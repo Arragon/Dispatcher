@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "scenario": "dashboard-open",
+  "startedAt": "2026-09-15T18:16:17.466Z",
+  "durationSeconds": 600,
+  "environment": {
+    "platform": "darwin",
+    "architecture": "arm64",
+    "node": "v26.7.0",
+    "pid": 59992
+  },
+  "measurements": {
+    "sampleCount": 592,
+    "cpuAveragePercent": 0.147,
+    "rssMaximumBytes": 94388224,
+    "controllerReportedRssBytes": 27590656,
+    "databaseBytes": 4096,
+    "dashboardClients": 1
+  },
+  "targets": {
+    "idleCpuPercentBelow": 1,
+    "rssBytesBelow": 262144000
+  },
+  "assessment": "pass",
+  "limitations": []
+}

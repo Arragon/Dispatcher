@@ -10,7 +10,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run test",
     "dev": "tsx src/cli.ts",
-    "dispatcher": "tsx src/cli.ts"
+    "dispatcher": "node dist/cli.js"
   },
   "dependencies": {
     "@dispatcher/config": "workspace:*",

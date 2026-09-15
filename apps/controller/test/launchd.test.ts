@@ -33,4 +33,23 @@ describe("launchd prototype", () => {
     expect(readFileSync(plistPath, "utf8")).toContain("dev.dispatcher.controller");
     expect(executor).toHaveBeenCalledOnce();
   });
+
+  it("replaces an already-loaded service before bootstrapping the new plist", async () => {
+    const root = mkdtempSync(join(tmpdir(), "dispatcher-launchd-upgrade-"));
+    directories.push(root);
+    const plistPath = join(root, "LaunchAgents", "dispatcher.plist");
+    const executor = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("service already loaded"))
+      .mockResolvedValue({ stdout: "", stderr: "" });
+    await installLaunchAgent({
+      plistPath,
+      nodePath: "/usr/local/bin/node",
+      cliPath: "/opt/dispatcher/cli.js",
+      dataDirectory: join(root, "data"),
+      logDirectory: join(root, "logs"),
+      executor,
+    });
+    expect(executor.mock.calls.map(([args]) => args[0])).toEqual(["bootstrap", "bootout", "bootstrap"]);
+  });
 });

@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync }
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
+import { get } from "node:http";
 import Ajv2020Module from "ajv/dist/2020.js";
 
 const Ajv2020 = Ajv2020Module.default ?? Ajv2020Module.Ajv2020 ?? Ajv2020Module;
@@ -27,7 +28,8 @@ const startedAt = new Date().toISOString();
 const limitations = [];
 let assessment = "informational";
 let child;
-let streamAbort;
+let eventRequest;
+let eventResponse;
 
 const delay = (milliseconds) => new Promise((resolveDelay) => setTimeout(resolveDelay, milliseconds));
 async function waitForHealth() {
@@ -41,6 +43,22 @@ async function waitForHealth() {
     await delay(50);
   }
   throw new Error("Controller did not become healthy");
+}
+
+async function openDashboardEventStream() {
+  await new Promise((resolveOpen, rejectOpen) => {
+    eventRequest = get(`http://127.0.0.1:${port}/api/events`, (response) => {
+      eventResponse = response;
+      if (response.statusCode !== 200) {
+        response.resume();
+        rejectOpen(new Error(`Dashboard event stream returned ${response.statusCode ?? "unknown"}`));
+        return;
+      }
+      response.once("data", resolveOpen);
+      response.on("data", () => undefined);
+    });
+    eventRequest.once("error", rejectOpen);
+  });
 }
 
 function sampleProcess(pid) {
@@ -58,8 +76,7 @@ try {
   await waitForHealth();
 
   if (scenario === "dashboard-open") {
-    streamAbort = new AbortController();
-    void fetch(`http://127.0.0.1:${port}/api/events`, { signal: streamAbort.signal }).catch(() => undefined);
+    await openDashboardEventStream();
   }
   if (scenario === "one-run" || scenario === "three-runs") {
     assessment = "not-runnable";
@@ -84,6 +101,10 @@ try {
   const rssMaximum = Math.max(...samples.map((value) => value.rssBytes));
   if (assessment !== "not-runnable" && scenario !== "smoke") {
     assessment = cpuAverage < 1 && rssMaximum < 250 * 1024 * 1024 ? "pass" : "fail";
+  }
+  if (scenario === "dashboard-open" && impact.dashboardClients !== 1) {
+    assessment = "fail";
+    limitations.push(`Dashboard event stream was not held open: expected 1 client, measured ${impact.dashboardClients}.`);
   }
   const databasePath = join(dataDirectory, "dispatcher.sqlite");
   const report = {
@@ -118,7 +139,8 @@ try {
   if (assessment === "fail") process.exitCode = 1;
   if (startupError && child.exitCode !== null && child.exitCode !== 0) throw new Error("Controller benchmark process failed");
 } finally {
-  streamAbort?.abort();
+  eventResponse?.destroy();
+  eventRequest?.destroy();
   if (child && child.exitCode === null) child.kill("SIGTERM");
   await delay(100);
   rmSync(temporary, { recursive: true, force: true });

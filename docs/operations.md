@@ -69,7 +69,7 @@ pnpm dispatcher -- stop
 pnpm dispatcher -- uninstall
 ```
 
-The prototype installs `com.inhandy.agent-dispatcher` in the current user's
+The prototype installs `dev.dispatcher.controller` in the current user's
 `~/Library/LaunchAgents`, writes logs under the selected data directory, and
 uses a 30-second restart throttle. It does not install a system daemon.
 
@@ -87,3 +87,5 @@ sample count, raw measurements, targets, assessment, and limitations. `one-run`
 and `three-runs` remain `not-runnable` until M4 supplies the Generic Execution
 Harness.
 
+Accepted milestone baselines are copied into `benchmarks/baselines/` so they
+remain reviewable after local runtime data is cleaned.

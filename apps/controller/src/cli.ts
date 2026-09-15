@@ -1,11 +1,12 @@
 #!/usr/bin/env node
-import { accessSync, constants, mkdirSync, readFileSync } from "node:fs";
+import { accessSync, constants, existsSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ConfigurationEngine, validateConfig } from "@dispatcher/config";
 import { DispatcherDatabase } from "@dispatcher/persistence";
 import { installLaunchAgent, LAUNCHD_LABEL, launchctl, tailLog } from "./launchd.js";
+import { normalizeCliArguments } from "./cli-args.js";
 import { ControllerService } from "./service.js";
 
 function flag(args: string[], name: string, fallback?: string): string | undefined {
@@ -79,7 +80,13 @@ async function serviceCommand(command: string, args: string[]): Promise<void> {
   else if (command === "stop") await launchctl(["kill", "SIGTERM", `${domain}/${LAUNCHD_LABEL}`]);
   else if (command === "restart") await launchctl(["kickstart", "-k", `${domain}/${LAUNCHD_LABEL}`]);
   else if (command === "status") console.log((await launchctl(["print", `${domain}/${LAUNCHD_LABEL}`])).stdout);
-  else if (command === "uninstall") await launchctl(["bootout", domain, paths.plist]);
+  else if (command === "uninstall") {
+    try {
+      await launchctl(["bootout", domain, paths.plist]);
+    } finally {
+      if (existsSync(paths.plist)) unlinkSync(paths.plist);
+    }
+  }
   else if (command === "logs") console.log(tailLog(join(paths.logs, "controller.log")));
 }
 
@@ -101,7 +108,7 @@ async function doctor(args: string[]): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  const args = process.argv.slice(2);
+  const args = normalizeCliArguments(process.argv.slice(2));
   const command = args[0] ?? "serve";
   if (command === "serve") await serve(args);
   else if (command === "config") await configCommand(args);
