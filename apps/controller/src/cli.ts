@@ -3,7 +3,13 @@ import { accessSync, constants, existsSync, mkdirSync, readFileSync, unlinkSync 
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { ConfigurationEngine, validateConfig } from "@dispatcher/config";
+import {
+  assertRequiredSecretsAvailable,
+  ConfigurationEngine,
+  createDefaultSecretStore,
+  requiredSecretReferences,
+  validateConfig,
+} from "@dispatcher/config";
 import { DispatcherDatabase } from "@dispatcher/persistence";
 import { installLaunchAgent, LAUNCHD_LABEL, launchctl, tailLog } from "./launchd.js";
 import { normalizeCliArguments } from "./cli-args.js";
@@ -59,6 +65,10 @@ async function configCommand(args: string[]): Promise<void> {
       if (!path) throw new Error("config import requires a JSON file");
       const plan = engine.importConfig(JSON.parse(readFileSync(resolve(path), "utf8")), "local-cli");
       if (args.includes("--apply")) {
+        const proposed = engine.proposedConfig(plan.id);
+        if (requiredSecretReferences(proposed).length > 0) {
+          await assertRequiredSecretsAvailable(proposed, createDefaultSecretStore({ dataDirectory: dataDirectory(args) }));
+        }
         const applied = engine.applyPlan(plan.id, { confirmed: args.includes("--confirm") });
         console.log(JSON.stringify({ planId: plan.id, revision: applied.revision }, null, 2));
       } else console.log(JSON.stringify({ plan }, null, 2));

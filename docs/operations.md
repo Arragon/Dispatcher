@@ -47,7 +47,9 @@ pnpm dispatcher -- config import ./config.json --apply --confirm
 
 Import without `--apply` creates a preview plan. Sensitive and privileged
 changes fail until `--confirm` is present. Exports are redacted and contain no
-secret values.
+secret values. Applying a config that enables an integration also fails until
+its referenced SecretStore item has been created through the Dashboard secret
+input.
 
 macOS uses Login Keychain. On systems without the macOS backend, set a strong
 master key before starting:

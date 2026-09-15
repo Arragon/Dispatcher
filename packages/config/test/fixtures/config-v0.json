@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 0,
+  "controller": {
+    "id": "legacy-controller",
+    "listen": "127.0.0.1",
+    "port": 8347,
+    "deploymentMode": "embedded",
+    "adminStrategy": "local-only"
+  },
+  "runners": [],
+  "integrations": {
+    "linear": { "enabled": false },
+    "github": { "enabled": false },
+    "slack": { "enabled": false }
+  },
+  "internalLlm": { "configured": false },
+  "agentProfiles": [],
+  "policies": {
+    "highRiskRequiresConfirmation": true,
+    "rawShellDefault": "deny"
+  }
+}

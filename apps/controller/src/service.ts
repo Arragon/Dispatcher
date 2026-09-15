@@ -5,11 +5,16 @@ import { fileURLToPath } from "node:url";
 import fastify, { type FastifyBaseLogger, type FastifyInstance } from "fastify";
 import fastifyStatic from "@fastify/static";
 import {
+  assertRequiredSecretsAvailable,
   ConfigurationEngine,
   ConfigPlanError,
+  ConfigValidationError,
   createDefaultSecretStore,
   dispatcherConfigSchema,
   dispatcherConfigUiSchema,
+  requiredSecretReferences,
+  SecretStoreError,
+  type SecretMetadata,
   type SecretStore,
 } from "@dispatcher/config";
 import type { Runner } from "@dispatcher/domain";
@@ -47,6 +52,11 @@ interface WizardBody {
   configRevision?: number;
 }
 
+interface SecretTestState {
+  lastTestedAt: string;
+  lastTestStatus: "ok" | "failed";
+}
+
 function json(value: unknown): JsonValue {
   return JSON.parse(JSON.stringify(value)) as JsonValue;
 }
@@ -64,6 +74,7 @@ export class ControllerService {
   private listening = false;
   private stopping?: Promise<void>;
   private dashboardClients = 0;
+  private readonly secretTestStates = new Map<string, SecretTestState>();
 
   constructor(readonly options: ControllerOptions) {
     const logger = createLogger({ level: process.env.LOG_LEVEL ?? "info" });
@@ -194,6 +205,7 @@ export class ControllerService {
     });
     this.app.post<{ Params: { id: string }; Body: ApplyPlanBody }>("/api/config/plans/:id/apply", async (request) => {
       const confirmed = request.body?.confirmed;
+      await assertRequiredSecretsAvailable(this.configuration.proposedConfig(request.params.id), this.secrets);
       return this.configuration.applyPlan(request.params.id, confirmed === undefined ? {} : { confirmed });
     });
     this.app.post<{ Params: { id: string } }>("/api/config/plans/:id/rollback", async (request) =>
@@ -224,22 +236,55 @@ export class ControllerService {
         if (!request.body?.value) return reply.code(400).send({ code: "SECRET_VALUE_REQUIRED" });
         const reference = `secret://${request.params.namespace}/${request.params.name}`;
         const metadata = await this.secrets.put(reference, request.body.value);
-        return reply.code(201).send({ secret: metadata });
+        this.secretTestStates.delete(reference);
+        return reply.code(201).send({ secret: this.secretView(metadata) });
       },
     );
     this.app.post<{ Params: { namespace: string; name: string } }>("/api/secrets/:namespace/:name/test", async (request) => {
       const reference = `secret://${request.params.namespace}/${request.params.name}`;
-      return { ok: await this.secrets.test(reference, { principal: "controller", purpose: "test" }), secret: await this.secrets.metadata(reference) };
+      const metadata = await this.secrets.metadata(reference);
+      const testedAt = new Date().toISOString();
+      if (!metadata.exists) {
+        this.secretTestStates.set(reference, { lastTestedAt: testedAt, lastTestStatus: "failed" });
+        return { ok: false, secret: this.secretView(metadata) };
+      }
+      try {
+        const ok = await this.secrets.test(reference, { principal: "controller", purpose: "test" });
+        this.secretTestStates.set(reference, { lastTestedAt: testedAt, lastTestStatus: ok ? "ok" : "failed" });
+        return { ok, secret: this.secretView(metadata) };
+      } catch (error) {
+        this.secretTestStates.set(reference, { lastTestedAt: testedAt, lastTestStatus: "failed" });
+        throw error;
+      }
     });
     this.app.delete<{ Params: { namespace: string; name: string } }>("/api/secrets/:namespace/:name", async (request, reply) => {
       const reference = `secret://${request.params.namespace}/${request.params.name}`;
+      if (requiredSecretReferences(this.configuration.current().config).includes(reference)) {
+        return reply.code(409).send({ code: "SECRET_IN_USE", message: "Disable the configuration that uses this credential before deleting it" });
+      }
       await this.secrets.delete(reference);
+      this.secretTestStates.delete(reference);
       return reply.code(204).send();
     });
 
     this.app.setErrorHandler((error, _request, reply) => {
-      const status = error instanceof RevisionConflictError ? 409 : error instanceof ConfigPlanError ? 400 : 500;
-      const code = error instanceof RevisionConflictError ? error.code : error instanceof ConfigPlanError ? error.code : "INTERNAL_ERROR";
+      const secretStatus = error instanceof SecretStoreError
+        ? error.code === "SECRET_ACCESS_DENIED"
+          ? 403
+          : ["INVALID_SECRET_REFERENCE", "EMPTY_SECRET", "SECRET_NOT_FOUND", "SECRET_REFERENCE_MISSING"].includes(error.code)
+            ? 400
+            : 500
+        : undefined;
+      const status = error instanceof RevisionConflictError
+        ? 409
+        : error instanceof ConfigPlanError || error instanceof ConfigValidationError
+          ? 400
+          : secretStatus ?? 500;
+      const code = error instanceof RevisionConflictError || error instanceof ConfigPlanError || error instanceof SecretStoreError
+        ? error.code
+        : error instanceof ConfigValidationError
+          ? error.code
+        : "INTERNAL_ERROR";
       this.app.log.error({ error: redactValue(error) }, "request failed");
       const message = error instanceof Error ? error.message : "Request failed";
       void reply.code(status).send({ code, message: status === 500 ? "Internal error" : message });
@@ -255,5 +300,14 @@ export class ControllerService {
         return reply.header("Cache-Control", "no-cache").sendFile("index.html", { maxAge: 0, immutable: false });
       });
     }
+  }
+
+  private secretView(metadata: SecretMetadata): SecretMetadata & { lastTestedAt: string | null; lastTestStatus: "ok" | "failed" | null } {
+    const state = this.secretTestStates.get(metadata.reference);
+    return {
+      ...metadata,
+      lastTestedAt: state?.lastTestedAt ?? null,
+      lastTestStatus: state?.lastTestStatus ?? null,
+    };
   }
 }

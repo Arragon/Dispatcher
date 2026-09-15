@@ -13,9 +13,27 @@ describe("shared redaction", () => {
   });
 
   it("refuses secret-like outbound payloads", () => {
-    expect(() => assertExternalPayloadSafe({ text: "sk-test_abcdefghijk" })).toThrowError(
-      expect.objectContaining({ code: "SECRET_LIKE_EXTERNAL_PAYLOAD" }),
-    );
+    for (const payload of [
+      { destination: "linear", text: "sk-test_abcdefghijk" },
+      { destination: "slack", authorization: "Bearer abcdefghijklmnop" },
+    ]) {
+      expect(() => assertExternalPayloadSafe(payload)).toThrowError(
+        expect.objectContaining({ code: "SECRET_LIKE_EXTERNAL_PAYLOAD" }),
+      );
+    }
+  });
+
+  it("redacts canaries across nested arrays and common credential keys", () => {
+    const canaries = [
+      { apiKey: "canary-api-key" },
+      { headers: [{ authorization: "Bearer abcdefghijklmnop" }] },
+      { nested: { private_key: "canary-private-key" } },
+      { tokens: ["ghp_abcdefghijklmno"] },
+    ];
+    const output = JSON.stringify(redactValue(canaries));
+    for (const canary of ["canary-api-key", "abcdefghijklmnop", "canary-private-key", "ghp_abcdefghijklmno"]) {
+      expect(output).not.toContain(canary);
+    }
   });
 
   it("redacts logger output", async () => {

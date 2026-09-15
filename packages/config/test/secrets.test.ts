@@ -38,8 +38,22 @@ describe("EncryptedLocalSecretStore", () => {
     await expect(store.resolve("secret://linear/main", { principal: "web-user", purpose: "test" })).rejects.toMatchObject({
       code: "SECRET_ACCESS_DENIED",
     });
+    await expect(store.resolve("secret://linear/main", { principal: "runner:local", purpose: "provider" })).rejects.toMatchObject({
+      code: "SECRET_ACCESS_DENIED",
+    });
     const wrong = new EncryptedLocalSecretStore(path, "a-different-master-key");
     await expect(wrong.resolve("secret://linear/main", access)).rejects.toMatchObject({ code: "SECRET_STORE_DECRYPT_FAILED" });
+  });
+
+  it("atomically replaces and deletes a value", async () => {
+    const path = storePath();
+    const store = new EncryptedLocalSecretStore(path, "a-secure-test-master-key");
+    await store.put("secret://linear/main", "first-canary-value");
+    await store.put("secret://linear/main", "second-canary-value");
+    await expect(store.resolve("secret://linear/main", access)).resolves.toBe("second-canary-value");
+    expect(readFileSync(path, "utf8")).not.toContain("first-canary-value");
+    await store.delete("secret://linear/main");
+    await expect(store.metadata("secret://linear/main")).resolves.toMatchObject({ exists: false });
   });
 
   it("rejects insecure file permissions", async () => {

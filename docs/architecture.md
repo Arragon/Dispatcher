@@ -80,22 +80,33 @@ All persisted configuration must pass the versioned JSON Schema and semantic
 validation. A proposed change becomes a `ConfigPlan`; sensitive and privileged
 plans require explicit confirmation. Apply, runtime verification, durable
 write, and audit are one logical transaction. Failure restores the previous
-runtime configuration and records a classified failed plan.
+runtime configuration and records a classified failed plan. Explicit rollback
+uses the same runtime verification and audit boundary; if rollback fails, the
+active canonical revision is preserved and the failure is classified.
 
 Configuration contains only `secret://namespace/name` references. On macOS,
 secret values use Login Keychain. Other platforms require an explicit
 `DISPATCHER_SECRET_STORE_KEY` and use an AES-256-GCM local envelope with 0600
-file permissions. Secret values are accepted only by write/test/delete APIs;
-there is no read-value API. Logs, errors, audit records, and exports pass
-through the redaction boundary.
+file permissions. Enabling an integration requires a correctly namespaced
+reference that already exists in SecretStore; apply and CLI import fail closed
+when a required reference is missing. Resolve authorization binds each
+reference namespace to an integration, provider, or LLM purpose. Secret values
+are accepted only by write/test/delete APIs; there is no read-value API. The
+API returns only reference, backend, existence, and last-test status. Logs,
+errors, audit records, events, and exports pass through the redaction boundary.
+Deletion is rejected while the active configuration still references the item;
+the owning configuration must be disabled or rolled back first.
 
 ## Dashboard boundary
 
 Vite produces static files served by the Controller. React Query owns API
 cache state and SSE invalidates live fleet data. JSON Schema and RJSF render
-ordinary settings; secure inputs bypass form state and write directly to the
-Secret API. The setup wizard persists its step and expected configuration
-revision so refresh and restart are recoverable.
+ordinary settings with the same Draft 2020-12 schema used by the Controller;
+secure values bypass form state and write directly to the Secret API, while the
+resulting opaque reference is added to the ordinary configuration draft.
+Settings exposes plan preview, apply, verification state, and immediate rollback. The
+setup wizard persists its step and expected configuration revision so refresh
+and restart are recoverable.
 
 ## Change rules
 
@@ -106,4 +117,3 @@ revision so refresh and restart are recoverable.
   process arguments.
 - Do not implement an M3+ integration inside Controller or Runner to save a
   package boundary.
-

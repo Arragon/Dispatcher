@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
 import { api, type ConfigResponse } from "./api.js";
 
 interface SetupResponse {
@@ -68,9 +69,11 @@ export default function SetupWizard(): React.JSX.Element {
         {step === 0 ? <label>Controller ID<input value={controllerId} pattern="[a-z0-9][a-z0-9._-]*" onChange={(event) => setControllerId(event.target.value)} /></label> : null}
         {step === 1 ? <div><h2>Local-only administration</h2><p>The M2 default binds administration to the local machine. Network authentication hardening is scheduled for M15.</p></div> : null}
         {step === 2 ? <label>Runner display name<input value={runnerName} onChange={(event) => setRunnerName(event.target.value)} /></label> : null}
-        {step === 3 ? <div><h2>Integrations are optional now</h2><p>Linear, GitHub, and Slack remain visibly unconfigured until their credentials and later milestone workflows are added.</p></div> : null}
-        {step === 4 ? <div><h2>Internal LLM is optional now</h2><p>M3 adds endpoints, profiles, health checks, safe switching, and fallback. Deterministic M0–M2 functions work without it.</p></div> : null}
-        <div className="wizard-actions"><button disabled={step === 0} onClick={() => setStep((value) => Math.max(0, value - 1))}>Back</button><button className="primary" onClick={() => void continueSetup()}>{step === 4 ? "Finish setup" : "Save and continue"}</button></div>
+        {step === 3 ? <div><h2>Integrations are optional now</h2><p>Status: Not configured. Linear, GitHub, and Slack stay disabled until you store credentials and explicitly enable them.</p></div> : null}
+        {step === 4 ? <div><h2>Internal LLM is optional now</h2><p>Status: Not configured. M3 adds endpoints, profiles, health checks, safe switching, and fallback. Deterministic M0–M2 functions work without it.</p></div> : null}
+        {setup.data.state.completed
+          ? <div className="wizard-actions"><Link className="button-link primary" to="/settings">Open Settings</Link></div>
+          : <div className="wizard-actions"><button disabled={step === 0} onClick={() => setStep((value) => Math.max(0, value - 1))}>Back</button><button className="primary" onClick={() => void continueSetup()}>{step === 4 ? "Finish setup" : "Save and continue"}</button></div>}
         <p aria-live="polite">{message}</p>
       </div>
     </section>

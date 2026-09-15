@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -65,13 +65,70 @@ describe("ControllerService", () => {
 
   it("never exposes a secret read endpoint", async () => {
     const secrets = new FakeSecretStore();
-    const service = new ControllerService({ dataDirectory: dataDirectory(), secretStore: secrets });
+    const directory = dataDirectory();
+    const service = new ControllerService({ dataDirectory: directory, secretStore: secrets });
     await service.start({ listen: false });
     const saved = await service.app.inject({ method: "PUT", url: "/api/secrets/linear/main", payload: { value: "canary-secret-value" } });
     expect(saved.statusCode).toBe(201);
     expect(saved.body).not.toContain("canary-secret-value");
+    expect(saved.json().secret).toMatchObject({
+      reference: "secret://linear/main",
+      backend: "encrypted-local",
+      exists: true,
+      lastTestStatus: null,
+      lastTestedAt: null,
+    });
+    const tested = await service.app.inject({ method: "POST", url: "/api/secrets/linear/main/test" });
+    expect(tested.json()).toMatchObject({ ok: true, secret: { lastTestStatus: "ok" } });
+    expect(tested.body).not.toContain("canary-secret-value");
     const read = await service.app.inject({ method: "GET", url: "/api/secrets/linear/main" });
     expect(read.statusCode).toBe(404);
+    expect(JSON.stringify(service.configuration.exportRedacted())).not.toContain("canary-secret-value");
+    expect(JSON.stringify(service.database.listAudit())).not.toContain("canary-secret-value");
+    await service.stop();
+    for (const name of readdirSync(directory).filter((entry) => entry.startsWith("dispatcher.sqlite"))) {
+      expect(readFileSync(join(directory, name)).toString("utf8")).not.toContain("canary-secret-value");
+    }
+  });
+
+  it("blocks activation until every required secret reference exists", async () => {
+    const secrets = new FakeSecretStore();
+    const service = new ControllerService({ dataDirectory: dataDirectory(), secretStore: secrets });
+    await service.start({ listen: false });
+    const current = (await service.app.inject({ method: "GET", url: "/api/config" })).json();
+    current.config.integrations.linear = { enabled: true, credentialRef: "secret://linear/main" };
+    const built = await service.app.inject({ method: "POST", url: "/api/config/plans", payload: { config: current.config } });
+    const missing = await service.app.inject({
+      method: "POST",
+      url: `/api/config/plans/${built.json().plan.id}/apply`,
+      payload: { confirmed: true },
+    });
+    expect(missing.statusCode).toBe(400);
+    expect(missing.json()).toMatchObject({ code: "SECRET_REFERENCE_MISSING" });
+    expect((await service.app.inject({ method: "GET", url: "/api/config" })).json().revision).toBe(current.revision);
+    await service.app.inject({ method: "PUT", url: "/api/secrets/linear/main", payload: { value: "canary-secret-value" } });
+    const applied = await service.app.inject({
+      method: "POST",
+      url: `/api/config/plans/${built.json().plan.id}/apply`,
+      payload: { confirmed: true },
+    });
+    expect(applied.statusCode).toBe(200);
+    const inUse = await service.app.inject({ method: "DELETE", url: "/api/secrets/linear/main" });
+    expect(inUse.statusCode).toBe(409);
+    expect(inUse.json()).toMatchObject({ code: "SECRET_IN_USE" });
+    await service.app.inject({ method: "POST", url: `/api/config/plans/${built.json().plan.id}/rollback` });
+    expect((await service.app.inject({ method: "DELETE", url: "/api/secrets/linear/main" })).statusCode).toBe(204);
+    await service.stop();
+  });
+
+  it("returns schema validation failures as safe client errors", async () => {
+    const service = new ControllerService({ dataDirectory: dataDirectory(), secretStore: new FakeSecretStore() });
+    await service.start({ listen: false });
+    const current = (await service.app.inject({ method: "GET", url: "/api/config" })).json();
+    current.config.integrations.linear = { enabled: true };
+    const response = await service.app.inject({ method: "POST", url: "/api/config/plans", payload: { config: current.config } });
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({ code: "INVALID_CONFIGURATION" });
     await service.stop();
   });
 
@@ -84,6 +141,26 @@ describe("ControllerService", () => {
     expect(saved.body).not.toContain("secret");
     expect((await service.app.inject({ method: "GET", url: "/api/setup" })).json().state.step).toBe(2);
     await service.stop();
+  });
+
+  it("restores the completed setup step and canonical config after restart", async () => {
+    const directory = dataDirectory();
+    const first = new ControllerService({ dataDirectory: directory, secretStore: new FakeSecretStore() });
+    await first.start({ listen: false });
+    const current = (await first.app.inject({ method: "GET", url: "/api/config" })).json();
+    current.config.controller.id = "wizard-controller";
+    const built = await first.app.inject({ method: "POST", url: "/api/config/plans", payload: { config: current.config, actor: "setup-wizard" } });
+    const applied = await first.app.inject({ method: "POST", url: `/api/config/plans/${built.json().plan.id}/apply`, payload: {} });
+    await first.app.inject({ method: "POST", url: "/api/setup", payload: { step: 4, completed: true, configRevision: applied.json().revision } });
+    await first.stop();
+
+    const second = new ControllerService({ dataDirectory: directory, secretStore: new FakeSecretStore() });
+    await second.start({ listen: false });
+    const restored = (await second.app.inject({ method: "GET", url: "/api/setup" })).json();
+    expect(restored.state).toMatchObject({ step: 4, completed: true, configRevision: applied.json().revision });
+    expect(restored.config.config.controller.id).toBe("wizard-controller");
+    expect(() => JSON.parse(JSON.stringify(second.configuration.exportRedacted()))).not.toThrow();
+    await second.stop();
   });
 });
 

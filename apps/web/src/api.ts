@@ -26,7 +26,7 @@ export interface ConfigResponse<T = Record<string, unknown>> {
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
     ...init,
-    headers: { "Content-Type": "application/json", ...init?.headers },
+    headers: { ...(init?.body === undefined ? {} : { "Content-Type": "application/json" }), ...init?.headers },
   });
   if (!response.ok) {
     const body = (await response.json().catch(() => ({ code: "REQUEST_FAILED" }))) as { code?: string; message?: string };

@@ -153,6 +153,12 @@ export class ConfigurationEngine {
     return stored ? (stored.plan as unknown as ConfigPlan) : undefined;
   }
 
+  proposedConfig(id: string): DispatcherConfig {
+    const stored = this.database.getConfigPlan(id);
+    if (!stored) throw new ConfigPlanError("CONFIG_PLAN_NOT_FOUND", `Unknown configuration plan: ${id}`);
+    return validateConfig(stored.after);
+  }
+
   applyPlan(id: string, options: { confirmed?: boolean } = {}): { revision: number; config: DispatcherConfig } {
     const stored = this.database.getConfigPlan(id);
     if (!stored) throw new ConfigPlanError("CONFIG_PLAN_NOT_FOUND", `Unknown configuration plan: ${id}`);
@@ -167,10 +173,12 @@ export class ConfigurationEngine {
     const before = validateConfig(stored.before);
     const after = validateConfig(stored.after);
     const now = new Date().toISOString();
+    let runtimeTouched = false;
     try {
       return this.database.transaction(() => {
         const actual = this.current().revision;
         if (actual !== stored.baseRevision) throw new RevisionConflictError(stored.baseRevision, actual);
+        runtimeTouched = true;
         this.runtime.apply(after);
         for (const verify of this.verifyHooks) verify(after);
         const state = this.database.writeConfigState(stored.baseRevision, {
@@ -193,16 +201,25 @@ export class ConfigurationEngine {
         return { revision: state.revision, config: after };
       });
     } catch (error) {
-      try {
-        this.runtime.apply(before);
-      } catch {
-        // Runtime rollback failure is reported through the classified apply error below.
+      let runtimeRollbackFailed = false;
+      if (runtimeTouched) {
+        try {
+          this.runtime.apply(before);
+        } catch {
+          runtimeRollbackFailed = true;
+        }
       }
       const failed: StoredConfigPlan = {
         ...stored,
         state: "FAILED",
         confirmed: Boolean(options.confirmed),
-        result: { code: error instanceof RevisionConflictError ? error.code : "CONFIG_APPLY_FAILED" },
+        result: {
+          code: error instanceof RevisionConflictError
+            ? error.code
+            : runtimeRollbackFailed
+              ? "CONFIG_RUNTIME_ROLLBACK_FAILED"
+              : "CONFIG_APPLY_FAILED",
+        },
         updatedAt: now,
       };
       this.database.saveConfigPlan(failed);
@@ -218,6 +235,9 @@ export class ConfigurationEngine {
         createdAt: now,
       });
       if (error instanceof RevisionConflictError) throw error;
+      if (runtimeRollbackFailed) {
+        throw new ConfigPlanError("CONFIG_RUNTIME_ROLLBACK_FAILED", "Configuration plan failed and runtime rollback also failed", { cause: error });
+      }
       throw new ConfigPlanError("CONFIG_APPLY_FAILED", "Configuration plan failed and was rolled back", { cause: error });
     }
   }
@@ -232,15 +252,45 @@ export class ConfigurationEngine {
     }
     const before = normalizeConfig(validateConfig(stored.before));
     const now = new Date().toISOString();
-    return this.database.transaction(() => {
-      this.runtime.apply(before);
-      for (const verify of this.verifyHooks) verify(before);
-      const state = this.database.writeConfigState(current.revision, {
-        schemaVersion: 1,
-        document: configToJson(before),
+    let runtimeTouched = false;
+    try {
+      return this.database.transaction(() => {
+        runtimeTouched = true;
+        this.runtime.apply(before);
+        for (const verify of this.verifyHooks) verify(before);
+        const state = this.database.writeConfigState(current.revision, {
+          schemaVersion: 1,
+          document: configToJson(before),
+          updatedAt: now,
+        });
+        this.database.saveConfigPlan({ ...stored, state: "ROLLED_BACK", updatedAt: now });
+        this.database.appendAudit({
+          id: randomUUID(),
+          planId: stored.id,
+          action: "rollback",
+          actor: String((stored.plan as Record<string, JsonValue>).actor ?? "unknown"),
+          source: String((stored.plan as Record<string, JsonValue>).source ?? "unknown"),
+          before: redactValue(stored.after) as JsonValue,
+          after: redactValue(stored.before) as JsonValue,
+          status: "committed",
+          createdAt: now,
+        });
+        return { revision: state.revision, config: before };
+      });
+    } catch (error) {
+      let runtimeRestoreFailed = false;
+      if (runtimeTouched) {
+        try {
+          this.runtime.apply(current.config);
+        } catch {
+          runtimeRestoreFailed = true;
+        }
+      }
+      this.database.saveConfigPlan({
+        ...stored,
+        result: { code: runtimeRestoreFailed ? "CONFIG_RUNTIME_RESTORE_FAILED" : "CONFIG_ROLLBACK_FAILED" },
         updatedAt: now,
       });
-      this.database.saveConfigPlan({ ...stored, state: "ROLLED_BACK", updatedAt: now });
       this.database.appendAudit({
         id: randomUUID(),
         planId: stored.id,
@@ -249,11 +299,15 @@ export class ConfigurationEngine {
         source: String((stored.plan as Record<string, JsonValue>).source ?? "unknown"),
         before: redactValue(stored.after) as JsonValue,
         after: redactValue(stored.before) as JsonValue,
-        status: "committed",
+        status: "failed",
         createdAt: now,
       });
-      return { revision: state.revision, config: before };
-    });
+      throw new ConfigPlanError(
+        runtimeRestoreFailed ? "CONFIG_RUNTIME_RESTORE_FAILED" : "CONFIG_ROLLBACK_FAILED",
+        runtimeRestoreFailed ? "Configuration rollback failed and the active runtime could not be restored" : "Configuration rollback failed; the active revision was restored",
+        { cause: error },
+      );
+    }
   }
 
   exportRedacted(): JsonValue {

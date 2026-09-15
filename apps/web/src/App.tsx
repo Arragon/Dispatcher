@@ -101,27 +101,73 @@ function Placeholder({ title, description }: { title: string; description: strin
   return <section><header className="page-header"><div><p className="eyebrow">Foundation ready</p><h1>{title}</h1><p>{description}</p></div></header><PageState title="No records yet" detail="This surface is ready for its roadmap milestone." /></section>;
 }
 
-export function SecureInput({ namespace, name, label }: { namespace: string; name: string; label: string }): React.JSX.Element {
+export function SecureInput({
+  namespace,
+  name,
+  label,
+  onStored,
+  onDeleted,
+}: {
+  namespace: string;
+  name: string;
+  label: string;
+  onStored?: (reference: string) => void;
+  onDeleted?: () => void;
+}): React.JSX.Element {
   const input = useRef<HTMLInputElement>(null);
   const [status, setStatus] = useState("Not configured");
+  const [busy, setBusy] = useState(false);
   async function submit(event: FormEvent): Promise<void> {
     event.preventDefault();
     const value = input.current?.value;
     if (!value) return;
+    setBusy(true);
     setStatus("Saving securely…");
     try {
-      await api(`/api/secrets/${namespace}/${name}`, { method: "PUT", body: JSON.stringify({ value }) });
+      const result = await api<{ secret: { backend: string; reference: string } }>(`/api/secrets/${namespace}/${name}`, { method: "PUT", body: JSON.stringify({ value }) });
       if (input.current) input.current.value = "";
-      setStatus("Stored in SecretStore");
+      onStored?.(result.secret.reference);
+      setStatus(`Stored in ${result.secret.backend}`);
     } catch {
       if (input.current) input.current.value = "";
       setStatus("Secret could not be stored");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function testConnection(): Promise<void> {
+    setBusy(true);
+    setStatus("Testing stored credential…");
+    try {
+      const result = await api<{ ok: boolean; secret: { lastTestedAt: string | null } }>(`/api/secrets/${namespace}/${name}/test`, { method: "POST" });
+      setStatus(result.ok ? `Connection test passed at ${result.secret.lastTestedAt ?? "now"}` : "Connection test failed or credential is missing");
+    } catch {
+      setStatus("Connection test could not run");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function deleteSecret(): Promise<void> {
+    setBusy(true);
+    setStatus("Deleting stored credential…");
+    try {
+      await api(`/api/secrets/${namespace}/${name}`, { method: "DELETE" });
+      if (input.current) input.current.value = "";
+      onDeleted?.();
+      setStatus("Not configured");
+    } catch {
+      setStatus("Stored credential could not be deleted");
+    } finally {
+      setBusy(false);
     }
   }
   return (
     <form className="secure-input" onSubmit={(event) => void submit(event)}>
       <label htmlFor={`secret-${namespace}-${name}`}>{label}</label>
-      <div><input ref={input} id={`secret-${namespace}-${name}`} type="password" autoComplete="off" required /><button type="submit">Store</button></div>
+      <div><input ref={input} id={`secret-${namespace}-${name}`} type="password" autoComplete="off" required /><button type="submit" disabled={busy}>Store</button></div>
+      <div className="secure-actions"><button type="button" disabled={busy} onClick={() => void testConnection()}>Test connection</button><button type="button" disabled={busy} onClick={() => void deleteSecret()}>Delete</button></div>
       <small aria-live="polite">{status}</small>
     </form>
   );

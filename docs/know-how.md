@@ -20,8 +20,22 @@
 - Secret values never enter the canonical configuration document. Persist only
   opaque `secret://namespace/name` references. Secure UI inputs must remain
   outside RJSF form state.
+- Enabled integrations must use their own namespace (`secret://linear/...`,
+  `secret://github/...`, or `secret://slack/...`) and the referenced item must
+  exist before a ConfigPlan can apply. Secret resolution additionally checks
+  the caller principal and integration/provider/LLM purpose.
+- Refuse SecretStore deletion while the current canonical configuration uses
+  the reference. The user must first apply a disabling/removal ConfigPlan; this
+  prevents a valid active configuration from being made unusable out of band.
 - The non-macOS encrypted store intentionally fails closed when its master key
   is absent, weak, wrong, or the file permissions are broader than 0600.
+- macOS `security ... -w` prompts twice and reads from a terminal. The Keychain
+  backend supplies both prompts through a pseudo-terminal pipe so the value
+  never appears in process arguments; changing that subprocess path requires a
+  real Keychain smoke test, not only an injected executor test.
+- RJSF must use an Ajv 2020 instance. Its default Ajv validator targets an older
+  schema dialect and will render the form but reject submission of the shared
+  Draft 2020-12 schema.
 - Performance reports separate measured values from targets. Scenarios that
   require the M4 execution harness must be marked `not-runnable` before M4; do
   not synthesize agent-run measurements.
@@ -36,4 +50,3 @@
 - Build order is represented by workspace dependencies. Controller consumes the
   built Web directory at runtime but does not use a TypeScript project reference
   to Web because Web is a no-emit application project.
-

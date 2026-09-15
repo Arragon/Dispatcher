@@ -2,6 +2,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, w
 import { dirname } from "node:path";
 import { spawn } from "node:child_process";
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "node:crypto";
+import { requiredSecretReferences, type DispatcherConfig } from "./schema.js";
 
 export interface SecretAccessContext {
   principal: string;
@@ -37,10 +38,21 @@ export function parseSecretReference(reference: string): { namespace: string; na
   return { namespace: match[1], name: match[2] };
 }
 
-function authorize(context: SecretAccessContext): void {
+function authorize(reference: string, context: SecretAccessContext): void {
   if (!(context.principal === "controller" || context.principal.startsWith("runner:"))) {
     throw new SecretStoreError("SECRET_ACCESS_DENIED", "Secret access denied");
   }
+  if (context.purpose === "test") {
+    if (context.principal !== "controller") throw new SecretStoreError("SECRET_ACCESS_DENIED", "Secret access denied");
+    return;
+  }
+  const { namespace } = parseSecretReference(reference);
+  const expectedPurpose = namespace === "llm"
+    ? "llm"
+    : ["linear", "github", "slack"].includes(namespace)
+      ? "integration"
+      : "provider";
+  if (context.purpose !== expectedPurpose) throw new SecretStoreError("SECRET_ACCESS_DENIED", "Secret access denied");
 }
 
 export interface CommandResult {
@@ -50,9 +62,66 @@ export interface CommandResult {
 
 export type CommandExecutor = (file: string, args: string[], stdin?: string) => Promise<CommandResult>;
 
-const execute: CommandExecutor = async (file, args, stdin) =>
+const executePrompted: CommandExecutor = async (file, args, stdin) =>
   await new Promise((resolve, reject) => {
-    const child = spawn(file, args, { stdio: ["pipe", "pipe", "pipe"] });
+    // Node uses a socketpair for piped stdin on macOS, while `script` requires a
+    // pipe or terminal. `cat` creates that pipe without placing the secret in
+    // the shell command or any process argument.
+    const child = spawn(
+      "/bin/sh",
+      ["-c", 'cat | /usr/bin/script -q -e /dev/null "$@"', "keychain-prompt", file, ...args],
+      { stdio: ["pipe", "pipe", "pipe"], detached: true },
+    );
+    let stdout = "";
+    let stderr = "";
+    let promptPhase: "waiting" | "confirming" | "supplied" = "waiting";
+    let settled = false;
+    const timeout = setTimeout(() => {
+      try {
+        if (child.pid === undefined) throw new Error("Keychain helper has no process id");
+        process.kill(-child.pid, "SIGTERM");
+      } catch {
+        child.kill("SIGTERM");
+      }
+      if (!settled) {
+        settled = true;
+        reject(new SecretStoreError("KEYCHAIN_COMMAND_FAILED", "macOS Keychain operation timed out"));
+      }
+    }, 10_000);
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk.toString();
+      if (promptPhase === "waiting" && stdout.includes("password data for new item:")) {
+        promptPhase = "confirming";
+        child.stdin.write(`${stdin ?? ""}\n`);
+      }
+      if (promptPhase === "confirming" && stdout.includes("retype password for new item:")) {
+        promptPhase = "supplied";
+        child.stdin.end(`${stdin ?? ""}\n`);
+      }
+    });
+    child.stderr.on("data", (chunk) => (stderr += chunk.toString()));
+    child.on("error", (error) => {
+      clearTimeout(timeout);
+      if (!settled) {
+        settled = true;
+        reject(error);
+      }
+    });
+    child.on("close", (code) => {
+      clearTimeout(timeout);
+      if (settled) return;
+      settled = true;
+      if (code === 0 && promptPhase === "supplied") resolve({ stdout: "", stderr: "" });
+      else reject(new SecretStoreError("KEYCHAIN_COMMAND_FAILED", "macOS Keychain operation failed"));
+    });
+  });
+
+const execute: CommandExecutor = async (file, args, stdin) => {
+  if (stdin !== undefined && file === "/usr/bin/security" && args.at(-1) === "-w") {
+    return executePrompted(file, args, stdin);
+  }
+  return await new Promise((resolve, reject) => {
+    const child = spawn(file, args, { stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (chunk) => (stdout += chunk.toString()));
@@ -62,9 +131,8 @@ const execute: CommandExecutor = async (file, args, stdin) =>
       if (code === 0) resolve({ stdout, stderr });
       else reject(new SecretStoreError("KEYCHAIN_COMMAND_FAILED", "macOS Keychain operation failed"));
     });
-    if (stdin !== undefined) child.stdin.end(`${stdin}\n`);
-    else child.stdin.end();
   });
+};
 
 export class MacOsKeychainSecretStore implements SecretStore {
   constructor(
@@ -86,7 +154,7 @@ export class MacOsKeychainSecretStore implements SecretStore {
 
   async resolve(reference: string, context: SecretAccessContext): Promise<string> {
     parseSecretReference(reference);
-    authorize(context);
+    authorize(reference, context);
     const result = await this.executor("/usr/bin/security", ["find-generic-password", "-w", "-a", reference, "-s", this.service]);
     return result.stdout.replace(/\r?\n$/, "");
   }
@@ -143,7 +211,7 @@ export class EncryptedLocalSecretStore implements SecretStore {
 
   async resolve(reference: string, context: SecretAccessContext): Promise<string> {
     parseSecretReference(reference);
-    authorize(context);
+    authorize(reference, context);
     const value = this.readValues()[reference];
     if (!value) throw new SecretStoreError("SECRET_NOT_FOUND", "Secret does not exist");
     return value;
@@ -215,4 +283,14 @@ export function createDefaultSecretStore(input: {
     throw new SecretStoreError("SECRET_STORE_UNAVAILABLE", "Set DISPATCHER_SECRET_STORE_KEY when a platform keychain is unavailable");
   }
   return new EncryptedLocalSecretStore(`${input.dataDirectory}/secrets.enc`, key);
+}
+
+export async function assertRequiredSecretsAvailable(config: DispatcherConfig, store: SecretStore): Promise<void> {
+  const missing: string[] = [];
+  for (const reference of requiredSecretReferences(config)) {
+    if (!(await store.metadata(reference)).exists) missing.push(reference);
+  }
+  if (missing.length > 0) {
+    throw new SecretStoreError("SECRET_REFERENCE_MISSING", `Required secret references are not configured: ${missing.join(", ")}`);
+  }
 }

@@ -220,7 +220,25 @@ export function validateConfig(input: unknown): DispatcherConfig {
       throw new ConfigValidationError([`/agentProfiles/${profile.id} references unknown runner ${profile.runnerId}`]);
     }
   }
+  for (const [name, integration] of Object.entries(config.integrations)) {
+    if (integration.enabled && !integration.credentialRef) {
+      throw new ConfigValidationError([`/integrations/${name}/credentialRef is required when enabled`]);
+    }
+    if (integration.credentialRef && !integration.credentialRef.startsWith(`secret://${name}/`)) {
+      throw new ConfigValidationError([`/integrations/${name}/credentialRef must use the ${name} secret namespace`]);
+    }
+  }
   return config;
+}
+
+export function requiredSecretReferences(config: DispatcherConfig): string[] {
+  const references = Object.values(config.integrations)
+    .filter((integration) => integration.enabled)
+    .flatMap((integration) => integration.credentialRef ? [integration.credentialRef] : []);
+  for (const profile of config.agentProfiles) {
+    if (profile.credentialRef) references.push(profile.credentialRef);
+  }
+  return [...new Set(references)].sort();
 }
 
 export function configToJson(config: DispatcherConfig): JsonValue {
