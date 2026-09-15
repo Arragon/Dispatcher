@@ -1,0 +1,21 @@
+{
+  "files": [],
+  "references": [
+    { "path": "packages/domain" },
+    { "path": "packages/protocol" },
+    { "path": "packages/persistence" },
+    { "path": "packages/runner" },
+    { "path": "packages/config" },
+    { "path": "packages/observability" },
+    { "path": "packages/adapters" },
+    { "path": "packages/llm-runtime" },
+    { "path": "packages/semantic" },
+    { "path": "packages/scheduler" },
+    { "path": "packages/fleet" },
+    { "path": "packages/workspace" },
+    { "path": "packages/integrations" },
+    { "path": "packages/shared" },
+    { "path": "apps/controller" },
+    { "path": "apps/web" }
+  ]
+}

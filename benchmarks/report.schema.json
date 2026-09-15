@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dispatcher.local/schemas/benchmark-report-v1.json",
+  "type": "object",
+  "required": ["schemaVersion", "scenario", "startedAt", "durationSeconds", "environment", "measurements", "targets", "assessment"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "scenario": { "enum": ["smoke", "idle", "dashboard-open", "one-run", "three-runs", "log-growth", "db-growth"] },
+    "startedAt": { "type": "string", "format": "date-time" },
+    "durationSeconds": { "type": "number", "minimum": 0 },
+    "environment": { "type": "object" },
+    "measurements": { "type": "object" },
+    "targets": { "type": "object" },
+    "assessment": { "enum": ["pass", "fail", "informational", "not-runnable"] },
+    "limitations": { "type": "array", "items": { "type": "string" } }
+  },
+  "additionalProperties": false
+}
