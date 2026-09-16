@@ -38,12 +38,18 @@ importers:
 
   apps/controller:
     dependencies:
+      '@dispatcher/adapters':
+        specifier: workspace:*
+        version: link:../../packages/adapters
       '@dispatcher/config':
         specifier: workspace:*
         version: link:../../packages/config
       '@dispatcher/domain':
         specifier: workspace:*
         version: link:../../packages/domain
+      '@dispatcher/llm-runtime':
+        specifier: workspace:*
+        version: link:../../packages/llm-runtime
       '@dispatcher/observability':
         specifier: workspace:*
         version: link:../../packages/observability
@@ -132,7 +138,11 @@ importers:
 
   packages/integrations: {}
 
-  packages/llm-runtime: {}
+  packages/llm-runtime:
+    dependencies:
+      '@dispatcher/persistence':
+        specifier: workspace:*
+        version: link:../persistence
 
   packages/observability:
     dependencies:
@@ -160,6 +170,13 @@ importers:
       '@dispatcher/protocol':
         specifier: workspace:*
         version: link:../protocol
+    devDependencies:
+      '@dispatcher/adapters':
+        specifier: workspace:*
+        version: link:../adapters
+      '@dispatcher/workspace':
+        specifier: workspace:*
+        version: link:../workspace
 
   packages/scheduler: {}
 

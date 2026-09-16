@@ -1,6 +1,6 @@
 # Durable Project Know-how
 
-## M0–M2 invariants
+## M0–M4 invariants
 
 - The frozen architecture/roadmap dated 2026-09-15 is authoritative over the
   tracker. Tracker differences are reconciled to the document, not vice versa.
@@ -37,8 +37,36 @@
   schema dialect and will render the form but reject submission of the shared
   Draft 2020-12 schema.
 - Performance reports separate measured values from targets. Scenarios that
-  require the M4 execution harness must be marked `not-runnable` before M4; do
-  not synthesize agent-run measurements.
+  require the execution harness must use a real harmless child process and Git
+  worktree; do not synthesize agent-run measurements.
+- Internal LLM endpoint credentials remain `secret://llm/...` references in
+  canonical config. Resolve them only at the protocol invocation boundary;
+  never include values in normalized requests, response objects, health state,
+  logs, errors, audit records, or Web payloads.
+- A manual LLM switch is probe-then-commit. Failure preserves the previous
+  active profile. Automatic fallback follows the configured pool order;
+  automatic failback requires repeated healthy probes instead of a single
+  transient success.
+- `DEGRADED_NO_LLM` degrades semantic features only. Health may report degraded,
+  but Dashboard, ConfigPlan, SecretStore and deterministic Controller paths must
+  stay available.
+- Adapter discovery is an ID allowlist over manifest-declared probes. Do not add
+  a raw command/path field to discovery requests. Probe free text is redacted
+  and summarized before it enters trusted state.
+- Generic CLI command templates have a fixed executable and argv array, run
+  with `shell: false`, and permit only whole-argument placeholders. LLM or task
+  text is data, never a shell fragment.
+- One Run owns one writable worktree. Canonicalize every candidate path against
+  the real worktree root, then enforce declared scope paths; lexical prefix
+  checks alone do not stop symlink escape.
+- Worktree cleanup is planned before execution and fails closed on dirty,
+  unknown, or out-of-root paths. Never force-remove uncommitted user work.
+- Raw Agent output belongs in redacted, bounded rotating files. SQLite stores
+  normalized metadata and summaries only. Slow observers must not create an
+  unbounded in-memory queue.
+- Verification commands are repository/project registrations, not request
+  strings. Required failures block delivery; optional failures remain visible
+  without being promoted to success.
 
 ## Tooling details
 

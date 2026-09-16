@@ -64,7 +64,11 @@ function inferRisk(before: DispatcherConfig, after: DispatcherConfig): ConfigRis
   ) {
     return "privileged";
   }
-  if (JSON.stringify(before.integrations) !== JSON.stringify(after.integrations) || JSON.stringify(before.agentProfiles) !== JSON.stringify(after.agentProfiles)) {
+  if (
+    JSON.stringify(before.integrations) !== JSON.stringify(after.integrations) ||
+    JSON.stringify(before.agentProfiles) !== JSON.stringify(after.agentProfiles) ||
+    JSON.stringify(before.internalLlm) !== JSON.stringify(after.internalLlm)
+  ) {
     return "sensitive";
   }
   return "safe";

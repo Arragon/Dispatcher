@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import fastify, { type FastifyBaseLogger, type FastifyInstance } from "fastify";
 import fastifyStatic from "@fastify/static";
+import { genericCliManifest, genericMockManifest } from "@dispatcher/adapters";
 import {
   assertRequiredSecretsAvailable,
   ConfigurationEngine,
@@ -16,8 +17,10 @@ import {
   SecretStoreError,
   type SecretMetadata,
   type SecretStore,
+  type DispatcherConfig,
 } from "@dispatcher/config";
 import type { Runner } from "@dispatcher/domain";
+import { LlmRuntime, LlmRuntimeError, type FetchLike, type LlmConfiguration, type LlmRole } from "@dispatcher/llm-runtime";
 import { createLogger, redactValue } from "@dispatcher/observability";
 import { DispatcherDatabase, RevisionConflictError, type JsonValue } from "@dispatcher/persistence";
 import { EmbeddedRunner, EventBus, RunnerRegistry, type RunnerEvents } from "@dispatcher/runner";
@@ -30,6 +33,7 @@ export interface ControllerOptions {
   port?: number;
   webRoot?: string;
   secretStore?: SecretStore;
+  llmFetch?: FetchLike;
   modules?: ServiceModule[];
 }
 
@@ -52,6 +56,16 @@ interface WizardBody {
   configRevision?: number;
 }
 
+interface LlmConfigBody {
+  config?: DispatcherConfig["internalLlm"];
+  actor?: string;
+  confirmed?: boolean;
+}
+
+interface LlmSwitchBody {
+  profileId?: string;
+}
+
 interface SecretTestState {
   lastTestedAt: string;
   lastTestStatus: "ok" | "failed";
@@ -59,6 +73,16 @@ interface SecretTestState {
 
 function json(value: unknown): JsonValue {
   return JSON.parse(JSON.stringify(value)) as JsonValue;
+}
+
+function llmConfiguration(config: DispatcherConfig["internalLlm"]): LlmConfiguration {
+  return {
+    endpoints: structuredClone(config.endpoints),
+    profiles: structuredClone(config.profiles),
+    pools: structuredClone(config.pools),
+    roleBindings: structuredClone(config.roleBindings),
+    ...(config.defaultPoolId ? { defaultPoolId: config.defaultPoolId } : {}),
+  };
 }
 
 export class ControllerService {
@@ -69,6 +93,7 @@ export class ControllerService {
   readonly events: EventBus<RunnerEvents>;
   readonly lifecycle: LifecycleManager;
   readonly secrets: SecretStore;
+  readonly llm: LlmRuntime;
   private readonly startedAt = Date.now();
   private readonly embeddedRunner?: EmbeddedRunner;
   private listening = false;
@@ -80,7 +105,10 @@ export class ControllerService {
     const logger = createLogger({ level: process.env.LOG_LEVEL ?? "info" });
     this.app = fastify({ loggerInstance: logger as unknown as FastifyBaseLogger });
     this.database = new DispatcherDatabase(join(options.dataDirectory, "dispatcher.sqlite"));
-    this.configuration = new ConfigurationEngine(this.database);
+    this.secrets = options.secretStore ?? createDefaultSecretStore({ dataDirectory: options.dataDirectory });
+    this.llm = new LlmRuntime(this.database, (reference) => this.secrets.resolve(reference, { principal: "controller", purpose: "llm" }), options.llmFetch);
+    this.configuration = new ConfigurationEngine(this.database, { apply: (config) => this.llm.configure(llmConfiguration(config.internalLlm)) });
+    this.llm.configure(llmConfiguration(this.configuration.current().config.internalLlm));
     this.events = new EventBus<RunnerEvents>(1_000, (error, topic) => {
       logger.error({ error: redactValue(error), topic }, "event handler failed");
     });
@@ -93,7 +121,6 @@ export class ControllerService {
     this.events.subscribe("runnerChanged", async (runner) => {
       this.database.saveEntity("runner", runner.id, json(runner));
     });
-    this.secrets = options.secretStore ?? createDefaultSecretStore({ dataDirectory: options.dataDirectory });
     const modules: ServiceModule[] = [];
     if (options.withRunner) {
       const configured = this.configuration.current().config.runners.find((runner) => runner.mode === "embedded");
@@ -146,7 +173,11 @@ export class ControllerService {
 
   private registerRoutes(): void {
     this.app.get("/health", async () => ({
-      status: this.lifecycle.state === "READY" ? "ok" : this.lifecycle.state === "DEGRADED" ? "degraded" : "starting",
+      status: this.lifecycle.state === "READY" && (!this.configuration.current().config.internalLlm.configured || this.llm.snapshot().state.mode === "ACTIVE")
+        ? "ok"
+        : this.lifecycle.state === "READY" || this.lifecycle.state === "DEGRADED"
+          ? "degraded"
+          : "starting",
       lifecycle: this.lifecycle.state,
       version: "0.1.0",
       mode: this.options.withRunner ? "embedded" : "controller",
@@ -159,6 +190,7 @@ export class ControllerService {
     });
 
     this.app.get("/api/runners", async () => ({ runners: this.runners.list() }));
+    this.app.get("/api/adapters/manifests", async () => ({ manifests: [genericMockManifest, genericCliManifest] }));
     this.app.get("/api/system-impact", async () => {
       const memory = process.memoryUsage();
       const databasePath = join(this.options.dataDirectory, "dispatcher.sqlite");
@@ -169,9 +201,34 @@ export class ControllerService {
         activeLocalProcesses: 0,
         databaseBytes: existsSync(databasePath) ? statSync(databasePath).size : 0,
         dashboardClients: this.dashboardClients,
-        llmCallsLastHour: 0,
+        llmCallsLastHour: this.llm.snapshot().calls,
       };
     });
+
+    this.app.get("/api/llm", async () => {
+      const current = this.configuration.current();
+      return { revision: current.revision, config: current.config.internalLlm, ...this.llm.snapshot() };
+    });
+    this.app.put<{ Body: LlmConfigBody }>("/api/llm/config", async (request, reply) => {
+      if (!request.body?.config) return reply.code(400).send({ code: "LLM_CONFIG_REQUIRED" });
+      const current = this.configuration.current();
+      const next: DispatcherConfig = { ...structuredClone(current.config), internalLlm: structuredClone(request.body.config) };
+      const plan = this.configuration.buildPlan(next, request.body.actor ?? "local-web", "web");
+      await assertRequiredSecretsAvailable(next, this.secrets);
+      const applied = this.configuration.applyPlan(plan.id, { confirmed: request.body.confirmed ?? true });
+      return { plan, revision: applied.revision, config: applied.config.internalLlm, state: this.llm.snapshot().state };
+    });
+    this.app.post<{ Params: { profileId: string } }>("/api/llm/profiles/:profileId/test", async (request) => ({
+      health: await this.llm.probe(request.params.profileId, "explicit"),
+    }));
+    this.app.post<{ Params: { role: LlmRole }; Body: LlmSwitchBody }>("/api/llm/roles/:role/switch", async (request, reply) => {
+      if (!request.body?.profileId) return reply.code(400).send({ code: "LLM_PROFILE_REQUIRED" });
+      return { state: await this.llm.switchProfile(request.params.role, request.body.profileId) };
+    });
+    this.app.post<{ Params: { role: LlmRole } }>("/api/llm/roles/:role/failback", async (request) => ({
+      switched: await this.llm.attemptFailback(request.params.role),
+      state: this.llm.snapshot().state,
+    }));
 
     this.app.get("/api/events", async (request, reply) => {
       reply.hijack();
@@ -277,10 +334,12 @@ export class ControllerService {
         : undefined;
       const status = error instanceof RevisionConflictError
         ? 409
+        : error instanceof LlmRuntimeError
+          ? error.code === "NO_AVAILABLE_PROFILE" ? 503 : 400
         : error instanceof ConfigPlanError || error instanceof ConfigValidationError
           ? 400
           : secretStatus ?? 500;
-      const code = error instanceof RevisionConflictError || error instanceof ConfigPlanError || error instanceof SecretStoreError
+      const code = error instanceof RevisionConflictError || error instanceof ConfigPlanError || error instanceof SecretStoreError || error instanceof LlmRuntimeError
         ? error.code
         : error instanceof ConfigValidationError
           ? error.code

@@ -1,6 +1,3 @@
-export const moduleBoundary = {
-  id: "adapters",
-  status: "planned",
-  milestone: "M4",
-} as const;
-
+export * from "./contracts.js";
+export * from "./discovery.js";
+export * from "./generic.js";

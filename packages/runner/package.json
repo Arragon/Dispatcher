@@ -12,5 +12,9 @@
   "dependencies": {
     "@dispatcher/domain": "workspace:*",
     "@dispatcher/protocol": "workspace:*"
+  },
+  "devDependencies": {
+    "@dispatcher/adapters": "workspace:*",
+    "@dispatcher/workspace": "workspace:*"
   }
 }

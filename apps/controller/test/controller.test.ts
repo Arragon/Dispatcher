@@ -132,6 +132,50 @@ describe("ControllerService", () => {
     await service.stop();
   });
 
+  it("manages Internal LLM profiles through ConfigPlan and preserves the active profile on failed switch", async () => {
+    const secrets = new FakeSecretStore();
+    secrets.values.set("secret://llm/primary", "primary-secret");
+    secrets.values.set("secret://llm/backup", "backup-secret");
+    let backupFails = false;
+    const service = new ControllerService({
+      dataDirectory: dataDirectory(),
+      secretStore: secrets,
+      llmFetch: async (input) => {
+        const url = String(input);
+        if (url.includes("backup") && backupFails) return new Response(JSON.stringify({ error: { message: "bad key" } }), { status: 401 });
+        return url.includes("chat/completions")
+          ? new Response(JSON.stringify({ choices: [{ message: { content: "backup" } }], usage: {} }), { status: 200 })
+          : new Response(JSON.stringify({ output_text: "primary", usage: {} }), { status: 200 });
+      },
+    });
+    await service.start({ listen: false });
+    const config = {
+      configured: true,
+      endpoints: [
+        { id: "primary", protocol: "openai-responses", baseUrl: "https://primary.example/v1", credentialRef: "secret://llm/primary" },
+        { id: "backup", protocol: "openai-chat", baseUrl: "https://backup.example/v1", credentialRef: "secret://llm/backup" },
+      ],
+      profiles: [
+        { id: "primary", endpointId: "primary", alias: "Primary", model: "a", enabled: true },
+        { id: "backup", endpointId: "backup", alias: "Backup", model: "b", enabled: true },
+      ],
+      pools: [{ id: "default", profileIds: ["primary", "backup"] }],
+      roleBindings: [{ role: "command_parser", poolId: "default" }],
+      defaultPoolId: "default",
+    };
+    const applied = await service.app.inject({ method: "PUT", url: "/api/llm/config", payload: { config, confirmed: true } });
+    expect(applied.statusCode).toBe(200);
+    expect(applied.json().plan).toMatchObject({ risk: "sensitive", state: "PLANNED" });
+    await service.app.inject({ method: "POST", url: "/api/llm/roles/command_parser/switch", payload: { profileId: "primary" } });
+    backupFails = true;
+    const failed = await service.app.inject({ method: "POST", url: "/api/llm/roles/command_parser/switch", payload: { profileId: "backup" } });
+    expect(failed.statusCode).toBe(503);
+    const view = (await service.app.inject({ method: "GET", url: "/api/llm" })).json();
+    expect(view.state.activeProfileByRole.command_parser).toBe("primary");
+    expect(JSON.stringify(view)).not.toContain("primary-secret");
+    await service.stop();
+  });
+
   it("persists wizard progress without draft secret data", async () => {
     const service = new ControllerService({ dataDirectory: dataDirectory(), secretStore: new FakeSecretStore() });
     await service.start({ listen: false });

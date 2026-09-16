@@ -23,6 +23,35 @@ export interface AgentProfileConfig {
   credentialRef?: string;
 }
 
+export interface LlmEndpointConfig {
+  id: string;
+  protocol: "openai-responses" | "openai-chat" | "anthropic-messages" | "azure-openai-v1";
+  baseUrl: string;
+  credentialRef: string;
+  deployment?: string;
+  apiVersion?: string;
+}
+
+export interface LlmProfileConfig {
+  id: string;
+  endpointId: string;
+  alias: string;
+  model: string;
+  enabled: boolean;
+}
+
+export interface LlmPoolConfig {
+  id: string;
+  profileIds: string[];
+}
+
+export type LlmRoleConfig = "command_parser" | "config_assistant" | "runtime_summarizer" | "error_classifier";
+
+export interface LlmRoleBindingConfig {
+  role: LlmRoleConfig;
+  poolId: string;
+}
+
 export interface DispatcherConfig {
   schemaVersion: 1;
   controller: {
@@ -40,7 +69,11 @@ export interface DispatcherConfig {
   };
   internalLlm: {
     configured: boolean;
-    globalDefault?: string;
+    endpoints: LlmEndpointConfig[];
+    profiles: LlmProfileConfig[];
+    pools: LlmPoolConfig[];
+    roleBindings: LlmRoleBindingConfig[];
+    defaultPoolId?: string;
   };
   agentProfiles: AgentProfileConfig[];
   policies: {
@@ -108,10 +141,65 @@ export const dispatcherConfigSchema = {
       type: "object",
       title: "Internal LLM",
       additionalProperties: false,
-      required: ["configured"],
+      required: ["configured", "endpoints", "profiles", "pools", "roleBindings"],
       properties: {
         configured: { type: "boolean" },
-        globalDefault: { type: "string", minLength: 1 },
+        defaultPoolId: { type: "string", minLength: 1 },
+        endpoints: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: false,
+            required: ["id", "protocol", "baseUrl", "credentialRef"],
+            properties: {
+              id: { type: "string", minLength: 1 },
+              protocol: { enum: ["openai-responses", "openai-chat", "anthropic-messages", "azure-openai-v1"] },
+              baseUrl: { type: "string", pattern: "^https?://" },
+              credentialRef: { type: "string", pattern: "^secret://llm/[a-z0-9][a-z0-9._/-]*$" },
+              deployment: { type: "string", minLength: 1 },
+              apiVersion: { type: "string", minLength: 1 },
+            },
+          },
+        },
+        profiles: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: false,
+            required: ["id", "endpointId", "alias", "model", "enabled"],
+            properties: {
+              id: { type: "string", minLength: 1 },
+              endpointId: { type: "string", minLength: 1 },
+              alias: { type: "string", minLength: 1 },
+              model: { type: "string", minLength: 1 },
+              enabled: { type: "boolean" },
+            },
+          },
+        },
+        pools: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: false,
+            required: ["id", "profileIds"],
+            properties: {
+              id: { type: "string", minLength: 1 },
+              profileIds: { type: "array", uniqueItems: true, items: { type: "string", minLength: 1 } },
+            },
+          },
+        },
+        roleBindings: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: false,
+            required: ["role", "poolId"],
+            properties: {
+              role: { enum: ["command_parser", "config_assistant", "runtime_summarizer", "error_classifier"] },
+              poolId: { type: "string", minLength: 1 },
+            },
+          },
+        },
       },
     },
     agentProfiles: {
@@ -150,6 +238,9 @@ export const dispatcherConfigUiSchema = {
     github: { credentialRef: { "ui:widget": "hidden" } },
     slack: { credentialRef: { "ui:widget": "hidden" } },
   },
+  internalLlm: {
+    endpoints: { items: { credentialRef: { "ui:widget": "hidden" } } },
+  },
   agentProfiles: { items: { credentialRef: { "ui:widget": "hidden" } } },
 } as const;
 
@@ -168,7 +259,7 @@ export const defaultDispatcherConfig: DispatcherConfig = {
     github: { enabled: false },
     slack: { enabled: false },
   },
-  internalLlm: { configured: false },
+  internalLlm: { configured: false, endpoints: [], profiles: [], pools: [], roleBindings: [] },
   agentProfiles: [],
   policies: { highRiskRequiresConfirmation: true, rawShellDefault: "deny" },
 };
@@ -200,12 +291,30 @@ export function normalizeConfig(input: DispatcherConfig): DispatcherConfig {
   normalized.runners.sort((left, right) => left.id.localeCompare(right.id));
   normalized.runners = normalized.runners.map((runner) => ({ ...runner, tags: [...runner.tags].sort() }));
   normalized.agentProfiles.sort((left, right) => left.id.localeCompare(right.id));
+  normalized.internalLlm.endpoints.sort((left, right) => left.id.localeCompare(right.id));
+  normalized.internalLlm.profiles.sort((left, right) => left.id.localeCompare(right.id));
+  normalized.internalLlm.pools.sort((left, right) => left.id.localeCompare(right.id));
+  normalized.internalLlm.roleBindings.sort((left, right) => left.role.localeCompare(right.role));
   return normalized;
 }
 
 export function validateConfig(input: unknown): DispatcherConfig {
-  if (!validateSchema(input)) throw new ConfigValidationError((validateSchema.errors ?? []).map(issueText));
-  const config = normalizeConfig(input as DispatcherConfig);
+  const candidate = structuredClone(input) as Record<string, unknown>;
+  const internal = candidate && typeof candidate === "object" && candidate.internalLlm && typeof candidate.internalLlm === "object"
+    ? candidate.internalLlm as Record<string, unknown>
+    : undefined;
+  if (internal) {
+    internal.endpoints ??= [];
+    internal.profiles ??= [];
+    internal.pools ??= [];
+    internal.roleBindings ??= [];
+    if ("globalDefault" in internal && !("defaultPoolId" in internal)) {
+      internal.defaultPoolId = internal.globalDefault;
+      delete internal.globalDefault;
+    }
+  }
+  if (!validateSchema(candidate)) throw new ConfigValidationError((validateSchema.errors ?? []).map(issueText));
+  const config = normalizeConfig(candidate as unknown as DispatcherConfig);
   const runnerIds = new Set(config.runners.map((runner) => runner.id));
   if (runnerIds.size !== config.runners.length) throw new ConfigValidationError(["/runners contains duplicate id"]);
   const profileIds = new Set<string>();
@@ -228,6 +337,42 @@ export function validateConfig(input: unknown): DispatcherConfig {
       throw new ConfigValidationError([`/integrations/${name}/credentialRef must use the ${name} secret namespace`]);
     }
   }
+  const endpointIds = new Set<string>();
+  for (const endpoint of config.internalLlm.endpoints) {
+    if (endpointIds.has(endpoint.id)) throw new ConfigValidationError(["/internalLlm/endpoints contains duplicate id"]);
+    endpointIds.add(endpoint.id);
+    try {
+      const url = new URL(endpoint.baseUrl);
+      if (url.username || url.password) throw new Error("embedded credentials");
+    } catch {
+      throw new ConfigValidationError([`/internalLlm/endpoints/${endpoint.id}/baseUrl is invalid`]);
+    }
+  }
+  const llmProfileIds = new Set<string>();
+  const llmAliases = new Set<string>();
+  for (const profile of config.internalLlm.profiles) {
+    if (llmProfileIds.has(profile.id)) throw new ConfigValidationError(["/internalLlm/profiles contains duplicate id"]);
+    llmProfileIds.add(profile.id);
+    if (llmAliases.has(profile.alias.toLowerCase())) throw new ConfigValidationError(["/internalLlm/profiles contains duplicate alias"]);
+    llmAliases.add(profile.alias.toLowerCase());
+    if (!endpointIds.has(profile.endpointId)) throw new ConfigValidationError([`/internalLlm/profiles/${profile.id} references unknown endpoint`]);
+  }
+  const poolIds = new Set<string>();
+  for (const pool of config.internalLlm.pools) {
+    if (poolIds.has(pool.id)) throw new ConfigValidationError(["/internalLlm/pools contains duplicate id"]);
+    poolIds.add(pool.id);
+    for (const profileId of pool.profileIds) if (!llmProfileIds.has(profileId)) throw new ConfigValidationError([`/internalLlm/pools/${pool.id} references unknown profile`]);
+  }
+  if (config.internalLlm.defaultPoolId && !poolIds.has(config.internalLlm.defaultPoolId)) throw new ConfigValidationError(["/internalLlm/defaultPoolId references unknown pool"]);
+  const boundRoles = new Set<string>();
+  for (const binding of config.internalLlm.roleBindings) {
+    if (boundRoles.has(binding.role)) throw new ConfigValidationError(["/internalLlm/roleBindings contains duplicate role"]);
+    boundRoles.add(binding.role);
+    if (!poolIds.has(binding.poolId)) throw new ConfigValidationError([`/internalLlm/roleBindings/${binding.role} references unknown pool`]);
+  }
+  if (config.internalLlm.configured && (!config.internalLlm.endpoints.length || !config.internalLlm.profiles.length || !config.internalLlm.pools.length)) {
+    throw new ConfigValidationError(["/internalLlm requires an endpoint, profile, and pool when configured"]);
+  }
   return config;
 }
 
@@ -238,6 +383,7 @@ export function requiredSecretReferences(config: DispatcherConfig): string[] {
   for (const profile of config.agentProfiles) {
     if (profile.credentialRef) references.push(profile.credentialRef);
   }
+  for (const endpoint of config.internalLlm.endpoints) references.push(endpoint.credentialRef);
   return [...new Set(references)].sort();
 }
 

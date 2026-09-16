@@ -13,8 +13,10 @@
     "dispatcher": "node dist/cli.js"
   },
   "dependencies": {
+    "@dispatcher/adapters": "workspace:*",
     "@dispatcher/config": "workspace:*",
     "@dispatcher/domain": "workspace:*",
+    "@dispatcher/llm-runtime": "workspace:*",
     "@dispatcher/observability": "workspace:*",
     "@dispatcher/persistence": "workspace:*",
     "@dispatcher/runner": "workspace:*",

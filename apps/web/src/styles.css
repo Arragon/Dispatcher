@@ -74,6 +74,9 @@ main { padding: 2.4rem clamp(1.2rem, 4vw, 4rem); max-width: 1500px; width: 100%;
 .stepper li.current, .stepper li.done { border-color: var(--accent); color: #f0f4f7; }
 .wizard-card { max-width: 720px; display: grid; gap: 1.2rem; }
 .wizard-actions { display: flex; justify-content: space-between; gap: .6rem; }
+.compact-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: .65rem; align-items: end; }
+.compact-form input, .compact-form select, .field-stack select { width: 100%; min-height: 40px; border: 1px solid var(--line); border-radius: 8px; padding: .55rem .65rem; background: var(--surface); color: var(--text); }
+.field-stack { display: grid; gap: .35rem; margin: .85rem 0; color: var(--muted); font-size: .82rem; }
 @media (max-width: 980px) {
   .shell { grid-template-columns: 76px minmax(0, 1fr); }
   .brand > span:not(.brand-mark), .nav-link { font-size: 0; }

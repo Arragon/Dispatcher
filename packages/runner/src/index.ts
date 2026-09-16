@@ -7,6 +7,9 @@ import {
   type ResponsePayload,
 } from "@dispatcher/protocol";
 
+export * from "./process.js";
+export * from "./verification.js";
+
 export type EventHandler<T> = (event: T) => void | Promise<void>;
 
 export class EventBus<TEvents extends object> {

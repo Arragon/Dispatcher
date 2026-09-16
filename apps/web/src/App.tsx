@@ -6,6 +6,8 @@ import "./styles.css";
 
 const SettingsPage = lazy(() => import("./SettingsPage.js"));
 const SetupWizard = lazy(() => import("./SetupWizard.js"));
+const LlmPage = lazy(() => import("./LlmPage.js"));
+const AgentsPage = lazy(() => import("./AgentsPage.js"));
 
 const navigation = [
   ["/overview", "Overview / Fleet", "⌁"],
@@ -187,8 +189,8 @@ export function App(): React.JSX.Element {
                 <Route path="/overview" element={<Overview />} />
                 <Route path="/tasks" element={<Placeholder title="Tasks & Runs" description="Task truth and execution attempts remain separate." />} />
                 <Route path="/runners" element={<Placeholder title="Runners" description="Registered execution devices and capabilities." />} />
-                <Route path="/agents" element={<Placeholder title="Agents & Profiles" description="Provider accounts use safe display aliases." />} />
-                <Route path="/llm" element={<Placeholder title="Internal LLM" description="Semantic runtime configuration arrives in M3." />} />
+                <Route path="/agents" element={<AgentsPage />} />
+                <Route path="/llm" element={<LlmPage />} />
                 <Route path="/integrations" element={<Placeholder title="Integrations" description="Linear, GitHub and Slack connection state." />} />
                 <Route path="/policies" element={<Placeholder title="Policies" description="Deterministic execution and approval boundaries." />} />
                 <Route path="/diagnostics" element={<Placeholder title="Logs & Diagnostics" description="Structured system evidence without raw-log flooding." />} />
