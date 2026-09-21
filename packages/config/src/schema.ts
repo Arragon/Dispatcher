@@ -1,6 +1,7 @@
 import type { ErrorObject } from "ajv";
 import Ajv2020Module, { type Ajv2020 as Ajv2020Instance, type Options } from "ajv/dist/2020.js";
 import type { JsonValue } from "@dispatcher/persistence";
+import { isAbsolute } from "node:path";
 
 export interface RunnerConfig {
   id: string;
@@ -15,12 +16,39 @@ export interface IntegrationConfig {
   credentialRef?: string;
 }
 
+export interface ConnectorInstanceConfig {
+  id: string;
+  definitionId: string;
+  kind: "task" | "messaging" | "scm";
+  displayName: string;
+  enabled: boolean;
+  credentialRef?: string;
+  settings?: Record<string, JsonValue>;
+}
+
 export interface AgentProfileConfig {
   id: string;
   provider: string;
   alias: string;
   runnerId: string;
   credentialRef?: string;
+  settings?: Record<string, JsonValue>;
+}
+
+export interface RepositoryConfig {
+  id: string;
+  root: string;
+  remote?: string;
+  defaultBaseRef: string;
+  scopePaths: string[];
+  verificationCommands: Array<{
+    id: string;
+    file: string;
+    args: string[];
+    required: boolean;
+    timeoutMs: number;
+    outputLimitBytes: number;
+  }>;
 }
 
 export interface LlmEndpointConfig {
@@ -67,6 +95,8 @@ export interface DispatcherConfig {
     github: IntegrationConfig;
     slack: IntegrationConfig;
   };
+  connectors: ConnectorInstanceConfig[];
+  repositories: RepositoryConfig[];
   internalLlm: {
     configured: boolean;
     endpoints: LlmEndpointConfig[];
@@ -98,7 +128,7 @@ export const dispatcherConfigSchema = {
   title: "Agent Dispatcher configuration",
   type: "object",
   additionalProperties: false,
-  required: ["schemaVersion", "controller", "runners", "integrations", "internalLlm", "agentProfiles", "policies"],
+  required: ["schemaVersion", "controller", "runners", "integrations", "connectors", "repositories", "internalLlm", "agentProfiles", "policies"],
   properties: {
     schemaVersion: { const: 1 },
     controller: {
@@ -136,6 +166,56 @@ export const dispatcherConfigSchema = {
       additionalProperties: false,
       required: ["linear", "github", "slack"],
       properties: { linear: integrationSchema, github: integrationSchema, slack: integrationSchema },
+    },
+    connectors: {
+      type: "array",
+      title: "Connectors",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["id", "definitionId", "kind", "displayName", "enabled"],
+        properties: {
+          id: { type: "string", minLength: 1, pattern: "^[a-z0-9][a-z0-9._-]*$" },
+          definitionId: { type: "string", minLength: 1, pattern: "^(task|messaging|scm)\\.[a-z0-9][a-z0-9._-]*$" },
+          kind: { enum: ["task", "messaging", "scm"] },
+          displayName: { type: "string", minLength: 1 },
+          enabled: { type: "boolean" },
+          credentialRef: integrationSchema.properties.credentialRef,
+          settings: { type: "object", additionalProperties: true },
+        },
+      },
+    },
+    repositories: {
+      type: "array",
+      title: "Repositories",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["id", "root", "defaultBaseRef", "scopePaths", "verificationCommands"],
+        properties: {
+          id: { type: "string", minLength: 1, pattern: "^[a-z0-9][a-z0-9._/-]*$" },
+          root: { type: "string", minLength: 1 },
+          remote: { type: "string", minLength: 1 },
+          defaultBaseRef: { type: "string", minLength: 1 },
+          scopePaths: { type: "array", uniqueItems: true, items: { type: "string", minLength: 1 } },
+          verificationCommands: {
+            type: "array",
+            items: {
+              type: "object",
+              additionalProperties: false,
+              required: ["id", "file", "args", "required", "timeoutMs", "outputLimitBytes"],
+              properties: {
+                id: { type: "string", minLength: 1 },
+                file: { type: "string", minLength: 1 },
+                args: { type: "array", items: { type: "string" } },
+                required: { type: "boolean" },
+                timeoutMs: { type: "integer", minimum: 1, maximum: 3_600_000 },
+                outputLimitBytes: { type: "integer", minimum: 1, maximum: 10_485_760 },
+              },
+            },
+          },
+        },
+      },
     },
     internalLlm: {
       type: "object",
@@ -215,6 +295,7 @@ export const dispatcherConfigSchema = {
           alias: { type: "string", minLength: 1 },
           runnerId: { type: "string", minLength: 1 },
           credentialRef: integrationSchema.properties.credentialRef,
+          settings: { type: "object", additionalProperties: true },
         },
       },
     },
@@ -238,6 +319,7 @@ export const dispatcherConfigUiSchema = {
     github: { credentialRef: { "ui:widget": "hidden" } },
     slack: { credentialRef: { "ui:widget": "hidden" } },
   },
+  connectors: { items: { credentialRef: { "ui:widget": "hidden" } } },
   internalLlm: {
     endpoints: { items: { credentialRef: { "ui:widget": "hidden" } } },
   },
@@ -259,6 +341,8 @@ export const defaultDispatcherConfig: DispatcherConfig = {
     github: { enabled: false },
     slack: { enabled: false },
   },
+  connectors: [],
+  repositories: [],
   internalLlm: { configured: false, endpoints: [], profiles: [], pools: [], roleBindings: [] },
   agentProfiles: [],
   policies: { highRiskRequiresConfirmation: true, rawShellDefault: "deny" },
@@ -291,6 +375,8 @@ export function normalizeConfig(input: DispatcherConfig): DispatcherConfig {
   normalized.runners.sort((left, right) => left.id.localeCompare(right.id));
   normalized.runners = normalized.runners.map((runner) => ({ ...runner, tags: [...runner.tags].sort() }));
   normalized.agentProfiles.sort((left, right) => left.id.localeCompare(right.id));
+  normalized.connectors.sort((left, right) => left.id.localeCompare(right.id));
+  normalized.repositories.sort((left, right) => left.id.localeCompare(right.id));
   normalized.internalLlm.endpoints.sort((left, right) => left.id.localeCompare(right.id));
   normalized.internalLlm.profiles.sort((left, right) => left.id.localeCompare(right.id));
   normalized.internalLlm.pools.sort((left, right) => left.id.localeCompare(right.id));
@@ -300,6 +386,13 @@ export function normalizeConfig(input: DispatcherConfig): DispatcherConfig {
 
 export function validateConfig(input: unknown): DispatcherConfig {
   const candidate = structuredClone(input) as Record<string, unknown>;
+  candidate.connectors ??= [];
+  candidate.repositories ??= [];
+  if (Array.isArray(candidate.repositories)) {
+    for (const repository of candidate.repositories) {
+      if (repository && typeof repository === "object") (repository as Record<string, unknown>).verificationCommands ??= [];
+    }
+  }
   const internal = candidate && typeof candidate === "object" && candidate.internalLlm && typeof candidate.internalLlm === "object"
     ? candidate.internalLlm as Record<string, unknown>
     : undefined;
@@ -328,6 +421,9 @@ export function validateConfig(input: unknown): DispatcherConfig {
     if (!runnerIds.has(profile.runnerId)) {
       throw new ConfigValidationError([`/agentProfiles/${profile.id} references unknown runner ${profile.runnerId}`]);
     }
+    if (profile.provider === "codex" && (typeof profile.settings?.codexHome !== "string" || !profile.settings.codexHome)) {
+      throw new ConfigValidationError([`/agentProfiles/${profile.id}/settings/codexHome is required for Codex`]);
+    }
   }
   for (const [name, integration] of Object.entries(config.integrations)) {
     if (integration.enabled && !integration.credentialRef) {
@@ -336,6 +432,43 @@ export function validateConfig(input: unknown): DispatcherConfig {
     if (integration.credentialRef && !integration.credentialRef.startsWith(`secret://${name}/`)) {
       throw new ConfigValidationError([`/integrations/${name}/credentialRef must use the ${name} secret namespace`]);
     }
+  }
+  const connectorIds = new Set<string>();
+  for (const connector of config.connectors) {
+    if (connectorIds.has(connector.id)) throw new ConfigValidationError(["/connectors contains duplicate id"]);
+    connectorIds.add(connector.id);
+    if (!connector.definitionId.startsWith(`${connector.kind}.`)) {
+      throw new ConfigValidationError([`/connectors/${connector.id}/definitionId must match connector kind`]);
+    }
+    if (connector.enabled && !connector.credentialRef) {
+      throw new ConfigValidationError([`/connectors/${connector.id}/credentialRef is required when enabled`]);
+    }
+    if (connector.credentialRef) {
+      const namespace = connector.definitionId.split(".")[1];
+      if (!namespace || !connector.credentialRef.startsWith(`secret://${namespace}/`)) {
+        throw new ConfigValidationError([`/connectors/${connector.id}/credentialRef must use the ${namespace ?? "connector"} secret namespace`]);
+      }
+    }
+    const namespace = connector.definitionId.split(".")[1];
+    for (const [key, value] of Object.entries(connector.settings ?? {})) {
+      if (key.toLowerCase().endsWith("ref") && (typeof value !== "string" || !namespace || !value.startsWith(`secret://${namespace}/`))) {
+        throw new ConfigValidationError([`/connectors/${connector.id}/settings/${key} must use the ${namespace ?? "connector"} secret namespace`]);
+      }
+    }
+    if (connector.definitionId === "task.linear" && (typeof connector.settings?.webhookSecretRef !== "string" || !connector.settings.webhookSecretRef)) {
+      throw new ConfigValidationError([`/connectors/${connector.id}/settings/webhookSecretRef is required for Linear`]);
+    }
+  }
+  const repositoryIds = new Set<string>();
+  for (const repository of config.repositories) {
+    if (repositoryIds.has(repository.id)) throw new ConfigValidationError(["/repositories contains duplicate id"]);
+    repositoryIds.add(repository.id);
+    if (!isAbsolute(repository.root)) throw new ConfigValidationError([`/repositories/${repository.id}/root must be absolute`]);
+    if (repository.scopePaths.some((path) => isAbsolute(path) || path.split(/[\\/]/).includes(".."))) {
+      throw new ConfigValidationError([`/repositories/${repository.id}/scopePaths must stay relative to the worktree`]);
+    }
+    const commandIds = new Set(repository.verificationCommands.map((command) => command.id));
+    if (commandIds.size !== repository.verificationCommands.length) throw new ConfigValidationError([`/repositories/${repository.id}/verificationCommands contains duplicate id`]);
   }
   const endpointIds = new Set<string>();
   for (const endpoint of config.internalLlm.endpoints) {
@@ -382,6 +515,12 @@ export function requiredSecretReferences(config: DispatcherConfig): string[] {
     .flatMap((integration) => integration.credentialRef ? [integration.credentialRef] : []);
   for (const profile of config.agentProfiles) {
     if (profile.credentialRef) references.push(profile.credentialRef);
+  }
+  for (const connector of config.connectors) {
+    if (connector.enabled && connector.credentialRef) references.push(connector.credentialRef);
+    for (const [key, value] of Object.entries(connector.settings ?? {})) {
+      if (key.toLowerCase().endsWith("ref") && typeof value === "string") references.push(value);
+    }
   }
   for (const endpoint of config.internalLlm.endpoints) references.push(endpoint.credentialRef);
   return [...new Set(references)].sort();

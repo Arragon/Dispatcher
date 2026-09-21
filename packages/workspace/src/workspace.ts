@@ -59,11 +59,17 @@ export class RepositoryRegistry {
     if (!record) throw new WorkspacePolicyError("REPOSITORY_NOT_FOUND", `Unknown repository ${id}`);
     return structuredClone(record);
   }
+  clear(): void { this.repositories.clear(); }
 }
 
 export class WorkspaceManager {
   private readonly managed = new Map<string, WorkspaceHandle>();
   constructor(private readonly registry: RepositoryRegistry, private readonly worktreeRoot: string) {}
+
+  get(path: string): WorkspaceHandle | undefined {
+    const workspace = this.managed.get(resolve(path));
+    return workspace ? structuredClone(workspace) : undefined;
+  }
 
   async create(plan: WorkspacePlan): Promise<WorkspaceHandle> {
     const repository = this.registry.get(plan.repositoryId);

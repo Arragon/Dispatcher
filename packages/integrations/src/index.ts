@@ -1,6 +1,11 @@
-export const moduleBoundary = {
-  id: "integrations",
-  status: "planned",
-  milestone: "M6",
-} as const;
-
+export * from "./contracts.js";
+export * from "./registry.js";
+export * from "./task-platform.js";
+export * from "./task-service.js";
+export * from "./portability.js";
+export * from "./projection.js";
+export * from "./linear.js";
+export * from "./scm.js";
+export * from "./github.js";
+export * from "./delivery.js";
+export * from "./messaging.js";

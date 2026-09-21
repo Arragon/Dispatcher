@@ -4,15 +4,16 @@ This file is the concise implementation map for the frozen design in
 `agent-dispatcher-architecture-roadmap-v2026-09-15.md`. If the two disagree,
 the frozen design is authoritative.
 
-## Delivered boundary (M0–M4)
+## Delivered boundary (M0–M6)
 
 The current system is a single Node.js Controller with an optional in-process
-Embedded Runner. It stores durable state in SQLite, serves a static React
-Dashboard, owns canonical configuration and secret references, operates a
-provider-neutral Internal LLM Runtime, and exposes the reusable Adapter,
-Discovery, Workspace, process/log, and Verification foundations. Remote Runner
-authentication, production provider adapters, scheduling, Linear, GitHub,
-Slack, and semantic analysis remain later capabilities.
+Embedded Runner. In addition to the M0–M4 foundation, it owns canonical tasks,
+connector bindings, inbox/outbox projection, deterministic routing, TaskContract
+compilation, isolated Codex profiles, Linear task ingress/projection, and GitHub
+delivery evidence. The M6 vertical path is Linear issue → canonical task →
+managed Git worktree → Codex run → verified commit/PR/CI evidence → Linear
+projection. Remote Runner authentication, Slack, richer Fleet management, and
+the real-time task dashboard remain later capabilities.
 
 ```text
 React Dashboard
@@ -22,6 +23,9 @@ Fastify Controller ─── ConfigPlan Engine ─── SecretStore
       │                       │
       │ typed events          └── opaque secret:// references only
       ├── Internal LLM Runtime ─── protocol adapters + safe fallback
+      ├── Connector Registry ─── Linear / GitHub / contract fakes
+      ├── Canonical Task Service ─── inbox + outbox + bindings
+      └── Deterministic Scheduler ─── Codex profile + managed worktree
       │
       ▼
 Embedded Runner ─── Adapter Contract ─── Execution Backend
@@ -29,7 +33,7 @@ Embedded Runner ─── Adapter Contract ─── Execution Backend
       ├── versioned Controller–Runner protocol
       └── Workspace Manager + bounded raw logs + Verification Registry
 
-Controller + ConfigPlan Engine ─── SQLite repositories (WAL)
+Controller + ConfigPlan + Canonical Tasks ─── SQLite repositories (WAL)
 ```
 
 ## Package ownership
@@ -42,14 +46,17 @@ Controller + ConfigPlan Engine ─── SQLite repositories (WAL)
 | `runner` | Event bus, Embedded transport, registry and heartbeat | Controller policy |
 | `llm-runtime` | Protocol normalization, probes, role pools, safe switch, circuit/fallback/failback | Semantic intent or secret persistence |
 | `adapters` | Manifest, discovery, normalized session contract, Generic Mock/CLI | Scheduler or database internals |
+| `semantic` | Deterministic TaskDraft → TaskContract compilation and `NEEDS_SPEC` classification | Provider payloads or execution |
+| `scheduler` | Deterministic eligibility/ranking and Run creation bound to task/contract revisions | Provider implementation or task persistence |
+| `integrations` | Connector contracts, Linear, GitHub, canonical task commands, projections, delivery evidence | Controller HTTP or secret persistence |
 | `workspace` | Repository registry, isolated Git worktrees, path and cleanup policy | Agent behavior or delivery policy |
 | `config` | Canonical schema, precedence, plan/apply/verify/rollback, secrets | Web rendering |
 | `observability` | Structured logging and recursive redaction | Domain decisions |
 | `controller` | Lifecycle composition, HTTP/SSE API, CLI, static assets | Provider-specific logic |
 | `web` | Dashboard, settings, setup wizard | Secrets or direct database access |
 
-`semantic`, `scheduler`, `fleet`, and `integrations` remain explicit future
-seams. Code enters them only when their roadmap milestone begins.
+`fleet` remains an explicit future seam. Slack is represented only by the
+messaging connector contract fake; its production control plane starts at M10.
 
 The `domain` and `protocol` purity rule is executable through
 `pnpm boundaries`.
@@ -73,6 +80,13 @@ stored as a canonical JSON document with an integer revision. Every apply and
 rollback uses compare-and-swap semantics so a stale plan cannot overwrite a
 newer revision.
 
+M5 adds durable connector instances, external bindings, idempotent inbox and
+outbox records, sync cursors, dead letters, canonical tasks/contracts, and
+delivery evidence. A canonical task command commits the revision and every
+projection record in one SQLite transaction. Connector outages therefore do
+not roll back canonical state; bounded workers retry with backoff and move
+permanent or exhausted failures to the dead-letter store.
+
 ## Configuration and secrets
 
 Effective configuration follows the frozen precedence:
@@ -81,8 +95,9 @@ Effective configuration follows the frozen precedence:
 defaults < bootstrap input < canonical database state < explicit runtime override
 ```
 
-All persisted configuration must pass the versioned JSON Schema and semantic
-validation. A proposed change becomes a `ConfigPlan`; sensitive and privileged
+All persisted configuration, including connector instances, repositories, and
+Codex profiles, must pass the versioned JSON Schema and semantic validation. A
+proposed change becomes a `ConfigPlan`; sensitive and privileged
 plans require explicit confirmation. Apply, runtime verification, durable
 write, and audit are one logical transaction. Failure restores the previous
 runtime configuration and records a classified failed plan. Explicit rollback
@@ -119,6 +134,18 @@ still bypass form state and enter SecretStore directly. Connection tests are
 explicit—there is no background health polling. Adapter manifests are exposed
 read-only to the Agents page, where their JSON Schema and UI Schema generate
 the base configuration form.
+
+The Agents page discovers Codex CLI installations, creates alias-based
+profiles through ConfigPlan, tests authentication explicitly, and shows only
+profile aliases and normalized session state. `CODEX_HOME`, account IDs, and
+credentials are never returned by profile/session APIs.
+Quota and rate-limit events are persisted as per-profile `ResourceSnapshot`
+records. They move an active Run to `RESOURCE_BLOCKED`, its task to
+`WAITING_RESOURCE`, and remove the affected profile from deterministic routing
+instead of classifying resource exhaustion as an implementation failure.
+Normalized approval/input-required events pause the Adapter session and move
+the Run/task to `WAITING_USER`. Supplying input resumes the same provider
+session and returns both records to their active states.
 
 ## Internal LLM runtime
 
@@ -160,11 +187,47 @@ output. Verification Registry executes only pre-registered file/argv commands
 in the run worktree with timeout/output limits; required failures block
 delivery while optional failures remain explicit evidence.
 
+## Connector and MVP workflow
+
+Connector definitions advertise versioned capabilities independently from
+configured connector instances. External IDs and revisions live in
+`ExternalBinding`, while provider-only fields stay in `platformExtensions`.
+The version 1.1 protocol envelope adds origin, causation, correlation,
+connector, event, and idempotency metadata while continuing to accept v1.0
+fixtures. Raw provider payloads are rejected at the protocol boundary.
+
+Linear webhook ingress verifies the HMAC against the exact request bytes,
+enforces payload and timestamp limits, normalizes the event, and deduplicates it
+before canonical mutation. Common-field ownership is explicit; reconcile never
+silently overwrites concurrent canonical edits. Projection writes carry the
+origin revision so echoed webhook updates can be recognized.
+Task-platform portability is explicit: a dry-run reports projectable and
+unmappable fields, and switching the primary binding changes only the task's
+origin/binding. Canonical task identity, TaskContract, current Run/history, and
+delivery evidence remain stable while both task-platform projections can
+coexist.
+
+TaskDraft compilation fails closed to `NEEDS_SPEC` unless repository, scope,
+acceptance criteria, and verification are complete. Dispatch applies
+deterministic capability/capacity/resource filters, creates a worktree only
+from the configured repository registry, and binds the Run to task and
+contract revisions. Arbitrary client-supplied workspace paths are rejected.
+Run advancement persists each phase boundary: completed Codex sessions move to
+verification, registered command results move to delivery, and retryable SCM
+failures leave the Run in `DELIVERING`. Delivery requires passed verification
+and the current generation/lease, then records commit, pull request, and CI
+evidence idempotently. The compatibility decision and capability matrix are recorded in
+`docs/adr-001-connector-contract.md`.
+
 ## Change rules
 
 - Add a state only by changing its domain contract and transition tests.
 - Add a protocol message only through the versioned protocol package.
 - Add a database shape only through an idempotent migration and upgrade test.
+- Add a task platform or SCM provider only through the connector contract kit;
+  keep raw payloads at the adapter edge.
+- Never start an Agent in a client-selected directory. Resolve a configured
+  repository and create a Dispatcher-managed worktree first.
 - Never move secret values into configuration, logs, URLs, audit payloads, or
   process arguments.
 - Do not implement a later provider integration inside Controller or Runner to save a

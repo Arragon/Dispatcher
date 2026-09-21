@@ -66,6 +66,8 @@ function inferRisk(before: DispatcherConfig, after: DispatcherConfig): ConfigRis
   }
   if (
     JSON.stringify(before.integrations) !== JSON.stringify(after.integrations) ||
+    JSON.stringify(before.connectors) !== JSON.stringify(after.connectors) ||
+    JSON.stringify(before.repositories) !== JSON.stringify(after.repositories) ||
     JSON.stringify(before.agentProfiles) !== JSON.stringify(after.agentProfiles) ||
     JSON.stringify(before.internalLlm) !== JSON.stringify(after.internalLlm)
   ) {

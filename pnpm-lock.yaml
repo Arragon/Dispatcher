@@ -47,6 +47,9 @@ importers:
       '@dispatcher/domain':
         specifier: workspace:*
         version: link:../../packages/domain
+      '@dispatcher/integrations':
+        specifier: workspace:*
+        version: link:../../packages/integrations
       '@dispatcher/llm-runtime':
         specifier: workspace:*
         version: link:../../packages/llm-runtime
@@ -59,9 +62,18 @@ importers:
       '@dispatcher/runner':
         specifier: workspace:*
         version: link:../../packages/runner
+      '@dispatcher/scheduler':
+        specifier: workspace:*
+        version: link:../../packages/scheduler
+      '@dispatcher/semantic':
+        specifier: workspace:*
+        version: link:../../packages/semantic
       '@dispatcher/web':
         specifier: workspace:*
         version: link:../web
+      '@dispatcher/workspace':
+        specifier: workspace:*
+        version: link:../../packages/workspace
       '@fastify/static':
         specifier: 10.1.3
         version: 10.1.3
@@ -136,7 +148,14 @@ importers:
 
   packages/fleet: {}
 
-  packages/integrations: {}
+  packages/integrations:
+    dependencies:
+      '@dispatcher/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@dispatcher/persistence':
+        specifier: workspace:*
+        version: link:../persistence
 
   packages/llm-runtime:
     dependencies:
@@ -178,9 +197,23 @@ importers:
         specifier: workspace:*
         version: link:../workspace
 
-  packages/scheduler: {}
+  packages/scheduler:
+    dependencies:
+      '@dispatcher/adapters':
+        specifier: workspace:*
+        version: link:../adapters
+      '@dispatcher/domain':
+        specifier: workspace:*
+        version: link:../domain
 
-  packages/semantic: {}
+  packages/semantic:
+    dependencies:
+      '@dispatcher/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@dispatcher/integrations':
+        specifier: workspace:*
+        version: link:../integrations
 
   packages/shared: {}
 

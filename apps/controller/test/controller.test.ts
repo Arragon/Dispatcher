@@ -1,8 +1,10 @@
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SecretAccessContext, SecretMetadata, SecretStore } from "@dispatcher/config";
+import type { CodexBackend } from "@dispatcher/adapters";
 import { ControllerService } from "../src/service.js";
 import { LifecycleManager } from "../src/lifecycle.js";
 
@@ -205,6 +207,226 @@ describe("ControllerService", () => {
     expect(restored.config.config.controller.id).toBe("wizard-controller");
     expect(() => JSON.parse(JSON.stringify(second.configuration.exportRedacted()))).not.toThrow();
     await second.stop();
+  });
+
+  it("configures Codex profiles through ConfigPlan without exposing CODEX_HOME or accepting unmanaged workspaces", async () => {
+    const backend: CodexBackend = {
+      start: (input) => ({
+        cancel: async () => undefined,
+        status: () => "completed",
+        result: async () => ({ state: "completed", summary: "done", providerSessionId: input.providerSessionId ?? "thread-1", events: [] }),
+      }),
+    };
+    const service = new ControllerService({ dataDirectory: dataDirectory(), withRunner: true, secretStore: new FakeSecretStore(), codexBackendFactory: () => backend });
+    await service.start({ listen: false });
+    const manifests = await service.app.inject({ method: "GET", url: "/api/adapters/manifests" });
+    expect(manifests.json().manifests.map((manifest: { id: string }) => manifest.id)).toContain("codex");
+    const created = await service.app.inject({ method: "POST", url: "/api/agents/codex/profiles", payload: { id: "orion", alias: "Orion", runnerId: "local", codexHome: "/private/orion" } });
+    expect(created.statusCode).toBe(201);
+    const profiles = await service.app.inject({ method: "GET", url: "/api/agents/profiles" });
+    expect(profiles.json().profiles).toContainEqual(expect.objectContaining({ id: "orion", alias: "Orion", state: "CONFIGURED" }));
+    expect(profiles.body).not.toContain("/private/orion");
+    const run = await service.app.inject({ method: "POST", url: "/api/agents/profiles/orion/runs", payload: { workspacePath: "/worktree", prompt: "do it" } });
+    expect(run.statusCode).toBe(400);
+    expect(run.json()).toMatchObject({ code: "UNMANAGED_WORKSPACE" });
+    await service.stop();
+  });
+
+  it("keeps concurrently running Codex profiles isolated and does not start idle backends", async () => {
+    const directory = dataDirectory();
+    const repositoryRoot = join(directory, "repository");
+    mkdirSync(repositoryRoot, { recursive: true });
+    execFileSync("git", ["init", "--initial-branch=main", repositoryRoot]);
+    execFileSync("git", ["-C", repositoryRoot, "config", "user.email", "dispatcher@example.invalid"]);
+    execFileSync("git", ["-C", repositoryRoot, "config", "user.name", "Dispatcher Test"]);
+    writeFileSync(join(repositoryRoot, "README.md"), "fixture\n");
+    execFileSync("git", ["-C", repositoryRoot, "add", "README.md"]);
+    execFileSync("git", ["-C", repositoryRoot, "commit", "-m", "fixture"]);
+    const starts: Array<{ codexHome: string; workspacePath: string }> = [];
+    const service = new ControllerService({
+      dataDirectory: directory,
+      withRunner: true,
+      secretStore: new FakeSecretStore(),
+      codexBackendFactory: () => ({
+        start: (input) => {
+          starts.push({ codexHome: input.codexHome, workspacePath: input.workspacePath });
+          return {
+            cancel: async () => undefined,
+            status: () => "completed",
+            result: async () => ({ state: "completed", summary: "done", providerSessionId: `thread-${input.codexHome.split("/").at(-1)}`, events: [] }),
+          };
+        },
+      }),
+    });
+    await service.start({ listen: false });
+    const current = (await service.app.inject({ method: "GET", url: "/api/config" })).json();
+    current.config.agentProfiles = [
+      { id: "atlas", provider: "codex", alias: "Atlas", runnerId: "local", settings: { codexHome: "/profiles/atlas" } },
+      { id: "orion", provider: "codex", alias: "Orion", runnerId: "local", settings: { codexHome: "/profiles/orion" } },
+    ];
+    current.config.repositories = [{ id: "acme/repo", root: repositoryRoot, defaultBaseRef: "main", scopePaths: [], verificationCommands: [] }];
+    const plan = await service.app.inject({ method: "POST", url: "/api/config/plans", payload: { config: current.config } });
+    expect((await service.app.inject({ method: "POST", url: `/api/config/plans/${plan.json().plan.id}/apply`, payload: { confirmed: true } })).statusCode).toBe(200);
+    expect(starts).toEqual([]);
+
+    const [atlasWorkspace, orionWorkspace] = await Promise.all([
+      service.workspaces.create({ repositoryId: "acme/repo", taskId: "task-atlas", runId: "run-atlas", attempt: 1, baseRef: "main", scopePaths: [] }),
+      service.workspaces.create({ repositoryId: "acme/repo", taskId: "task-orion", runId: "run-orion", attempt: 1, baseRef: "main", scopePaths: [] }),
+    ]);
+    const [atlas, orion] = await Promise.all([
+      service.app.inject({ method: "POST", url: "/api/agents/profiles/atlas/runs", payload: { workspacePath: atlasWorkspace.path, prompt: "atlas work" } }),
+      service.app.inject({ method: "POST", url: "/api/agents/profiles/orion/runs", payload: { workspacePath: orionWorkspace.path, prompt: "orion work" } }),
+    ]);
+    expect([atlas.statusCode, orion.statusCode]).toEqual([201, 201]);
+    expect(atlas.json().session).toMatchObject({ profileId: "atlas" });
+    expect(orion.json().session).toMatchObject({ profileId: "orion" });
+    expect(starts).toEqual(expect.arrayContaining([
+      { codexHome: "/profiles/atlas", workspacePath: atlasWorkspace.path },
+      { codexHome: "/profiles/orion", workspacePath: orionWorkspace.path },
+    ]));
+    expect(new Set(starts.map((entry) => entry.codexHome)).size).toBe(2);
+    expect(new Set(starts.map((entry) => entry.workspacePath)).size).toBe(2);
+    await service.stop();
+  });
+
+  it("moves runs through WAITING_USER recovery and required verification failure", async () => {
+    const directory = dataDirectory();
+    const repositoryRoot = join(directory, "repository");
+    mkdirSync(repositoryRoot, { recursive: true });
+    execFileSync("git", ["init", "--initial-branch=main", repositoryRoot]);
+    execFileSync("git", ["-C", repositoryRoot, "config", "user.email", "dispatcher@example.invalid"]);
+    execFileSync("git", ["-C", repositoryRoot, "config", "user.name", "Dispatcher Test"]);
+    writeFileSync(join(repositoryRoot, "README.md"), "fixture\n");
+    execFileSync("git", ["-C", repositoryRoot, "add", "README.md"]);
+    execFileSync("git", ["-C", repositoryRoot, "commit", "-m", "fixture"]);
+    const backendInputs: Array<{ prompt: string; providerSessionId?: string }> = [];
+    const backend: CodexBackend = {
+      start: (input) => {
+        backendInputs.push({ prompt: input.prompt, ...(input.providerSessionId ? { providerSessionId: input.providerSessionId } : {}) });
+        return {
+        cancel: async () => undefined,
+        status: () => "completed",
+        result: async () => input.prompt === "needs input" && !input.providerSessionId
+          ? { state: "waiting", summary: "approval required", providerSessionId: "thread-waiting", events: [{ type: "waiting", reason: "approval_required" }] }
+          : { state: "completed", summary: "done", providerSessionId: input.providerSessionId ?? "thread-complete", events: [] },
+        };
+      },
+    };
+    const service = new ControllerService({ dataDirectory: directory, withRunner: true, secretStore: new FakeSecretStore(), codexBackendFactory: () => backend });
+    await service.start({ listen: false });
+    const current = (await service.app.inject({ method: "GET", url: "/api/config" })).json();
+    current.config.agentProfiles = [{ id: "atlas", provider: "codex", alias: "Atlas", runnerId: "local", settings: { codexHome: "/profiles/atlas" } }];
+    current.config.repositories = [{
+      id: "acme/repo",
+      root: repositoryRoot,
+      defaultBaseRef: "main",
+      scopePaths: [],
+      verificationCommands: [{ id: "fail", file: process.execPath, args: ["-e", "process.exit(1)"], required: true, timeoutMs: 5_000, outputLimitBytes: 4_096 }],
+    }];
+    const plan = await service.app.inject({ method: "POST", url: "/api/config/plans", payload: { config: current.config } });
+    expect((await service.app.inject({ method: "POST", url: `/api/config/plans/${plan.json().plan.id}/apply`, payload: { confirmed: true } })).statusCode).toBe(200);
+
+    const waitingWorkspace = await service.workspaces.create({ repositoryId: "acme/repo", taskId: "task-waiting", runId: "run-waiting", attempt: 1, baseRef: "main", scopePaths: [] });
+    const failingWorkspace = await service.workspaces.create({ repositoryId: "acme/repo", taskId: "task-failing", runId: "run-failing", attempt: 1, baseRef: "main", scopePaths: [] });
+    const waitingSession = (await service.app.inject({ method: "POST", url: "/api/agents/profiles/atlas/runs", payload: { workspacePath: waitingWorkspace.path, prompt: "needs input" } })).json().session;
+    const failingSession = (await service.app.inject({ method: "POST", url: "/api/agents/profiles/atlas/runs", payload: { workspacePath: failingWorkspace.path, prompt: "complete" } })).json().session;
+    expect(backendInputs).toEqual([{ prompt: "needs input" }, { prompt: "complete" }]);
+    expect((await service.app.inject({ method: "GET", url: `/api/agents/profiles/atlas/sessions/${waitingSession.id}` })).json().session).toMatchObject({ state: "PAUSED" });
+    for (const fixture of [
+      { taskId: "task-waiting", runId: "run-waiting", sessionId: waitingSession.id as string, workspace: waitingWorkspace, verification: [] },
+      { taskId: "task-failing", runId: "run-failing", sessionId: failingSession.id as string, workspace: failingWorkspace, verification: ["fail"] },
+    ]) {
+      service.database.writeCanonicalTask(fixture.taskId, 0, {
+        id: fixture.taskId, projectId: "project", title: fixture.taskId, state: "RUNNING",
+        createdAt: "2026-09-22T00:00:00.000Z", updatedAt: "2026-09-22T00:00:00.000Z",
+      });
+      service.database.saveTaskContract(fixture.taskId, {
+        version: 1, revision: 1, goal: "Work", scope: ["README.md"], acceptanceCriteria: ["done"],
+        verification: fixture.verification, constraints: [], delivery: { type: "pull-request", repository: "acme/repo" },
+      });
+      service.database.saveEntity("run", fixture.runId, {
+        id: fixture.runId, taskId: fixture.taskId, runnerId: "local", providerId: "codex", profileId: "atlas",
+        sessionId: fixture.sessionId, state: "ACTIVE", attempt: 1, generation: 1, leaseId: "lease", taskRevision: 1,
+        contractRevision: 1, worktree: fixture.workspace.path, branch: fixture.workspace.branch,
+        startedAt: "2026-09-22T00:00:00.000Z", lastActivityAt: "2026-09-22T00:00:00.000Z",
+        verification: { state: "PENDING", commands: fixture.verification },
+      });
+    }
+
+    const waiting = await service.app.inject({ method: "POST", url: "/api/runs/run-waiting/advance" });
+    expect(waiting.json()).toMatchObject({ run: { state: "WAITING_USER" }, task: { state: "WAITING_USER" } });
+    expect(waiting.statusCode).toBe(202);
+    expect((await service.app.inject({
+      method: "POST",
+      url: `/api/agents/profiles/atlas/sessions/${waitingSession.id}/input`,
+      payload: { message: "approved" },
+    })).statusCode).toBe(200);
+    expect(service.database.getEntity("run", "run-waiting")).toMatchObject({ state: "ACTIVE", sessionId: waitingSession.id });
+    expect(service.database.getCanonicalTask("task-waiting")?.document).toMatchObject({ state: "RUNNING" });
+
+    const failed = await service.app.inject({ method: "POST", url: "/api/runs/run-failing/advance" });
+    expect(failed.statusCode).toBe(200);
+    expect(failed.json()).toMatchObject({
+      run: { state: "FAILED", failureReason: "Required verification failed", verification: { state: "FAILED", commands: ["fail"] } },
+      task: { state: "FAILED" },
+    });
+    await service.stop();
+  });
+
+  it("persists Codex quota signals and blocks the run, task, and future routing", async () => {
+    const directory = dataDirectory();
+    const repositoryRoot = join(directory, "repository");
+    mkdirSync(repositoryRoot, { recursive: true });
+    execFileSync("git", ["init", "--initial-branch=main", repositoryRoot]);
+    execFileSync("git", ["-C", repositoryRoot, "config", "user.email", "dispatcher@example.invalid"]);
+    execFileSync("git", ["-C", repositoryRoot, "config", "user.name", "Dispatcher Test"]);
+    writeFileSync(join(repositoryRoot, "README.md"), "fixture\n");
+    execFileSync("git", ["-C", repositoryRoot, "add", "README.md"]);
+    execFileSync("git", ["-C", repositoryRoot, "commit", "-m", "fixture"]);
+    const backend: CodexBackend = {
+      start: () => ({
+        cancel: async () => undefined,
+        status: () => "completed",
+        result: async () => ({
+          state: "failed",
+          summary: "quota",
+          providerSessionId: "thread-quota",
+          events: [{ type: "resource", state: "QUOTA_EXHAUSTED", reason: "quota exhausted", source: "event", confidence: "high" }],
+        }),
+      }),
+    };
+    const service = new ControllerService({ dataDirectory: directory, withRunner: true, secretStore: new FakeSecretStore(), codexBackendFactory: () => backend });
+    await service.start({ listen: false });
+    const current = (await service.app.inject({ method: "GET", url: "/api/config" })).json();
+    current.config.agentProfiles = [{ id: "atlas", provider: "codex", alias: "Atlas", runnerId: "local", settings: { codexHome: "/profiles/atlas" } }];
+    current.config.repositories = [{ id: "acme/repo", root: repositoryRoot, defaultBaseRef: "main", scopePaths: [], verificationCommands: [] }];
+    const plan = await service.app.inject({ method: "POST", url: "/api/config/plans", payload: { config: current.config } });
+    expect((await service.app.inject({ method: "POST", url: `/api/config/plans/${plan.json().plan.id}/apply`, payload: { confirmed: true } })).statusCode).toBe(200);
+    const workspace = await service.workspaces.create({ repositoryId: "acme/repo", taskId: "task-quota", runId: "run-quota", attempt: 1, baseRef: "main", scopePaths: [] });
+    const started = await service.app.inject({ method: "POST", url: "/api/agents/profiles/atlas/runs", payload: { workspacePath: workspace.path, prompt: "work" } });
+    const sessionId = started.json().session.id as string;
+    service.database.writeCanonicalTask("task-quota", 0, {
+      id: "task-quota", projectId: "project", title: "Quota task", state: "RUNNING",
+      createdAt: "2026-09-22T00:00:00.000Z", updatedAt: "2026-09-22T00:00:00.000Z",
+    });
+    service.database.saveTaskContract("task-quota", {
+      version: 1, revision: 1, goal: "Work", scope: ["README.md"], acceptanceCriteria: ["done"],
+      verification: ["check"], constraints: [], delivery: { type: "pull-request", repository: "acme/repo" },
+    });
+    service.database.saveEntity("run", "run-quota", {
+      id: "run-quota", taskId: "task-quota", runnerId: "local", providerId: "codex", profileId: "atlas",
+      sessionId, state: "ACTIVE", attempt: 1, generation: 1, leaseId: "lease", taskRevision: 1,
+      contractRevision: 1, worktree: workspace.path, branch: workspace.branch,
+      startedAt: "2026-09-22T00:00:00.000Z", lastActivityAt: "2026-09-22T00:00:00.000Z",
+      verification: { state: "PENDING", commands: ["check"] },
+    });
+
+    const advanced = await service.app.inject({ method: "POST", url: "/api/runs/run-quota/advance" });
+    expect(advanced.statusCode).toBe(202);
+    expect(advanced.json()).toMatchObject({ run: { state: "RESOURCE_BLOCKED", resourceBlockReason: "quota exhausted" }, task: { state: "WAITING_RESOURCE" } });
+    const profiles = await service.app.inject({ method: "GET", url: "/api/agents/profiles" });
+    expect(profiles.json().profiles).toContainEqual(expect.objectContaining({ id: "atlas", resourceState: "QUOTA_EXHAUSTED" }));
+    await service.stop();
   });
 });
 

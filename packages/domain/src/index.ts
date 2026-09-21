@@ -48,23 +48,149 @@ export type ResourceState = (typeof RESOURCE_STATES)[number];
 export type IsoDateTime = string;
 export type EntityId = string;
 
+export type ConnectorKind = "task" | "messaging" | "scm";
+export type ConnectorHealth = "HEALTHY" | "DEGRADED" | "UNAVAILABLE" | "AUTH_REQUIRED" | "DISABLED";
+export type ProjectionState = "PENDING" | "SYNCED" | "CONFLICT" | "FAILED" | "DISABLED";
+export type CapabilitySupport = "supported" | "unsupported" | "unknown";
+
+export interface ConnectorCapability {
+  namespace: string;
+  version: number;
+  support: CapabilitySupport;
+}
+
+export interface ConnectorDefinition {
+  id: string;
+  kind: ConnectorKind;
+  displayName: string;
+  apiVersion: 1;
+  capabilities: ConnectorCapability[];
+}
+
+export interface ConnectorInstance {
+  id: EntityId;
+  definitionId: string;
+  kind: ConnectorKind;
+  displayName: string;
+  enabled: boolean;
+  credentialRef?: string;
+  health: ConnectorHealth;
+  revision: number;
+  updatedAt: IsoDateTime;
+}
+
+export interface ExternalRef {
+  connectorInstanceId: EntityId;
+  entityType: "project" | "task" | "conversation" | "delivery";
+  externalId: string;
+  externalUrl?: string;
+  externalRevision?: string;
+}
+
+export interface ExternalBinding extends ExternalRef {
+  id: EntityId;
+  canonicalEntityId: EntityId;
+  projectionState: ProjectionState;
+  platformExtensions?: Record<string, unknown>;
+  updatedAt: IsoDateTime;
+}
+
+export interface OriginMetadata {
+  source: "local" | "connector" | "migration";
+  connectorInstanceId?: EntityId;
+  externalEventId?: string;
+}
+
 export interface Project {
   id: EntityId;
-  linearProjectId: string;
+  /** @deprecated External ids belong in bindings. Retained for v1 fixture compatibility. */
+  linearProjectId?: string;
   name: string;
   repository?: string;
+  revision?: number;
+  bindings?: ExternalBinding[];
   updatedAt: IsoDateTime;
 }
 
 export interface Task {
   id: EntityId;
   projectId: EntityId;
-  linearIssueId: string;
+  /** @deprecated External ids belong in bindings. Retained for v1 fixture compatibility. */
+  linearIssueId?: string;
   title: string;
   state: TaskState;
   currentRunId?: EntityId;
+  revision?: number;
+  bindings?: ExternalBinding[];
+  origin?: OriginMetadata;
+  description?: string;
+  priority?: number;
+  assignee?: string;
+  labels?: string[];
+  dueAt?: IsoDateTime;
+  platformExtensions?: Record<string, unknown>;
   createdAt: IsoDateTime;
   updatedAt: IsoDateTime;
+}
+
+export interface TaskContract {
+  version: 1;
+  revision: number;
+  goal: string;
+  scope: string[];
+  acceptanceCriteria: string[];
+  verification: string[];
+  constraints: string[];
+  delivery: { type: "pull-request" | "commit" | "none"; repository?: string; baseBranch?: string };
+}
+
+export interface DeliveryEvidence {
+  id: EntityId;
+  taskId: EntityId;
+  runId: EntityId;
+  connectorInstanceId: EntityId;
+  kind: "pull-request" | "commit" | "ci";
+  externalId: string;
+  url?: string;
+  state: "PENDING" | "READY" | "FAILED" | "MERGED";
+  revision: number;
+  metadata: Record<string, unknown>;
+  createdAt: IsoDateTime;
+  updatedAt: IsoDateTime;
+}
+
+export function negotiateCapabilities(
+  definition: ConnectorDefinition,
+  requested: readonly { namespace: string; minimumVersion: number; required?: boolean }[],
+): { accepted: ConnectorCapability[]; rejected: string[] } {
+  const accepted: ConnectorCapability[] = [];
+  const rejected: string[] = [];
+  for (const request of requested) {
+    const capability = definition.capabilities.find((entry) => entry.namespace === request.namespace);
+    if (capability?.support === "supported" && capability.version >= request.minimumVersion) accepted.push(structuredClone(capability));
+    else if (request.required) rejected.push(request.namespace);
+  }
+  return { accepted, rejected };
+}
+
+export function upgradeLegacyTask(task: Task): Task {
+  const upgraded = structuredClone(task);
+  upgraded.revision ??= 1;
+  upgraded.bindings ??= task.linearIssueId
+    ? [{
+        id: `legacy-linear:${task.id}`,
+        canonicalEntityId: task.id,
+        connectorInstanceId: "legacy-linear",
+        entityType: "task",
+        externalId: task.linearIssueId,
+        projectionState: "SYNCED",
+        updatedAt: task.updatedAt,
+      }]
+    : [];
+  upgraded.origin ??= task.linearIssueId
+    ? { source: "migration", connectorInstanceId: "legacy-linear" }
+    : { source: "local" };
+  return upgraded;
 }
 
 export type ProviderId = "codex" | "cursor" | "devin" | "qoder" | "kiro" | "codebuddy" | string;
@@ -122,6 +248,8 @@ export interface Run {
   attempt: number;
   generation: number;
   leaseId: string;
+  taskRevision?: number;
+  contractRevision?: number;
   branch?: string;
   worktree?: string;
   startedAt?: IsoDateTime;

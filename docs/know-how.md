@@ -1,6 +1,6 @@
 # Durable Project Know-how
 
-## M0–M4 invariants
+## M0–M6 invariants
 
 - The frozen architecture/roadmap dated 2026-09-15 is authoritative over the
   tracker. Tracker differences are reconciled to the document, not vice versa.
@@ -67,6 +67,48 @@
 - Verification commands are repository/project registrations, not request
   strings. Required failures block delivery; optional failures remain visible
   without being promoted to success.
+- Connector definition IDs are namespaced by kind (`task.*`, `messaging.*`,
+  `scm.*`). Capability versions describe behavior; configured instances carry
+  credentials, health, and revisions. Do not merge the two concepts.
+- External IDs and provider revisions live in `ExternalBinding`. Canonical
+  entities keep stable local IDs; provider-only fields stay under
+  `platformExtensions` and must not leak into scheduler/domain decisions.
+- Canonical task mutation and projection enqueue are one transaction. A remote
+  outage is represented by pending/retried/dead-letter outbox state, never by
+  rolling back a committed canonical revision.
+- Webhook signatures are computed over exact request bytes before JSON
+  normalization. Apply size and time-window limits first, deduplicate on the
+  provider event ID, and never persist the raw provider payload.
+- Projection events include connector identity, canonical revision, and a
+  stable idempotency key. Treat a matching origin/revision as echo, not as a new
+  canonical edit.
+- A TaskDraft with missing repository, scope, acceptance criteria, or
+  verification becomes `NEEDS_SPEC`. Scheduling a partial contract is a policy
+  bypass, not a fallback.
+- Deterministic routing filters capability, capacity, runner tags, provider,
+  and resource state before stable identity ordering. LLM output must never
+  override these hard gates.
+- Every task dispatch resolves a registered repository and creates a managed
+  worktree. Manual Codex APIs reject paths that are not registered by the
+  current WorkspaceManager.
+- Delivery is fenced by the current run generation and lease and requires
+  passed verification. Commit, PR, and CI records are durable evidence with
+  idempotent external identities; retries must not create duplicate PRs.
+- Run advancement is phase-idempotent. Persist `VERIFYING` before executing
+  registered checks and `DELIVERING` before calling an SCM provider; retry from
+  the stored phase after a temporary provider failure.
+- Codex profiles isolate `CODEX_HOME`; Web/API surfaces expose alias and
+  normalized status only. A CLI probe and a real business invocation are
+  separate pieces of evidence.
+- Codex quota and rate-limit signals become durable profile ResourceSnapshots.
+  Block the Run/task and future routing on that profile; do not collapse a
+  provider resource condition into task failure.
+- Codex approval or input-required signals are `WAITING_USER`, not failures.
+  Resume through the existing provider session ID, then restore Run/task active
+  state before advancing the pipeline.
+- A task-platform switch changes the primary connector binding, not execution
+  identity. Dry-run unsupported fields first; preserve task ID, TaskContract,
+  Run history, and delivery evidence throughout the switch.
 
 ## Tooling details
 
