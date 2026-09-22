@@ -85,6 +85,9 @@ describe("Slack MessagingAdapter v1", () => {
     expect(policy.shouldNotify({ taskId: "task-1", state: "RUNNING", generation: 1, now: fixedNow })).toBe(false);
     expect(policy.shouldNotify({ taskId: "task-1", state: "WAITING_USER", generation: 1, now: fixedNow })).toBe(true);
     expect(policy.shouldNotify({ taskId: "task-1", state: "WAITING_USER", generation: 1, now: fixedNow })).toBe(false);
+    expect(policy.shouldNotify({ taskId: "task-1", state: "REVIEW_READY", generation: 1, now: fixedNow })).toBe(true);
+    expect(policy.shouldNotify({ taskId: "connector-1", state: "SYNC_CONFLICT", generation: 1, now: fixedNow })).toBe(true);
+    expect(policy.shouldNotify({ taskId: "runner-1", state: "RUNNER_OFFLINE", generation: 1, now: fixedNow })).toBe(true);
     const issuer = new SecureDashboardLinkIssuer("https://dispatcher.example", "ticket-key");
     const url = new URL(issuer.issue({ principalId: "user-1", taskId: "task-1", expiresAt: "2026-09-22T12:05:00.000Z" }));
     expect(issuer.verify(url.searchParams.get("ticket")!, fixedNow)).toMatchObject({ principalId: "user-1", taskId: "task-1" });

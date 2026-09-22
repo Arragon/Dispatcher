@@ -348,7 +348,7 @@ export class AttentionNotificationPolicy {
   private readonly sent = new Map<string, number>();
   constructor(private readonly cooldownMs = 15 * 60_000) {}
   shouldNotify(input: { taskId: string; state: string; generation: number; now?: Date }): boolean {
-    if (!["WAITING_USER", "WAITING_RESOURCE", "FAILED", "STALLED"].includes(input.state)) return false;
+    if (!["WAITING_USER", "WAITING_RESOURCE", "FAILED", "STALLED", "REVIEW_READY", "SYNC_CONFLICT", "CONNECTOR_AUTH", "RUNNER_OFFLINE"].includes(input.state)) return false;
     const key = `${input.taskId}:${input.state}:${input.generation}`;
     const now = input.now?.getTime() ?? Date.now();
     const previous = this.sent.get(key);

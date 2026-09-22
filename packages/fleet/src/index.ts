@@ -30,6 +30,7 @@ export interface FleetConnectorInput {
   kind: string;
   health: string;
   checkedAt: string;
+  source?: "configuration" | "probe";
   reason?: string;
   pendingOutbox?: number;
   deadLetters?: number;

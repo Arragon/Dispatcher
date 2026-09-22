@@ -318,6 +318,7 @@ export class ControllerService {
     this.events.subscribe("runnerChanged", async (runner) => {
       this.database.saveEntity("runner", runner.id, json(runner));
       this.fleetEvents.publish("runner.changed", runner.id, redactValue(runner));
+      if (runner.state === "OFFLINE") await this.notifyOperationalAttention({ key: runner.id, state: "RUNNER_OFFLINE", subject: `Runner offline: ${runner.displayName}`, body: `${runner.id} stopped reporting capacity.` });
     });
     const modules: ServiceModule[] = [];
     if (options.withRunner) {
@@ -620,6 +621,7 @@ export class ControllerService {
         kind: adapter.instance.kind,
         health,
         checkedAt: probe?.checkedAt ?? adapter.instance.updatedAt,
+        source: probe ? "probe" as const : "configuration" as const,
         ...(probe?.message ? { reason: probe.message } : health === "HEALTHY" ? {} : { reason: health }),
         pendingOutbox: blockers.pendingOutbox,
         deadLetters: deadLetters.filter((entry) => entry.connectorInstanceId === adapter.instance.id).length,
@@ -1086,7 +1088,7 @@ export class ControllerService {
   }
 
   private async notifyAttention(run: Run): Promise<void> {
-    const state = run.state === "RESOURCE_BLOCKED" ? "WAITING_RESOURCE" : run.state;
+    const state = run.state === "RESOURCE_BLOCKED" ? "WAITING_RESOURCE" : run.state === "COMPLETE" && run.prUrl ? "REVIEW_READY" : run.state;
     if (!this.attentionNotifications.shouldNotify({ taskId: run.taskId, state, generation: run.generation })) return;
     const idempotencyKey = `attention:${run.taskId}:${state}:${run.generation}`;
     if (this.database.getEntity<JsonValue>("attention-notification", idempotencyKey)) return;
@@ -1097,14 +1099,28 @@ export class ControllerService {
     const notification: Notification = {
       channel,
       subject: `${state}: ${task?.title ?? run.taskId}`,
-      body: run.activitySummary ?? run.failureReason ?? run.resourceBlockReason ?? "Open the thread to inspect or respond.",
-      severity: state === "FAILED" ? "critical" : "warning",
+      body: run.prUrl ?? run.activitySummary ?? run.failureReason ?? run.resourceBlockReason ?? "Open the thread to inspect or respond.",
+      severity: state === "FAILED" ? "critical" : state === "REVIEW_READY" ? "info" : "warning",
       canonicalEntityId: run.taskId,
     };
     const sent = await connector.send(notification, idempotencyKey);
     this.database.saveEntity("attention-notification", idempotencyKey, json({ idempotencyKey, taskId: run.taskId, state, generation: run.generation, externalMessageId: sent.externalMessageId, sentAt: new Date().toISOString() }));
     if (state === "WAITING_USER") {
       this.conversations.bind({ connectorInstanceId: connector.instance.id, conversationId: channel, threadId: sent.externalMessageId, taskId: run.taskId, runId: run.id, sessionId: run.sessionId, generation: run.generation, state: "WAITING_USER" });
+    }
+  }
+
+  private async notifyOperationalAttention(input: { key: string; state: "SYNC_CONFLICT" | "CONNECTOR_AUTH" | "RUNNER_OFFLINE"; subject: string; body: string; canonicalEntityId?: string }): Promise<void> {
+    if (!this.attentionNotifications.shouldNotify({ taskId: input.key, state: input.state, generation: 1 })) return;
+    const idempotencyKey = `attention:${input.key}:${input.state}:1`;
+    if (this.database.getEntity<JsonValue>("attention-notification", idempotencyKey)) return;
+    const connector = this.connectors.list("messaging").find((entry) => this.messagingChannels.has(entry.instance.id)) as MessagingAdapter | undefined;
+    if (!connector) return;
+    try {
+      const sent = await connector.send({ channel: this.messagingChannels.get(connector.instance.id)!, subject: input.subject, body: input.body, severity: "warning", ...(input.canonicalEntityId ? { canonicalEntityId: input.canonicalEntityId } : {}) }, idempotencyKey);
+      this.database.saveEntity("attention-notification", idempotencyKey, json({ ...input, idempotencyKey, externalMessageId: sent.externalMessageId, sentAt: new Date().toISOString() }));
+    } catch (error) {
+      this.app.log.warn({ error: redactValue(error), state: input.state, key: input.key }, "attention notification failed");
     }
   }
 
@@ -1347,6 +1363,7 @@ export class ControllerService {
       connector.instance.updatedAt = probe.checkedAt;
       this.database.saveEntity("connector-health", connector.instance.id, json(probe), probe.checkedAt);
       this.fleetEvents.publish("connector.changed", connector.instance.id, probe);
+      if (probe.health === "AUTH_REQUIRED") await this.notifyOperationalAttention({ key: connector.instance.id, state: "CONNECTOR_AUTH", subject: `Connector authentication required: ${connector.instance.displayName}`, body: probe.message ?? "Open Integrations to repair credentials." });
       return { probe };
     });
     this.app.post("/api/connectors/projections/drain", async () => this.projections.drain());
@@ -1384,6 +1401,7 @@ export class ControllerService {
         });
       }
       if (result.cursor) this.database.saveSyncCursor(request.params.id, result.cursor);
+      if (result.conflicts.length) await this.notifyOperationalAttention({ key: request.params.id, state: "SYNC_CONFLICT", subject: `Sync conflicts: ${adapter.instance.displayName}`, body: `${result.conflicts.length} conflict(s) require recovery in Integrations.` });
       return { applied, conflicts: result.conflicts.length, cursor: result.cursor ?? null };
     });
     this.app.post<{ Params: { id: string } }>("/api/connectors/:id/webhook", async (request, reply) => {
