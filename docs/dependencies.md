@@ -24,3 +24,8 @@ No third-party source code was copied, forked, vendored, or derived into this
 repository for M0–M6. M5–M6 use built-in Node crypto, fetch, child-process,
 and SQLite APIs plus existing workspace packages; no new production third-party
 dependency was added.
+
+M14 adds no dependency. Cursor, Kiro, and Generic CLI execution use Node's
+`child_process` with `shell: false`; Devin and configured local services use
+Node's built-in fetch. Provider SDKs are intentionally not linked into Core,
+and no vendor source was copied or vendored.

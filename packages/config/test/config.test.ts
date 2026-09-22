@@ -7,6 +7,7 @@ import {
   configToJson,
   defaultDispatcherConfig,
   normalizeConfig,
+  requiredSecretReferences,
   resolveEffectiveConfig,
   validateConfig,
   type ConfigPlanError,
@@ -83,6 +84,15 @@ describe("configuration schema", () => {
     expect(() => validateConfig(input)).toThrowError(/scopePaths must stay relative/);
     input.repositories[0] = { id: "acme/repo", root: "relative", defaultBaseRef: "main", scopePaths: [], verificationCommands: [] };
     expect(() => validateConfig(input)).toThrowError(/root must be absolute/);
+  });
+
+  it("requires an opaque runner credential reference for remote runners", () => {
+    const input = structuredClone(defaultDispatcherConfig);
+    input.runners.push({ id: "remote", displayName: "Remote", mode: "remote", capacity: 1, tags: [] });
+    expect(() => validateConfig(input)).toThrowError(/credentialRef is required/);
+    input.runners[1]!.credentialRef = "secret://runner/dispatcher/remote";
+    expect(validateConfig(input).runners[1]?.credentialRef).toBe("secret://runner/dispatcher/remote");
+    expect(requiredSecretReferences(validateConfig(input))).not.toContain("secret://runner/dispatcher/remote");
   });
 });
 

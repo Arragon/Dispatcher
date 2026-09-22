@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { execFile, spawn, type ChildProcess } from "node:child_process";
+import { promisify } from "node:util";
 import {
   AdapterContractError,
   validateManifest,
@@ -9,6 +11,8 @@ import {
   type AgentAdapter,
   type BackendKind,
 } from "./contracts.js";
+
+const execFileAsync = promisify(execFile);
 
 export interface SessionStore {
   load(id: string): AdapterSession | undefined;
@@ -71,12 +75,49 @@ export interface ProcessExecution {
 }
 
 export interface ProcessExecutor {
-  start(input: { file: string; args: string[]; cwd: string; runId: string }): Promise<ProcessExecution>;
+  start(input: { file: string; args: string[]; cwd: string; runId: string; mode?: "headless" | "pty" }): Promise<ProcessExecution>;
+}
+
+export class SpawnProcessExecutor implements ProcessExecutor {
+  async start(input: { file: string; args: string[]; cwd: string; runId: string; mode?: "headless" | "pty" }): Promise<ProcessExecution> {
+    if (input.mode === "pty") throw new AdapterContractError("PTY_EXECUTOR_REQUIRED", "PTY mode must be provided by the Runner ProcessManager");
+    return new SpawnProcessExecution(input.runId, spawn(input.file, input.args, { cwd: input.cwd, shell: false, stdio: ["pipe", "pipe", "pipe"] }));
+  }
+}
+
+class SpawnProcessExecution implements ProcessExecution {
+  private current: "running" | "cancelled" | "completed" | "failed" = "running";
+  private stdout = "";
+  private stderr = "";
+  private readonly outcome: Promise<{ state: "cancelled" | "completed" | "failed"; summary: string }>;
+
+  constructor(readonly id: string, private readonly child: ChildProcess) {
+    child.stdout?.on("data", (chunk: Buffer) => { this.stdout = (this.stdout + chunk.toString("utf8")).slice(-131_072); });
+    child.stderr?.on("data", (chunk: Buffer) => { this.stderr = (this.stderr + chunk.toString("utf8")).slice(-32_768); });
+    this.outcome = new Promise((resolve) => {
+      child.on("error", (error) => { this.stderr = error.message; });
+      child.on("close", (code) => {
+        if (this.current !== "cancelled") this.current = code === 0 ? "completed" : "failed";
+        resolve({ state: this.current, summary: (this.stdout.trim() || this.stderr.trim() || `Process exited with code ${code ?? "unknown"}`).slice(0, 4_000) });
+      });
+    });
+  }
+  async status(): Promise<{ state: "running" | "cancelled" | "completed" | "failed" }> { return { state: this.current }; }
+  async send(data: string): Promise<void> {
+    if (this.current !== "running" || !this.child.stdin?.writable) throw new AdapterContractError("SESSION_NOT_INTERACTIVE", "CLI process stdin is unavailable");
+    await new Promise<void>((resolve, reject) => this.child.stdin!.write(data, (error) => error ? reject(error) : resolve()));
+  }
+  async cancel(): Promise<void> {
+    if (this.current === "running") { this.current = "cancelled"; this.child.kill("SIGTERM"); }
+    await this.outcome;
+  }
+  result(): Promise<{ state: "cancelled" | "completed" | "failed"; summary: string }> { return this.outcome; }
 }
 
 export interface GenericCliTemplate {
   file: string;
   args: string[];
+  mode?: "headless" | "pty";
 }
 
 export const genericCliManifest: AdapterManifest = {
@@ -87,31 +128,38 @@ export const genericCliManifest: AdapterManifest = {
   configSchema: {
     type: "object",
     additionalProperties: false,
-    required: ["executable", "args"],
+    required: ["id", "alias", "executable", "args"],
     properties: {
+      id: { type: "string", minLength: 1, pattern: "^[a-z0-9][a-z0-9._-]*$" },
+      alias: { type: "string", minLength: 1 },
+      runnerId: { type: "string", minLength: 1, default: "local" },
       executable: { type: "string", title: "Executable" },
       args: { type: "array", title: "Argument template", items: { type: "string" } },
+      mode: { enum: ["headless", "pty"], default: "headless" },
     },
   },
   uiSchema: {},
   secretFields: [],
   probes: [{ id: "cli-version", kind: "command", description: "Read the configured CLI version", timeoutMs: 3_000 }],
-  backends: [{ id: "structured-cli", kind: "headless-cli", priority: 30, capabilities: ["start", "send", "cancel", "result"] }],
+  backends: [
+    { id: "structured-cli", kind: "headless-cli", priority: 30, capabilities: ["code", "git", "start", "send", "status", "cancel", "result", "interactive-input"] },
+    { id: "restricted-pty", kind: "pty", priority: 50, capabilities: ["code", "git", "start", "send", "status", "cancel", "result", "interactive-input"] },
+  ],
   capabilities: { pause: false, resume: false, usage: false, diagnostics: true },
 };
 
 export class GenericCliAdapter implements AgentAdapter {
   readonly manifest = validateManifest(genericCliManifest);
   private readonly executions = new Map<string, ProcessExecution>();
-  constructor(private readonly executor: ProcessExecutor, private readonly template: GenericCliTemplate, private readonly store: SessionStore = new MemorySessionStore()) {}
+  constructor(private readonly executor: ProcessExecutor, private readonly template: GenericCliTemplate, private readonly store: SessionStore = new MemorySessionStore(), private readonly profileId?: string) {}
 
   async start(input: { runId: string; workspacePath: string; backendId?: string; prompt?: string }): Promise<AdapterSession> {
     const id = randomUUID();
     const command = renderCommand(this.template, { prompt: input.prompt ?? "", sessionId: id, workspace: input.workspacePath });
-    const execution = await this.executor.start({ ...command, cwd: input.workspacePath, runId: input.runId });
+    const execution = await this.executor.start({ ...command, cwd: input.workspacePath, runId: input.runId, ...(this.template.mode ? { mode: this.template.mode } : {}) });
     this.executions.set(id, execution);
     const now = new Date().toISOString();
-    const session: AdapterSession = { id, runId: input.runId, backendId: input.backendId ?? "structured-cli", workspacePath: input.workspacePath, state: "RUNNING", createdAt: now, updatedAt: now };
+    const session: AdapterSession = { id, runId: input.runId, backendId: input.backendId ?? (this.template.mode === "pty" ? "restricted-pty" : "structured-cli"), workspacePath: input.workspacePath, state: "RUNNING", ...(this.profileId ? { profileId: this.profileId } : {}), createdAt: now, updatedAt: now };
     this.store.save(session);
     return structuredClone(session);
   }
@@ -145,7 +193,7 @@ export class GenericCliAdapter implements AgentAdapter {
     this.transition(sessionId, state);
     return { sessionId, state, summary: result.summary, artifacts: [] };
   }
-  async diagnostics(sessionId: string): Promise<Record<string, unknown>> { const session = this.require(sessionId); return { sessionId, backendId: session.backendId, attached: this.executions.has(sessionId) }; }
+  async diagnostics(sessionId: string): Promise<Record<string, unknown>> { const session = this.require(sessionId); return { sessionId, backendId: session.backendId, mode: this.template.mode ?? "headless", attached: this.executions.has(sessionId) }; }
 
   private require(id: string): AdapterSession { const session = this.store.load(id); if (!session) throw new AdapterContractError("SESSION_NOT_FOUND", `Unknown session ${id}`); return session; }
   private transition(id: string, state: AdapterSession["state"]): AdapterSession { const current = this.require(id); const updated = { ...current, state, updatedAt: new Date().toISOString() }; this.store.save(updated); return structuredClone(updated); }
@@ -163,4 +211,14 @@ export function renderCommand(template: GenericCliTemplate, values: { prompt: st
   });
   if ([template.file, ...args].some((value) => value.includes("\0"))) throw new AdapterContractError("UNSAFE_COMMAND_TEMPLATE", "Command contains a null byte");
   return { file: template.file, args };
+}
+
+export async function probeGenericCli(template: GenericCliTemplate): Promise<{ installed: boolean; executable: string; version?: string; diagnostic?: string }> {
+  if (!template.file || template.file.includes("{{") || template.file.includes("\0")) return { installed: false, executable: template.file, diagnostic: "Executable must be a fixed non-empty value" };
+  try {
+    const result = await execFileAsync(template.file, ["--version"], { timeout: 3_000, maxBuffer: 128 * 1024 });
+    return { installed: true, executable: template.file, version: `${result.stdout}\n${result.stderr}`.trim().slice(0, 240) || "version command succeeded" };
+  } catch (error) {
+    return { installed: false, executable: template.file, diagnostic: error instanceof Error ? error.message.slice(0, 240) : "Version probe failed" };
+  }
 }

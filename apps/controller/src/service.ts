@@ -1,6 +1,6 @@
 import { existsSync, statSync } from "node:fs";
 import { PassThrough } from "node:stream";
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { arch, platform } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,10 +11,27 @@ import {
   codexManifest,
   QoderAdapter,
   qoderManifest,
+  CursorAdapter,
+  cursorManifest,
+  KiroAdapter,
+  kiroManifest,
+  DevinAdapter,
+  devinManifest,
+  LocalServiceAdapter,
+  localServiceManifest,
+  GenericCliAdapter,
   genericCliManifest,
   genericMockManifest,
+  buildAdapterCompatibilityMatrix,
+  manifestCapabilities,
+  assessManifestCapabilities,
   probeCodexProfile,
   probeQoderProfile,
+  probeCursorProfile,
+  probeKiroProfile,
+  probeDevinProfile,
+  probeLocalService,
+  probeGenericCli,
   type AgentAdapter,
   type AdapterSession,
   type SessionStore,
@@ -22,6 +39,12 @@ import {
   type CodexProfileConfig,
   type QoderBackend,
   type QoderProfileConfig,
+  type CliAgentBackend,
+  type CliAgentProfile,
+  type DevinBackend,
+  type DevinProfileConfig,
+  type LocalServiceProfileConfig,
+  type ProcessExecutor,
 } from "@dispatcher/adapters";
 import {
   assertRequiredSecretsAvailable,
@@ -49,7 +72,17 @@ import {
   type Task,
   type TaskContract,
 } from "@dispatcher/domain";
-import { CoalescingEventStream, FleetReadModel, paginate, type FleetSnapshot } from "@dispatcher/fleet";
+import {
+  CoalescingEventStream,
+  FleetReadModel,
+  MultiSignalResourceRegistry,
+  ResetAwareProbeScheduler,
+  decideResourceRecovery,
+  paginate,
+  type FleetSnapshot,
+  type ResourceAssessment,
+  type ResourceProbeSchedule,
+} from "@dispatcher/fleet";
 import {
   CanonicalTaskService,
   ConnectorError,
@@ -80,7 +113,7 @@ import {
 import { LlmRuntime, LlmRuntimeError, type FetchLike, type LlmConfiguration, type LlmRole } from "@dispatcher/llm-runtime";
 import { createLogger, redactValue } from "@dispatcher/observability";
 import { DispatcherDatabase, RevisionConflictError, type JsonValue } from "@dispatcher/persistence";
-import { EmbeddedRunner, EventBus, RunnerRegistry, VerificationRegistry, type RunnerEvents } from "@dispatcher/runner";
+import { EmbeddedRunner, EventBus, LeaseFenceError, ProcessManager, RemoteRunnerServer, RunnerEnrollmentAuthority, RunnerLeaseAuthority, RunnerRegistry, VerificationRegistry, type RunnerEnrollmentRecord, type RunnerEvents } from "@dispatcher/runner";
 import {
   SemanticPolicyError,
   SemanticToolRegistry,
@@ -108,6 +141,8 @@ export interface ControllerOptions {
   gitTransport?: GitTransport;
   codexBackendFactory?: (profile: CodexProfileConfig) => CodexBackend;
   qoderBackendFactory?: (profile: QoderProfileConfig) => QoderBackend;
+  cliBackendFactory?: (provider: "cursor" | "kiro", profile: CliAgentProfile) => CliAgentBackend;
+  devinBackendFactory?: (profile: DevinProfileConfig) => DevinBackend;
   modules?: ServiceModule[];
 }
 
@@ -156,6 +191,10 @@ function stringMapSetting(value: JsonValue | undefined): Record<string, string> 
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const entries = Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === "string");
   return Object.fromEntries(entries);
+}
+
+function stringArraySetting(value: JsonValue | undefined): string[] | undefined {
+  return Array.isArray(value) && value.every((entry) => typeof entry === "string") ? value : undefined;
 }
 
 interface SecretBody {
@@ -210,6 +249,28 @@ interface QoderProfileBody {
   model?: string;
 }
 
+interface EcosystemProfileBody {
+  id?: string;
+  alias?: string;
+  runnerId?: string;
+  credentialRef?: string;
+  executable?: string;
+  model?: string;
+  organizationId?: string;
+  apiBase?: string;
+  maxSessionAcu?: number;
+  provider?: "workbuddy" | "codebuddy";
+  baseUrl?: string;
+  healthPath?: string;
+  startPath?: string;
+  statusPath?: string;
+  inputPath?: string;
+  cancelPath?: string;
+  resourcePath?: string;
+  args?: string[];
+  mode?: "headless" | "pty";
+}
+
 interface CodexRunBody {
   prompt?: string;
   workspacePath?: string;
@@ -219,6 +280,14 @@ interface TaskDispatchBody {
   profileId?: string;
   repositoryId?: string;
   baseRef?: string;
+  capabilities?: string[];
+  runnerTags?: string[];
+  providerIds?: string[];
+}
+
+interface RunnerEnrollmentBody {
+  runnerId?: string;
+  token?: string;
 }
 
 interface AssistantPlanBody {
@@ -255,6 +324,30 @@ function llmConfiguration(config: DispatcherConfig["internalLlm"]): LlmConfigura
   };
 }
 
+const adapterManifests = [genericMockManifest, genericCliManifest, codexManifest, qoderManifest, cursorManifest, devinManifest, kiroManifest, localServiceManifest] as const;
+
+function manifestForProvider(provider: string) {
+  if (provider === "workbuddy" || provider === "codebuddy") return localServiceManifest;
+  return adapterManifests.find((manifest) => manifest.id === provider);
+}
+
+function localServiceProfile(body: EcosystemProfileBody): LocalServiceProfileConfig | undefined {
+  if (!body.id || !body.alias || !body.provider || !body.baseUrl || !body.healthPath || !body.startPath || !body.statusPath || !body.inputPath || !body.cancelPath) return undefined;
+  return {
+    id: body.id,
+    alias: body.alias,
+    provider: body.provider,
+    baseUrl: body.baseUrl,
+    healthPath: body.healthPath,
+    startPath: body.startPath,
+    statusPath: body.statusPath,
+    inputPath: body.inputPath,
+    cancelPath: body.cancelPath,
+    ...(body.resourcePath ? { resourcePath: body.resourcePath } : {}),
+    ...(body.credentialRef ? { credentialRef: body.credentialRef } : {}),
+  };
+}
+
 export class ControllerService {
   readonly app: FastifyInstance;
   readonly database: DispatcherDatabase;
@@ -276,22 +369,42 @@ export class ControllerService {
   private readonly taskCompiler = new TaskContractCompiler();
   private readonly fleet = new FleetReadModel();
   private readonly fleetEvents = new CoalescingEventStream(512);
+  private readonly resourceRegistry = new MultiSignalResourceRegistry();
+  private readonly resourceProbes = new ResetAwareProbeScheduler();
   private readonly attentionNotifications = new AttentionNotificationPolicy();
+  private readonly leaseAuthority = new RunnerLeaseAuthority();
   private readonly secureLinks: SecureDashboardLinkIssuer;
   private readonly messagingChannels = new Map<string, string>();
   private readonly agentAdapters = new Map<string, AgentAdapter>();
   private readonly rawWebhookBodies = new WeakMap<object, Uint8Array>();
   private readonly startedAt = Date.now();
   private readonly embeddedRunner?: EmbeddedRunner;
+  private readonly remoteRunnerServer: RemoteRunnerServer;
+  private readonly enrollments: RunnerEnrollmentAuthority;
+  private resourceProbeTimer: ReturnType<typeof setInterval> | undefined;
+  private resourceProbeRunning = false;
   private listening = false;
   private stopping?: Promise<void>;
   private dashboardClients = 0;
   private readonly secretTestStates = new Map<string, SecretTestState>();
+  private readonly agentProcesses: ProcessManager;
 
   constructor(readonly options: ControllerOptions) {
     const logger = createLogger({ level: process.env.LOG_LEVEL ?? "info" });
     this.app = fastify({ loggerInstance: logger as unknown as FastifyBaseLogger });
     this.database = new DispatcherDatabase(join(options.dataDirectory, "dispatcher.sqlite"));
+    this.agentProcesses = new ProcessManager(join(options.dataDirectory, "agent-logs"));
+    this.enrollments = new RunnerEnrollmentAuthority(
+      this.database.listEntities<JsonValue>("runner-enrollment") as unknown as RunnerEnrollmentRecord[],
+      (record) => this.database.saveEntity("runner-enrollment", record.id, json(record), record.consumedAt ?? record.createdAt),
+    );
+    for (const value of this.database.listEntities<JsonValue>("run")) {
+      const run = value as unknown as Run;
+      if (isTerminalRunState(run.state)) continue;
+      this.restoreLeaseAuthority(run);
+    }
+    this.resourceRegistry.restore(this.database.listEntities<JsonValue>("resource-signal") as unknown as ResourceSnapshot[]);
+    this.resourceProbes.restore(this.database.listEntities<JsonValue>("resource-probe-schedule") as unknown as ResourceProbeSchedule[]);
     this.workspaces = new WorkspaceManager(this.repositories, join(options.dataDirectory, "worktrees"));
     this.tasks = new CanonicalTaskService(this.database);
     this.projections = new ProjectionWorker(this.database, this.connectors);
@@ -320,7 +433,24 @@ export class ControllerService {
       this.fleetEvents.publish("runner.changed", runner.id, redactValue(runner));
       if (runner.state === "OFFLINE") await this.notifyOperationalAttention({ key: runner.id, state: "RUNNER_OFFLINE", subject: `Runner offline: ${runner.displayName}`, body: `${runner.id} stopped reporting capacity.` });
     });
+    this.remoteRunnerServer = new RemoteRunnerServer({
+      registry: this.runners,
+      server: this.app.server,
+      path: "/runner",
+      authenticate: async ({ runnerId, bearerToken }) => {
+        if (!bearerToken) return false;
+        const configured = this.configuration.current().config.runners.find((runner) => runner.id === runnerId && runner.mode === "remote");
+        if (!configured?.credentialRef) return false;
+        const expected = await this.secrets.resolve(configured.credentialRef, { principal: "controller", purpose: "provider" });
+        const suppliedBytes = Buffer.from(bearerToken);
+        const expectedBytes = Buffer.from(expected);
+        return suppliedBytes.length === expectedBytes.length && timingSafeEqual(suppliedBytes, expectedBytes);
+      },
+      onRunnerChanged: async (runner) => await this.events.publish("runnerChanged", runner),
+    });
     const modules: ServiceModule[] = [];
+    modules.push({ name: "agent-processes", start: () => undefined, stop: () => this.agentProcesses.shutdown() });
+    modules.push({ name: "remote-runner-server", start: () => undefined, stop: () => this.remoteRunnerServer.close() });
     if (options.withRunner) {
       const configured = this.configuration.current().config.runners.find((runner) => runner.mode === "embedded");
       const now = new Date().toISOString();
@@ -337,6 +467,18 @@ export class ControllerService {
       this.embeddedRunner = new EmbeddedRunner(runner, this.runners, this.events);
       modules.push({ name: "embedded-runner", start: () => this.embeddedRunner?.start(), stop: () => this.embeddedRunner?.stop() });
     }
+    modules.push({
+      name: "resource-monitor",
+      start: () => {
+        this.resourceProbeTimer = setInterval(() => void this.runDueResourceProbes(), 30_000);
+        this.resourceProbeTimer.unref();
+        void this.runDueResourceProbes();
+      },
+      stop: () => {
+        if (this.resourceProbeTimer) clearInterval(this.resourceProbeTimer);
+        this.resourceProbeTimer = undefined;
+      },
+    });
     modules.push(...(options.modules ?? []));
     this.lifecycle = new LifecycleManager(modules);
     this.registerRoutes();
@@ -368,6 +510,57 @@ export class ControllerService {
       this.listening = false;
     })();
     return this.stopping;
+  }
+
+  private restoreLeaseAuthority(run: Run): void {
+    if (this.leaseAuthority.current(run.id)) return;
+    const expiresAt = run.leaseExpiresAt ?? new Date(Date.now() + 15 * 60_000).toISOString();
+    this.leaseAuthority.issue({ runId: run.id, runnerId: run.runnerId, leaseId: run.leaseId, generation: run.generation, expiresAt });
+    this.persistLatestLeaseAudit(run.id);
+  }
+
+  private fenceDelivery(run: Run, operation: "branch" | "push" | "pull-request" | "complete"): void {
+    this.restoreLeaseAuthority(run);
+    try {
+      this.leaseAuthority.fence(run.id, run.leaseId, run.generation, operation);
+      this.persistLatestLeaseAudit(run.id);
+    } catch (error) {
+      this.persistLatestLeaseAudit(run.id);
+      if (error instanceof LeaseFenceError) {
+        throw new ConnectorError("CONFLICT", `Delivery authority rejected during ${operation}: ${error.message}`, { retryable: false, operation: "delivery" });
+      }
+      throw error;
+    }
+  }
+
+  private persistLatestLeaseAudit(runId: string): void {
+    const audit = this.leaseAuthority.audit(runId);
+    const record = audit.at(-1);
+    if (!record) return;
+    this.database.saveEntity("lease-audit", `${runId}:${audit.length}`, json(record), record.occurredAt);
+  }
+
+  private genericProcessExecutor(): ProcessExecutor {
+    return {
+      start: async (input) => {
+        const handle = await this.agentProcesses.start({ runId: input.runId, file: input.file, args: input.args, cwd: input.cwd, ...(input.mode === "pty" ? { mode: "pty" as const } : { mode: "process" as const }) });
+        const state = async (): Promise<"running" | "cancelled" | "completed" | "failed"> => {
+          if (handle.status().state === "running") return "running";
+          const result = await handle.result();
+          return result.classification === "success" ? "completed" : result.classification === "cancelled" ? "cancelled" : "failed";
+        };
+        return {
+          id: handle.id,
+          status: async () => ({ state: await state() }),
+          send: (data) => handle.send(data),
+          cancel: () => handle.cancel(),
+          result: async () => {
+            const result = await handle.result();
+            return { state: result.classification === "success" ? "completed" as const : result.classification === "cancelled" ? "cancelled" as const : "failed" as const, summary: result.stdoutTail || result.stderrTail || result.classification };
+          },
+        };
+      },
+    };
   }
 
   private applyRuntimeConfiguration(config: DispatcherConfig): void {
@@ -469,6 +662,62 @@ export class ControllerService {
       };
       this.agentAdapters.set(profile.id, new QoderAdapter(adapterProfile, this.options.qoderBackendFactory?.(adapterProfile), store));
     }
+    const resolveProviderCredential = (reference: string): Promise<string> => this.secrets.resolve(reference, { principal: "controller", purpose: "provider" });
+    for (const profile of config.agentProfiles.filter((entry) => entry.provider === "cursor" || entry.provider === "kiro")) {
+      const adapterProfile: CliAgentProfile = {
+        id: profile.id,
+        alias: profile.alias,
+        ...(stringSetting(profile.settings?.executable) ? { executable: stringSetting(profile.settings?.executable)! } : {}),
+        ...(profile.credentialRef ? { credentialRef: profile.credentialRef } : {}),
+        ...(stringSetting(profile.settings?.model) ? { model: stringSetting(profile.settings?.model)! } : {}),
+      };
+      const backend = this.options.cliBackendFactory?.(profile.provider as "cursor" | "kiro", adapterProfile);
+      this.agentAdapters.set(profile.id, profile.provider === "cursor"
+        ? new CursorAdapter(adapterProfile, backend, store, resolveProviderCredential)
+        : new KiroAdapter(adapterProfile, backend, store, resolveProviderCredential));
+    }
+    for (const profile of config.agentProfiles.filter((entry) => entry.provider === "devin")) {
+      const organizationId = stringSetting(profile.settings?.organizationId);
+      if (!organizationId || !profile.credentialRef) continue;
+      const adapterProfile: DevinProfileConfig = {
+        id: profile.id,
+        alias: profile.alias,
+        organizationId,
+        credentialRef: profile.credentialRef,
+        ...(stringSetting(profile.settings?.apiBase) ? { apiBase: stringSetting(profile.settings?.apiBase)! } : {}),
+        ...(typeof profile.settings?.maxSessionAcu === "number" ? { maxSessionAcu: profile.settings.maxSessionAcu } : {}),
+      };
+      this.agentAdapters.set(profile.id, new DevinAdapter(adapterProfile, this.options.devinBackendFactory?.(adapterProfile), store, resolveProviderCredential, this.options.integrationFetch as typeof fetch | undefined));
+    }
+    for (const profile of config.agentProfiles.filter((entry) => entry.provider === "workbuddy" || entry.provider === "codebuddy")) {
+      const settings = profile.settings;
+      const required = ["baseUrl", "healthPath", "startPath", "statusPath", "inputPath", "cancelPath"] as const;
+      if (required.some((key) => !stringSetting(settings?.[key]))) continue;
+      const adapterProfile: LocalServiceProfileConfig = {
+        id: profile.id,
+        alias: profile.alias,
+        provider: profile.provider as "workbuddy" | "codebuddy",
+        baseUrl: stringSetting(settings?.baseUrl)!,
+        healthPath: stringSetting(settings?.healthPath)!,
+        startPath: stringSetting(settings?.startPath)!,
+        statusPath: stringSetting(settings?.statusPath)!,
+        inputPath: stringSetting(settings?.inputPath)!,
+        cancelPath: stringSetting(settings?.cancelPath)!,
+        ...(stringSetting(settings?.resourcePath) ? { resourcePath: stringSetting(settings?.resourcePath)! } : {}),
+        ...(profile.credentialRef ? { credentialRef: profile.credentialRef } : {}),
+      };
+      this.agentAdapters.set(profile.id, new LocalServiceAdapter(adapterProfile, resolveProviderCredential, this.options.integrationFetch as typeof fetch | undefined, store));
+    }
+    for (const profile of config.agentProfiles.filter((entry) => entry.provider === "generic-cli")) {
+      const executable = stringSetting(profile.settings?.executable);
+      const args = stringArraySetting(profile.settings?.args);
+      if (!executable || !args) continue;
+      this.agentAdapters.set(profile.id, new GenericCliAdapter(this.genericProcessExecutor(), {
+        file: executable,
+        args,
+        ...(profile.settings?.mode === "pty" || profile.settings?.mode === "headless" ? { mode: profile.settings.mode } : {}),
+      }, store, profile.id));
+    }
   }
 
   private async processExternalTaskEvent(adapter: TaskPlatformAdapter, event: ExternalEvent): Promise<{ task: Task; revision: number; duplicate: boolean }> {
@@ -567,6 +816,8 @@ export class ControllerService {
   }
 
   private profileResourceState(profileId: string): ResourceState {
+    const assessment = this.resourceRegistry.assess(profileId);
+    if (assessment.evidence.length) return assessment.state;
     const snapshot = this.database.getEntity<JsonValue>("resource-snapshot", profileId) as unknown as ResourceSnapshot | undefined;
     return snapshot?.state ?? "AVAILABLE";
   }
@@ -628,14 +879,24 @@ export class ControllerService {
         capabilities: adapter.definition.capabilities.filter((capability) => capability.support === "supported").map((capability) => `${capability.namespace}@${capability.version}`),
       };
     });
-    const profiles = this.configuration.current().config.agentProfiles.map((profile) => ({
-      id: profile.id,
-      alias: profile.alias,
-      provider: profile.provider,
-      state: this.agentAdapters.has(profile.id) ? "CONFIGURED" : "UNAVAILABLE",
-      resourceState: this.profileResourceState(profile.id),
-      runnerId: profile.runnerId,
-    }));
+    const profiles = this.configuration.current().config.agentProfiles.map((profile) => {
+      const resource = this.resourceRegistry.assess(profile.id, now);
+      return {
+        id: profile.id,
+        alias: profile.alias,
+        provider: profile.provider,
+        state: this.agentAdapters.has(profile.id) ? "CONFIGURED" : "UNAVAILABLE",
+        resourceState: resource.evidence.length ? resource.state : this.profileResourceState(profile.id),
+        ...(resource.evidence.length ? {
+          resourceReason: resource.reason,
+          resourceSource: resource.source,
+          resourceConfidence: resource.confidence,
+          resetsAt: resource.resetsAt,
+          affectedTasks: storedRuns.filter((run) => run.profileId === profile.id && run.state === "RESOURCE_BLOCKED").length,
+        } : {}),
+        runnerId: profile.runnerId,
+      };
+    });
     return this.fleet.rebuild({ tasks, runs, connectors, profiles }, now);
   }
 
@@ -645,18 +906,157 @@ export class ControllerService {
     const state = typeof usage.state === "string" && RESOURCE_STATES.includes(usage.state as ResourceState)
       ? usage.state as ResourceState
       : undefined;
-    if (!state || state === "UNKNOWN") return undefined;
+    if (!state) return undefined;
+    const resourceSources: ResourceSnapshot["source"][] = ["sdk", "cli", "session", "error", "probe", "manual"];
+    const reportedSource = typeof usage.source === "string" && resourceSources.includes(usage.source as ResourceSnapshot["source"])
+      ? usage.source as ResourceSnapshot["source"]
+      : undefined;
     const snapshot: ResourceSnapshot = {
       profileId,
       state,
       ...(typeof usage.reason === "string" ? { reason: usage.reason } : {}),
       ...(typeof usage.resetsAt === "string" ? { resetsAt: usage.resetsAt } : {}),
-      source: usage.source === "error" ? "error" : "session",
+      source: reportedSource ?? (usage.source === "error" ? "error" : "session"),
       confidence: usage.confidence === "high" || usage.confidence === "medium" ? usage.confidence : "low",
       checkedAt: new Date().toISOString(),
     };
-    this.database.saveEntity("resource-snapshot", profileId, json(snapshot));
+    this.database.saveEntity("resource-signal", `${profileId}:${snapshot.source}`, json(snapshot), snapshot.checkedAt);
+    const assessment = this.resourceRegistry.record(snapshot);
+    const effective: ResourceSnapshot = {
+      profileId: assessment.profileId,
+      state: assessment.state,
+      ...(assessment.reason ? { reason: assessment.reason } : {}),
+      ...(assessment.resetsAt ? { resetsAt: assessment.resetsAt } : {}),
+      source: assessment.source,
+      confidence: assessment.confidence,
+      checkedAt: assessment.checkedAt,
+    };
+    this.database.saveEntity("resource-snapshot", profileId, json(effective), effective.checkedAt);
+    const priorSchedule = this.resourceProbes.list().find((entry) => entry.profileId === profileId);
+    const scheduled = this.resourceProbes.schedule(effective);
+    if (scheduled) this.database.saveEntity("resource-probe-schedule", profileId, json(scheduled), scheduled.nextProbeAt);
+    else if (priorSchedule && (effective.state === "AVAILABLE" || effective.state === "LOW")) {
+      const recovered: ResourceProbeSchedule = { ...priorSchedule, status: "RECOVERED", lastProbeAt: effective.checkedAt, lastState: effective.state };
+      this.database.saveEntity("resource-probe-schedule", profileId, json(recovered), effective.checkedAt);
+    }
+    this.fleetEvents.publish("resource.changed", profileId, redactValue(assessment));
     return snapshot;
+  }
+
+  private async probeProfileResource(profileId: string): Promise<ResourceSnapshot | undefined> {
+    const adapter = this.agentAdapters.get(profileId);
+    if (!adapter?.usage) return undefined;
+    const run = this.database.listEntities<JsonValue>("run")
+      .map((value) => value as unknown as Run)
+      .filter((candidate) => candidate.profileId === profileId)
+      .sort((left, right) => (right.lastActivityAt ?? right.startedAt ?? "").localeCompare(left.lastActivityAt ?? left.startedAt ?? ""))[0];
+    if (!run) return undefined;
+    const snapshot = await this.captureProfileResource(profileId, adapter, run.sessionId);
+    if (!snapshot) return undefined;
+    const scheduled = this.resourceProbes.list().find((entry) => entry.profileId === profileId);
+    if (scheduled?.status === "PROBING") {
+      const completed = this.resourceProbes.complete(profileId, snapshot);
+      this.database.saveEntity("resource-probe-schedule", profileId, json(completed), completed.lastProbeAt ?? completed.nextProbeAt);
+    }
+    const assessment = this.resourceRegistry.assess(profileId);
+    if (assessment.state === "AVAILABLE" || assessment.state === "LOW") await this.recoverProfileRuns(profileId, assessment);
+    return snapshot;
+  }
+
+  private async runDueResourceProbes(): Promise<void> {
+    if (this.resourceProbeRunning) return;
+    this.resourceProbeRunning = true;
+    try {
+      for (const due of this.resourceProbes.due()) {
+        this.database.saveEntity("resource-probe-schedule", due.profileId, json(due), due.lastProbeAt ?? due.nextProbeAt);
+        try {
+          const result = await this.probeProfileResource(due.profileId);
+          if (!result) {
+            const unavailable: ResourceSnapshot = { profileId: due.profileId, state: "UNKNOWN", reason: "Provider did not return a resource probe", source: "probe", confidence: "low", checkedAt: new Date().toISOString() };
+            this.resourceRegistry.record(unavailable);
+            this.database.saveEntity("resource-signal", `${due.profileId}:probe`, json(unavailable), unavailable.checkedAt);
+            const completed = this.resourceProbes.complete(due.profileId, unavailable);
+            this.database.saveEntity("resource-probe-schedule", due.profileId, json(completed), completed.lastProbeAt ?? completed.nextProbeAt);
+          }
+        } catch (error) {
+          const failed: ResourceSnapshot = { profileId: due.profileId, state: "PROVIDER_DOWN", reason: error instanceof Error ? error.message : "Resource probe failed", source: "probe", confidence: "medium", checkedAt: new Date().toISOString() };
+          this.resourceRegistry.record(failed);
+          this.database.saveEntity("resource-signal", `${due.profileId}:probe`, json(failed), failed.checkedAt);
+          const completed = this.resourceProbes.complete(due.profileId, failed);
+          this.database.saveEntity("resource-probe-schedule", due.profileId, json(completed), completed.lastProbeAt ?? completed.nextProbeAt);
+        }
+      }
+    } finally {
+      this.resourceProbeRunning = false;
+    }
+  }
+
+  private async recoverProfileRuns(profileId: string, assessment: ResourceAssessment): Promise<Array<{ runId: string; action: string; reason: string }>> {
+    const outcomes: Array<{ runId: string; action: string; reason: string }> = [];
+    const adapter = this.agentAdapters.get(profileId);
+    if (!adapter) return outcomes;
+    const runs = this.database.listEntities<JsonValue>("run").map((value) => value as unknown as Run).filter((run) => run.profileId === profileId && run.state === "RESOURCE_BLOCKED");
+    for (const run of runs) {
+      const taskRecord = this.database.getCanonicalTask<JsonValue>(run.taskId);
+      const task = taskRecord?.document as unknown as Task | undefined;
+      let session: AdapterSession | undefined;
+      try { session = await adapter.status(run.sessionId); } catch { /* explicit reroute decision below */ }
+      const runner = this.runners.list().find((candidate) => candidate.id === run.runnerId);
+      const decision = decideResourceRecovery({
+        run,
+        currentGeneration: task?.currentRunId === run.id ? run.generation : run.generation + 1,
+        ...(task?.currentRunId ? { currentRunId: task.currentRunId } : {}),
+        sessionResumable: Boolean(session && (session.providerSessionId || adapter.manifest.capabilities.resume)),
+        profileAvailable: assessment.state === "AVAILABLE" || assessment.state === "LOW",
+        runnerAvailable: runner?.state === "ONLINE" || runner?.state === "DEGRADED",
+      });
+      if (this.database.getEntity<JsonValue>("resource-recovery", decision.idempotencyKey)) {
+        outcomes.push({ runId: run.id, action: "DEDUPED", reason: decision.reason });
+        continue;
+      }
+      if (decision.action !== "RESUME") {
+        this.database.saveEntity("resource-recovery", decision.idempotencyKey, json({ ...decision, runId: run.id, profileId, recordedAt: new Date().toISOString() }));
+        outcomes.push({ runId: run.id, action: decision.action, reason: decision.reason });
+        continue;
+      }
+      try {
+        await adapter.resume(run.sessionId);
+      } catch (error) {
+        const reason = `Same-session resume failed: ${error instanceof Error ? error.message : "unknown error"}; controlled reroute requires operator approval`;
+        this.database.saveEntity("resource-recovery", decision.idempotencyKey, json({ runId: run.id, profileId, action: "REROUTE_REQUIRED", reason, revokeLeaseId: run.leaseId, recordedAt: new Date().toISOString() }));
+        outcomes.push({ runId: run.id, action: "REROUTE_REQUIRED", reason });
+        continue;
+      }
+      assertRunTransition(run.state, "ACTIVE");
+      run.state = "ACTIVE";
+      run.recoveryReason = decision.reason;
+      run.lastActivityAt = new Date().toISOString();
+      delete run.resourceBlockReason;
+      this.database.saveEntity("run", run.id, json(run), run.lastActivityAt);
+      if (taskRecord && task?.state === "WAITING_RESOURCE") {
+        this.tasks.execute({ id: decision.idempotencyKey, taskId: run.taskId, baseRevision: taskRecord.revision, actor: "resource-monitor", command: { type: "task.transition", state: "RUNNING" } });
+      }
+      this.database.saveEntity("resource-recovery", decision.idempotencyKey, json({ ...decision, runId: run.id, profileId, assessment, recoveredAt: run.lastActivityAt }));
+      this.attentionNotifications.recover(run.taskId);
+      await this.notifyResourceRecovery(run, decision.idempotencyKey);
+      await this.projections.drain();
+      this.fleetEvents.publish("run.changed", run.id, { id: run.id, state: run.state, recoveryReason: run.recoveryReason });
+      outcomes.push({ runId: run.id, action: decision.action, reason: decision.reason });
+    }
+    return outcomes;
+  }
+
+  private async notifyResourceRecovery(run: Run, idempotencyKey: string): Promise<void> {
+    const existing = this.database.getEntity<JsonValue>("resource-recovery-notification", idempotencyKey);
+    if (existing) return;
+    const binding = this.database.listEntities<JsonValue>("messaging-conversation")
+      .map((value) => value as unknown as ConversationBinding)
+      .find((candidate) => candidate.runId === run.id && candidate.generation === run.generation);
+    const connector = binding ? this.connectors.get<MessagingAdapter>(binding.connectorInstanceId) : undefined;
+    if (binding && connector?.reply) {
+      const sent = await connector.reply({ channel: binding.conversationId, threadId: binding.threadId, text: `Resource recovered; resumed the original session for run ${run.id}.` }, `${idempotencyKey}:thread`);
+      this.database.saveEntity("resource-recovery-notification", idempotencyKey, json({ idempotencyKey, externalMessageId: sent.externalMessageId, threadId: binding.threadId, sentAt: new Date().toISOString() }));
+    }
   }
 
   private async advanceRun(runId: string): Promise<{ waiting: boolean; run: Run; task: Task; deliveries: JsonValue[] }> {
@@ -690,10 +1090,13 @@ export class ControllerService {
         return { waiting: true, run, task: this.database.getCanonicalTask<JsonValue>(run.taskId)!.document as unknown as Task, deliveries: [] };
       }
       const resource = await this.captureProfileResource(run.profileId, adapter, run.sessionId);
-      if (resource) {
+      if (resource && !["AVAILABLE", "LOW", "UNKNOWN"].includes(resource.state)) {
+        const pausedSession = await adapter.status(run.sessionId);
         assertRunTransition(run.state, "RESOURCE_BLOCKED");
         run.state = "RESOURCE_BLOCKED";
         run.resourceBlockReason = resource.reason ?? resource.state;
+        if (pausedSession.providerSessionId) run.providerSessionId = pausedSession.providerSessionId;
+        run.resumePolicy = pausedSession.providerSessionId || adapter.manifest.capabilities.resume ? "same-session" : "controlled-reroute";
         this.database.saveEntity("run", run.id, json(run));
         const current = this.database.getCanonicalTask<JsonValue>(run.taskId)!;
         if ((current.document as unknown as Task).state === "RUNNING") {
@@ -783,6 +1186,7 @@ export class ControllerService {
       title: contract.goal,
       body: `Verified by Agent Dispatcher run ${run.id}.`,
       verification: run.verification,
+      assertAuthority: (operation) => this.fenceDelivery(run, operation),
     });
     const pullRequest = delivery.evidence.find((entry) => entry.kind === "pull-request");
     assertRunTransition(run.state, "COMPLETE");
@@ -954,21 +1358,29 @@ export class ControllerService {
         const previousAdapter = run ? this.agentAdapters.get(run.profileId) : undefined;
         const contract = run ? this.database.getTaskContract<JsonValue>(run.taskId) as unknown as TaskContract | undefined : undefined;
         if (!run || isTerminalRunState(run.state) || !run.worktree || !profile || !nextAdapter || !previousAdapter || !contract) throw new SemanticPolicyError("INVALID_INPUT", `Run ${runId} cannot be rerouted to ${nextProfileId}`);
+        const capabilityAssessment = assessManifestCapabilities(nextAdapter.manifest, run.requiredCapabilities ?? ["code", "git"]);
+        if (!capabilityAssessment.supported) throw new SemanticPolicyError("INVALID_INPUT", capabilityAssessment.explanation);
         const session = await nextAdapter.start({ runId: randomUUID(), workspacePath: run.worktree, prompt: contract.goal });
         try { await previousAdapter.cancel(run.sessionId); }
         catch (error) { await nextAdapter.cancel(session.id); throw error; }
         assertRunTransition(run.state, "SUPERSEDED");
         run.state = "SUPERSEDED";
         run.endedAt = new Date().toISOString();
+        run.recoveryReason = `Delivery authority revoked for controlled reroute to ${nextProfileId}`;
         this.database.saveEntity("run", run.id, json(run));
         const now = new Date().toISOString();
-        const rerouted: Run = { ...run, id: session.runId, runnerId: profile.runnerId, providerId: profile.provider, profileId: nextProfileId, sessionId: session.id, state: "ACTIVE", attempt: run.attempt + 1, generation: run.generation + 1, leaseId: randomUUID(), startedAt: now, lastActivityAt: now, verification: { state: "PENDING", commands: [...contract.verification] } };
+        this.restoreLeaseAuthority(run);
+        this.leaseAuthority.revoke(run.id, run.leaseId, run.generation, `controlled reroute to ${nextProfileId}`, now);
+        this.persistLatestLeaseAudit(run.id);
+        const rerouted: Run = { ...run, id: session.runId, runnerId: profile.runnerId, providerId: profile.provider, profileId: nextProfileId, sessionId: session.id, ...(session.providerSessionId ? { providerSessionId: session.providerSessionId } : {}), resumePolicy: session.providerSessionId || nextAdapter.manifest.capabilities.resume ? "same-session" : "controlled-reroute", state: "ACTIVE", attempt: run.attempt + 1, generation: run.generation + 1, leaseId: randomUUID(), leaseExpiresAt: new Date(Date.parse(now) + 15 * 60_000).toISOString(), revokedLeaseIds: [...(run.revokedLeaseIds ?? []), run.leaseId], startedAt: now, lastActivityAt: now, verification: { state: "PENDING", commands: [...contract.verification] } };
         delete rerouted.endedAt;
         delete rerouted.failureReason;
         delete rerouted.resourceBlockReason;
+        rerouted.recoveryReason = `Controlled reroute from ${run.profileId}; prior lease ${run.leaseId} revoked`;
         delete rerouted.activitySummary;
         delete rerouted.prUrl;
         this.database.saveEntity("run", rerouted.id, json(rerouted));
+        this.restoreLeaseAuthority(rerouted);
         const stored = this.database.getCanonicalTask<JsonValue>(run.taskId);
         if (!stored) throw new SemanticPolicyError("INVALID_INPUT", `Unknown task ${run.taskId}`);
         const bound = this.tasks.execute({ id: `semantic:${context.workflowId}:bind`, taskId: run.taskId, baseRevision: stored.revision, actor: context.principal.id, command: { type: "task.set-current-run", runId: rerouted.id } });
@@ -1223,21 +1635,66 @@ export class ControllerService {
     });
 
     this.app.get("/api/runners", async () => ({ runners: this.runners.list() }));
-    this.app.get("/api/adapters/manifests", async () => ({ manifests: [genericMockManifest, genericCliManifest, codexManifest, qoderManifest] }));
+    this.app.post<{ Params: { id: string }; Body: { ttlMs?: number } }>("/api/runners/:id/enrollment", async (request, reply) => {
+      const runner = this.configuration.current().config.runners.find((candidate) => candidate.id === request.params.id && candidate.mode === "remote");
+      if (!runner) return reply.code(404).send({ code: "REMOTE_RUNNER_NOT_FOUND" });
+      const issued = this.enrollments.issue(runner.id, request.body?.ttlMs);
+      return reply.code(201).send({ runnerId: runner.id, token: issued.token, expiresAt: issued.record.expiresAt });
+    });
+    this.app.post<{ Body: RunnerEnrollmentBody }>("/api/runners/enroll", async (request, reply) => {
+      if (!request.body?.runnerId || !request.body.token) return reply.code(400).send({ code: "ENROLLMENT_INPUT_REQUIRED" });
+      const runner = this.configuration.current().config.runners.find((candidate) => candidate.id === request.body!.runnerId && candidate.mode === "remote");
+      if (!runner?.credentialRef) return reply.code(404).send({ code: "REMOTE_RUNNER_NOT_FOUND" });
+      try {
+        this.enrollments.consume(runner.id, request.body.token);
+      } catch (error) {
+        return reply.code(401).send({ code: "ENROLLMENT_REJECTED", message: error instanceof Error ? error.message : "Enrollment rejected" });
+      }
+      const bearerToken = randomBytes(32).toString("base64url");
+      await this.secrets.put(runner.credentialRef, bearerToken);
+      this.database.saveEntity("runner-identity", runner.id, json({ runnerId: runner.id, credentialRef: runner.credentialRef, enrolledAt: new Date().toISOString() }));
+      return reply.code(201).send({ runnerId: runner.id, credentialRef: runner.credentialRef, bearerToken, protocolVersion: "1.2" });
+    });
+    this.app.get("/api/adapters/manifests", async () => ({ manifests: adapterManifests }));
+    this.app.get("/api/adapters/compatibility", async () => ({ matrix: buildAdapterCompatibilityMatrix(adapterManifests) }));
     this.app.get("/api/agents/profiles", async () => ({
-      profiles: this.configuration.current().config.agentProfiles.map((profile) => ({
-        id: profile.id,
-        provider: profile.provider,
-        alias: profile.alias,
-        runnerId: profile.runnerId,
-        state: this.agentAdapters.has(profile.id) ? "CONFIGURED" : "UNAVAILABLE",
-        resourceState: this.profileResourceState(profile.id),
-      })),
+      profiles: this.configuration.current().config.agentProfiles.map((profile) => {
+        const manifest = manifestForProvider(profile.provider);
+        return {
+          id: profile.id,
+          provider: profile.provider,
+          alias: profile.alias,
+          runnerId: profile.runnerId,
+          state: this.agentAdapters.has(profile.id) ? "CONFIGURED" : "UNAVAILABLE",
+          resourceState: this.profileResourceState(profile.id),
+          capabilities: manifest ? manifestCapabilities(manifest) : [],
+        };
+      }),
       sessions: this.database.listEntities<JsonValue>("adapter-session").map((value) => {
         const session = value as Record<string, JsonValue>;
         return { id: session.id, runId: session.runId, profileId: session.profileId, state: session.state, updatedAt: session.updatedAt };
       }),
     }));
+    this.app.get("/api/resources", async () => ({
+      resources: this.configuration.current().config.agentProfiles.map((profile) => {
+        const assessment = this.resourceRegistry.assess(profile.id);
+        const affectedTasks = this.database.listEntities<JsonValue>("run").map((value) => value as unknown as Run)
+          .filter((run) => run.profileId === profile.id && run.state === "RESOURCE_BLOCKED").map((run) => run.taskId);
+        return { ...assessment, affectedTasks: [...new Set(affectedTasks)].sort() };
+      }),
+      schedules: this.resourceProbes.list(),
+    }));
+    this.app.post<{ Params: { profileId: string } }>("/api/resources/:profileId/probe", async (request, reply) => {
+      if (!this.agentAdapters.has(request.params.profileId)) return reply.code(404).send({ code: "PROFILE_NOT_FOUND" });
+      const snapshot = await this.probeProfileResource(request.params.profileId);
+      if (!snapshot) return reply.code(409).send({ code: "RESOURCE_PROBE_UNAVAILABLE" });
+      return { snapshot, assessment: this.resourceRegistry.assess(request.params.profileId), schedules: this.resourceProbes.list().filter((entry) => entry.profileId === request.params.profileId) };
+    });
+    this.app.post<{ Params: { profileId: string } }>("/api/resources/:profileId/recover", async (request, reply) => {
+      const assessment = this.resourceRegistry.assess(request.params.profileId);
+      if (!["AVAILABLE", "LOW"].includes(assessment.state)) return reply.code(409).send({ code: "RESOURCE_NOT_READY", assessment });
+      return { assessment, recoveries: await this.recoverProfileRuns(request.params.profileId, assessment) };
+    });
     this.app.post<{ Body: CodexProfileBody }>("/api/agents/codex/discover", async (request, reply) => {
       if (!request.body?.codexHome || !request.body.alias) return reply.code(400).send({ code: "CODEX_PROFILE_REQUIRED" });
       return probeCodexProfile({
@@ -1299,6 +1756,59 @@ export class ControllerService {
       const applied = this.configuration.applyPlan(plan.id, { confirmed: true });
       return reply.code(201).send({ profile: { id: body.id, provider: "qoder", alias: body.alias, runnerId: body.runnerId ?? "local", state: "CONFIGURED" }, discovery: discovery.selected, revision: applied.revision });
     });
+    this.app.post<{ Params: { provider: string }; Body: EcosystemProfileBody }>("/api/agents/:provider/discover", async (request, reply) => {
+      const body = request.body;
+      if (!body?.alias) return reply.code(400).send({ code: "AGENT_PROFILE_REQUIRED" });
+      const resolveCredential = (reference: string): Promise<string> => this.secrets.resolve(reference, { principal: "controller", purpose: "provider" });
+      if (request.params.provider === "cursor" || request.params.provider === "kiro") {
+        const profile: CliAgentProfile = { id: body.id ?? `discovered-${request.params.provider}`, alias: body.alias, ...(body.executable ? { executable: body.executable } : {}), ...(body.credentialRef ? { credentialRef: body.credentialRef } : {}), ...(body.model ? { model: body.model } : {}) };
+        return request.params.provider === "cursor" ? probeCursorProfile(profile, resolveCredential) : probeKiroProfile(profile, resolveCredential);
+      }
+      if (request.params.provider === "devin") {
+        if (!body.organizationId || !body.credentialRef) return reply.code(400).send({ code: "DEVIN_PROFILE_REQUIRED" });
+        return probeDevinProfile({ id: body.id ?? "discovered-devin", alias: body.alias, organizationId: body.organizationId, credentialRef: body.credentialRef, ...(body.apiBase ? { apiBase: body.apiBase } : {}), ...(body.maxSessionAcu ? { maxSessionAcu: body.maxSessionAcu } : {}) }, resolveCredential, this.options.integrationFetch as typeof fetch | undefined);
+      }
+      if (request.params.provider === "workbuddy-codebuddy") {
+        const local = localServiceProfile({ ...body, id: body.id ?? "discovered-local-service" });
+        if (!local) return reply.code(400).send({ code: "LOCAL_SERVICE_PROFILE_REQUIRED" });
+        return probeLocalService(local, resolveCredential, this.options.integrationFetch as typeof fetch | undefined);
+      }
+      if (request.params.provider === "generic-cli") {
+        if (!body.executable || !body.args) return reply.code(400).send({ code: "GENERIC_CLI_PROFILE_REQUIRED" });
+        return probeGenericCli({ file: body.executable, args: body.args, ...(body.mode ? { mode: body.mode } : {}) });
+      }
+      return reply.code(404).send({ code: "ADAPTER_NOT_FOUND" });
+    });
+    this.app.post<{ Params: { provider: string }; Body: EcosystemProfileBody }>("/api/agents/:provider/profiles", async (request, reply) => {
+      const body = request.body;
+      if (!body?.id || !body.alias) return reply.code(400).send({ code: "AGENT_PROFILE_REQUIRED" });
+      const current = this.configuration.current();
+      if (current.config.agentProfiles.some((profile) => profile.id === body.id)) return reply.code(409).send({ code: "PROFILE_EXISTS" });
+      let provider = request.params.provider;
+      let settings: Record<string, JsonValue>;
+      let credentialRef = body.credentialRef;
+      if (provider === "cursor" || provider === "kiro") {
+        settings = { ...(body.executable ? { executable: body.executable } : {}), ...(body.model ? { model: body.model } : {}) };
+      } else if (provider === "devin") {
+        if (!body.organizationId || !credentialRef) return reply.code(400).send({ code: "DEVIN_PROFILE_REQUIRED" });
+        settings = { organizationId: body.organizationId, ...(body.apiBase ? { apiBase: body.apiBase } : {}), ...(body.maxSessionAcu ? { maxSessionAcu: body.maxSessionAcu } : {}) };
+      } else if (provider === "workbuddy-codebuddy") {
+        const local = localServiceProfile(body);
+        if (!local) return reply.code(400).send({ code: "LOCAL_SERVICE_PROFILE_REQUIRED" });
+        provider = local.provider;
+        settings = { baseUrl: local.baseUrl, healthPath: local.healthPath, startPath: local.startPath, statusPath: local.statusPath, inputPath: local.inputPath, cancelPath: local.cancelPath, ...(local.resourcePath ? { resourcePath: local.resourcePath } : {}) };
+      } else if (provider === "generic-cli") {
+        if (!body.executable || !body.args) return reply.code(400).send({ code: "GENERIC_CLI_PROFILE_REQUIRED" });
+        settings = { executable: body.executable, args: body.args, mode: body.mode ?? "headless" };
+        credentialRef = undefined;
+      } else return reply.code(404).send({ code: "ADAPTER_NOT_FOUND" });
+      if (credentialRef && !(await this.secrets.metadata(credentialRef)).exists) return reply.code(409).send({ code: "SECRET_REFERENCE_MISSING" });
+      const next = structuredClone(current.config);
+      next.agentProfiles.push({ id: body.id, provider, alias: body.alias, runnerId: body.runnerId ?? "local", ...(credentialRef ? { credentialRef } : {}), settings });
+      const plan = this.configuration.buildPlan(next, "local-web", "web");
+      const applied = this.configuration.applyPlan(plan.id, { confirmed: true });
+      return reply.code(201).send({ profile: { id: body.id, provider, alias: body.alias, runnerId: body.runnerId ?? "local", state: this.agentAdapters.has(body.id) ? "CONFIGURED" : "UNAVAILABLE" }, revision: applied.revision });
+    });
     this.app.post<{ Params: { id: string } }>("/api/agents/profiles/:id/test", async (request, reply) => {
       const profile = this.configuration.current().config.agentProfiles.find((entry) => entry.id === request.params.id);
       const codexHome = stringSetting(profile?.settings?.codexHome);
@@ -1317,6 +1827,22 @@ export class ControllerService {
         ...(stringSetting(profile.settings?.configDir) ? { configDir: stringSetting(profile.settings?.configDir)! } : {}),
         ...(stringSetting(profile.settings?.model) ? { model: stringSetting(profile.settings?.model)! } : {}),
       });
+      const resolveCredential = (reference: string): Promise<string> => this.secrets.resolve(reference, { principal: "controller", purpose: "provider" });
+      if (profile.provider === "cursor" || profile.provider === "kiro") {
+        const cliProfile: CliAgentProfile = { id: profile.id, alias: profile.alias, ...(stringSetting(profile.settings?.executable) ? { executable: stringSetting(profile.settings?.executable)! } : {}), ...(profile.credentialRef ? { credentialRef: profile.credentialRef } : {}), ...(stringSetting(profile.settings?.model) ? { model: stringSetting(profile.settings?.model)! } : {}) };
+        return profile.provider === "cursor" ? probeCursorProfile(cliProfile, resolveCredential) : probeKiroProfile(cliProfile, resolveCredential);
+      }
+      if (profile.provider === "devin" && profile.credentialRef && stringSetting(profile.settings?.organizationId)) {
+        const devinProfile: DevinProfileConfig = { id: profile.id, alias: profile.alias, organizationId: stringSetting(profile.settings?.organizationId)!, credentialRef: profile.credentialRef, ...(stringSetting(profile.settings?.apiBase) ? { apiBase: stringSetting(profile.settings?.apiBase)! } : {}), ...(typeof profile.settings?.maxSessionAcu === "number" ? { maxSessionAcu: profile.settings.maxSessionAcu } : {}) };
+        const backend = this.options.devinBackendFactory?.(devinProfile);
+        if (backend) { const health = await backend.health(); return { authenticated: health.ok, apiVersion: "v3", ...(health.diagnostic ? { diagnostic: health.diagnostic } : {}) }; }
+        return probeDevinProfile(devinProfile, resolveCredential, this.options.integrationFetch as typeof fetch | undefined);
+      }
+      if (profile.provider === "workbuddy" || profile.provider === "codebuddy") {
+        const local = localServiceProfile({ id: profile.id, alias: profile.alias, provider: profile.provider, ...(profile.credentialRef ? { credentialRef: profile.credentialRef } : {}), ...(stringSetting(profile.settings?.baseUrl) ? { baseUrl: stringSetting(profile.settings?.baseUrl)! } : {}), ...(stringSetting(profile.settings?.healthPath) ? { healthPath: stringSetting(profile.settings?.healthPath)! } : {}), ...(stringSetting(profile.settings?.startPath) ? { startPath: stringSetting(profile.settings?.startPath)! } : {}), ...(stringSetting(profile.settings?.statusPath) ? { statusPath: stringSetting(profile.settings?.statusPath)! } : {}), ...(stringSetting(profile.settings?.inputPath) ? { inputPath: stringSetting(profile.settings?.inputPath)! } : {}), ...(stringSetting(profile.settings?.cancelPath) ? { cancelPath: stringSetting(profile.settings?.cancelPath)! } : {}), ...(stringSetting(profile.settings?.resourcePath) ? { resourcePath: stringSetting(profile.settings?.resourcePath)! } : {}) });
+        if (local) return probeLocalService(local, resolveCredential, this.options.integrationFetch as typeof fetch | undefined);
+      }
+      if (profile.provider === "generic-cli" && stringSetting(profile.settings?.executable) && stringArraySetting(profile.settings?.args)) return probeGenericCli({ file: stringSetting(profile.settings?.executable)!, args: stringArraySetting(profile.settings?.args)!, ...(profile.settings?.mode === "pty" || profile.settings?.mode === "headless" ? { mode: profile.settings.mode } : {}) });
       return reply.code(409).send({ code: "PROFILE_UNSUPPORTED" });
     });
     this.app.post<{ Params: { id: string }; Body: CodexRunBody }>("/api/agents/profiles/:id/runs", async (request, reply) => {
@@ -1479,48 +2005,64 @@ export class ControllerService {
       return { ...task, contract: this.database.getTaskContract<JsonValue>(request.params.id), deliveries: this.database.listDeliveryEvidence<JsonValue>(request.params.id) };
     });
     this.app.post<{ Params: { id: string }; Body: TaskDispatchBody }>("/api/tasks/:id/dispatch", async (request, reply) => {
-      if (!request.body?.profileId) return reply.code(400).send({ code: "DISPATCH_INPUT_REQUIRED" });
       const stored = this.database.getCanonicalTask<JsonValue>(request.params.id);
       const contract = this.database.getTaskContract<JsonValue>(request.params.id) as unknown as TaskContract | undefined;
-      const adapter = this.agentAdapters.get(request.body.profileId);
       if (!stored || !contract) return reply.code(404).send({ code: "TASK_NOT_FOUND" });
-      if (!adapter) return reply.code(404).send({ code: "PROFILE_NOT_FOUND" });
-      const profile = this.configuration.current().config.agentProfiles.find((entry) => entry.id === request.body!.profileId)!;
-      const runner = this.runners.list().find((entry) => entry.id === profile.runnerId);
-      if (!runner) return reply.code(409).send({ code: "RUNNER_UNAVAILABLE" });
-      const repositoryId = request.body.repositoryId ?? contract.delivery.repository;
+      if (request.body?.profileId && !this.agentAdapters.has(request.body.profileId)) return reply.code(404).send({ code: "PROFILE_NOT_FOUND" });
+      const runners = new Map(this.runners.list().map((runner) => [runner.id, runner]));
+      const profiles = this.configuration.current().config.agentProfiles.filter((profile) => !request.body?.profileId || profile.id === request.body.profileId);
+      const repositoryId = request.body?.repositoryId ?? contract.delivery.repository;
       const repositoryConfig = this.configuration.current().config.repositories.find((entry) => entry.id === repositoryId);
       if (!repositoryId || !repositoryConfig) return reply.code(409).send({ code: "REPOSITORY_UNAVAILABLE", message: "The task repository is not registered" });
-      const scheduler = new CanonicalScheduler(() => [{
-        runnerId: runner.id,
-        runnerTags: runner.capabilities,
-        capacity: runner.capacity,
-        activeRuns: this.database.listEntities<JsonValue>("run").filter((value) => (value as Record<string, JsonValue>).state === "ACTIVE").length,
-        providerId: profile.provider,
-        profileId: profile.id,
-        resourceState: this.profileResourceState(profile.id),
-        capabilities: ["code", "git", "session-resume"],
-        adapter,
-      }]);
+      const activeRuns = this.database.listEntities<JsonValue>("run").map((value) => value as unknown as Run).filter((run) => run.state === "ACTIVE");
+      const scheduler = new CanonicalScheduler(() => profiles.flatMap((profile) => {
+        const runner = runners.get(profile.runnerId);
+        const adapter = this.agentAdapters.get(profile.id);
+        if (!runner || !adapter) return [];
+        return [{
+          runnerId: runner.id,
+          runnerTags: runner.capabilities,
+          capacity: runner.state === "ONLINE" || runner.state === "DEGRADED" ? runner.capacity : 0,
+          activeRuns: activeRuns.filter((run) => run.runnerId === runner.id).length,
+          providerId: profile.provider,
+          profileId: profile.id,
+          resourceState: this.profileResourceState(profile.id),
+          capabilities: [...new Set([...manifestCapabilities(adapter.manifest), ...runner.capabilities])],
+          adapter,
+        }];
+      }));
       const runId = randomUUID();
       const workspace = await this.workspaces.create({
         repositoryId,
         taskId: request.params.id,
         runId,
         attempt: 1,
-        baseRef: request.body.baseRef ?? contract.delivery.baseBranch ?? repositoryConfig.defaultBaseRef,
+        baseRef: request.body?.baseRef ?? contract.delivery.baseBranch ?? repositoryConfig.defaultBaseRef,
         scopePaths: repositoryConfig.scopePaths,
       });
       let dispatched: Awaited<ReturnType<CanonicalScheduler["dispatch"]>>;
       try {
-        dispatched = await scheduler.dispatch({ task: stored.document as unknown as Task, taskRevision: stored.revision, contract, requirements: { capabilities: ["code", "git"] }, workspacePath: workspace.path, runId });
+        dispatched = await scheduler.dispatch({
+          task: stored.document as unknown as Task,
+          taskRevision: stored.revision,
+          contract,
+          requirements: {
+            capabilities: ["code", "git", ...(request.body?.capabilities ?? [])],
+            ...(request.body?.runnerTags?.length ? { runnerTags: request.body.runnerTags } : {}),
+            ...(request.body?.providerIds?.length ? { providerIds: request.body.providerIds } : {}),
+          },
+          workspacePath: workspace.path,
+          runId,
+        });
       } catch (error) {
         const cleanup = await this.workspaces.cleanupPlan(workspace);
         if (cleanup.safe) await this.workspaces.cleanup(cleanup);
         throw error;
       }
       dispatched.run.branch = workspace.branch;
+      dispatched.run.leaseExpiresAt = new Date(Date.now() + 15 * 60_000).toISOString();
       this.database.saveEntity("run", dispatched.run.id, json(dispatched.run));
+      this.restoreLeaseAuthority(dispatched.run);
       this.fleetEvents.publish("run.changed", dispatched.run.id, { id: dispatched.run.id, taskId: dispatched.run.taskId, state: dispatched.run.state });
       const queued = this.tasks.execute({ id: `dispatch:${dispatched.run.id}:queued`, taskId: request.params.id, baseRevision: stored.revision, actor: "scheduler", command: { type: "task.transition", state: "QUEUED" } });
       this.tasks.execute({ id: `dispatch:${dispatched.run.id}:running`, taskId: request.params.id, baseRevision: queued.revision, actor: "scheduler", command: { type: "task.transition", state: "RUNNING" } });

@@ -4,7 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SecretAccessContext, SecretMetadata, SecretStore } from "@dispatcher/config";
-import type { CodexBackend } from "@dispatcher/adapters";
+import type { CodexBackend, DevinBackend } from "@dispatcher/adapters";
+import { RemoteRunnerClient } from "@dispatcher/runner";
 import { ControllerService } from "../src/service.js";
 import { LifecycleManager } from "../src/lifecycle.js";
 
@@ -50,6 +51,36 @@ describe("ControllerService", () => {
     const runners = await second.app.inject({ method: "GET", url: "/api/runners" });
     expect(runners.json().runners[0]).toMatchObject({ id: "local", state: "ONLINE" });
     await second.stop();
+  });
+
+  it("authenticates a separately connected Remote Runner on the controller websocket", async () => {
+    const secrets = new FakeSecretStore();
+    const service = new ControllerService({ dataDirectory: dataDirectory(), host: "127.0.0.1", port: 0, secretStore: secrets });
+    const next = structuredClone(service.configuration.current().config);
+    next.runners.push({ id: "build-01", displayName: "Build 01", mode: "remote", capacity: 2, tags: ["ci"], credentialRef: "secret://runner/dispatcher/build-01" });
+    const plan = service.configuration.buildPlan(next, "test", "api");
+    service.configuration.applyPlan(plan.id, { confirmed: true });
+    await service.start();
+    const issued = await service.app.inject({ method: "POST", url: "/api/runners/build-01/enrollment", payload: { ttlMs: 60_000 } });
+    expect(issued.statusCode).toBe(201);
+    const enrolled = await service.app.inject({ method: "POST", url: "/api/runners/enroll", payload: { runnerId: "build-01", token: issued.json().token } });
+    expect(enrolled.statusCode).toBe(201);
+    expect(enrolled.json()).toMatchObject({ runnerId: "build-01", credentialRef: "secret://runner/dispatcher/build-01", protocolVersion: "1.2" });
+    const replay = await service.app.inject({ method: "POST", url: "/api/runners/enroll", payload: { runnerId: "build-01", token: issued.json().token } });
+    expect(replay.statusCode).toBe(401);
+    const address = service.app.server.address();
+    if (!address || typeof address === "string") throw new Error("Controller did not bind a TCP port");
+    const client = new RemoteRunnerClient({
+      url: `ws://127.0.0.1:${address.port}/runner`,
+      bearerToken: enrolled.json().bearerToken,
+      runner: { id: "build-01", displayName: "Build 01", platform: "darwin", architecture: "arm64", state: "ONLINE", capabilities: ["os:darwin", "remote"], capacity: 2, lastSeenAt: new Date().toISOString() },
+    });
+    client.register("runner.health", () => ({ ok: true }));
+    await client.start();
+    const runners = await service.app.inject({ method: "GET", url: "/api/runners" });
+    expect(runners.json().runners).toEqual(expect.arrayContaining([expect.objectContaining({ id: "build-01", state: "ONLINE" })]));
+    await client.stop();
+    await service.stop();
   });
 
   it("creates and applies configuration plans through the API", async () => {
@@ -232,6 +263,34 @@ describe("ControllerService", () => {
     await service.stop();
   });
 
+  it("registers the M14 ecosystem, persists provider profiles through ConfigPlan, and exposes routing capabilities", async () => {
+    const secrets = new FakeSecretStore();
+    await secrets.put("secret://devin/main", "cog-test-token");
+    const backend: DevinBackend = {
+      health: async () => ({ ok: true }),
+      create: async () => ({ sessionId: "devin-1", status: "running", pullRequests: [] }),
+      get: async () => ({ sessionId: "devin-1", status: "running", acusConsumed: 1, pullRequests: [] }),
+      send: async () => ({ sessionId: "devin-1", status: "running", pullRequests: [] }),
+    };
+    const service = new ControllerService({ dataDirectory: dataDirectory(), withRunner: true, secretStore: secrets, devinBackendFactory: () => backend });
+    await service.start({ listen: false });
+    const manifests = (await service.app.inject({ method: "GET", url: "/api/adapters/manifests" })).json().manifests;
+    expect(manifests.map((manifest: { id: string }) => manifest.id)).toEqual(expect.arrayContaining(["cursor", "devin", "kiro", "workbuddy-codebuddy", "generic-cli"]));
+    const matrix = await service.app.inject({ method: "GET", url: "/api/adapters/compatibility" });
+    expect(matrix.json().matrix).toEqual(expect.arrayContaining([expect.objectContaining({ adapterId: "cursor", backendId: "cursor-local-cli" }), expect.objectContaining({ adapterId: "devin", backendId: "devin-v3-api" })]));
+
+    const missingSecret = await service.app.inject({ method: "POST", url: "/api/agents/devin/profiles", payload: { id: "devin-missing", alias: "Missing", organizationId: "org-test", credentialRef: "secret://devin/missing" } });
+    expect(missingSecret.statusCode).toBe(409);
+    const created = await service.app.inject({ method: "POST", url: "/api/agents/devin/profiles", payload: { id: "devin-main", alias: "Devin", organizationId: "org-test", credentialRef: "secret://devin/main", maxSessionAcu: 20 } });
+    expect(created.statusCode).toBe(201);
+    const profiles = await service.app.inject({ method: "GET", url: "/api/agents/profiles" });
+    expect(profiles.json().profiles).toContainEqual(expect.objectContaining({ id: "devin-main", provider: "devin", state: "CONFIGURED", capabilities: expect.arrayContaining(["code", "git", "waiting-user", "resource-probe"]) }));
+    expect(profiles.body).not.toContain("cog-test-token");
+    const tested = await service.app.inject({ method: "POST", url: "/api/agents/profiles/devin-main/test" });
+    expect(tested.json()).toMatchObject({ authenticated: true, apiVersion: "v3" });
+    await service.stop();
+  });
+
   it("keeps concurrently running Codex profiles isolated and does not start idle backends", async () => {
     const directory = dataDirectory();
     const repositoryRoot = join(directory, "repository");
@@ -371,7 +430,7 @@ describe("ControllerService", () => {
       task: { state: "FAILED" },
     });
     await service.stop();
-  });
+  }, 15_000);
 
   it("persists Codex quota signals and blocks the run, task, and future routing", async () => {
     const directory = dataDirectory();
@@ -383,16 +442,14 @@ describe("ControllerService", () => {
     writeFileSync(join(repositoryRoot, "README.md"), "fixture\n");
     execFileSync("git", ["-C", repositoryRoot, "add", "README.md"]);
     execFileSync("git", ["-C", repositoryRoot, "commit", "-m", "fixture"]);
+    let resourceReady = false;
     const backend: CodexBackend = {
       start: () => ({
         cancel: async () => undefined,
         status: () => "completed",
-        result: async () => ({
-          state: "failed",
-          summary: "quota",
-          providerSessionId: "thread-quota",
-          events: [{ type: "resource", state: "QUOTA_EXHAUSTED", reason: "quota exhausted", source: "event", confidence: "high" }],
-        }),
+        result: async () => resourceReady
+          ? { state: "completed", summary: "resource ready", providerSessionId: "thread-quota", events: [{ type: "resource", state: "AVAILABLE", reason: "probe succeeded", source: "probe", confidence: "high" }] }
+          : { state: "failed", summary: "quota", providerSessionId: "thread-quota", events: [{ type: "resource", state: "QUOTA_EXHAUSTED", reason: "quota exhausted", resetsAt: "2026-09-23T01:00:00.000Z", source: "error", confidence: "high" }] },
       }),
     };
     const service = new ControllerService({ dataDirectory: directory, withRunner: true, secretStore: new FakeSecretStore(), codexBackendFactory: () => backend });
@@ -406,7 +463,7 @@ describe("ControllerService", () => {
     const started = await service.app.inject({ method: "POST", url: "/api/agents/profiles/atlas/runs", payload: { workspacePath: workspace.path, prompt: "work" } });
     const sessionId = started.json().session.id as string;
     service.database.writeCanonicalTask("task-quota", 0, {
-      id: "task-quota", projectId: "project", title: "Quota task", state: "RUNNING",
+      id: "task-quota", projectId: "project", title: "Quota task", state: "RUNNING", currentRunId: "run-quota",
       createdAt: "2026-09-22T00:00:00.000Z", updatedAt: "2026-09-22T00:00:00.000Z",
     });
     service.database.saveTaskContract("task-quota", {
@@ -426,6 +483,17 @@ describe("ControllerService", () => {
     expect(advanced.json()).toMatchObject({ run: { state: "RESOURCE_BLOCKED", resourceBlockReason: "quota exhausted" }, task: { state: "WAITING_RESOURCE" } });
     const profiles = await service.app.inject({ method: "GET", url: "/api/agents/profiles" });
     expect(profiles.json().profiles).toContainEqual(expect.objectContaining({ id: "atlas", resourceState: "QUOTA_EXHAUSTED" }));
+    const resources = await service.app.inject({ method: "GET", url: "/api/resources" });
+    expect(resources.json().resources).toContainEqual(expect.objectContaining({ profileId: "atlas", state: "QUOTA_EXHAUSTED", source: "error", confidence: "high", affectedTasks: ["task-quota"] }));
+    expect(resources.json().schedules).toContainEqual(expect.objectContaining({ profileId: "atlas", status: "SCHEDULED" }));
+
+    resourceReady = true;
+    const probed = await service.app.inject({ method: "POST", url: "/api/resources/atlas/probe" });
+    expect(probed.statusCode).toBe(200);
+    expect(probed.json()).toMatchObject({ assessment: { state: "AVAILABLE", source: "probe" } });
+    expect(service.database.getEntity("run", "run-quota")).toMatchObject({ state: "ACTIVE", sessionId, recoveryReason: expect.stringContaining("Original provider session") });
+    expect(service.database.getCanonicalTask("task-quota")?.document).toMatchObject({ state: "RUNNING", currentRunId: "run-quota" });
+    expect(service.database.listEntities("resource-probe-schedule")).toContainEqual(expect.objectContaining({ profileId: "atlas", status: "RECOVERED" }));
     await service.stop();
   });
 });

@@ -23,6 +23,15 @@ describe("canonical deterministic scheduler", () => {
     expect(decision.rejected[1]?.reasons).toContain("resource state RATE_LIMITED");
   });
 
+  it("selects a runner by OS and native capability without importing platform code", () => {
+    const decision = routeDeterministically({ capabilities: ["code", "os:win32", "pty:conpty"] }, [
+      candidate({ runnerId: "mac", profileId: "mac-profile", capabilities: ["code", "os:darwin", "pty:unix-pty"] }),
+      candidate({ runnerId: "windows", profileId: "windows-profile", capabilities: ["code", "os:win32", "pty:conpty"] }),
+    ]);
+    expect(decision.selected).toMatchObject({ runnerId: "windows" });
+    expect(decision.rejected[0]?.reasons).toEqual(expect.arrayContaining(["missing capability os:win32", "missing capability pty:conpty"]));
+  });
+
   it("binds task and contract revisions to the run", async () => {
     const scheduler = new CanonicalScheduler(() => [candidate({ runnerId: "runner-a", profileId: "profile-a" })]);
     const result = await scheduler.dispatch({
@@ -32,6 +41,6 @@ describe("canonical deterministic scheduler", () => {
       requirements: { capabilities: ["code"] },
       workspacePath: "/tmp/worktree",
     });
-    expect(result.run).toMatchObject({ taskId: "task-1", taskRevision: 3, contractRevision: 2, state: "ACTIVE", runnerId: "runner-a" });
+    expect(result.run).toMatchObject({ taskId: "task-1", taskRevision: 3, contractRevision: 2, state: "ACTIVE", runnerId: "runner-a", requiredCapabilities: ["code"] });
   });
 });

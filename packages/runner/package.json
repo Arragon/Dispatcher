@@ -3,7 +3,15 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "exports": { ".": { "types": "./src/index.ts", "default": "./dist/index.js" } },
+  "bin": {
+    "agent-runner": "./dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./dist/index.js"
+    }
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
@@ -11,10 +19,13 @@
   },
   "dependencies": {
     "@dispatcher/domain": "workspace:*",
-    "@dispatcher/protocol": "workspace:*"
+    "@dispatcher/protocol": "workspace:*",
+    "node-pty": "1.1.0",
+    "ws": "8.21.3"
   },
   "devDependencies": {
     "@dispatcher/adapters": "workspace:*",
-    "@dispatcher/workspace": "workspace:*"
+    "@dispatcher/workspace": "workspace:*",
+    "@types/ws": "8.18.1"
   }
 }

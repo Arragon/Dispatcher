@@ -244,10 +244,14 @@ export interface Run {
   providerId: ProviderId;
   profileId: EntityId;
   sessionId: EntityId;
+  providerSessionId?: EntityId;
+  resumePolicy?: "same-session" | "controlled-reroute" | "manual";
   state: RunState;
   attempt: number;
   generation: number;
   leaseId: string;
+  leaseExpiresAt?: IsoDateTime;
+  revokedLeaseIds?: string[];
   taskRevision?: number;
   contractRevision?: number;
   branch?: string;
@@ -258,6 +262,8 @@ export interface Run {
   activitySummary?: string;
   failureReason?: string;
   resourceBlockReason?: string;
+  recoveryReason?: string;
+  requiredCapabilities?: string[];
   prUrl?: string;
   verification: VerificationEvidence;
 }

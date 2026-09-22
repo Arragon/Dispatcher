@@ -54,8 +54,22 @@
   a raw command/path field to discovery requests. Probe free text is redacted
   and summarized before it enters trusted state.
 - Generic CLI command templates have a fixed executable and argv array, run
-  with `shell: false`, and permit only whole-argument placeholders. LLM or task
-  text is data, never a shell fragment.
+  with `shell: false`, and allow placeholders only as complete argv values.
+  Keep provider discovery on an allowlisted `--version`/health probe and never
+  turn a user string into a shell command.
+- Cursor and Kiro CLI credentials are `secret://` references resolved only at
+  process start into provider-specific environment variables. Version/auth
+  probes prove installation and login, not a business invocation.
+- Devin v3 has verified create/get/message session operations, waiting/resource
+  normalization, and PR evidence. Do not claim remote cancel support until an
+  official endpoint is verified; the adapter intentionally declares no cancel
+  capability.
+- WorkBuddy/CodeBuddy local-service paths are configuration, not guessed vendor
+  defaults. Every session endpoint must place `{sessionId}` in its own path
+  segment so percent-encoding cannot escape the configured endpoint shape.
+- Routing capabilities come from the selected AdapterManifest backend plus the
+  Runner, never from provider-brand conditionals. Persist required capabilities
+  on the Run so manual reroute is checked by the same hard gate.
 - One Run owns one writable worktree. Canonicalize every candidate path against
   the real worktree root, then enforce declared scope paths; lexical prefix
   checks alone do not stop symlink escape.
@@ -94,6 +108,17 @@
 - Delivery is fenced by the current run generation and lease and requires
   passed verification. Commit, PR, and CI records are durable evidence with
   idempotent external identities; retries must not create duplicate PRs.
+- Remote Runner transport uses the mature `ws` package (MIT, pinned at 8.21.3)
+  rather than a custom WebSocket implementation. Bearer credentials travel in
+  the Authorization header, never in protocol payloads; a non-loopback listener
+  must be attached to a TLS server. Runner journal entries are checksummed and
+  replayed by sequence, while delivery authority is re-fenced before branch,
+  push, pull-request, and completion mutations.
+- Native PTY uses Microsoft `node-pty` (MIT, pinned at 1.1.0) for Unix PTY and
+  Windows ConPTY. pnpm must explicitly allow its native build; some pnpm
+  installations lose the executable bit on the packaged Unix `spawn-helper`,
+  so Runner repairs that one known helper path before spawning. Platform code
+  stays in `runner`; scheduler/domain see only capability strings.
 - Run advancement is phase-idempotent. Persist `VERIFYING` before executing
   registered checks and `DELIVERING` before calling an SCM provider; retry from
   the stored phase after a temporary provider failure.

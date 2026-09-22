@@ -104,14 +104,20 @@ export async function runAdapterContract(adapter: AgentAdapter): Promise<string[
   try {
     session = await adapter.start({ runId: "contract-run", workspacePath: "/contract/workspace", prompt: "hello" });
     if (session.state !== "RUNNING") failures.push("start must produce RUNNING session");
-    const event = await adapter.send(session.id, "continue");
-    if (event.sessionId !== session.id) failures.push("send event must retain session identity");
+    const capabilities = new Set(adapter.manifest.backends.find((backend) => backend.id === session?.backendId)?.capabilities ?? []);
+    if (capabilities.has("send") || capabilities.has("interactive-input")) {
+      const event = await adapter.send(session.id, "continue");
+      if (event.sessionId !== session.id) failures.push("send event must retain session identity");
+    }
     const status = await adapter.status(session.id);
     if (status.id !== session.id) failures.push("status must retain session identity");
-    const cancelled = await adapter.cancel(session.id);
-    if (cancelled.state !== "CANCELLED") failures.push("cancel must produce CANCELLED session");
+    if (capabilities.has("cancel")) {
+      const cancelled = await adapter.cancel(session.id);
+      if (cancelled.state !== "CANCELLED") failures.push("cancel must produce CANCELLED session");
+    }
     const result = await adapter.result(session.id);
-    if (result.sessionId !== session.id || result.state !== "CANCELLED") failures.push("result must reflect terminal session");
+    if (result.sessionId !== session.id) failures.push("result must retain session identity");
+    if (capabilities.has("cancel") && result.state !== "CANCELLED") failures.push("result must reflect terminal session");
   } catch (error) {
     failures.push(error instanceof Error ? error.message : "adapter contract failed");
   }

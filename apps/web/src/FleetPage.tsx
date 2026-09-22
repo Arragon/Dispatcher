@@ -5,7 +5,7 @@ import { api, subscribeToEvents } from "./api.js";
 interface FleetSnapshot {
   generatedAt: string;
   counts: { tasks: number; activeRuns: number; waiting: number; stalled: number; failed: number; unhealthyConnectors: number };
-  profiles: Array<{ id: string; alias: string; provider: string; state: string; resourceState?: string }>;
+  profiles: Array<{ id: string; alias: string; provider: string; state: string; resourceState?: string; resourceReason?: string; resourceSource?: string; resourceConfidence?: string; resetsAt?: string; affectedTasks?: number }>;
   attention: Array<{ id: string; kind: string; title: string; detail: string; since: string }>;
 }
 
@@ -25,7 +25,7 @@ export default function FleetPage(): React.JSX.Element {
     </div>
     <div className="two-column">
       <div className="panel"><div className="panel-heading"><div><p className="eyebrow">Need attention</p><h2>Actionable blockers</h2></div><span>{fleet.attention.length}</span></div>{fleet.attention.length ? <div className="runner-list">{fleet.attention.map((item) => <article className="runner-row" key={item.id}><div className="runner-avatar">!</div><div><strong>{item.title}</strong><p>{item.kind} · {item.detail}</p></div><small>{new Date(item.since).toLocaleTimeString()}</small></article>)}</div> : <div className="empty-inline">No intervention is required.</div>}</div>
-      <div className="panel"><div className="panel-heading"><div><p className="eyebrow">Capacity</p><h2>Profiles</h2></div></div><div className="runner-list">{fleet.profiles.map((profile) => <article className="runner-row" key={profile.id}><div className="runner-avatar">{profile.alias.slice(0, 2).toUpperCase()}</div><div><strong>{profile.alias}</strong><p>{profile.provider} · {profile.resourceState ?? "UNKNOWN"}</p></div><span className={`status status-${profile.state.toLowerCase()}`}>{profile.state}</span></article>)}</div></div>
+      <div className="panel"><div className="panel-heading"><div><p className="eyebrow">Capacity</p><h2>Profiles</h2></div></div><div className="runner-list">{fleet.profiles.map((profile) => <article className="runner-row" key={profile.id}><div className="runner-avatar">{profile.alias.slice(0, 2).toUpperCase()}</div><div><strong>{profile.alias}</strong><p>{profile.provider} · {profile.resourceState ?? "UNKNOWN"}{profile.resourceReason ? ` · ${profile.resourceReason}` : ""}</p>{profile.resourceSource && <small>{profile.resourceSource} · {profile.resourceConfidence} confidence{profile.resetsAt ? ` · probe after ${new Date(profile.resetsAt).toLocaleString()}` : ""} · {profile.affectedTasks ?? 0} affected tasks</small>}</div><span className={`status status-${profile.state.toLowerCase()}`}>{profile.state}</span></article>)}</div></div>
     </div>
     <p className="snapshot-time">Snapshot rebuilt {new Date(fleet.generatedAt).toLocaleString()} · updates arrive over bounded cursor SSE.</p>
   </section>;

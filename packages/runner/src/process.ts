@@ -1,8 +1,10 @@
-import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { platform } from "node:os";
+import { spawn as spawnProcess } from "node:child_process";
+import { chmodSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { arch, platform } from "node:os";
 import { randomUUID } from "node:crypto";
+import { createRequire } from "node:module";
+import { spawn as spawnPty } from "node-pty";
 
 export interface LogBudget {
   maxFileBytes: number;
@@ -12,6 +14,14 @@ export interface LogBudget {
 }
 
 const defaultBudget: LogBudget = { maxFileBytes: 256 * 1_024, maxTotalBytes: 1 * 1_024 * 1_024, retentionFiles: 4, tailBytes: 8 * 1_024 };
+
+function ensurePtySpawnHelper(): void {
+  if (platform() === "win32") return;
+  const packageRoot = join(dirname(createRequire(import.meta.url).resolve("node-pty")), "..");
+  for (const helper of [join(packageRoot, "prebuilds", `${platform()}-${arch()}`, "spawn-helper"), join(packageRoot, "build", "Release", "spawn-helper")]) {
+    if (existsSync(helper) && (statSync(helper).mode & 0o111) === 0) chmodSync(helper, 0o755);
+  }
+}
 
 export function stripAnsi(value: string): string {
   const pattern = new RegExp(`${String.fromCharCode(27)}\\[[0-?]*[ -/]*[@-~]`, "g");
@@ -84,8 +94,12 @@ export interface ManagedProcessHandle {
   subscribe(handler: (event: ActivityEvent) => void): () => void;
 }
 
+export function processTreeKillCommand(pid: number, targetPlatform: NodeJS.Platform, force = false): { file: string; args: string[] } | undefined {
+  if (targetPlatform !== "win32") return undefined;
+  return { file: "taskkill.exe", args: ["/PID", String(pid), "/T", ...(force ? ["/F"] : [])] };
+}
+
 interface InternalProcess {
-  child: ChildProcess;
   handle: ManagedProcessHandle;
 }
 
@@ -95,7 +109,7 @@ export class ProcessManager {
   get activeCount(): number { return this.active.size; }
 
   async start(input: { runId: string; file: string; args: string[]; cwd: string; timeoutMs?: number; idleTimeoutMs?: number; mode?: "process" | "pty" }): Promise<ManagedProcessHandle> {
-    if (input.mode === "pty") throw new Error("PTY backend is unavailable until a manifest explicitly provides an installed PTY capability");
+    if (input.mode === "pty") return this.startPty(input);
     const id = randomUUID();
     const startedAt = Date.now();
     const stdout = new BoundedLogWriter(join(this.logRoot, input.runId), "stdout", this.budget);
@@ -103,7 +117,7 @@ export class ProcessManager {
     const listeners = new Set<(event: ActivityEvent) => void>();
     let classification: ExitClassification | undefined;
     let settled = false;
-    const child = spawn(input.file, input.args, { cwd: input.cwd, shell: false, detached: platform() !== "win32", stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawnProcess(input.file, input.args, { cwd: input.cwd, shell: false, detached: platform() !== "win32", stdio: ["pipe", "pipe", "pipe"] });
     if (child.pid === undefined) throw new Error("Process did not receive a pid");
     const emit = (stream: ActivityEvent["stream"], text: string): void => {
       const event = { sessionId: id, stream, summary: stripAnsi(redact(text)).slice(-500), occurredAt: new Date().toISOString() };
@@ -113,8 +127,24 @@ export class ProcessManager {
     const terminate = (reason: ExitClassification): void => {
       if (settled || child.exitCode !== null) return;
       classification = reason;
-      try { if (platform() !== "win32") process.kill(-child.pid!, "SIGTERM"); else child.kill("SIGTERM"); } catch { child.kill("SIGTERM"); }
-      const force = setTimeout(() => { if (child.exitCode === null) { try { if (platform() !== "win32") process.kill(-child.pid!, "SIGKILL"); else child.kill("SIGKILL"); } catch { child.kill("SIGKILL"); } } }, 2_000);
+      try {
+        if (platform() !== "win32") process.kill(-child.pid!, "SIGTERM");
+        else {
+          const command = processTreeKillCommand(child.pid!, "win32")!;
+          spawnProcess(command.file, command.args, { shell: false, stdio: "ignore" });
+        }
+      } catch { child.kill("SIGTERM"); }
+      const force = setTimeout(() => {
+        if (child.exitCode === null) {
+          try {
+            if (platform() !== "win32") process.kill(-child.pid!, "SIGKILL");
+            else {
+              const command = processTreeKillCommand(child.pid!, "win32", true)!;
+              spawnProcess(command.file, command.args, { shell: false, stdio: "ignore" });
+            }
+          } catch { child.kill("SIGKILL"); }
+        }
+      }, 2_000);
       force.unref();
     };
     const resetIdle = (): void => {
@@ -149,7 +179,74 @@ export class ProcessManager {
       result: async () => await resultPromise,
       subscribe: (handler) => { listeners.add(handler); return () => listeners.delete(handler); },
     };
-    this.active.set(id, { child, handle });
+    this.active.set(id, { handle });
+    return handle;
+  }
+
+  private startPty(input: { runId: string; file: string; args: string[]; cwd: string; timeoutMs?: number; idleTimeoutMs?: number }): ManagedProcessHandle {
+    ensurePtySpawnHelper();
+    const id = randomUUID();
+    const startedAt = Date.now();
+    const output = new BoundedLogWriter(join(this.logRoot, input.runId), "pty", this.budget);
+    const listeners = new Set<(event: ActivityEvent) => void>();
+    let settled = false;
+    let classification: ExitClassification | undefined;
+    const terminal = spawnPty(input.file, input.args, {
+      cwd: input.cwd,
+      env: Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)),
+      name: process.env.TERM ?? "xterm-256color",
+      cols: 120,
+      rows: 40,
+      useConpty: platform() === "win32",
+    });
+    const emit = (stream: ActivityEvent["stream"], text: string): void => {
+      const event = { sessionId: id, stream, summary: stripAnsi(redact(text)).slice(-500), occurredAt: new Date().toISOString() };
+      for (const listener of listeners) listener(event);
+    };
+    let idleTimer: ReturnType<typeof setTimeout> | undefined;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    let resolveResult: (result: ProcessResult) => void = () => undefined;
+    const resultPromise = new Promise<ProcessResult>((resolve) => { resolveResult = resolve; });
+    const terminate = (reason: ExitClassification): void => {
+      if (settled) return;
+      classification = reason;
+      terminal.kill();
+    };
+    const resetIdle = (): void => {
+      if (!input.idleTimeoutMs) return;
+      if (idleTimer) clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => terminate("idle-timeout"), input.idleTimeoutMs);
+      idleTimer.unref();
+    };
+    terminal.onData((data) => {
+      output.write(data);
+      emit("stdout", data);
+      resetIdle();
+    });
+    terminal.onExit(({ exitCode, signal }) => {
+      settled = true;
+      if (idleTimer) clearTimeout(idleTimer);
+      if (timeout) clearTimeout(timeout);
+      this.active.delete(id);
+      const resolved = classification ?? (signal ? "signal" : exitCode === 0 ? "success" : "nonzero");
+      emit("lifecycle", resolved);
+      resolveResult({ sessionId: id, exitCode, signal: null, classification: resolved, stdoutTail: output.tail(), stderrTail: "", durationMs: Date.now() - startedAt });
+    });
+    resetIdle();
+    if (input.timeoutMs) {
+      timeout = setTimeout(() => terminate("timeout"), input.timeoutMs);
+      timeout.unref();
+    }
+    const handle: ManagedProcessHandle = {
+      id,
+      pid: terminal.pid,
+      send: async (data) => terminal.write(data),
+      cancel: async () => { terminate("cancelled"); await resultPromise; },
+      status: () => ({ state: settled ? "completed" : "running", pid: terminal.pid }),
+      result: async () => await resultPromise,
+      subscribe: (handler) => { listeners.add(handler); return () => listeners.delete(handler); },
+    };
+    this.active.set(id, { handle });
     return handle;
   }
 
