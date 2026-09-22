@@ -1,3 +1,5 @@
+export * from "./resource.js";
+
 export type FleetScope = "fleet" | "profile" | "project" | "task";
 export type AttentionKind = "WAITING_USER" | "WAITING_RESOURCE" | "STALLED" | "FAILED" | "CONNECTOR";
 
@@ -43,6 +45,11 @@ export interface FleetProfileInput {
   provider: string;
   state: string;
   resourceState?: string;
+  resourceReason?: string;
+  resourceSource?: string;
+  resourceConfidence?: string;
+  resetsAt?: string;
+  affectedTasks?: number;
   runnerId?: string;
 }
 

@@ -49,7 +49,17 @@ import {
   type Task,
   type TaskContract,
 } from "@dispatcher/domain";
-import { CoalescingEventStream, FleetReadModel, paginate, type FleetSnapshot } from "@dispatcher/fleet";
+import {
+  CoalescingEventStream,
+  FleetReadModel,
+  MultiSignalResourceRegistry,
+  ResetAwareProbeScheduler,
+  decideResourceRecovery,
+  paginate,
+  type FleetSnapshot,
+  type ResourceAssessment,
+  type ResourceProbeSchedule,
+} from "@dispatcher/fleet";
 import {
   CanonicalTaskService,
   ConnectorError,
@@ -276,6 +286,8 @@ export class ControllerService {
   private readonly taskCompiler = new TaskContractCompiler();
   private readonly fleet = new FleetReadModel();
   private readonly fleetEvents = new CoalescingEventStream(512);
+  private readonly resourceRegistry = new MultiSignalResourceRegistry();
+  private readonly resourceProbes = new ResetAwareProbeScheduler();
   private readonly attentionNotifications = new AttentionNotificationPolicy();
   private readonly secureLinks: SecureDashboardLinkIssuer;
   private readonly messagingChannels = new Map<string, string>();
@@ -283,6 +295,8 @@ export class ControllerService {
   private readonly rawWebhookBodies = new WeakMap<object, Uint8Array>();
   private readonly startedAt = Date.now();
   private readonly embeddedRunner?: EmbeddedRunner;
+  private resourceProbeTimer: ReturnType<typeof setInterval> | undefined;
+  private resourceProbeRunning = false;
   private listening = false;
   private stopping?: Promise<void>;
   private dashboardClients = 0;
@@ -292,6 +306,8 @@ export class ControllerService {
     const logger = createLogger({ level: process.env.LOG_LEVEL ?? "info" });
     this.app = fastify({ loggerInstance: logger as unknown as FastifyBaseLogger });
     this.database = new DispatcherDatabase(join(options.dataDirectory, "dispatcher.sqlite"));
+    this.resourceRegistry.restore(this.database.listEntities<JsonValue>("resource-signal") as unknown as ResourceSnapshot[]);
+    this.resourceProbes.restore(this.database.listEntities<JsonValue>("resource-probe-schedule") as unknown as ResourceProbeSchedule[]);
     this.workspaces = new WorkspaceManager(this.repositories, join(options.dataDirectory, "worktrees"));
     this.tasks = new CanonicalTaskService(this.database);
     this.projections = new ProjectionWorker(this.database, this.connectors);
@@ -337,6 +353,18 @@ export class ControllerService {
       this.embeddedRunner = new EmbeddedRunner(runner, this.runners, this.events);
       modules.push({ name: "embedded-runner", start: () => this.embeddedRunner?.start(), stop: () => this.embeddedRunner?.stop() });
     }
+    modules.push({
+      name: "resource-monitor",
+      start: () => {
+        this.resourceProbeTimer = setInterval(() => void this.runDueResourceProbes(), 30_000);
+        this.resourceProbeTimer.unref();
+        void this.runDueResourceProbes();
+      },
+      stop: () => {
+        if (this.resourceProbeTimer) clearInterval(this.resourceProbeTimer);
+        this.resourceProbeTimer = undefined;
+      },
+    });
     modules.push(...(options.modules ?? []));
     this.lifecycle = new LifecycleManager(modules);
     this.registerRoutes();
@@ -567,6 +595,8 @@ export class ControllerService {
   }
 
   private profileResourceState(profileId: string): ResourceState {
+    const assessment = this.resourceRegistry.assess(profileId);
+    if (assessment.evidence.length) return assessment.state;
     const snapshot = this.database.getEntity<JsonValue>("resource-snapshot", profileId) as unknown as ResourceSnapshot | undefined;
     return snapshot?.state ?? "AVAILABLE";
   }
@@ -628,14 +658,24 @@ export class ControllerService {
         capabilities: adapter.definition.capabilities.filter((capability) => capability.support === "supported").map((capability) => `${capability.namespace}@${capability.version}`),
       };
     });
-    const profiles = this.configuration.current().config.agentProfiles.map((profile) => ({
-      id: profile.id,
-      alias: profile.alias,
-      provider: profile.provider,
-      state: this.agentAdapters.has(profile.id) ? "CONFIGURED" : "UNAVAILABLE",
-      resourceState: this.profileResourceState(profile.id),
-      runnerId: profile.runnerId,
-    }));
+    const profiles = this.configuration.current().config.agentProfiles.map((profile) => {
+      const resource = this.resourceRegistry.assess(profile.id, now);
+      return {
+        id: profile.id,
+        alias: profile.alias,
+        provider: profile.provider,
+        state: this.agentAdapters.has(profile.id) ? "CONFIGURED" : "UNAVAILABLE",
+        resourceState: resource.evidence.length ? resource.state : this.profileResourceState(profile.id),
+        ...(resource.evidence.length ? {
+          resourceReason: resource.reason,
+          resourceSource: resource.source,
+          resourceConfidence: resource.confidence,
+          resetsAt: resource.resetsAt,
+          affectedTasks: storedRuns.filter((run) => run.profileId === profile.id && run.state === "RESOURCE_BLOCKED").length,
+        } : {}),
+        runnerId: profile.runnerId,
+      };
+    });
     return this.fleet.rebuild({ tasks, runs, connectors, profiles }, now);
   }
 
@@ -645,18 +685,157 @@ export class ControllerService {
     const state = typeof usage.state === "string" && RESOURCE_STATES.includes(usage.state as ResourceState)
       ? usage.state as ResourceState
       : undefined;
-    if (!state || state === "UNKNOWN") return undefined;
+    if (!state) return undefined;
+    const resourceSources: ResourceSnapshot["source"][] = ["sdk", "cli", "session", "error", "probe", "manual"];
+    const reportedSource = typeof usage.source === "string" && resourceSources.includes(usage.source as ResourceSnapshot["source"])
+      ? usage.source as ResourceSnapshot["source"]
+      : undefined;
     const snapshot: ResourceSnapshot = {
       profileId,
       state,
       ...(typeof usage.reason === "string" ? { reason: usage.reason } : {}),
       ...(typeof usage.resetsAt === "string" ? { resetsAt: usage.resetsAt } : {}),
-      source: usage.source === "error" ? "error" : "session",
+      source: reportedSource ?? (usage.source === "error" ? "error" : "session"),
       confidence: usage.confidence === "high" || usage.confidence === "medium" ? usage.confidence : "low",
       checkedAt: new Date().toISOString(),
     };
-    this.database.saveEntity("resource-snapshot", profileId, json(snapshot));
+    this.database.saveEntity("resource-signal", `${profileId}:${snapshot.source}`, json(snapshot), snapshot.checkedAt);
+    const assessment = this.resourceRegistry.record(snapshot);
+    const effective: ResourceSnapshot = {
+      profileId: assessment.profileId,
+      state: assessment.state,
+      ...(assessment.reason ? { reason: assessment.reason } : {}),
+      ...(assessment.resetsAt ? { resetsAt: assessment.resetsAt } : {}),
+      source: assessment.source,
+      confidence: assessment.confidence,
+      checkedAt: assessment.checkedAt,
+    };
+    this.database.saveEntity("resource-snapshot", profileId, json(effective), effective.checkedAt);
+    const priorSchedule = this.resourceProbes.list().find((entry) => entry.profileId === profileId);
+    const scheduled = this.resourceProbes.schedule(effective);
+    if (scheduled) this.database.saveEntity("resource-probe-schedule", profileId, json(scheduled), scheduled.nextProbeAt);
+    else if (priorSchedule && (effective.state === "AVAILABLE" || effective.state === "LOW")) {
+      const recovered: ResourceProbeSchedule = { ...priorSchedule, status: "RECOVERED", lastProbeAt: effective.checkedAt, lastState: effective.state };
+      this.database.saveEntity("resource-probe-schedule", profileId, json(recovered), effective.checkedAt);
+    }
+    this.fleetEvents.publish("resource.changed", profileId, redactValue(assessment));
     return snapshot;
+  }
+
+  private async probeProfileResource(profileId: string): Promise<ResourceSnapshot | undefined> {
+    const adapter = this.agentAdapters.get(profileId);
+    if (!adapter?.usage) return undefined;
+    const run = this.database.listEntities<JsonValue>("run")
+      .map((value) => value as unknown as Run)
+      .filter((candidate) => candidate.profileId === profileId)
+      .sort((left, right) => (right.lastActivityAt ?? right.startedAt ?? "").localeCompare(left.lastActivityAt ?? left.startedAt ?? ""))[0];
+    if (!run) return undefined;
+    const snapshot = await this.captureProfileResource(profileId, adapter, run.sessionId);
+    if (!snapshot) return undefined;
+    const scheduled = this.resourceProbes.list().find((entry) => entry.profileId === profileId);
+    if (scheduled?.status === "PROBING") {
+      const completed = this.resourceProbes.complete(profileId, snapshot);
+      this.database.saveEntity("resource-probe-schedule", profileId, json(completed), completed.lastProbeAt ?? completed.nextProbeAt);
+    }
+    const assessment = this.resourceRegistry.assess(profileId);
+    if (assessment.state === "AVAILABLE" || assessment.state === "LOW") await this.recoverProfileRuns(profileId, assessment);
+    return snapshot;
+  }
+
+  private async runDueResourceProbes(): Promise<void> {
+    if (this.resourceProbeRunning) return;
+    this.resourceProbeRunning = true;
+    try {
+      for (const due of this.resourceProbes.due()) {
+        this.database.saveEntity("resource-probe-schedule", due.profileId, json(due), due.lastProbeAt ?? due.nextProbeAt);
+        try {
+          const result = await this.probeProfileResource(due.profileId);
+          if (!result) {
+            const unavailable: ResourceSnapshot = { profileId: due.profileId, state: "UNKNOWN", reason: "Provider did not return a resource probe", source: "probe", confidence: "low", checkedAt: new Date().toISOString() };
+            this.resourceRegistry.record(unavailable);
+            this.database.saveEntity("resource-signal", `${due.profileId}:probe`, json(unavailable), unavailable.checkedAt);
+            const completed = this.resourceProbes.complete(due.profileId, unavailable);
+            this.database.saveEntity("resource-probe-schedule", due.profileId, json(completed), completed.lastProbeAt ?? completed.nextProbeAt);
+          }
+        } catch (error) {
+          const failed: ResourceSnapshot = { profileId: due.profileId, state: "PROVIDER_DOWN", reason: error instanceof Error ? error.message : "Resource probe failed", source: "probe", confidence: "medium", checkedAt: new Date().toISOString() };
+          this.resourceRegistry.record(failed);
+          this.database.saveEntity("resource-signal", `${due.profileId}:probe`, json(failed), failed.checkedAt);
+          const completed = this.resourceProbes.complete(due.profileId, failed);
+          this.database.saveEntity("resource-probe-schedule", due.profileId, json(completed), completed.lastProbeAt ?? completed.nextProbeAt);
+        }
+      }
+    } finally {
+      this.resourceProbeRunning = false;
+    }
+  }
+
+  private async recoverProfileRuns(profileId: string, assessment: ResourceAssessment): Promise<Array<{ runId: string; action: string; reason: string }>> {
+    const outcomes: Array<{ runId: string; action: string; reason: string }> = [];
+    const adapter = this.agentAdapters.get(profileId);
+    if (!adapter) return outcomes;
+    const runs = this.database.listEntities<JsonValue>("run").map((value) => value as unknown as Run).filter((run) => run.profileId === profileId && run.state === "RESOURCE_BLOCKED");
+    for (const run of runs) {
+      const taskRecord = this.database.getCanonicalTask<JsonValue>(run.taskId);
+      const task = taskRecord?.document as unknown as Task | undefined;
+      let session: AdapterSession | undefined;
+      try { session = await adapter.status(run.sessionId); } catch { /* explicit reroute decision below */ }
+      const runner = this.runners.list().find((candidate) => candidate.id === run.runnerId);
+      const decision = decideResourceRecovery({
+        run,
+        currentGeneration: task?.currentRunId === run.id ? run.generation : run.generation + 1,
+        ...(task?.currentRunId ? { currentRunId: task.currentRunId } : {}),
+        sessionResumable: Boolean(session && (session.providerSessionId || adapter.manifest.capabilities.resume)),
+        profileAvailable: assessment.state === "AVAILABLE" || assessment.state === "LOW",
+        runnerAvailable: runner?.state === "ONLINE" || runner?.state === "DEGRADED",
+      });
+      if (this.database.getEntity<JsonValue>("resource-recovery", decision.idempotencyKey)) {
+        outcomes.push({ runId: run.id, action: "DEDUPED", reason: decision.reason });
+        continue;
+      }
+      if (decision.action !== "RESUME") {
+        this.database.saveEntity("resource-recovery", decision.idempotencyKey, json({ ...decision, runId: run.id, profileId, recordedAt: new Date().toISOString() }));
+        outcomes.push({ runId: run.id, action: decision.action, reason: decision.reason });
+        continue;
+      }
+      try {
+        await adapter.resume(run.sessionId);
+      } catch (error) {
+        const reason = `Same-session resume failed: ${error instanceof Error ? error.message : "unknown error"}; controlled reroute requires operator approval`;
+        this.database.saveEntity("resource-recovery", decision.idempotencyKey, json({ runId: run.id, profileId, action: "REROUTE_REQUIRED", reason, revokeLeaseId: run.leaseId, recordedAt: new Date().toISOString() }));
+        outcomes.push({ runId: run.id, action: "REROUTE_REQUIRED", reason });
+        continue;
+      }
+      assertRunTransition(run.state, "ACTIVE");
+      run.state = "ACTIVE";
+      run.recoveryReason = decision.reason;
+      run.lastActivityAt = new Date().toISOString();
+      delete run.resourceBlockReason;
+      this.database.saveEntity("run", run.id, json(run), run.lastActivityAt);
+      if (taskRecord && task?.state === "WAITING_RESOURCE") {
+        this.tasks.execute({ id: decision.idempotencyKey, taskId: run.taskId, baseRevision: taskRecord.revision, actor: "resource-monitor", command: { type: "task.transition", state: "RUNNING" } });
+      }
+      this.database.saveEntity("resource-recovery", decision.idempotencyKey, json({ ...decision, runId: run.id, profileId, assessment, recoveredAt: run.lastActivityAt }));
+      this.attentionNotifications.recover(run.taskId);
+      await this.notifyResourceRecovery(run, decision.idempotencyKey);
+      await this.projections.drain();
+      this.fleetEvents.publish("run.changed", run.id, { id: run.id, state: run.state, recoveryReason: run.recoveryReason });
+      outcomes.push({ runId: run.id, action: decision.action, reason: decision.reason });
+    }
+    return outcomes;
+  }
+
+  private async notifyResourceRecovery(run: Run, idempotencyKey: string): Promise<void> {
+    const existing = this.database.getEntity<JsonValue>("resource-recovery-notification", idempotencyKey);
+    if (existing) return;
+    const binding = this.database.listEntities<JsonValue>("messaging-conversation")
+      .map((value) => value as unknown as ConversationBinding)
+      .find((candidate) => candidate.runId === run.id && candidate.generation === run.generation);
+    const connector = binding ? this.connectors.get<MessagingAdapter>(binding.connectorInstanceId) : undefined;
+    if (binding && connector?.reply) {
+      const sent = await connector.reply({ channel: binding.conversationId, threadId: binding.threadId, text: `Resource recovered; resumed the original session for run ${run.id}.` }, `${idempotencyKey}:thread`);
+      this.database.saveEntity("resource-recovery-notification", idempotencyKey, json({ idempotencyKey, externalMessageId: sent.externalMessageId, threadId: binding.threadId, sentAt: new Date().toISOString() }));
+    }
   }
 
   private async advanceRun(runId: string): Promise<{ waiting: boolean; run: Run; task: Task; deliveries: JsonValue[] }> {
@@ -690,10 +869,13 @@ export class ControllerService {
         return { waiting: true, run, task: this.database.getCanonicalTask<JsonValue>(run.taskId)!.document as unknown as Task, deliveries: [] };
       }
       const resource = await this.captureProfileResource(run.profileId, adapter, run.sessionId);
-      if (resource) {
+      if (resource && !["AVAILABLE", "LOW", "UNKNOWN"].includes(resource.state)) {
+        const pausedSession = await adapter.status(run.sessionId);
         assertRunTransition(run.state, "RESOURCE_BLOCKED");
         run.state = "RESOURCE_BLOCKED";
         run.resourceBlockReason = resource.reason ?? resource.state;
+        if (pausedSession.providerSessionId) run.providerSessionId = pausedSession.providerSessionId;
+        run.resumePolicy = pausedSession.providerSessionId || adapter.manifest.capabilities.resume ? "same-session" : "controlled-reroute";
         this.database.saveEntity("run", run.id, json(run));
         const current = this.database.getCanonicalTask<JsonValue>(run.taskId)!;
         if ((current.document as unknown as Task).state === "RUNNING") {
@@ -960,12 +1142,14 @@ export class ControllerService {
         assertRunTransition(run.state, "SUPERSEDED");
         run.state = "SUPERSEDED";
         run.endedAt = new Date().toISOString();
+        run.recoveryReason = `Delivery authority revoked for controlled reroute to ${nextProfileId}`;
         this.database.saveEntity("run", run.id, json(run));
         const now = new Date().toISOString();
-        const rerouted: Run = { ...run, id: session.runId, runnerId: profile.runnerId, providerId: profile.provider, profileId: nextProfileId, sessionId: session.id, state: "ACTIVE", attempt: run.attempt + 1, generation: run.generation + 1, leaseId: randomUUID(), startedAt: now, lastActivityAt: now, verification: { state: "PENDING", commands: [...contract.verification] } };
+        const rerouted: Run = { ...run, id: session.runId, runnerId: profile.runnerId, providerId: profile.provider, profileId: nextProfileId, sessionId: session.id, ...(session.providerSessionId ? { providerSessionId: session.providerSessionId } : {}), resumePolicy: session.providerSessionId || nextAdapter.manifest.capabilities.resume ? "same-session" : "controlled-reroute", state: "ACTIVE", attempt: run.attempt + 1, generation: run.generation + 1, leaseId: randomUUID(), revokedLeaseIds: [...(run.revokedLeaseIds ?? []), run.leaseId], startedAt: now, lastActivityAt: now, verification: { state: "PENDING", commands: [...contract.verification] } };
         delete rerouted.endedAt;
         delete rerouted.failureReason;
         delete rerouted.resourceBlockReason;
+        rerouted.recoveryReason = `Controlled reroute from ${run.profileId}; prior lease ${run.leaseId} revoked`;
         delete rerouted.activitySummary;
         delete rerouted.prUrl;
         this.database.saveEntity("run", rerouted.id, json(rerouted));
@@ -1238,6 +1422,26 @@ export class ControllerService {
         return { id: session.id, runId: session.runId, profileId: session.profileId, state: session.state, updatedAt: session.updatedAt };
       }),
     }));
+    this.app.get("/api/resources", async () => ({
+      resources: this.configuration.current().config.agentProfiles.map((profile) => {
+        const assessment = this.resourceRegistry.assess(profile.id);
+        const affectedTasks = this.database.listEntities<JsonValue>("run").map((value) => value as unknown as Run)
+          .filter((run) => run.profileId === profile.id && run.state === "RESOURCE_BLOCKED").map((run) => run.taskId);
+        return { ...assessment, affectedTasks: [...new Set(affectedTasks)].sort() };
+      }),
+      schedules: this.resourceProbes.list(),
+    }));
+    this.app.post<{ Params: { profileId: string } }>("/api/resources/:profileId/probe", async (request, reply) => {
+      if (!this.agentAdapters.has(request.params.profileId)) return reply.code(404).send({ code: "PROFILE_NOT_FOUND" });
+      const snapshot = await this.probeProfileResource(request.params.profileId);
+      if (!snapshot) return reply.code(409).send({ code: "RESOURCE_PROBE_UNAVAILABLE" });
+      return { snapshot, assessment: this.resourceRegistry.assess(request.params.profileId), schedules: this.resourceProbes.list().filter((entry) => entry.profileId === request.params.profileId) };
+    });
+    this.app.post<{ Params: { profileId: string } }>("/api/resources/:profileId/recover", async (request, reply) => {
+      const assessment = this.resourceRegistry.assess(request.params.profileId);
+      if (!["AVAILABLE", "LOW"].includes(assessment.state)) return reply.code(409).send({ code: "RESOURCE_NOT_READY", assessment });
+      return { assessment, recoveries: await this.recoverProfileRuns(request.params.profileId, assessment) };
+    });
     this.app.post<{ Body: CodexProfileBody }>("/api/agents/codex/discover", async (request, reply) => {
       if (!request.body?.codexHome || !request.body.alias) return reply.code(400).send({ code: "CODEX_PROFILE_REQUIRED" });
       return probeCodexProfile({

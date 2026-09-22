@@ -149,7 +149,11 @@ importers:
 
   packages/domain: {}
 
-  packages/fleet: {}
+  packages/fleet:
+    dependencies:
+      '@dispatcher/domain':
+        specifier: workspace:*
+        version: link:../domain
 
   packages/integrations:
     dependencies:

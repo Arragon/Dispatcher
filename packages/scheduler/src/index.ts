@@ -88,6 +88,8 @@ export class CanonicalScheduler {
       providerId: decision.selected.providerId,
       profileId: decision.selected.profileId,
       sessionId: session.id,
+      ...(session.providerSessionId ? { providerSessionId: session.providerSessionId } : {}),
+      resumePolicy: session.providerSessionId || decision.selected.adapter.manifest.capabilities.resume ? "same-session" : "controlled-reroute",
       state: "ACTIVE",
       attempt: 1,
       generation: input.generation ?? 1,

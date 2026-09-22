@@ -383,16 +383,14 @@ describe("ControllerService", () => {
     writeFileSync(join(repositoryRoot, "README.md"), "fixture\n");
     execFileSync("git", ["-C", repositoryRoot, "add", "README.md"]);
     execFileSync("git", ["-C", repositoryRoot, "commit", "-m", "fixture"]);
+    let resourceReady = false;
     const backend: CodexBackend = {
       start: () => ({
         cancel: async () => undefined,
         status: () => "completed",
-        result: async () => ({
-          state: "failed",
-          summary: "quota",
-          providerSessionId: "thread-quota",
-          events: [{ type: "resource", state: "QUOTA_EXHAUSTED", reason: "quota exhausted", source: "event", confidence: "high" }],
-        }),
+        result: async () => resourceReady
+          ? { state: "completed", summary: "resource ready", providerSessionId: "thread-quota", events: [{ type: "resource", state: "AVAILABLE", reason: "probe succeeded", source: "probe", confidence: "high" }] }
+          : { state: "failed", summary: "quota", providerSessionId: "thread-quota", events: [{ type: "resource", state: "QUOTA_EXHAUSTED", reason: "quota exhausted", resetsAt: "2026-09-23T01:00:00.000Z", source: "error", confidence: "high" }] },
       }),
     };
     const service = new ControllerService({ dataDirectory: directory, withRunner: true, secretStore: new FakeSecretStore(), codexBackendFactory: () => backend });
@@ -406,7 +404,7 @@ describe("ControllerService", () => {
     const started = await service.app.inject({ method: "POST", url: "/api/agents/profiles/atlas/runs", payload: { workspacePath: workspace.path, prompt: "work" } });
     const sessionId = started.json().session.id as string;
     service.database.writeCanonicalTask("task-quota", 0, {
-      id: "task-quota", projectId: "project", title: "Quota task", state: "RUNNING",
+      id: "task-quota", projectId: "project", title: "Quota task", state: "RUNNING", currentRunId: "run-quota",
       createdAt: "2026-09-22T00:00:00.000Z", updatedAt: "2026-09-22T00:00:00.000Z",
     });
     service.database.saveTaskContract("task-quota", {
@@ -426,6 +424,17 @@ describe("ControllerService", () => {
     expect(advanced.json()).toMatchObject({ run: { state: "RESOURCE_BLOCKED", resourceBlockReason: "quota exhausted" }, task: { state: "WAITING_RESOURCE" } });
     const profiles = await service.app.inject({ method: "GET", url: "/api/agents/profiles" });
     expect(profiles.json().profiles).toContainEqual(expect.objectContaining({ id: "atlas", resourceState: "QUOTA_EXHAUSTED" }));
+    const resources = await service.app.inject({ method: "GET", url: "/api/resources" });
+    expect(resources.json().resources).toContainEqual(expect.objectContaining({ profileId: "atlas", state: "QUOTA_EXHAUSTED", source: "error", confidence: "high", affectedTasks: ["task-quota"] }));
+    expect(resources.json().schedules).toContainEqual(expect.objectContaining({ profileId: "atlas", status: "SCHEDULED" }));
+
+    resourceReady = true;
+    const probed = await service.app.inject({ method: "POST", url: "/api/resources/atlas/probe" });
+    expect(probed.statusCode).toBe(200);
+    expect(probed.json()).toMatchObject({ assessment: { state: "AVAILABLE", source: "probe" } });
+    expect(service.database.getEntity("run", "run-quota")).toMatchObject({ state: "ACTIVE", sessionId, recoveryReason: expect.stringContaining("Original provider session") });
+    expect(service.database.getCanonicalTask("task-quota")?.document).toMatchObject({ state: "RUNNING", currentRunId: "run-quota" });
+    expect(service.database.listEntities("resource-probe-schedule")).toContainEqual(expect.objectContaining({ profileId: "atlas", status: "RECOVERED" }));
     await service.stop();
   });
 });
