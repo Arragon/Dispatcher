@@ -47,6 +47,9 @@ importers:
       '@dispatcher/domain':
         specifier: workspace:*
         version: link:../../packages/domain
+      '@dispatcher/fleet':
+        specifier: workspace:*
+        version: link:../../packages/fleet
       '@dispatcher/integrations':
         specifier: workspace:*
         version: link:../../packages/integrations

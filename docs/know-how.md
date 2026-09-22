@@ -1,6 +1,6 @@
 # Durable Project Know-how
 
-## M0–M6 invariants
+## M0–M10 invariants
 
 - The frozen architecture/roadmap dated 2026-09-15 is authoritative over the
   tracker. Tracker differences are reconciled to the document, not vice versa.
@@ -109,6 +109,45 @@
 - A task-platform switch changes the primary connector binding, not execution
   identity. Dry-run unsupported fields first; preserve task ID, TaskContract,
   Run history, and delivery evidence throughout the switch.
+- Fleet is a disposable projection over canonical records. Never repair an
+  inconsistency by editing Fleet state; fix the canonical record and rebuild.
+- Meaningful activity is deterministic. Heartbeat/observer noise must not clear
+  a stall, while real activity clears suspect/stalled state on the next rebuild.
+- Dashboard event history is bounded and coalesced by type/entity key. An
+  expired reconnect cursor requires a reset snapshot. EventSource is the
+  refresh path; do not add a hidden polling loop.
+- Typed Intent v2 is the only semantic execution input. Resolve external IDs
+  and aliases to canonical IDs first; ambiguous or missing resolution enters
+  clarification and never silently chooses the first match.
+- Semantic tools are allowlisted with bounded schemas and risk levels. Recheck
+  role and confirmation at execution. Assistants may call ConfigPlan APIs, but
+  may not write tables or execute arbitrary shell commands.
+- Reject literal credentials before an LLM request. Assistant and Slack flows
+  request secure input and pass only `secret://` references.
+- Approval and clarification use durable optimistic-concurrency records. A
+  stale workflow revision must not execute after restart or a newer decision.
+- A Qoder first invocation owns an explicit provider session ID; every later
+  send/resume uses that same ID. Controller and provider session IDs are
+  distinct and must not be substituted.
+- Qoder usage/credit parsing uses shared ResourceSnapshot states. A Qoder quota
+  event blocks Qoder capacity only and must not make Codex globally unavailable.
+- Scheduler candidates derive `providerId` from the configured profile. A
+  hard-coded provider in Controller reintroduces single-provider coupling.
+- Slack HMAC is computed over exact raw bytes and guarded by timestamp and
+  replay checks before parsing. Never reserialize JSON for signature checking.
+- Slack display names are presentation only. Authorization requires a durable,
+  admin-approved PrincipalBinding; unknown and revoked principals fail closed.
+- A Slack intervention thread binds to one task/run/session generation. Replies
+  and buttons recheck binding revision and generation before resuming the
+  original provider session; stale controls are conflicts.
+- Remote notifications are attention-only and idempotent. Deduplicate per
+  task/state/generation with cooldown and do not stream routine activity.
+- Persist only normalized Slack Inbox records. Redact credential-shaped text
+  before persistence, and route the user to a short-lived signed Dashboard
+  link; never echo or audit the submitted literal.
+- Slack approval buttons identify a semantic workflow plus its expected
+  revision. Recheck the durable principal, roles, and revision before execute;
+  stale or cross-principal buttons fail closed.
 
 ## Tooling details
 

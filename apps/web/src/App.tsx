@@ -1,13 +1,17 @@
-import { lazy, Suspense, useEffect, useRef, useState, type FormEvent } from "react";
-import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
+import { lazy, Suspense, useRef, useState, type FormEvent } from "react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, NavLink, Navigate, Route, Routes } from "react-router-dom";
-import { api, subscribeToEvents, type ConfigResponse, type Health, type RunnerSummary } from "./api.js";
+import { api, type ConfigResponse } from "./api.js";
 import "./styles.css";
 
 const SettingsPage = lazy(() => import("./SettingsPage.js"));
 const SetupWizard = lazy(() => import("./SetupWizard.js"));
 const LlmPage = lazy(() => import("./LlmPage.js"));
 const AgentsPage = lazy(() => import("./AgentsPage.js"));
+const FleetPage = lazy(() => import("./FleetPage.js"));
+const TasksPage = lazy(() => import("./TasksPage.js"));
+const IntegrationsPage = lazy(() => import("./IntegrationsPage.js"));
+const AssistantDrawer = lazy(() => import("./AssistantDrawer.js"));
 
 const navigation = [
   ["/overview", "Overview / Fleet", "⌁"],
@@ -35,64 +39,6 @@ export function Navigation(): React.JSX.Element {
       <NavLink to="/setup" className="setup-link">Setup wizard</NavLink>
     </aside>
   );
-}
-
-function StatusPill({ state }: { state: string }): React.JSX.Element {
-  return <span className={`status status-${state.toLowerCase()}`}>{state}</span>;
-}
-
-function Overview(): React.JSX.Element {
-  const health = useQuery({ queryKey: ["health"], queryFn: () => api<Health>("/health"), retry: false });
-  const runners = useQuery({ queryKey: ["runners"], queryFn: () => api<{ runners: RunnerSummary[] }>("/api/runners"), retry: false });
-  const impact = useQuery({
-    queryKey: ["impact"],
-    queryFn: () => api<{ rssBytes: number; databaseBytes: number; dashboardClients: number }>("/api/system-impact"),
-    retry: false,
-  });
-  useEffect(() => subscribeToEvents(() => void runners.refetch()), [runners.refetch]);
-
-  if (health.isLoading || runners.isLoading) return <PageState title="Connecting to Controller" detail="Loading live state…" />;
-  if (health.error || runners.error) return <PageState title="Controller unavailable" detail="Check that dispatcher serve --with-runner is running." tone="error" />;
-  const active = runners.data?.runners.filter((runner) => runner.state === "ONLINE") ?? [];
-  return (
-    <section>
-      <header className="page-header">
-        <div><p className="eyebrow">Control plane</p><h1>Overview / Fleet</h1><p>Live system state without background polling.</p></div>
-        <StatusPill state={health.data?.status === "ok" ? "ONLINE" : "DEGRADED"} />
-      </header>
-      <div className="metric-grid">
-        <Metric label="Controller" value={health.data?.mode ?? "—"} detail={`v${health.data?.version ?? "—"}`} />
-        <Metric label="Runners online" value={`${active.length}`} detail={`${runners.data?.runners.length ?? 0} registered`} />
-        <Metric label="Controller RSS" value={formatBytes(impact.data?.rssBytes)} detail="current process" />
-        <Metric label="State database" value={formatBytes(impact.data?.databaseBytes)} detail={`${impact.data?.dashboardClients ?? 0} dashboard client`} />
-      </div>
-      <div className="panel">
-        <div className="panel-heading"><div><p className="eyebrow">Execution plane</p><h2>Runners</h2></div><span>{active.length} available</span></div>
-        {runners.data?.runners.length ? (
-          <div className="runner-list">
-            {runners.data.runners.map((runner) => (
-              <article className="runner-row" key={runner.id}>
-                <div className="runner-avatar">{runner.displayName.slice(0, 2).toUpperCase()}</div>
-                <div><strong>{runner.displayName}</strong><p>{runner.platform} · {runner.architecture} · {runner.capabilities.join(", ")}</p></div>
-                <div className="runner-meta"><StatusPill state={runner.state} /><small>{new Date(runner.lastSeenAt).toLocaleTimeString()}</small></div>
-              </article>
-            ))}
-          </div>
-        ) : <PageState title="No runners registered" detail="Start the Controller with --with-runner." />}
-      </div>
-    </section>
-  );
-}
-
-function Metric({ label, value, detail }: { label: string; value: string; detail: string }): React.JSX.Element {
-  return <article className="metric"><p>{label}</p><strong>{value}</strong><small>{detail}</small></article>;
-}
-
-function formatBytes(value?: number): string {
-  if (value === undefined) return "—";
-  if (value < 1024) return `${value} B`;
-  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
-  return `${(value / 1024 / 1024).toFixed(1)} MB`;
 }
 
 function PageState({ title, detail, tone = "neutral" }: { title: string; detail: string; tone?: "neutral" | "error" }): React.JSX.Element {
@@ -186,12 +132,12 @@ export function App(): React.JSX.Element {
           <main>
             <Suspense fallback={<PageState title="Loading" detail="Preparing this control surface…" />}>
               <Routes>
-                <Route path="/overview" element={<Overview />} />
-                <Route path="/tasks" element={<Placeholder title="Tasks & Runs" description="Task truth and execution attempts remain separate." />} />
+                <Route path="/overview" element={<FleetPage />} />
+                <Route path="/tasks" element={<TasksPage />} />
                 <Route path="/runners" element={<Placeholder title="Runners" description="Registered execution devices and capabilities." />} />
                 <Route path="/agents" element={<AgentsPage />} />
                 <Route path="/llm" element={<LlmPage />} />
-                <Route path="/integrations" element={<Placeholder title="Integrations" description="Linear, GitHub and Slack connection state." />} />
+                <Route path="/integrations" element={<IntegrationsPage />} />
                 <Route path="/policies" element={<Placeholder title="Policies" description="Deterministic execution and approval boundaries." />} />
                 <Route path="/diagnostics" element={<Placeholder title="Logs & Diagnostics" description="Structured system evidence without raw-log flooding." />} />
                 <Route path="/settings" element={<SettingsPage />} />
@@ -199,6 +145,7 @@ export function App(): React.JSX.Element {
                 <Route path="*" element={<Navigate to="/overview" replace />} />
               </Routes>
             </Suspense>
+            <Suspense fallback={null}><AssistantDrawer /></Suspense>
           </main>
         </div>
       </BrowserRouter>

@@ -77,6 +77,29 @@ main { padding: 2.4rem clamp(1.2rem, 4vw, 4rem); max-width: 1500px; width: 100%;
 .compact-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: .65rem; align-items: end; }
 .compact-form input, .compact-form select, .field-stack select { width: 100%; min-height: 40px; border: 1px solid var(--line); border-radius: 8px; padding: .55rem .65rem; background: var(--surface); color: var(--text); }
 .field-stack { display: grid; gap: .35rem; margin: .85rem 0; color: var(--muted); font-size: .82rem; }
+.two-column { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(300px, .75fr); gap: .8rem; }
+.empty-inline { color: var(--muted); padding: 1.4rem .2rem; }
+.snapshot-time { color: var(--muted); font-size: .78rem; text-align: right; }
+.toolbar, .pager { display: flex; align-items: end; justify-content: space-between; gap: 1rem; margin: .8rem 0; color: var(--muted); }
+.toolbar label { min-width: 180px; }
+.table-wrap { overflow-x: auto; padding: 0; }
+table { width: 100%; border-collapse: collapse; font-size: .86rem; }
+th, td { padding: .85rem 1rem; text-align: left; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { color: var(--muted); font-size: .72rem; text-transform: uppercase; letter-spacing: .08em; }
+td small { display: block; color: var(--muted); margin-top: .25rem; }
+.connector-card { display: grid; grid-template-columns: 1fr auto; gap: .8rem; padding: 1rem 0; border-bottom: 1px solid var(--line); }
+.connector-card dl { grid-column: 1 / -1; display: grid; grid-template-columns: 120px 120px 1fr; gap: .5rem; margin: 0; }
+.connector-card dl div { display: grid; gap: .25rem; }
+.connector-card dt { color: var(--muted); font-size: .72rem; }
+.connector-card dd { margin: 0; overflow-wrap: anywhere; }
+.connector-card button { justify-self: end; }
+.notice { margin-top: .8rem; color: var(--muted); }
+.assistant-launcher { position: fixed; z-index: 20; right: 1.2rem; bottom: 1.2rem; background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 800; box-shadow: 0 10px 40px #0008; }
+.assistant-drawer { position: fixed; z-index: 19; right: 1rem; bottom: 4.8rem; width: min(440px, calc(100vw - 2rem)); max-height: calc(100vh - 6rem); overflow: auto; padding: 1rem; background: #11171c; border: 1px solid #3a474f; border-radius: 16px; box-shadow: 0 20px 80px #000c; }
+.assistant-drawer form, .workflow-card { display: grid; gap: .8rem; margin-top: 1rem; }
+.assistant-message { color: var(--muted); }
+.workflow-card { padding: .9rem; border: 1px solid var(--line); border-radius: 10px; }
+.workflow-card pre { max-height: 260px; overflow: auto; white-space: pre-wrap; color: #bcd0dc; background: #090d10; padding: .7rem; border-radius: 8px; font-size: .75rem; }
 @media (max-width: 980px) {
   .shell { grid-template-columns: 76px minmax(0, 1fr); }
   .brand > span:not(.brand-mark), .nav-link { font-size: 0; }
@@ -87,6 +110,7 @@ main { padding: 2.4rem clamp(1.2rem, 4vw, 4rem); max-width: 1500px; width: 100%;
   .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .settings-layout { grid-template-columns: 1fr; }
   .settings-aside { position: static; }
+  .two-column { grid-template-columns: 1fr; }
 }
 @media (max-width: 620px) {
   .shell { display: block; }
@@ -105,4 +129,5 @@ main { padding: 2.4rem clamp(1.2rem, 4vw, 4rem); max-width: 1500px; width: 100%;
   .stepper { grid-template-columns: 1fr; }
   .stepper li { display: none; }
   .stepper li.current { display: block; }
+  .connector-card dl { grid-template-columns: 1fr 1fr; }
 }

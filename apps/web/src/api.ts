@@ -38,6 +38,6 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
 
 export function subscribeToEvents(onEvent: () => void): () => void {
   const source = new EventSource("/api/events");
-  source.addEventListener("runner.changed", onEvent);
+  for (const event of ["runner.changed", "run.changed", "task.changed", "connector.changed", "fleet.reset"]) source.addEventListener(event, onEvent);
   return () => source.close();
 }

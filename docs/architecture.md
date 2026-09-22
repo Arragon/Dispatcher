@@ -4,7 +4,7 @@ This file is the concise implementation map for the frozen design in
 `agent-dispatcher-architecture-roadmap-v2026-09-15.md`. If the two disagree,
 the frozen design is authoritative.
 
-## Delivered boundary (M0–M6)
+## Delivered boundary (M0–M10)
 
 The current system is a single Node.js Controller with an optional in-process
 Embedded Runner. In addition to the M0–M4 foundation, it owns canonical tasks,
@@ -12,8 +12,10 @@ connector bindings, inbox/outbox projection, deterministic routing, TaskContract
 compilation, isolated Codex profiles, Linear task ingress/projection, and GitHub
 delivery evidence. The M6 vertical path is Linear issue → canonical task →
 managed Git worktree → Codex run → verified commit/PR/CI evidence → Linear
-projection. Remote Runner authentication, Slack, richer Fleet management, and
-the real-time task dashboard remain later capabilities.
+projection. M7–M10 add a rebuildable Fleet read model and cursor SSE, Typed
+Intent v2 with allowlisted semantic workflows, Qoder as a second provider, and
+the Slack remote-control path. Remote Runner authentication and the later
+scale/HA milestones remain outside this boundary.
 
 ```text
 React Dashboard
@@ -23,9 +25,11 @@ Fastify Controller ─── ConfigPlan Engine ─── SecretStore
       │                       │
       │ typed events          └── opaque secret:// references only
       ├── Internal LLM Runtime ─── protocol adapters + safe fallback
-      ├── Connector Registry ─── Linear / GitHub / contract fakes
+      ├── Connector Registry ─── Linear / GitHub / Slack / contract fakes
       ├── Canonical Task Service ─── inbox + outbox + bindings
-      └── Deterministic Scheduler ─── Codex profile + managed worktree
+      ├── Fleet Read Model ─── bounded cursor events + attention policy
+      ├── Semantic Workflow ─── typed intent + allowlisted tools + approvals
+      └── Deterministic Scheduler ─── Codex/Qoder profiles + managed worktree
       │
       ▼
 Embedded Runner ─── Adapter Contract ─── Execution Backend
@@ -45,18 +49,16 @@ Controller + ConfigPlan + Canonical Tasks ─── SQLite repositories (WAL)
 | `persistence` | SQLite lifecycle, migrations, repositories, CAS revisions | Business orchestration |
 | `runner` | Event bus, Embedded transport, registry and heartbeat | Controller policy |
 | `llm-runtime` | Protocol normalization, probes, role pools, safe switch, circuit/fallback/failback | Semantic intent or secret persistence |
-| `adapters` | Manifest, discovery, normalized session contract, Generic Mock/CLI | Scheduler or database internals |
-| `semantic` | Deterministic TaskDraft → TaskContract compilation and `NEEDS_SPEC` classification | Provider payloads or execution |
+| `adapters` | Manifest, discovery, normalized session contract, Generic Mock/CLI, Codex and Qoder | Scheduler or database internals |
+| `semantic` | TaskContract compilation, Typed Intent v2, entity resolution, allowlisted tool policy and durable workflow states | Provider payloads, arbitrary shell or secret values |
 | `scheduler` | Deterministic eligibility/ranking and Run creation bound to task/contract revisions | Provider implementation or task persistence |
-| `integrations` | Connector contracts, Linear, GitHub, canonical task commands, projections, delivery evidence | Controller HTTP or secret persistence |
+| `fleet` | Rebuildable Fleet snapshot, activity, stall detection, bounded cursor stream and pagination | Provider SDKs, HTTP or persistence |
+| `integrations` | Connector contracts, Linear, GitHub, Slack messaging, canonical task commands, projections, delivery evidence | Controller HTTP or secret persistence |
 | `workspace` | Repository registry, isolated Git worktrees, path and cleanup policy | Agent behavior or delivery policy |
 | `config` | Canonical schema, precedence, plan/apply/verify/rollback, secrets | Web rendering |
 | `observability` | Structured logging and recursive redaction | Domain decisions |
 | `controller` | Lifecycle composition, HTTP/SSE API, CLI, static assets | Provider-specific logic |
 | `web` | Dashboard, settings, setup wizard | Secrets or direct database access |
-
-`fleet` remains an explicit future seam. Slack is represented only by the
-messaging connector contract fake; its production control plane starts at M10.
 
 The `domain` and `protocol` purity rule is executable through
 `pnpm boundaries`.
@@ -135,9 +137,9 @@ explicit—there is no background health polling. Adapter manifests are exposed
 read-only to the Agents page, where their JSON Schema and UI Schema generate
 the base configuration form.
 
-The Agents page discovers Codex CLI installations, creates alias-based
+The Agents page discovers Codex and Qoder CLI installations, creates alias-based
 profiles through ConfigPlan, tests authentication explicitly, and shows only
-profile aliases and normalized session state. `CODEX_HOME`, account IDs, and
+profile aliases and normalized session state. `CODEX_HOME`, provider account IDs, and
 credentials are never returned by profile/session APIs.
 Quota and rate-limit events are persisted as per-profile `ResourceSnapshot`
 records. They move an active Run to `RESOURCE_BLOCKED`, its task to
@@ -180,6 +182,13 @@ Cleanup first emits a plan and refuses unknown, out-of-root or dirty worktrees.
 The Generic CLI backend uses a fixed executable and argv template; placeholders
 occupy complete argv entries and are passed with `shell: false`.
 
+Codex and Qoder implement the same `AgentAdapter` lifecycle and return the same
+TaskContract-facing session/result types. Qoder discovery uses only manifest
+probes. Its CLI backend assigns an explicit provider session ID on first
+invocation and uses that exact ID for every resume. Credits, quota, rate-limit,
+auth and outage signals normalize to shared ResourceSnapshot states. Scheduler
+candidates carry the configured provider/profile rather than a Codex constant.
+
 Runner processes are lazy, group-cancellable and timeout/idle-timeout aware.
 Stdout/stderr become bounded activity summaries while redacted raw output goes
 to rotating files with per-file and total budgets. SQLite does not store raw
@@ -219,6 +228,41 @@ and the current generation/lease, then records commit, pull request, and CI
 evidence idempotently. The compatibility decision and capability matrix are recorded in
 `docs/adr-001-connector-contract.md`.
 
+## Fleet, semantic control, and Slack
+
+Fleet views are disposable projections, never a second source of truth. The
+Controller rebuilds one snapshot from canonical task/run, connector and profile
+records. Meaningful activity discards explicit noise and coalesces identical
+signals. Stall detection keeps `WAITING_USER`, `WAITING_RESOURCE` and terminal
+runs out of the stalled bucket. Dashboard events use a bounded coalescing
+buffer, monotonic cursors and reset snapshots when a reconnect cursor expires.
+Task and run tables page on the server; closing the dashboard closes EventSource
+and leaves no polling loop.
+
+The Assistant creates a durable Typed Intent v2 workflow before execution.
+Aliases resolve to canonical IDs; zero or multiple matches require
+clarification. Only registered semantic tools can execute, with input schema,
+principal roles and risk policy checked again at execution. Privileged tools
+require a persisted approval revision. Literal credentials are rejected before
+an LLM call and redirected to secure input. Fixed commands remain available in
+`DEGRADED_NO_LLM`, while manual GUI flows keep using Controller and ConfigPlan.
+
+`messaging.slack` implements MessagingAdapter v1. Ingress captures exact raw
+bytes, enforces the body limit and timestamp window, verifies Slack HMAC with a
+constant-time comparison, and rejects replay before normalization. External
+users have no authority until an administrator creates a `PrincipalBinding`;
+display names are never identities. Each intervention thread has one durable
+`ConversationBinding` with run, session, generation and revision fencing. A
+WAITING_USER notification creates that thread, and a reply continues the same
+provider session only after both fences match. Fixed and natural-language
+commands reuse the M8 semantic workflow. Outbound replies are idempotent and
+rate-limit aware; approval buttons carry workflow revision fences and declared
+files are uploaded into the same thread. Normalized inbound messages and
+attention notifications are durably deduplicated across Controller restart.
+Literal credentials are redacted before Inbox persistence and receive a
+short-lived signed link to the Dashboard secure-input flow. Notifications are
+attention-only and cooldown-deduplicated.
+
 ## Change rules
 
 - Add a state only by changing its domain contract and transition tests.
@@ -226,6 +270,10 @@ evidence idempotently. The compatibility decision and capability matrix are reco
 - Add a database shape only through an idempotent migration and upgrade test.
 - Add a task platform or SCM provider only through the connector contract kit;
   keep raw payloads at the adapter edge.
+- Add an Assistant capability only as an allowlisted semantic tool with a
+  bounded input schema and explicit risk classification.
+- Add a messaging platform only through MessagingAdapter v1; preserve raw-byte
+  verification, principal binding, conversation fencing and idempotency.
 - Never start an Agent in a client-selected directory. Resolve a configured
   repository and create a Dispatcher-managed worktree first.
 - Never move secret values into configuration, logs, URLs, audit payloads, or
