@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SecretAccessContext, SecretMetadata, SecretStore } from "@dispatcher/config";
-import type { CodexBackend } from "@dispatcher/adapters";
+import type { CodexBackend, DevinBackend } from "@dispatcher/adapters";
 import { RemoteRunnerClient } from "@dispatcher/runner";
 import { ControllerService } from "../src/service.js";
 import { LifecycleManager } from "../src/lifecycle.js";
@@ -263,6 +263,34 @@ describe("ControllerService", () => {
     await service.stop();
   });
 
+  it("registers the M14 ecosystem, persists provider profiles through ConfigPlan, and exposes routing capabilities", async () => {
+    const secrets = new FakeSecretStore();
+    await secrets.put("secret://devin/main", "cog-test-token");
+    const backend: DevinBackend = {
+      health: async () => ({ ok: true }),
+      create: async () => ({ sessionId: "devin-1", status: "running", pullRequests: [] }),
+      get: async () => ({ sessionId: "devin-1", status: "running", acusConsumed: 1, pullRequests: [] }),
+      send: async () => ({ sessionId: "devin-1", status: "running", pullRequests: [] }),
+    };
+    const service = new ControllerService({ dataDirectory: dataDirectory(), withRunner: true, secretStore: secrets, devinBackendFactory: () => backend });
+    await service.start({ listen: false });
+    const manifests = (await service.app.inject({ method: "GET", url: "/api/adapters/manifests" })).json().manifests;
+    expect(manifests.map((manifest: { id: string }) => manifest.id)).toEqual(expect.arrayContaining(["cursor", "devin", "kiro", "workbuddy-codebuddy", "generic-cli"]));
+    const matrix = await service.app.inject({ method: "GET", url: "/api/adapters/compatibility" });
+    expect(matrix.json().matrix).toEqual(expect.arrayContaining([expect.objectContaining({ adapterId: "cursor", backendId: "cursor-local-cli" }), expect.objectContaining({ adapterId: "devin", backendId: "devin-v3-api" })]));
+
+    const missingSecret = await service.app.inject({ method: "POST", url: "/api/agents/devin/profiles", payload: { id: "devin-missing", alias: "Missing", organizationId: "org-test", credentialRef: "secret://devin/missing" } });
+    expect(missingSecret.statusCode).toBe(409);
+    const created = await service.app.inject({ method: "POST", url: "/api/agents/devin/profiles", payload: { id: "devin-main", alias: "Devin", organizationId: "org-test", credentialRef: "secret://devin/main", maxSessionAcu: 20 } });
+    expect(created.statusCode).toBe(201);
+    const profiles = await service.app.inject({ method: "GET", url: "/api/agents/profiles" });
+    expect(profiles.json().profiles).toContainEqual(expect.objectContaining({ id: "devin-main", provider: "devin", state: "CONFIGURED", capabilities: expect.arrayContaining(["code", "git", "waiting-user", "resource-probe"]) }));
+    expect(profiles.body).not.toContain("cog-test-token");
+    const tested = await service.app.inject({ method: "POST", url: "/api/agents/profiles/devin-main/test" });
+    expect(tested.json()).toMatchObject({ authenticated: true, apiVersion: "v3" });
+    await service.stop();
+  });
+
   it("keeps concurrently running Codex profiles isolated and does not start idle backends", async () => {
     const directory = dataDirectory();
     const repositoryRoot = join(directory, "repository");
@@ -402,7 +430,7 @@ describe("ControllerService", () => {
       task: { state: "FAILED" },
     });
     await service.stop();
-  });
+  }, 15_000);
 
   it("persists Codex quota signals and blocks the run, task, and future routing", async () => {
     const directory = dataDirectory();

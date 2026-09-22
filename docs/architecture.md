@@ -4,7 +4,7 @@ This file is the concise implementation map for the frozen design in
 `agent-dispatcher-architecture-roadmap-v2026-09-15.md`. If the two disagree,
 the frozen design is authoritative.
 
-## Delivered boundary (M0–M13 implementation)
+## Delivered boundary (M0–M14 implementation)
 
 The current system is a single Node.js Controller with an optional in-process
 Embedded Runner. In addition to the M0–M4 foundation, it owns canonical tasks,
@@ -16,7 +16,10 @@ projection. M7–M10 add a rebuildable Fleet read model and cursor SSE, Typed
 Intent v2 with allowlisted semantic workflows, Qoder as a second provider, and
 the Slack remote-control path. M11–M13 add resource continuity, authenticated
 Remote Runners with durable replay and lease fencing, plus platform adapters
-for launchd, Windows Service, systemd, Unix PTY, and ConPTY. Scale/HA remains
+for launchd, Windows Service, systemd, Unix PTY, and ConPTY. M14 adds the
+Cursor, Devin, Kiro, WorkBuddy/CodeBuddy, and hardened Generic CLI adapter
+boundaries plus a capability matrix used by scheduling and operator reroute.
+Scale/HA remains
 outside this boundary.
 
 ```text
@@ -252,6 +255,27 @@ runs out of the stalled bucket. Dashboard events use a bounded coalescing
 buffer, monotonic cursors and reset snapshots when a reconnect cursor expires.
 Task and run tables page on the server; closing the dashboard closes EventSource
 and leaves no polling loop.
+
+## Agent ecosystem and compatibility routing
+
+Every provider is registered through `AdapterManifest`; Controller never parses
+provider output. Cursor and Kiro use verified headless CLI argv with structured
+stream output, no shell interpolation, and credentials resolved from
+`SecretStore` only into the child environment. Devin uses the official v3
+organization session API and maps suspended/waiting state, ACU consumption,
+and pull requests into canonical session/resource/artifact shapes. The
+WorkBuddy/CodeBuddy adapter uses an explicitly configured local HTTP contract;
+endpoint templates require `{sessionId}` as a complete path segment. Generic
+CLI keeps a fixed executable and argv template and grants only its declared
+capabilities.
+
+`GET /api/adapters/compatibility` derives backend, session, input, artifact,
+and resource support from manifests and returns explicit unsupported reasons.
+Scheduler candidates use those declared capabilities together with Runner
+capabilities. A Run persists its required capability set so an operator reroute
+is rejected if the replacement adapter cannot satisfy the original gate.
+Discovery/health and a real business Run are separate evidence; an installed
+CLI or reachable API is not presented as a completed end-to-end invocation.
 
 The Assistant creates a durable Typed Intent v2 workflow before execution.
 Aliases resolve to canonical IDs; zero or multiple matches require

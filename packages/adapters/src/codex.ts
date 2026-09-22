@@ -60,7 +60,7 @@ export const codexManifest: AdapterManifest = {
     { id: "codex-version", kind: "command", description: "Read Codex CLI version", timeoutMs: 3_000 },
     { id: "codex-auth", kind: "auth", description: "Check Codex login for this isolated CODEX_HOME", timeoutMs: 5_000 },
   ],
-  backends: [{ id: "codex-exec-json", kind: "headless-cli", priority: 1, capabilities: ["start", "resume", "send", "status", "cancel", "result", "usage"] }],
+  backends: [{ id: "codex-exec-json", kind: "headless-cli", priority: 1, capabilities: ["code", "git", "start", "resume", "send", "status", "cancel", "result", "usage", "artifacts"] }],
   capabilities: { pause: false, resume: true, usage: true, diagnostics: true },
 };
 

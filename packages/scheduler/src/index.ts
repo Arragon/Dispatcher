@@ -97,6 +97,7 @@ export class CanonicalScheduler {
       taskRevision: input.taskRevision,
       contractRevision: input.contract.revision,
       worktree: input.workspacePath,
+      requiredCapabilities: [...input.requirements.capabilities],
       startedAt: now,
       lastActivityAt: now,
       verification: { state: "PENDING", commands: [...input.contract.verification] },

@@ -41,6 +41,6 @@ describe("canonical deterministic scheduler", () => {
       requirements: { capabilities: ["code"] },
       workspacePath: "/tmp/worktree",
     });
-    expect(result.run).toMatchObject({ taskId: "task-1", taskRevision: 3, contractRevision: 2, state: "ACTIVE", runnerId: "runner-a" });
+    expect(result.run).toMatchObject({ taskId: "task-1", taskRevision: 3, contractRevision: 2, state: "ACTIVE", runnerId: "runner-a", requiredCapabilities: ["code"] });
   });
 });

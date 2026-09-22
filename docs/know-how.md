@@ -54,8 +54,22 @@
   a raw command/path field to discovery requests. Probe free text is redacted
   and summarized before it enters trusted state.
 - Generic CLI command templates have a fixed executable and argv array, run
-  with `shell: false`, and permit only whole-argument placeholders. LLM or task
-  text is data, never a shell fragment.
+  with `shell: false`, and allow placeholders only as complete argv values.
+  Keep provider discovery on an allowlisted `--version`/health probe and never
+  turn a user string into a shell command.
+- Cursor and Kiro CLI credentials are `secret://` references resolved only at
+  process start into provider-specific environment variables. Version/auth
+  probes prove installation and login, not a business invocation.
+- Devin v3 has verified create/get/message session operations, waiting/resource
+  normalization, and PR evidence. Do not claim remote cancel support until an
+  official endpoint is verified; the adapter intentionally declares no cancel
+  capability.
+- WorkBuddy/CodeBuddy local-service paths are configuration, not guessed vendor
+  defaults. Every session endpoint must place `{sessionId}` in its own path
+  segment so percent-encoding cannot escape the configured endpoint shape.
+- Routing capabilities come from the selected AdapterManifest backend plus the
+  Runner, never from provider-brand conditionals. Persist required capabilities
+  on the Run so manual reroute is checked by the same hard gate.
 - One Run owns one writable worktree. Canonicalize every candidate path against
   the real worktree root, then enforce declared scope paths; lexical prefix
   checks alone do not stop symlink escape.

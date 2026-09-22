@@ -11,10 +11,27 @@ import {
   codexManifest,
   QoderAdapter,
   qoderManifest,
+  CursorAdapter,
+  cursorManifest,
+  KiroAdapter,
+  kiroManifest,
+  DevinAdapter,
+  devinManifest,
+  LocalServiceAdapter,
+  localServiceManifest,
+  GenericCliAdapter,
   genericCliManifest,
   genericMockManifest,
+  buildAdapterCompatibilityMatrix,
+  manifestCapabilities,
+  assessManifestCapabilities,
   probeCodexProfile,
   probeQoderProfile,
+  probeCursorProfile,
+  probeKiroProfile,
+  probeDevinProfile,
+  probeLocalService,
+  probeGenericCli,
   type AgentAdapter,
   type AdapterSession,
   type SessionStore,
@@ -22,6 +39,12 @@ import {
   type CodexProfileConfig,
   type QoderBackend,
   type QoderProfileConfig,
+  type CliAgentBackend,
+  type CliAgentProfile,
+  type DevinBackend,
+  type DevinProfileConfig,
+  type LocalServiceProfileConfig,
+  type ProcessExecutor,
 } from "@dispatcher/adapters";
 import {
   assertRequiredSecretsAvailable,
@@ -90,7 +113,7 @@ import {
 import { LlmRuntime, LlmRuntimeError, type FetchLike, type LlmConfiguration, type LlmRole } from "@dispatcher/llm-runtime";
 import { createLogger, redactValue } from "@dispatcher/observability";
 import { DispatcherDatabase, RevisionConflictError, type JsonValue } from "@dispatcher/persistence";
-import { EmbeddedRunner, EventBus, LeaseFenceError, RemoteRunnerServer, RunnerEnrollmentAuthority, RunnerLeaseAuthority, RunnerRegistry, VerificationRegistry, type RunnerEnrollmentRecord, type RunnerEvents } from "@dispatcher/runner";
+import { EmbeddedRunner, EventBus, LeaseFenceError, ProcessManager, RemoteRunnerServer, RunnerEnrollmentAuthority, RunnerLeaseAuthority, RunnerRegistry, VerificationRegistry, type RunnerEnrollmentRecord, type RunnerEvents } from "@dispatcher/runner";
 import {
   SemanticPolicyError,
   SemanticToolRegistry,
@@ -118,6 +141,8 @@ export interface ControllerOptions {
   gitTransport?: GitTransport;
   codexBackendFactory?: (profile: CodexProfileConfig) => CodexBackend;
   qoderBackendFactory?: (profile: QoderProfileConfig) => QoderBackend;
+  cliBackendFactory?: (provider: "cursor" | "kiro", profile: CliAgentProfile) => CliAgentBackend;
+  devinBackendFactory?: (profile: DevinProfileConfig) => DevinBackend;
   modules?: ServiceModule[];
 }
 
@@ -166,6 +191,10 @@ function stringMapSetting(value: JsonValue | undefined): Record<string, string> 
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const entries = Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === "string");
   return Object.fromEntries(entries);
+}
+
+function stringArraySetting(value: JsonValue | undefined): string[] | undefined {
+  return Array.isArray(value) && value.every((entry) => typeof entry === "string") ? value : undefined;
 }
 
 interface SecretBody {
@@ -218,6 +247,28 @@ interface QoderProfileBody {
   executable?: string;
   configDir?: string;
   model?: string;
+}
+
+interface EcosystemProfileBody {
+  id?: string;
+  alias?: string;
+  runnerId?: string;
+  credentialRef?: string;
+  executable?: string;
+  model?: string;
+  organizationId?: string;
+  apiBase?: string;
+  maxSessionAcu?: number;
+  provider?: "workbuddy" | "codebuddy";
+  baseUrl?: string;
+  healthPath?: string;
+  startPath?: string;
+  statusPath?: string;
+  inputPath?: string;
+  cancelPath?: string;
+  resourcePath?: string;
+  args?: string[];
+  mode?: "headless" | "pty";
 }
 
 interface CodexRunBody {
@@ -273,6 +324,30 @@ function llmConfiguration(config: DispatcherConfig["internalLlm"]): LlmConfigura
   };
 }
 
+const adapterManifests = [genericMockManifest, genericCliManifest, codexManifest, qoderManifest, cursorManifest, devinManifest, kiroManifest, localServiceManifest] as const;
+
+function manifestForProvider(provider: string) {
+  if (provider === "workbuddy" || provider === "codebuddy") return localServiceManifest;
+  return adapterManifests.find((manifest) => manifest.id === provider);
+}
+
+function localServiceProfile(body: EcosystemProfileBody): LocalServiceProfileConfig | undefined {
+  if (!body.id || !body.alias || !body.provider || !body.baseUrl || !body.healthPath || !body.startPath || !body.statusPath || !body.inputPath || !body.cancelPath) return undefined;
+  return {
+    id: body.id,
+    alias: body.alias,
+    provider: body.provider,
+    baseUrl: body.baseUrl,
+    healthPath: body.healthPath,
+    startPath: body.startPath,
+    statusPath: body.statusPath,
+    inputPath: body.inputPath,
+    cancelPath: body.cancelPath,
+    ...(body.resourcePath ? { resourcePath: body.resourcePath } : {}),
+    ...(body.credentialRef ? { credentialRef: body.credentialRef } : {}),
+  };
+}
+
 export class ControllerService {
   readonly app: FastifyInstance;
   readonly database: DispatcherDatabase;
@@ -312,11 +387,13 @@ export class ControllerService {
   private stopping?: Promise<void>;
   private dashboardClients = 0;
   private readonly secretTestStates = new Map<string, SecretTestState>();
+  private readonly agentProcesses: ProcessManager;
 
   constructor(readonly options: ControllerOptions) {
     const logger = createLogger({ level: process.env.LOG_LEVEL ?? "info" });
     this.app = fastify({ loggerInstance: logger as unknown as FastifyBaseLogger });
     this.database = new DispatcherDatabase(join(options.dataDirectory, "dispatcher.sqlite"));
+    this.agentProcesses = new ProcessManager(join(options.dataDirectory, "agent-logs"));
     this.enrollments = new RunnerEnrollmentAuthority(
       this.database.listEntities<JsonValue>("runner-enrollment") as unknown as RunnerEnrollmentRecord[],
       (record) => this.database.saveEntity("runner-enrollment", record.id, json(record), record.consumedAt ?? record.createdAt),
@@ -372,6 +449,7 @@ export class ControllerService {
       onRunnerChanged: async (runner) => await this.events.publish("runnerChanged", runner),
     });
     const modules: ServiceModule[] = [];
+    modules.push({ name: "agent-processes", start: () => undefined, stop: () => this.agentProcesses.shutdown() });
     modules.push({ name: "remote-runner-server", start: () => undefined, stop: () => this.remoteRunnerServer.close() });
     if (options.withRunner) {
       const configured = this.configuration.current().config.runners.find((runner) => runner.mode === "embedded");
@@ -460,6 +538,29 @@ export class ControllerService {
     const record = audit.at(-1);
     if (!record) return;
     this.database.saveEntity("lease-audit", `${runId}:${audit.length}`, json(record), record.occurredAt);
+  }
+
+  private genericProcessExecutor(): ProcessExecutor {
+    return {
+      start: async (input) => {
+        const handle = await this.agentProcesses.start({ runId: input.runId, file: input.file, args: input.args, cwd: input.cwd, ...(input.mode === "pty" ? { mode: "pty" as const } : { mode: "process" as const }) });
+        const state = async (): Promise<"running" | "cancelled" | "completed" | "failed"> => {
+          if (handle.status().state === "running") return "running";
+          const result = await handle.result();
+          return result.classification === "success" ? "completed" : result.classification === "cancelled" ? "cancelled" : "failed";
+        };
+        return {
+          id: handle.id,
+          status: async () => ({ state: await state() }),
+          send: (data) => handle.send(data),
+          cancel: () => handle.cancel(),
+          result: async () => {
+            const result = await handle.result();
+            return { state: result.classification === "success" ? "completed" as const : result.classification === "cancelled" ? "cancelled" as const : "failed" as const, summary: result.stdoutTail || result.stderrTail || result.classification };
+          },
+        };
+      },
+    };
   }
 
   private applyRuntimeConfiguration(config: DispatcherConfig): void {
@@ -560,6 +661,62 @@ export class ControllerService {
         ...(stringSetting(profile.settings?.model) ? { model: stringSetting(profile.settings?.model)! } : {}),
       };
       this.agentAdapters.set(profile.id, new QoderAdapter(adapterProfile, this.options.qoderBackendFactory?.(adapterProfile), store));
+    }
+    const resolveProviderCredential = (reference: string): Promise<string> => this.secrets.resolve(reference, { principal: "controller", purpose: "provider" });
+    for (const profile of config.agentProfiles.filter((entry) => entry.provider === "cursor" || entry.provider === "kiro")) {
+      const adapterProfile: CliAgentProfile = {
+        id: profile.id,
+        alias: profile.alias,
+        ...(stringSetting(profile.settings?.executable) ? { executable: stringSetting(profile.settings?.executable)! } : {}),
+        ...(profile.credentialRef ? { credentialRef: profile.credentialRef } : {}),
+        ...(stringSetting(profile.settings?.model) ? { model: stringSetting(profile.settings?.model)! } : {}),
+      };
+      const backend = this.options.cliBackendFactory?.(profile.provider as "cursor" | "kiro", adapterProfile);
+      this.agentAdapters.set(profile.id, profile.provider === "cursor"
+        ? new CursorAdapter(adapterProfile, backend, store, resolveProviderCredential)
+        : new KiroAdapter(adapterProfile, backend, store, resolveProviderCredential));
+    }
+    for (const profile of config.agentProfiles.filter((entry) => entry.provider === "devin")) {
+      const organizationId = stringSetting(profile.settings?.organizationId);
+      if (!organizationId || !profile.credentialRef) continue;
+      const adapterProfile: DevinProfileConfig = {
+        id: profile.id,
+        alias: profile.alias,
+        organizationId,
+        credentialRef: profile.credentialRef,
+        ...(stringSetting(profile.settings?.apiBase) ? { apiBase: stringSetting(profile.settings?.apiBase)! } : {}),
+        ...(typeof profile.settings?.maxSessionAcu === "number" ? { maxSessionAcu: profile.settings.maxSessionAcu } : {}),
+      };
+      this.agentAdapters.set(profile.id, new DevinAdapter(adapterProfile, this.options.devinBackendFactory?.(adapterProfile), store, resolveProviderCredential, this.options.integrationFetch as typeof fetch | undefined));
+    }
+    for (const profile of config.agentProfiles.filter((entry) => entry.provider === "workbuddy" || entry.provider === "codebuddy")) {
+      const settings = profile.settings;
+      const required = ["baseUrl", "healthPath", "startPath", "statusPath", "inputPath", "cancelPath"] as const;
+      if (required.some((key) => !stringSetting(settings?.[key]))) continue;
+      const adapterProfile: LocalServiceProfileConfig = {
+        id: profile.id,
+        alias: profile.alias,
+        provider: profile.provider as "workbuddy" | "codebuddy",
+        baseUrl: stringSetting(settings?.baseUrl)!,
+        healthPath: stringSetting(settings?.healthPath)!,
+        startPath: stringSetting(settings?.startPath)!,
+        statusPath: stringSetting(settings?.statusPath)!,
+        inputPath: stringSetting(settings?.inputPath)!,
+        cancelPath: stringSetting(settings?.cancelPath)!,
+        ...(stringSetting(settings?.resourcePath) ? { resourcePath: stringSetting(settings?.resourcePath)! } : {}),
+        ...(profile.credentialRef ? { credentialRef: profile.credentialRef } : {}),
+      };
+      this.agentAdapters.set(profile.id, new LocalServiceAdapter(adapterProfile, resolveProviderCredential, this.options.integrationFetch as typeof fetch | undefined, store));
+    }
+    for (const profile of config.agentProfiles.filter((entry) => entry.provider === "generic-cli")) {
+      const executable = stringSetting(profile.settings?.executable);
+      const args = stringArraySetting(profile.settings?.args);
+      if (!executable || !args) continue;
+      this.agentAdapters.set(profile.id, new GenericCliAdapter(this.genericProcessExecutor(), {
+        file: executable,
+        args,
+        ...(profile.settings?.mode === "pty" || profile.settings?.mode === "headless" ? { mode: profile.settings.mode } : {}),
+      }, store, profile.id));
     }
   }
 
@@ -1201,6 +1358,8 @@ export class ControllerService {
         const previousAdapter = run ? this.agentAdapters.get(run.profileId) : undefined;
         const contract = run ? this.database.getTaskContract<JsonValue>(run.taskId) as unknown as TaskContract | undefined : undefined;
         if (!run || isTerminalRunState(run.state) || !run.worktree || !profile || !nextAdapter || !previousAdapter || !contract) throw new SemanticPolicyError("INVALID_INPUT", `Run ${runId} cannot be rerouted to ${nextProfileId}`);
+        const capabilityAssessment = assessManifestCapabilities(nextAdapter.manifest, run.requiredCapabilities ?? ["code", "git"]);
+        if (!capabilityAssessment.supported) throw new SemanticPolicyError("INVALID_INPUT", capabilityAssessment.explanation);
         const session = await nextAdapter.start({ runId: randomUUID(), workspacePath: run.worktree, prompt: contract.goal });
         try { await previousAdapter.cancel(run.sessionId); }
         catch (error) { await nextAdapter.cancel(session.id); throw error; }
@@ -1496,16 +1655,21 @@ export class ControllerService {
       this.database.saveEntity("runner-identity", runner.id, json({ runnerId: runner.id, credentialRef: runner.credentialRef, enrolledAt: new Date().toISOString() }));
       return reply.code(201).send({ runnerId: runner.id, credentialRef: runner.credentialRef, bearerToken, protocolVersion: "1.2" });
     });
-    this.app.get("/api/adapters/manifests", async () => ({ manifests: [genericMockManifest, genericCliManifest, codexManifest, qoderManifest] }));
+    this.app.get("/api/adapters/manifests", async () => ({ manifests: adapterManifests }));
+    this.app.get("/api/adapters/compatibility", async () => ({ matrix: buildAdapterCompatibilityMatrix(adapterManifests) }));
     this.app.get("/api/agents/profiles", async () => ({
-      profiles: this.configuration.current().config.agentProfiles.map((profile) => ({
-        id: profile.id,
-        provider: profile.provider,
-        alias: profile.alias,
-        runnerId: profile.runnerId,
-        state: this.agentAdapters.has(profile.id) ? "CONFIGURED" : "UNAVAILABLE",
-        resourceState: this.profileResourceState(profile.id),
-      })),
+      profiles: this.configuration.current().config.agentProfiles.map((profile) => {
+        const manifest = manifestForProvider(profile.provider);
+        return {
+          id: profile.id,
+          provider: profile.provider,
+          alias: profile.alias,
+          runnerId: profile.runnerId,
+          state: this.agentAdapters.has(profile.id) ? "CONFIGURED" : "UNAVAILABLE",
+          resourceState: this.profileResourceState(profile.id),
+          capabilities: manifest ? manifestCapabilities(manifest) : [],
+        };
+      }),
       sessions: this.database.listEntities<JsonValue>("adapter-session").map((value) => {
         const session = value as Record<string, JsonValue>;
         return { id: session.id, runId: session.runId, profileId: session.profileId, state: session.state, updatedAt: session.updatedAt };
@@ -1592,6 +1756,59 @@ export class ControllerService {
       const applied = this.configuration.applyPlan(plan.id, { confirmed: true });
       return reply.code(201).send({ profile: { id: body.id, provider: "qoder", alias: body.alias, runnerId: body.runnerId ?? "local", state: "CONFIGURED" }, discovery: discovery.selected, revision: applied.revision });
     });
+    this.app.post<{ Params: { provider: string }; Body: EcosystemProfileBody }>("/api/agents/:provider/discover", async (request, reply) => {
+      const body = request.body;
+      if (!body?.alias) return reply.code(400).send({ code: "AGENT_PROFILE_REQUIRED" });
+      const resolveCredential = (reference: string): Promise<string> => this.secrets.resolve(reference, { principal: "controller", purpose: "provider" });
+      if (request.params.provider === "cursor" || request.params.provider === "kiro") {
+        const profile: CliAgentProfile = { id: body.id ?? `discovered-${request.params.provider}`, alias: body.alias, ...(body.executable ? { executable: body.executable } : {}), ...(body.credentialRef ? { credentialRef: body.credentialRef } : {}), ...(body.model ? { model: body.model } : {}) };
+        return request.params.provider === "cursor" ? probeCursorProfile(profile, resolveCredential) : probeKiroProfile(profile, resolveCredential);
+      }
+      if (request.params.provider === "devin") {
+        if (!body.organizationId || !body.credentialRef) return reply.code(400).send({ code: "DEVIN_PROFILE_REQUIRED" });
+        return probeDevinProfile({ id: body.id ?? "discovered-devin", alias: body.alias, organizationId: body.organizationId, credentialRef: body.credentialRef, ...(body.apiBase ? { apiBase: body.apiBase } : {}), ...(body.maxSessionAcu ? { maxSessionAcu: body.maxSessionAcu } : {}) }, resolveCredential, this.options.integrationFetch as typeof fetch | undefined);
+      }
+      if (request.params.provider === "workbuddy-codebuddy") {
+        const local = localServiceProfile({ ...body, id: body.id ?? "discovered-local-service" });
+        if (!local) return reply.code(400).send({ code: "LOCAL_SERVICE_PROFILE_REQUIRED" });
+        return probeLocalService(local, resolveCredential, this.options.integrationFetch as typeof fetch | undefined);
+      }
+      if (request.params.provider === "generic-cli") {
+        if (!body.executable || !body.args) return reply.code(400).send({ code: "GENERIC_CLI_PROFILE_REQUIRED" });
+        return probeGenericCli({ file: body.executable, args: body.args, ...(body.mode ? { mode: body.mode } : {}) });
+      }
+      return reply.code(404).send({ code: "ADAPTER_NOT_FOUND" });
+    });
+    this.app.post<{ Params: { provider: string }; Body: EcosystemProfileBody }>("/api/agents/:provider/profiles", async (request, reply) => {
+      const body = request.body;
+      if (!body?.id || !body.alias) return reply.code(400).send({ code: "AGENT_PROFILE_REQUIRED" });
+      const current = this.configuration.current();
+      if (current.config.agentProfiles.some((profile) => profile.id === body.id)) return reply.code(409).send({ code: "PROFILE_EXISTS" });
+      let provider = request.params.provider;
+      let settings: Record<string, JsonValue>;
+      let credentialRef = body.credentialRef;
+      if (provider === "cursor" || provider === "kiro") {
+        settings = { ...(body.executable ? { executable: body.executable } : {}), ...(body.model ? { model: body.model } : {}) };
+      } else if (provider === "devin") {
+        if (!body.organizationId || !credentialRef) return reply.code(400).send({ code: "DEVIN_PROFILE_REQUIRED" });
+        settings = { organizationId: body.organizationId, ...(body.apiBase ? { apiBase: body.apiBase } : {}), ...(body.maxSessionAcu ? { maxSessionAcu: body.maxSessionAcu } : {}) };
+      } else if (provider === "workbuddy-codebuddy") {
+        const local = localServiceProfile(body);
+        if (!local) return reply.code(400).send({ code: "LOCAL_SERVICE_PROFILE_REQUIRED" });
+        provider = local.provider;
+        settings = { baseUrl: local.baseUrl, healthPath: local.healthPath, startPath: local.startPath, statusPath: local.statusPath, inputPath: local.inputPath, cancelPath: local.cancelPath, ...(local.resourcePath ? { resourcePath: local.resourcePath } : {}) };
+      } else if (provider === "generic-cli") {
+        if (!body.executable || !body.args) return reply.code(400).send({ code: "GENERIC_CLI_PROFILE_REQUIRED" });
+        settings = { executable: body.executable, args: body.args, mode: body.mode ?? "headless" };
+        credentialRef = undefined;
+      } else return reply.code(404).send({ code: "ADAPTER_NOT_FOUND" });
+      if (credentialRef && !(await this.secrets.metadata(credentialRef)).exists) return reply.code(409).send({ code: "SECRET_REFERENCE_MISSING" });
+      const next = structuredClone(current.config);
+      next.agentProfiles.push({ id: body.id, provider, alias: body.alias, runnerId: body.runnerId ?? "local", ...(credentialRef ? { credentialRef } : {}), settings });
+      const plan = this.configuration.buildPlan(next, "local-web", "web");
+      const applied = this.configuration.applyPlan(plan.id, { confirmed: true });
+      return reply.code(201).send({ profile: { id: body.id, provider, alias: body.alias, runnerId: body.runnerId ?? "local", state: this.agentAdapters.has(body.id) ? "CONFIGURED" : "UNAVAILABLE" }, revision: applied.revision });
+    });
     this.app.post<{ Params: { id: string } }>("/api/agents/profiles/:id/test", async (request, reply) => {
       const profile = this.configuration.current().config.agentProfiles.find((entry) => entry.id === request.params.id);
       const codexHome = stringSetting(profile?.settings?.codexHome);
@@ -1610,6 +1827,22 @@ export class ControllerService {
         ...(stringSetting(profile.settings?.configDir) ? { configDir: stringSetting(profile.settings?.configDir)! } : {}),
         ...(stringSetting(profile.settings?.model) ? { model: stringSetting(profile.settings?.model)! } : {}),
       });
+      const resolveCredential = (reference: string): Promise<string> => this.secrets.resolve(reference, { principal: "controller", purpose: "provider" });
+      if (profile.provider === "cursor" || profile.provider === "kiro") {
+        const cliProfile: CliAgentProfile = { id: profile.id, alias: profile.alias, ...(stringSetting(profile.settings?.executable) ? { executable: stringSetting(profile.settings?.executable)! } : {}), ...(profile.credentialRef ? { credentialRef: profile.credentialRef } : {}), ...(stringSetting(profile.settings?.model) ? { model: stringSetting(profile.settings?.model)! } : {}) };
+        return profile.provider === "cursor" ? probeCursorProfile(cliProfile, resolveCredential) : probeKiroProfile(cliProfile, resolveCredential);
+      }
+      if (profile.provider === "devin" && profile.credentialRef && stringSetting(profile.settings?.organizationId)) {
+        const devinProfile: DevinProfileConfig = { id: profile.id, alias: profile.alias, organizationId: stringSetting(profile.settings?.organizationId)!, credentialRef: profile.credentialRef, ...(stringSetting(profile.settings?.apiBase) ? { apiBase: stringSetting(profile.settings?.apiBase)! } : {}), ...(typeof profile.settings?.maxSessionAcu === "number" ? { maxSessionAcu: profile.settings.maxSessionAcu } : {}) };
+        const backend = this.options.devinBackendFactory?.(devinProfile);
+        if (backend) { const health = await backend.health(); return { authenticated: health.ok, apiVersion: "v3", ...(health.diagnostic ? { diagnostic: health.diagnostic } : {}) }; }
+        return probeDevinProfile(devinProfile, resolveCredential, this.options.integrationFetch as typeof fetch | undefined);
+      }
+      if (profile.provider === "workbuddy" || profile.provider === "codebuddy") {
+        const local = localServiceProfile({ id: profile.id, alias: profile.alias, provider: profile.provider, ...(profile.credentialRef ? { credentialRef: profile.credentialRef } : {}), ...(stringSetting(profile.settings?.baseUrl) ? { baseUrl: stringSetting(profile.settings?.baseUrl)! } : {}), ...(stringSetting(profile.settings?.healthPath) ? { healthPath: stringSetting(profile.settings?.healthPath)! } : {}), ...(stringSetting(profile.settings?.startPath) ? { startPath: stringSetting(profile.settings?.startPath)! } : {}), ...(stringSetting(profile.settings?.statusPath) ? { statusPath: stringSetting(profile.settings?.statusPath)! } : {}), ...(stringSetting(profile.settings?.inputPath) ? { inputPath: stringSetting(profile.settings?.inputPath)! } : {}), ...(stringSetting(profile.settings?.cancelPath) ? { cancelPath: stringSetting(profile.settings?.cancelPath)! } : {}), ...(stringSetting(profile.settings?.resourcePath) ? { resourcePath: stringSetting(profile.settings?.resourcePath)! } : {}) });
+        if (local) return probeLocalService(local, resolveCredential, this.options.integrationFetch as typeof fetch | undefined);
+      }
+      if (profile.provider === "generic-cli" && stringSetting(profile.settings?.executable) && stringArraySetting(profile.settings?.args)) return probeGenericCli({ file: stringSetting(profile.settings?.executable)!, args: stringArraySetting(profile.settings?.args)!, ...(profile.settings?.mode === "pty" || profile.settings?.mode === "headless" ? { mode: profile.settings.mode } : {}) });
       return reply.code(409).send({ code: "PROFILE_UNSUPPORTED" });
     });
     this.app.post<{ Params: { id: string }; Body: CodexRunBody }>("/api/agents/profiles/:id/runs", async (request, reply) => {
@@ -1794,7 +2027,7 @@ export class ControllerService {
           providerId: profile.provider,
           profileId: profile.id,
           resourceState: this.profileResourceState(profile.id),
-          capabilities: ["code", "git", "session-resume", ...runner.capabilities],
+          capabilities: [...new Set([...manifestCapabilities(adapter.manifest), ...runner.capabilities])],
           adapter,
         }];
       }));

@@ -153,6 +153,38 @@ token file. `upgrade` rewrites the service definition without changing
 `runnerId`; keep the previous package available until `doctor` and `status`
 pass so rollback is the same service rewrite against the prior CLI path.
 
+## M14 agent profiles
+
+Open **Agents & Profiles** or use the schema-driven endpoints:
+
+```text
+GET  /api/adapters/manifests
+GET  /api/adapters/compatibility
+POST /api/agents/<adapter-id>/discover
+POST /api/agents/<adapter-id>/profiles
+POST /api/agents/profiles/<profile-id>/test
+```
+
+Supported adapter IDs are `cursor`, `devin`, `kiro`,
+`workbuddy-codebuddy`, and `generic-cli` (plus the existing `codex` and
+`qoder`). Store provider credentials first through the secure secret API and
+put only a provider-scoped reference such as `secret://devin/main` in the
+profile. Profiles are persisted through ConfigPlan; the UI never reads secret
+values back.
+
+Cursor discovery runs `cursor-agent --version` and `cursor-agent status`;
+Kiro discovery runs `kiro-cli --version` and the structured model-list probe.
+Their business runs use official headless structured-output modes. Devin uses
+an organization ID and the v3 API. WorkBuddy/CodeBuddy requires explicit
+health/start/status/input/cancel paths because no vendor endpoint is assumed.
+Generic CLI requires a fixed executable and argv array; placeholders are only
+accepted as complete argv values.
+
+Treat discovery success, contract tests, and real provider execution as three
+separate gates. Without an installed CLI, Devin account, or reachable local
+service, keep the corresponding external acceptance item open and record the
+missing host/account evidence.
+
 ## Resource benchmark
 
 The M1 acceptance scenarios are:

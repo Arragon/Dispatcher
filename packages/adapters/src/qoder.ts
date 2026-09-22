@@ -61,7 +61,7 @@ export const qoderManifest: AdapterManifest = {
     { id: "qoder-auth", kind: "auth", description: "List models using the configured Qoder account", timeoutMs: 8_000 },
     { id: "qoder-session", kind: "capability", description: "Confirm explicit session-id and resume flags", timeoutMs: 3_000 },
   ],
-  backends: [{ id: "qoder-cli-json", kind: "headless-cli", priority: 1, capabilities: ["start", "resume", "send", "status", "cancel", "result", "usage", "credits"] }],
+  backends: [{ id: "qoder-cli-json", kind: "headless-cli", priority: 1, capabilities: ["code", "git", "start", "resume", "send", "status", "cancel", "result", "usage", "credits", "artifacts"] }],
   capabilities: { pause: false, resume: true, usage: true, diagnostics: true },
 };
 

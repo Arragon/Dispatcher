@@ -263,6 +263,7 @@ export interface Run {
   failureReason?: string;
   resourceBlockReason?: string;
   recoveryReason?: string;
+  requiredCapabilities?: string[];
   prUrl?: string;
   verification: VerificationEvidence;
 }

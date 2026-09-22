@@ -431,6 +431,9 @@ export function validateConfig(input: unknown): DispatcherConfig {
     if (profile.provider === "codex" && (typeof profile.settings?.codexHome !== "string" || !profile.settings.codexHome)) {
       throw new ConfigValidationError([`/agentProfiles/${profile.id}/settings/codexHome is required for Codex`]);
     }
+    if (profile.credentialRef && !profile.credentialRef.startsWith(`secret://${profile.provider}/`)) {
+      throw new ConfigValidationError([`/agentProfiles/${profile.id}/credentialRef must use the ${profile.provider} secret namespace`]);
+    }
   }
   for (const [name, integration] of Object.entries(config.integrations)) {
     if (integration.enabled && !integration.credentialRef) {
