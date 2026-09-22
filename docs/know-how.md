@@ -100,6 +100,11 @@
   must be attached to a TLS server. Runner journal entries are checksummed and
   replayed by sequence, while delivery authority is re-fenced before branch,
   push, pull-request, and completion mutations.
+- Native PTY uses Microsoft `node-pty` (MIT, pinned at 1.1.0) for Unix PTY and
+  Windows ConPTY. pnpm must explicitly allow its native build; some pnpm
+  installations lose the executable bit on the packaged Unix `spawn-helper`,
+  so Runner repairs that one known helper path before spawning. Platform code
+  stays in `runner`; scheduler/domain see only capability strings.
 - Run advancement is phase-idempotent. Persist `VERIFYING` before executing
   registered checks and `DELIVERING` before calling an SCM provider; retry from
   the stored phase after a temporary provider failure.

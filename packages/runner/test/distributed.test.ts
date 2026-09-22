@@ -66,6 +66,17 @@ describe("remote runner control plane", () => {
     await server.close();
   });
 
+  it("rejects an unsafe runner version before authentication", async () => {
+    const registry = new RunnerRegistry();
+    const server = new RemoteRunnerServer({ registry, port: 0, authenticate: () => true });
+    await server.ready();
+    const address = server.address()!;
+    const client = new RemoteRunnerClient({ url: `ws://127.0.0.1:${address.port}`, bearerToken: "token", runner: runner("old"), runnerVersion: "0.0.9" });
+    await expect(client.start()).rejects.toThrow("incompatible runner version");
+    expect(registry.list()).toEqual([]);
+    await server.close();
+  });
+
   it("bounds connection buffering and requires TLS outside loopback", () => {
     const registry = new RunnerRegistry();
     expect(() => new RemoteRunnerServer({ registry, host: "0.0.0.0", port: 0, authenticate: () => true })).toThrow("TLS server");

@@ -12,6 +12,9 @@ import {
 } from "@dispatcher/protocol";
 import WebSocket, { WebSocketServer, type RawData } from "ws";
 import type { RunnerJournal } from "./journal.js";
+import { isRunnerVersionCompatible } from "./enrollment.js";
+
+export const RUNNER_VERSION = "0.1.0";
 
 type CommandHandler = (payload: CommandPayload, envelope: ProtocolEnvelope<CommandPayload>) => unknown | Promise<unknown>;
 
@@ -27,6 +30,7 @@ interface RegistrationFrame {
   runner: Runner;
   profileInventory: string[];
   lastAcknowledgedSequence: number;
+  runnerVersion: string;
 }
 
 interface RegistrationResult {
@@ -52,6 +56,9 @@ export interface RemoteRunnerServerOptions {
   heartbeatTimeoutMs?: number;
   maxBufferedBytes?: number;
   rpcTimeoutMs?: number;
+  path?: string;
+  onRunnerChanged?: (runner: Runner) => void | Promise<void>;
+  controllerVersion?: string;
 }
 
 function isLoopback(host: string): boolean {
@@ -88,8 +95,8 @@ export class RemoteRunnerServer {
     this.maxBufferedBytes = options.maxBufferedBytes ?? 1_048_576;
     this.rpcTimeoutMs = options.rpcTimeoutMs ?? 30_000;
     this.webSocketServer = options.server
-      ? new WebSocketServer({ server: options.server, maxPayload: this.maxBufferedBytes })
-      : new WebSocketServer({ host, port: options.port ?? 0, maxPayload: this.maxBufferedBytes });
+      ? new WebSocketServer({ server: options.server, path: options.path, maxPayload: this.maxBufferedBytes })
+      : new WebSocketServer({ host, port: options.port ?? 0, path: options.path, maxPayload: this.maxBufferedBytes });
     this.webSocketServer.on("connection", (socket, request) => this.accept(socket, request.headers.authorization));
     this.monitor = setInterval(() => this.expireOffline(), Math.max(5_000, Math.floor(this.heartbeatTimeoutMs / 2)));
     this.monitor.unref();
@@ -158,9 +165,14 @@ export class RemoteRunnerServer {
       clearTimeout(registrationTimer);
       try {
         const frame = decode(data) as Partial<RegistrationFrame>;
-        if (frame.type !== "runner.register" || frame.protocolVersion !== PROTOCOL_VERSION || !frame.runner || !Array.isArray(frame.profileInventory) || !Number.isSafeInteger(frame.lastAcknowledgedSequence) || Number(frame.lastAcknowledgedSequence) < 0) {
+        if (frame.type !== "runner.register" || frame.protocolVersion !== PROTOCOL_VERSION || !frame.runner || !Array.isArray(frame.profileInventory) || !Number.isSafeInteger(frame.lastAcknowledgedSequence) || Number(frame.lastAcknowledgedSequence) < 0 || typeof frame.runnerVersion !== "string") {
           sendJson(socket, { type: "runner.rejected", reason: "unsupported registration or protocol version" } satisfies RegistrationResult, this.maxBufferedBytes);
           socket.close(1002, "invalid registration");
+          return;
+        }
+        if (!isRunnerVersionCompatible(this.options.controllerVersion ?? RUNNER_VERSION, frame.runnerVersion)) {
+          sendJson(socket, { type: "runner.rejected", reason: `incompatible runner version ${frame.runnerVersion}` } satisfies RegistrationResult, this.maxBufferedBytes);
+          socket.close(1002, "incompatible runner version");
           return;
         }
         if (!(await this.options.authenticate({ runnerId: frame.runner.id, bearerToken: bearer(authorization) }))) {
@@ -170,6 +182,7 @@ export class RemoteRunnerServer {
         }
         registered = true;
         const runner = this.options.registry.register({ ...frame.runner, state: "ONLINE", lastSeenAt: new Date().toISOString() });
+        void this.options.onRunnerChanged?.(runner);
         const existing = this.connections.get(runner.id);
         if (existing) existing.socket.close(1012, "runner reconnected");
         const connection: ServerConnection = { socket, runner, nextSequence: 1, lastReceivedSequence: Number(frame.lastAcknowledgedSequence), lastSeenAt: Date.now(), pending: new Map() };
@@ -186,7 +199,8 @@ export class RemoteRunnerServer {
       const connection = [...this.connections.values()].find((candidate) => candidate.socket === socket);
       if (!connection) return;
       this.connections.delete(connection.runner.id);
-      this.options.registry.register({ ...connection.runner, state: "DEGRADED", lastSeenAt: new Date().toISOString() });
+      const degraded = this.options.registry.register({ ...connection.runner, state: "DEGRADED", lastSeenAt: new Date().toISOString() });
+      void this.options.onRunnerChanged?.(degraded);
       for (const pending of connection.pending.values()) {
         clearTimeout(pending.timer);
         pending.reject(new Error("Remote runner disconnected"));
@@ -207,6 +221,7 @@ export class RemoteRunnerServer {
       }
       if (envelope.kind === "event" && envelope.payload.type === "runner.heartbeat") {
         connection.runner = this.options.registry.register({ ...connection.runner, state: envelope.payload.state, lastSeenAt: new Date().toISOString() });
+        void this.options.onRunnerChanged?.(connection.runner);
         return;
       }
       if (envelope.kind !== "response") return;
@@ -226,7 +241,8 @@ export class RemoteRunnerServer {
     for (const runner of this.options.registry.list()) {
       const connection = this.connections.get(runner.id);
       if (!connection && runner.state === "DEGRADED" && now - Date.parse(runner.lastSeenAt) >= this.heartbeatTimeoutMs) {
-        this.options.registry.setOffline(runner.id);
+        const offline = this.options.registry.setOffline(runner.id);
+        if (offline) void this.options.onRunnerChanged?.(offline);
       }
     }
   }
@@ -242,6 +258,7 @@ export interface RemoteRunnerClientOptions {
   maxBufferedBytes?: number;
   reconnectBackoffMs?: number;
   maxReconnectBackoffMs?: number;
+  runnerVersion?: string;
 }
 
 export class RemoteRunnerClient {
@@ -289,6 +306,7 @@ export class RemoteRunnerClient {
             runner: this.options.runner,
             profileInventory: this.options.profileInventory ?? [],
             lastAcknowledgedSequence: this.options.journal?.acknowledgedSequence() ?? 0,
+            runnerVersion: this.options.runnerVersion ?? RUNNER_VERSION,
           } satisfies RegistrationFrame, this.options.maxBufferedBytes ?? 1_048_576);
         });
         socket.once("message", (data) => {

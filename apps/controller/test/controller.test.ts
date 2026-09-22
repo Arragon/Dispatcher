@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SecretAccessContext, SecretMetadata, SecretStore } from "@dispatcher/config";
 import type { CodexBackend } from "@dispatcher/adapters";
+import { RemoteRunnerClient } from "@dispatcher/runner";
 import { ControllerService } from "../src/service.js";
 import { LifecycleManager } from "../src/lifecycle.js";
 
@@ -50,6 +51,36 @@ describe("ControllerService", () => {
     const runners = await second.app.inject({ method: "GET", url: "/api/runners" });
     expect(runners.json().runners[0]).toMatchObject({ id: "local", state: "ONLINE" });
     await second.stop();
+  });
+
+  it("authenticates a separately connected Remote Runner on the controller websocket", async () => {
+    const secrets = new FakeSecretStore();
+    const service = new ControllerService({ dataDirectory: dataDirectory(), host: "127.0.0.1", port: 0, secretStore: secrets });
+    const next = structuredClone(service.configuration.current().config);
+    next.runners.push({ id: "build-01", displayName: "Build 01", mode: "remote", capacity: 2, tags: ["ci"], credentialRef: "secret://runner/dispatcher/build-01" });
+    const plan = service.configuration.buildPlan(next, "test", "api");
+    service.configuration.applyPlan(plan.id, { confirmed: true });
+    await service.start();
+    const issued = await service.app.inject({ method: "POST", url: "/api/runners/build-01/enrollment", payload: { ttlMs: 60_000 } });
+    expect(issued.statusCode).toBe(201);
+    const enrolled = await service.app.inject({ method: "POST", url: "/api/runners/enroll", payload: { runnerId: "build-01", token: issued.json().token } });
+    expect(enrolled.statusCode).toBe(201);
+    expect(enrolled.json()).toMatchObject({ runnerId: "build-01", credentialRef: "secret://runner/dispatcher/build-01", protocolVersion: "1.2" });
+    const replay = await service.app.inject({ method: "POST", url: "/api/runners/enroll", payload: { runnerId: "build-01", token: issued.json().token } });
+    expect(replay.statusCode).toBe(401);
+    const address = service.app.server.address();
+    if (!address || typeof address === "string") throw new Error("Controller did not bind a TCP port");
+    const client = new RemoteRunnerClient({
+      url: `ws://127.0.0.1:${address.port}/runner`,
+      bearerToken: enrolled.json().bearerToken,
+      runner: { id: "build-01", displayName: "Build 01", platform: "darwin", architecture: "arm64", state: "ONLINE", capabilities: ["os:darwin", "remote"], capacity: 2, lastSeenAt: new Date().toISOString() },
+    });
+    client.register("runner.health", () => ({ ok: true }));
+    await client.start();
+    const runners = await service.app.inject({ method: "GET", url: "/api/runners" });
+    expect(runners.json().runners).toEqual(expect.arrayContaining([expect.objectContaining({ id: "build-01", state: "ONLINE" })]));
+    await client.stop();
+    await service.stop();
   });
 
   it("creates and applies configuration plans through the API", async () => {

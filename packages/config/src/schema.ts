@@ -9,6 +9,7 @@ export interface RunnerConfig {
   mode: "embedded" | "remote";
   capacity: number;
   tags: string[];
+  credentialRef?: string;
 }
 
 export interface IntegrationConfig {
@@ -157,6 +158,7 @@ export const dispatcherConfigSchema = {
           mode: { enum: ["embedded", "remote"] },
           capacity: { type: "integer", minimum: 1, maximum: 64 },
           tags: { type: "array", uniqueItems: true, items: { type: "string", minLength: 1 } },
+          credentialRef: { type: "string", pattern: "^secret://runner/[a-z0-9][a-z0-9._/-]*$" },
         },
       },
     },
@@ -314,6 +316,7 @@ export const dispatcherConfigSchema = {
 
 export const dispatcherConfigUiSchema = {
   controller: { port: { "ui:widget": "updown" } },
+  runners: { items: { credentialRef: { "ui:widget": "hidden" } } },
   integrations: {
     linear: { credentialRef: { "ui:widget": "hidden" } },
     github: { credentialRef: { "ui:widget": "hidden" } },
@@ -410,6 +413,10 @@ export function validateConfig(input: unknown): DispatcherConfig {
   const config = normalizeConfig(candidate as unknown as DispatcherConfig);
   const runnerIds = new Set(config.runners.map((runner) => runner.id));
   if (runnerIds.size !== config.runners.length) throw new ConfigValidationError(["/runners contains duplicate id"]);
+  for (const runner of config.runners) {
+    if (runner.mode === "remote" && !runner.credentialRef) throw new ConfigValidationError([`/runners/${runner.id}/credentialRef is required for remote runners`]);
+    if (runner.credentialRef && !runner.credentialRef.startsWith("secret://runner/")) throw new ConfigValidationError([`/runners/${runner.id}/credentialRef must use the runner secret namespace`]);
+  }
   const profileIds = new Set<string>();
   const aliases = new Set<string>();
   for (const profile of config.agentProfiles) {

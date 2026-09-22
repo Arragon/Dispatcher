@@ -1,6 +1,6 @@
 import { existsSync, statSync } from "node:fs";
 import { PassThrough } from "node:stream";
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { arch, platform } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -90,7 +90,7 @@ import {
 import { LlmRuntime, LlmRuntimeError, type FetchLike, type LlmConfiguration, type LlmRole } from "@dispatcher/llm-runtime";
 import { createLogger, redactValue } from "@dispatcher/observability";
 import { DispatcherDatabase, RevisionConflictError, type JsonValue } from "@dispatcher/persistence";
-import { EmbeddedRunner, EventBus, LeaseFenceError, RunnerLeaseAuthority, RunnerRegistry, VerificationRegistry, type RunnerEvents } from "@dispatcher/runner";
+import { EmbeddedRunner, EventBus, LeaseFenceError, RemoteRunnerServer, RunnerEnrollmentAuthority, RunnerLeaseAuthority, RunnerRegistry, VerificationRegistry, type RunnerEnrollmentRecord, type RunnerEvents } from "@dispatcher/runner";
 import {
   SemanticPolicyError,
   SemanticToolRegistry,
@@ -229,6 +229,14 @@ interface TaskDispatchBody {
   profileId?: string;
   repositoryId?: string;
   baseRef?: string;
+  capabilities?: string[];
+  runnerTags?: string[];
+  providerIds?: string[];
+}
+
+interface RunnerEnrollmentBody {
+  runnerId?: string;
+  token?: string;
 }
 
 interface AssistantPlanBody {
@@ -296,6 +304,8 @@ export class ControllerService {
   private readonly rawWebhookBodies = new WeakMap<object, Uint8Array>();
   private readonly startedAt = Date.now();
   private readonly embeddedRunner?: EmbeddedRunner;
+  private readonly remoteRunnerServer: RemoteRunnerServer;
+  private readonly enrollments: RunnerEnrollmentAuthority;
   private resourceProbeTimer: ReturnType<typeof setInterval> | undefined;
   private resourceProbeRunning = false;
   private listening = false;
@@ -307,6 +317,10 @@ export class ControllerService {
     const logger = createLogger({ level: process.env.LOG_LEVEL ?? "info" });
     this.app = fastify({ loggerInstance: logger as unknown as FastifyBaseLogger });
     this.database = new DispatcherDatabase(join(options.dataDirectory, "dispatcher.sqlite"));
+    this.enrollments = new RunnerEnrollmentAuthority(
+      this.database.listEntities<JsonValue>("runner-enrollment") as unknown as RunnerEnrollmentRecord[],
+      (record) => this.database.saveEntity("runner-enrollment", record.id, json(record), record.consumedAt ?? record.createdAt),
+    );
     for (const value of this.database.listEntities<JsonValue>("run")) {
       const run = value as unknown as Run;
       if (isTerminalRunState(run.state)) continue;
@@ -342,7 +356,23 @@ export class ControllerService {
       this.fleetEvents.publish("runner.changed", runner.id, redactValue(runner));
       if (runner.state === "OFFLINE") await this.notifyOperationalAttention({ key: runner.id, state: "RUNNER_OFFLINE", subject: `Runner offline: ${runner.displayName}`, body: `${runner.id} stopped reporting capacity.` });
     });
+    this.remoteRunnerServer = new RemoteRunnerServer({
+      registry: this.runners,
+      server: this.app.server,
+      path: "/runner",
+      authenticate: async ({ runnerId, bearerToken }) => {
+        if (!bearerToken) return false;
+        const configured = this.configuration.current().config.runners.find((runner) => runner.id === runnerId && runner.mode === "remote");
+        if (!configured?.credentialRef) return false;
+        const expected = await this.secrets.resolve(configured.credentialRef, { principal: "controller", purpose: "provider" });
+        const suppliedBytes = Buffer.from(bearerToken);
+        const expectedBytes = Buffer.from(expected);
+        return suppliedBytes.length === expectedBytes.length && timingSafeEqual(suppliedBytes, expectedBytes);
+      },
+      onRunnerChanged: async (runner) => await this.events.publish("runnerChanged", runner),
+    });
     const modules: ServiceModule[] = [];
+    modules.push({ name: "remote-runner-server", start: () => undefined, stop: () => this.remoteRunnerServer.close() });
     if (options.withRunner) {
       const configured = this.configuration.current().config.runners.find((runner) => runner.mode === "embedded");
       const now = new Date().toISOString();
@@ -1446,6 +1476,26 @@ export class ControllerService {
     });
 
     this.app.get("/api/runners", async () => ({ runners: this.runners.list() }));
+    this.app.post<{ Params: { id: string }; Body: { ttlMs?: number } }>("/api/runners/:id/enrollment", async (request, reply) => {
+      const runner = this.configuration.current().config.runners.find((candidate) => candidate.id === request.params.id && candidate.mode === "remote");
+      if (!runner) return reply.code(404).send({ code: "REMOTE_RUNNER_NOT_FOUND" });
+      const issued = this.enrollments.issue(runner.id, request.body?.ttlMs);
+      return reply.code(201).send({ runnerId: runner.id, token: issued.token, expiresAt: issued.record.expiresAt });
+    });
+    this.app.post<{ Body: RunnerEnrollmentBody }>("/api/runners/enroll", async (request, reply) => {
+      if (!request.body?.runnerId || !request.body.token) return reply.code(400).send({ code: "ENROLLMENT_INPUT_REQUIRED" });
+      const runner = this.configuration.current().config.runners.find((candidate) => candidate.id === request.body!.runnerId && candidate.mode === "remote");
+      if (!runner?.credentialRef) return reply.code(404).send({ code: "REMOTE_RUNNER_NOT_FOUND" });
+      try {
+        this.enrollments.consume(runner.id, request.body.token);
+      } catch (error) {
+        return reply.code(401).send({ code: "ENROLLMENT_REJECTED", message: error instanceof Error ? error.message : "Enrollment rejected" });
+      }
+      const bearerToken = randomBytes(32).toString("base64url");
+      await this.secrets.put(runner.credentialRef, bearerToken);
+      this.database.saveEntity("runner-identity", runner.id, json({ runnerId: runner.id, credentialRef: runner.credentialRef, enrolledAt: new Date().toISOString() }));
+      return reply.code(201).send({ runnerId: runner.id, credentialRef: runner.credentialRef, bearerToken, protocolVersion: "1.2" });
+    });
     this.app.get("/api/adapters/manifests", async () => ({ manifests: [genericMockManifest, genericCliManifest, codexManifest, qoderManifest] }));
     this.app.get("/api/agents/profiles", async () => ({
       profiles: this.configuration.current().config.agentProfiles.map((profile) => ({
@@ -1722,41 +1772,55 @@ export class ControllerService {
       return { ...task, contract: this.database.getTaskContract<JsonValue>(request.params.id), deliveries: this.database.listDeliveryEvidence<JsonValue>(request.params.id) };
     });
     this.app.post<{ Params: { id: string }; Body: TaskDispatchBody }>("/api/tasks/:id/dispatch", async (request, reply) => {
-      if (!request.body?.profileId) return reply.code(400).send({ code: "DISPATCH_INPUT_REQUIRED" });
       const stored = this.database.getCanonicalTask<JsonValue>(request.params.id);
       const contract = this.database.getTaskContract<JsonValue>(request.params.id) as unknown as TaskContract | undefined;
-      const adapter = this.agentAdapters.get(request.body.profileId);
       if (!stored || !contract) return reply.code(404).send({ code: "TASK_NOT_FOUND" });
-      if (!adapter) return reply.code(404).send({ code: "PROFILE_NOT_FOUND" });
-      const profile = this.configuration.current().config.agentProfiles.find((entry) => entry.id === request.body!.profileId)!;
-      const runner = this.runners.list().find((entry) => entry.id === profile.runnerId);
-      if (!runner) return reply.code(409).send({ code: "RUNNER_UNAVAILABLE" });
-      const repositoryId = request.body.repositoryId ?? contract.delivery.repository;
+      if (request.body?.profileId && !this.agentAdapters.has(request.body.profileId)) return reply.code(404).send({ code: "PROFILE_NOT_FOUND" });
+      const runners = new Map(this.runners.list().map((runner) => [runner.id, runner]));
+      const profiles = this.configuration.current().config.agentProfiles.filter((profile) => !request.body?.profileId || profile.id === request.body.profileId);
+      const repositoryId = request.body?.repositoryId ?? contract.delivery.repository;
       const repositoryConfig = this.configuration.current().config.repositories.find((entry) => entry.id === repositoryId);
       if (!repositoryId || !repositoryConfig) return reply.code(409).send({ code: "REPOSITORY_UNAVAILABLE", message: "The task repository is not registered" });
-      const scheduler = new CanonicalScheduler(() => [{
-        runnerId: runner.id,
-        runnerTags: runner.capabilities,
-        capacity: runner.capacity,
-        activeRuns: this.database.listEntities<JsonValue>("run").filter((value) => (value as Record<string, JsonValue>).state === "ACTIVE").length,
-        providerId: profile.provider,
-        profileId: profile.id,
-        resourceState: this.profileResourceState(profile.id),
-        capabilities: ["code", "git", "session-resume"],
-        adapter,
-      }]);
+      const activeRuns = this.database.listEntities<JsonValue>("run").map((value) => value as unknown as Run).filter((run) => run.state === "ACTIVE");
+      const scheduler = new CanonicalScheduler(() => profiles.flatMap((profile) => {
+        const runner = runners.get(profile.runnerId);
+        const adapter = this.agentAdapters.get(profile.id);
+        if (!runner || !adapter) return [];
+        return [{
+          runnerId: runner.id,
+          runnerTags: runner.capabilities,
+          capacity: runner.state === "ONLINE" || runner.state === "DEGRADED" ? runner.capacity : 0,
+          activeRuns: activeRuns.filter((run) => run.runnerId === runner.id).length,
+          providerId: profile.provider,
+          profileId: profile.id,
+          resourceState: this.profileResourceState(profile.id),
+          capabilities: ["code", "git", "session-resume", ...runner.capabilities],
+          adapter,
+        }];
+      }));
       const runId = randomUUID();
       const workspace = await this.workspaces.create({
         repositoryId,
         taskId: request.params.id,
         runId,
         attempt: 1,
-        baseRef: request.body.baseRef ?? contract.delivery.baseBranch ?? repositoryConfig.defaultBaseRef,
+        baseRef: request.body?.baseRef ?? contract.delivery.baseBranch ?? repositoryConfig.defaultBaseRef,
         scopePaths: repositoryConfig.scopePaths,
       });
       let dispatched: Awaited<ReturnType<CanonicalScheduler["dispatch"]>>;
       try {
-        dispatched = await scheduler.dispatch({ task: stored.document as unknown as Task, taskRevision: stored.revision, contract, requirements: { capabilities: ["code", "git"] }, workspacePath: workspace.path, runId });
+        dispatched = await scheduler.dispatch({
+          task: stored.document as unknown as Task,
+          taskRevision: stored.revision,
+          contract,
+          requirements: {
+            capabilities: ["code", "git", ...(request.body?.capabilities ?? [])],
+            ...(request.body?.runnerTags?.length ? { runnerTags: request.body.runnerTags } : {}),
+            ...(request.body?.providerIds?.length ? { providerIds: request.body.providerIds } : {}),
+          },
+          workspacePath: workspace.path,
+          runId,
+        });
       } catch (error) {
         const cleanup = await this.workspaces.cleanupPlan(workspace);
         if (cleanup.safe) await this.workspaces.cleanup(cleanup);

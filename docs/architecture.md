@@ -4,7 +4,7 @@ This file is the concise implementation map for the frozen design in
 `agent-dispatcher-architecture-roadmap-v2026-09-15.md`. If the two disagree,
 the frozen design is authoritative.
 
-## Delivered boundary (M0–M10)
+## Delivered boundary (M0–M13 implementation)
 
 The current system is a single Node.js Controller with an optional in-process
 Embedded Runner. In addition to the M0–M4 foundation, it owns canonical tasks,
@@ -14,8 +14,10 @@ delivery evidence. The M6 vertical path is Linear issue → canonical task →
 managed Git worktree → Codex run → verified commit/PR/CI evidence → Linear
 projection. M7–M10 add a rebuildable Fleet read model and cursor SSE, Typed
 Intent v2 with allowlisted semantic workflows, Qoder as a second provider, and
-the Slack remote-control path. Remote Runner authentication and the later
-scale/HA milestones remain outside this boundary.
+the Slack remote-control path. M11–M13 add resource continuity, authenticated
+Remote Runners with durable replay and lease fencing, plus platform adapters
+for launchd, Windows Service, systemd, Unix PTY, and ConPTY. Scale/HA remains
+outside this boundary.
 
 ```text
 React Dashboard
@@ -37,6 +39,12 @@ Embedded Runner ─── Adapter Contract ─── Execution Backend
       ├── versioned Controller–Runner protocol
       └── Workspace Manager + bounded raw logs + Verification Registry
 
+Remote Runner ─── WSS + auth + seq/ack ─── Controller
+      ├── SQLite journal + replay/reconcile
+      ├── generation/lease delivery fence
+      └── PlatformAdapter ─── launchd / Windows Service / systemd
+                              Unix PTY / ConPTY / native credential store
+
 Controller + ConfigPlan + Canonical Tasks ─── SQLite repositories (WAL)
 ```
 
@@ -47,7 +55,7 @@ Controller + ConfigPlan + Canonical Tasks ─── SQLite repositories (WAL)
 | `domain` | Six primary entities, four state machines, invariants | I/O, HTTP, SQLite, UI |
 | `protocol` | Versioned envelopes, commands, events, responses | Transport or persistence |
 | `persistence` | SQLite lifecycle, migrations, repositories, CAS revisions | Business orchestration |
-| `runner` | Event bus, Embedded transport, registry and heartbeat | Controller policy |
+| `runner` | Event bus, Embedded/Remote transport, journal, lease/reconcile, native process and platform service adapters | Controller policy |
 | `llm-runtime` | Protocol normalization, probes, role pools, safe switch, circuit/fallback/failback | Semantic intent or secret persistence |
 | `adapters` | Manifest, discovery, normalized session contract, Generic Mock/CLI, Codex and Qoder | Scheduler or database internals |
 | `semantic` | TaskContract compilation, Typed Intent v2, entity resolution, allowlisted tool policy and durable workflow states | Provider payloads, arbitrary shell or secret values |
@@ -195,15 +203,21 @@ to rotating files with per-file and total budgets. SQLite does not store raw
 output. Verification Registry executes only pre-registered file/argv commands
 in the run worktree with timeout/output limits; required failures block
 delivery while optional failures remain explicit evidence.
+PTY execution is delegated to pinned Microsoft `node-pty`, which selects Unix
+PTY or Windows ConPTY inside the Runner boundary. `PlatformAdapter` owns native
+service plans, process-tree semantics, credential lookup commands, sleep
+inhibition, and resource statistics. Scheduler/domain consume only advertised
+capability strings such as `os:win32` and `pty:conpty`.
 
 ## Connector and MVP workflow
 
 Connector definitions advertise versioned capabilities independently from
 configured connector instances. External IDs and revisions live in
 `ExternalBinding`, while provider-only fields stay in `platformExtensions`.
-The version 1.1 protocol envelope adds origin, causation, correlation,
-connector, event, and idempotency metadata while continuing to accept v1.0
-fixtures. Raw provider payloads are rejected at the protocol boundary.
+The version 1.2 protocol envelope adds ack sequence and lease/generation/expiry
+fencing while retaining the v1.1 origin, causation, correlation, connector,
+event, and idempotency metadata and continuing to accept v1.0/v1.1 fixtures.
+Raw provider payloads are rejected at the protocol boundary.
 
 Linear webhook ingress verifies the HMAC against the exact request bytes,
 enforces payload and timestamp limits, normalizes the event, and deduplicates it
