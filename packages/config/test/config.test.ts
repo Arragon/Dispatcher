@@ -31,8 +31,8 @@ describe("configuration schema", () => {
     expect(() => validateConfig({ ...defaultDispatcherConfig, unexpected: true })).toThrow(ConfigValidationError);
     const input = structuredClone(defaultDispatcherConfig);
     input.agentProfiles = [
-      { id: "one", provider: "codex", alias: "Atlas", runnerId: "local" },
-      { id: "two", provider: "codex", alias: "atlas", runnerId: "local" },
+      { id: "one", provider: "codex", alias: "Atlas", runnerId: "local", settings: { codexHome: "/profiles/one" } },
+      { id: "two", provider: "codex", alias: "atlas", runnerId: "local", settings: { codexHome: "/profiles/two" } },
     ];
     expect(() => validateConfig(input)).toThrowError(/duplicate provider alias/);
   });
@@ -56,6 +56,33 @@ describe("configuration schema", () => {
     expect(() => validateConfig(missing)).toThrowError(/credentialRef is required/);
     missing.integrations.linear.credentialRef = "secret://slack/main";
     expect(() => validateConfig(missing)).toThrowError(/linear secret namespace/);
+  });
+
+  it("validates connector and Codex profile configuration through the canonical schema", () => {
+    const input = structuredClone(defaultDispatcherConfig);
+    input.connectors = [{
+      id: "linear-main",
+      definitionId: "task.linear",
+      kind: "task",
+      displayName: "Linear",
+      enabled: true,
+      credentialRef: "secret://linear/token",
+      settings: { webhookSecretRef: "secret://linear/webhook", repository: "acme/repo" },
+    }];
+    input.agentProfiles = [{ id: "orion", provider: "codex", alias: "Orion", runnerId: "local", settings: { codexHome: "/profiles/orion" } }];
+    expect(validateConfig(input)).toEqual(input);
+    input.connectors[0]!.settings = { webhookSecretRef: "secret://github/wrong" };
+    expect(() => validateConfig(input)).toThrowError(/linear secret namespace/);
+  });
+
+  it("requires absolute repository roots and relative scope paths", () => {
+    const input = structuredClone(defaultDispatcherConfig);
+    input.repositories = [{ id: "acme/repo", root: "/srv/repo", defaultBaseRef: "main", scopePaths: ["packages/api"], verificationCommands: [] }];
+    expect(validateConfig(input).repositories).toEqual(input.repositories);
+    input.repositories[0]!.scopePaths = ["../outside"];
+    expect(() => validateConfig(input)).toThrowError(/scopePaths must stay relative/);
+    input.repositories[0] = { id: "acme/repo", root: "relative", defaultBaseRef: "main", scopePaths: [], verificationCommands: [] };
+    expect(() => validateConfig(input)).toThrowError(/root must be absolute/);
   });
 });
 

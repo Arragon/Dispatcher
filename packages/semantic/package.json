@@ -8,5 +8,9 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run test"
+  },
+  "dependencies": {
+    "@dispatcher/domain": "workspace:*",
+    "@dispatcher/integrations": "workspace:*"
   }
 }

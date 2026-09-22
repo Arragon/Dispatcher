@@ -1,6 +1,8 @@
 import type { ResourceSnapshot, RunState, Runner } from "@dispatcher/domain";
 
-export const PROTOCOL_VERSION = "1.0" as const;
+export const LEGACY_PROTOCOL_VERSION = "1.0" as const;
+export const PROTOCOL_VERSION = "1.1" as const;
+export const SUPPORTED_PROTOCOL_VERSIONS = [LEGACY_PROTOCOL_VERSION, PROTOCOL_VERSION] as const;
 
 export type CommandPayload =
   | { type: "run.start"; runId: string }
@@ -31,7 +33,7 @@ export type ProtocolPayload = CommandPayload | EventPayload | ResponsePayload;
 export type EnvelopeKind = "command" | "event" | "response";
 
 export interface ProtocolEnvelope<TPayload extends ProtocolPayload = ProtocolPayload> {
-  protocolVersion: typeof PROTOCOL_VERSION;
+  protocolVersion: (typeof SUPPORTED_PROTOCOL_VERSIONS)[number];
   messageId: string;
   traceId: string;
   runnerId: string;
@@ -39,6 +41,12 @@ export interface ProtocolEnvelope<TPayload extends ProtocolPayload = ProtocolPay
   sentAt: string;
   kind: EnvelopeKind;
   payload: TPayload;
+  origin?: "controller" | "runner" | "connector" | "migration";
+  connectorInstanceId?: string;
+  causationId?: string;
+  correlationId?: string;
+  externalEventId?: string;
+  idempotencyKey?: string;
 }
 
 const commandTypes = new Set<CommandPayload["type"]>([
@@ -79,7 +87,7 @@ export function parseEnvelope(value: unknown): ProtocolEnvelope {
   if (!isObject(value) || !isObject(value.payload)) {
     throw new ProtocolValidationError("INVALID_ENVELOPE", "Envelope and payload must be objects");
   }
-  if (value.protocolVersion !== PROTOCOL_VERSION) {
+  if (!SUPPORTED_PROTOCOL_VERSIONS.includes(value.protocolVersion as (typeof SUPPORTED_PROTOCOL_VERSIONS)[number])) {
     throw new ProtocolValidationError("UNSUPPORTED_PROTOCOL", `Unsupported protocol version: ${String(value.protocolVersion)}`);
   }
   if (
@@ -94,6 +102,14 @@ export function parseEnvelope(value: unknown): ProtocolEnvelope {
     typeof value.payload.type !== "string"
   ) {
     throw new ProtocolValidationError("INVALID_ENVELOPE", "Envelope fields are invalid");
+  }
+  for (const field of ["origin", "connectorInstanceId", "causationId", "correlationId", "externalEventId", "idempotencyKey"] as const) {
+    if (value[field] !== undefined && typeof value[field] !== "string") {
+      throw new ProtocolValidationError("INVALID_ENVELOPE", `${field} must be a string when present`);
+    }
+  }
+  if ("rawPayload" in value || "providerPayload" in value || "raw" in value.payload) {
+    throw new ProtocolValidationError("INVALID_ENVELOPE", "Raw provider payloads are not allowed in protocol envelopes");
   }
   const validType =
     (value.kind === "command" && commandTypes.has(value.payload.type as CommandPayload["type"])) ||
@@ -113,6 +129,12 @@ export function createEnvelope<TPayload extends ProtocolPayload>(input: {
   sequence: number;
   payload: TPayload;
   sentAt?: string;
+  origin?: ProtocolEnvelope["origin"];
+  connectorInstanceId?: string;
+  causationId?: string;
+  correlationId?: string;
+  externalEventId?: string;
+  idempotencyKey?: string;
 }): ProtocolEnvelope<TPayload> {
   const envelope: ProtocolEnvelope<TPayload> = {
     protocolVersion: PROTOCOL_VERSION,
@@ -123,6 +145,12 @@ export function createEnvelope<TPayload extends ProtocolPayload>(input: {
     sentAt: input.sentAt ?? new Date().toISOString(),
     kind: input.kind,
     payload: input.payload,
+    ...(input.origin ? { origin: input.origin } : {}),
+    ...(input.connectorInstanceId ? { connectorInstanceId: input.connectorInstanceId } : {}),
+    ...(input.causationId ? { causationId: input.causationId } : {}),
+    ...(input.correlationId ? { correlationId: input.correlationId } : {}),
+    ...(input.externalEventId ? { externalEventId: input.externalEventId } : {}),
+    ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
   };
   return parseEnvelope(envelope) as ProtocolEnvelope<TPayload>;
 }
@@ -133,7 +161,7 @@ export const runnerProtocolSchema = {
   type: "object",
   required: ["protocolVersion", "messageId", "traceId", "runnerId", "sequence", "sentAt", "kind", "payload"],
   properties: {
-    protocolVersion: { const: PROTOCOL_VERSION },
+    protocolVersion: { enum: SUPPORTED_PROTOCOL_VERSIONS },
     messageId: { type: "string", minLength: 1 },
     traceId: { type: "string", minLength: 1 },
     runnerId: { type: "string", minLength: 1 },
@@ -141,6 +169,12 @@ export const runnerProtocolSchema = {
     sentAt: { type: "string", format: "date-time" },
     kind: { enum: ["command", "event", "response"] },
     payload: { type: "object", required: ["type"] },
+    origin: { enum: ["controller", "runner", "connector", "migration"] },
+    connectorInstanceId: { type: "string", minLength: 1 },
+    causationId: { type: "string", minLength: 1 },
+    correlationId: { type: "string", minLength: 1 },
+    externalEventId: { type: "string", minLength: 1 },
+    idempotencyKey: { type: "string", minLength: 1 },
   },
   additionalProperties: false,
 } as const;

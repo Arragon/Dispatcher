@@ -5,8 +5,12 @@
   "references": [
     { "path": "../../packages/config" },
     { "path": "../../packages/domain" },
+    { "path": "../../packages/integrations" },
     { "path": "../../packages/observability" },
     { "path": "../../packages/persistence" },
-    { "path": "../../packages/runner" }
+    { "path": "../../packages/runner" },
+    { "path": "../../packages/scheduler" },
+    { "path": "../../packages/semantic" },
+    { "path": "../../packages/workspace" }
   ]
 }

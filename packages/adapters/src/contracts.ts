@@ -36,6 +36,8 @@ export interface AdapterSession {
   backendId: string;
   workspacePath: string;
   state: AdapterSessionState;
+  profileId?: string;
+  providerSessionId?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -115,4 +117,3 @@ export async function runAdapterContract(adapter: AgentAdapter): Promise<string[
   }
   return failures;
 }
-

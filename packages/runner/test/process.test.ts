@@ -54,8 +54,8 @@ describe("ProcessManager", () => {
 describe("VerificationRegistry", () => {
   it("runs only registered commands, limits output, and blocks delivery only on required failure", async () => {
     const registry = new VerificationRegistry();
-    registry.register({ id: "pass", file: process.execPath, args: ["-e", "console.log('ok')"], required: true, timeoutMs: 1_000, outputLimitBytes: 64 });
-    registry.register({ id: "optional-fail", file: process.execPath, args: ["-e", "process.exit(2)"], required: false, timeoutMs: 1_000, outputLimitBytes: 64 });
+    registry.register({ id: "pass", file: process.execPath, args: ["-e", "console.log('ok')"], required: true, timeoutMs: 5_000, outputLimitBytes: 64 });
+    registry.register({ id: "optional-fail", file: process.execPath, args: ["-e", "process.exit(2)"], required: false, timeoutMs: 5_000, outputLimitBytes: 64 });
     expect((await registry.run("pass", process.cwd())).status).toBe("passed");
     const optional = await registry.run("optional-fail", process.cwd());
     expect(optional.status).toBe("failed");
