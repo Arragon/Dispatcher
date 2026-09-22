@@ -16,6 +16,7 @@
     "@dispatcher/adapters": "workspace:*",
     "@dispatcher/config": "workspace:*",
     "@dispatcher/domain": "workspace:*",
+    "@dispatcher/fleet": "workspace:*",
     "@dispatcher/integrations": "workspace:*",
     "@dispatcher/llm-runtime": "workspace:*",
     "@dispatcher/observability": "workspace:*",

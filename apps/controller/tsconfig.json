@@ -5,6 +5,7 @@
   "references": [
     { "path": "../../packages/config" },
     { "path": "../../packages/domain" },
+    { "path": "../../packages/fleet" },
     { "path": "../../packages/integrations" },
     { "path": "../../packages/observability" },
     { "path": "../../packages/persistence" },

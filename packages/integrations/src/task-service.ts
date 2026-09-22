@@ -10,6 +10,7 @@ export type TaskCommand =
   | { type: "task.assign"; assignee?: string }
   | { type: "task.comment"; body: string }
   | { type: "task.transition"; state: TaskState }
+  | { type: "task.set-current-run"; runId: string }
   | { type: "task.switch-primary"; targetBinding: ExternalBinding };
 
 export interface TaskCommandInput {
@@ -90,6 +91,8 @@ export class CanonicalTaskService {
         } else if (input.command.type === "task.transition") {
           assertTaskTransition(next.state, input.command.state);
           next.state = input.command.state;
+        } else if (input.command.type === "task.set-current-run") {
+          next.currentRunId = input.command.runId;
         } else if (input.command.type === "task.switch-primary") {
           const target = input.command.targetBinding;
           if (target.entityType !== "task" || target.canonicalEntityId !== input.taskId) {

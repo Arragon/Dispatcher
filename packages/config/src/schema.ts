@@ -458,6 +458,9 @@ export function validateConfig(input: unknown): DispatcherConfig {
     if (connector.definitionId === "task.linear" && (typeof connector.settings?.webhookSecretRef !== "string" || !connector.settings.webhookSecretRef)) {
       throw new ConfigValidationError([`/connectors/${connector.id}/settings/webhookSecretRef is required for Linear`]);
     }
+    if (connector.definitionId === "messaging.slack" && (typeof connector.settings?.signingSecretRef !== "string" || !connector.settings.signingSecretRef)) {
+      throw new ConfigValidationError([`/connectors/${connector.id}/settings/signingSecretRef is required for Slack`]);
+    }
   }
   const repositoryIds = new Set<string>();
   for (const repository of config.repositories) {
