@@ -9,6 +9,10 @@ import {
 
 export * from "./process.js";
 export * from "./verification.js";
+export * from "./journal.js";
+export * from "./lease.js";
+export * from "./reconcile.js";
+export * from "./remote.js";
 
 export type EventHandler<T> = (event: T) => void | Promise<void>;
 

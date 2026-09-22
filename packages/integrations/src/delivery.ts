@@ -14,9 +14,15 @@ export class DeliveryService {
     assertDeliveryGate(request);
     const existing = this.database.listDeliveryEvidence<JsonValue>(request.taskId) as unknown as DeliveryEvidence[];
     const existingPullRequest = existing.find((item) => item.connectorInstanceId === adapter.instance.id && item.metadata.idempotencyKey === request.idempotencyKey && item.kind === "pull-request");
-    if (existingPullRequest) return { evidence: existing, duplicate: true };
+    if (existingPullRequest) {
+      request.assertAuthority?.("complete");
+      return { evidence: existing, duplicate: true };
+    }
+    request.assertAuthority?.("branch");
     await adapter.ensureBranch(request.repository, request.headBranch, request.baseBranch, request.idempotencyKey);
+    request.assertAuthority?.("push");
     const pushed = await adapter.push(request.repository, request.headBranch, `${request.idempotencyKey}:push`);
+    request.assertAuthority?.("pull-request");
     const pullRequest = await adapter.createOrGetPullRequest(request);
     const ci = await adapter.getCiStatus(request.repository, pushed.commit);
     const now = new Date().toISOString();
@@ -37,6 +43,7 @@ export class DeliveryService {
         updatedAt: evidence.updatedAt,
       });
     }
+    request.assertAuthority?.("complete");
     return { evidence: values, duplicate: false };
   }
 }

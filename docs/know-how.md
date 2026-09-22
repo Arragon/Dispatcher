@@ -94,6 +94,12 @@
 - Delivery is fenced by the current run generation and lease and requires
   passed verification. Commit, PR, and CI records are durable evidence with
   idempotent external identities; retries must not create duplicate PRs.
+- Remote Runner transport uses the mature `ws` package (MIT, pinned at 8.21.3)
+  rather than a custom WebSocket implementation. Bearer credentials travel in
+  the Authorization header, never in protocol payloads; a non-loopback listener
+  must be attached to a TLS server. Runner journal entries are checksummed and
+  replayed by sequence, while delivery authority is re-fenced before branch,
+  push, pull-request, and completion mutations.
 - Run advancement is phase-idempotent. Persist `VERIFYING` before executing
   registered checks and `DELIVERING` before calling an SCM provider; retry from
   the stored phase after a temporary provider failure.

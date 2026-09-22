@@ -46,7 +46,7 @@ describe("Runner Protocol v1", () => {
     ).toThrowError(expect.objectContaining<Partial<ProtocolValidationError>>({ code: "UNKNOWN_MESSAGE_TYPE" }));
   });
 
-  it("accepts v1 fixtures while v1.1 adds traceable connector metadata", () => {
+  it("accepts v1 fixtures while current envelopes add traceable connector metadata", () => {
     const legacy = {
       protocolVersion: LEGACY_PROTOCOL_VERSION,
       messageId: "legacy",
@@ -72,7 +72,23 @@ describe("Runner Protocol v1", () => {
       externalEventId: "external",
       idempotencyKey: "dedupe",
     });
-    expect(parseEnvelope(current)).toMatchObject({ protocolVersion: "1.1", idempotencyKey: "dedupe" });
+    expect(parseEnvelope(current)).toMatchObject({ protocolVersion: PROTOCOL_VERSION, idempotencyKey: "dedupe" });
+  });
+
+  it("validates v1.2 acknowledgement and lease fencing metadata", () => {
+    const envelope = createEnvelope({
+      kind: "command",
+      messageId: "fenced",
+      traceId: "trace",
+      runnerId: "runner",
+      sequence: 2,
+      ackSequence: 1,
+      leaseId: "lease-2",
+      generation: 2,
+      leaseExpiresAt: "2026-09-23T12:00:00.000Z",
+      payload: { type: "run.start", runId: "run-2" },
+    });
+    expect(parseEnvelope(envelope)).toMatchObject({ ackSequence: 1, leaseId: "lease-2", generation: 2 });
   });
 
   it("rejects raw provider payloads from the protocol boundary", () => {

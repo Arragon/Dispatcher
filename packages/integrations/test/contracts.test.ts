@@ -6,6 +6,7 @@ import {
   CanonicalTaskService,
   ConnectorError,
   ConnectorRegistry,
+  DeliveryService,
   FakeScmConnector,
   FakeMessagingConnector,
   FakeTaskConnector,
@@ -268,5 +269,15 @@ describe("SCM delivery contract", () => {
     const connector = new FakeScmConnector();
     expect(await runScmContract(connector, request())).toEqual([]);
     expect(connector.pullRequests).toHaveLength(1);
+  });
+
+  it("rechecks lease authority at every mutating delivery boundary", async () => {
+    const database = new DispatcherDatabase(":memory:");
+    const operations: string[] = [];
+    const input = request();
+    input.assertAuthority = (operation) => operations.push(operation);
+    await new DeliveryService(database).deliver(new FakeScmConnector(), input);
+    expect(operations).toEqual(["branch", "push", "pull-request", "complete"]);
+    database.close();
   });
 });

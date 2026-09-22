@@ -250,6 +250,7 @@ export interface Run {
   attempt: number;
   generation: number;
   leaseId: string;
+  leaseExpiresAt?: IsoDateTime;
   revokedLeaseIds?: string[];
   taskRevision?: number;
   contractRevision?: number;

@@ -20,6 +20,7 @@ export interface DeliveryRequest {
   title: string;
   body: string;
   verification: VerificationEvidence;
+  assertAuthority?: (operation: "branch" | "push" | "pull-request" | "complete") => void;
 }
 
 export interface ScmAdapter extends ConnectorAdapter {

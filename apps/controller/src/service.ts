@@ -90,7 +90,7 @@ import {
 import { LlmRuntime, LlmRuntimeError, type FetchLike, type LlmConfiguration, type LlmRole } from "@dispatcher/llm-runtime";
 import { createLogger, redactValue } from "@dispatcher/observability";
 import { DispatcherDatabase, RevisionConflictError, type JsonValue } from "@dispatcher/persistence";
-import { EmbeddedRunner, EventBus, RunnerRegistry, VerificationRegistry, type RunnerEvents } from "@dispatcher/runner";
+import { EmbeddedRunner, EventBus, LeaseFenceError, RunnerLeaseAuthority, RunnerRegistry, VerificationRegistry, type RunnerEvents } from "@dispatcher/runner";
 import {
   SemanticPolicyError,
   SemanticToolRegistry,
@@ -289,6 +289,7 @@ export class ControllerService {
   private readonly resourceRegistry = new MultiSignalResourceRegistry();
   private readonly resourceProbes = new ResetAwareProbeScheduler();
   private readonly attentionNotifications = new AttentionNotificationPolicy();
+  private readonly leaseAuthority = new RunnerLeaseAuthority();
   private readonly secureLinks: SecureDashboardLinkIssuer;
   private readonly messagingChannels = new Map<string, string>();
   private readonly agentAdapters = new Map<string, AgentAdapter>();
@@ -306,6 +307,11 @@ export class ControllerService {
     const logger = createLogger({ level: process.env.LOG_LEVEL ?? "info" });
     this.app = fastify({ loggerInstance: logger as unknown as FastifyBaseLogger });
     this.database = new DispatcherDatabase(join(options.dataDirectory, "dispatcher.sqlite"));
+    for (const value of this.database.listEntities<JsonValue>("run")) {
+      const run = value as unknown as Run;
+      if (isTerminalRunState(run.state)) continue;
+      this.restoreLeaseAuthority(run);
+    }
     this.resourceRegistry.restore(this.database.listEntities<JsonValue>("resource-signal") as unknown as ResourceSnapshot[]);
     this.resourceProbes.restore(this.database.listEntities<JsonValue>("resource-probe-schedule") as unknown as ResourceProbeSchedule[]);
     this.workspaces = new WorkspaceManager(this.repositories, join(options.dataDirectory, "worktrees"));
@@ -396,6 +402,34 @@ export class ControllerService {
       this.listening = false;
     })();
     return this.stopping;
+  }
+
+  private restoreLeaseAuthority(run: Run): void {
+    if (this.leaseAuthority.current(run.id)) return;
+    const expiresAt = run.leaseExpiresAt ?? new Date(Date.now() + 15 * 60_000).toISOString();
+    this.leaseAuthority.issue({ runId: run.id, runnerId: run.runnerId, leaseId: run.leaseId, generation: run.generation, expiresAt });
+    this.persistLatestLeaseAudit(run.id);
+  }
+
+  private fenceDelivery(run: Run, operation: "branch" | "push" | "pull-request" | "complete"): void {
+    this.restoreLeaseAuthority(run);
+    try {
+      this.leaseAuthority.fence(run.id, run.leaseId, run.generation, operation);
+      this.persistLatestLeaseAudit(run.id);
+    } catch (error) {
+      this.persistLatestLeaseAudit(run.id);
+      if (error instanceof LeaseFenceError) {
+        throw new ConnectorError("CONFLICT", `Delivery authority rejected during ${operation}: ${error.message}`, { retryable: false, operation: "delivery" });
+      }
+      throw error;
+    }
+  }
+
+  private persistLatestLeaseAudit(runId: string): void {
+    const audit = this.leaseAuthority.audit(runId);
+    const record = audit.at(-1);
+    if (!record) return;
+    this.database.saveEntity("lease-audit", `${runId}:${audit.length}`, json(record), record.occurredAt);
   }
 
   private applyRuntimeConfiguration(config: DispatcherConfig): void {
@@ -965,6 +999,7 @@ export class ControllerService {
       title: contract.goal,
       body: `Verified by Agent Dispatcher run ${run.id}.`,
       verification: run.verification,
+      assertAuthority: (operation) => this.fenceDelivery(run, operation),
     });
     const pullRequest = delivery.evidence.find((entry) => entry.kind === "pull-request");
     assertRunTransition(run.state, "COMPLETE");
@@ -1145,7 +1180,10 @@ export class ControllerService {
         run.recoveryReason = `Delivery authority revoked for controlled reroute to ${nextProfileId}`;
         this.database.saveEntity("run", run.id, json(run));
         const now = new Date().toISOString();
-        const rerouted: Run = { ...run, id: session.runId, runnerId: profile.runnerId, providerId: profile.provider, profileId: nextProfileId, sessionId: session.id, ...(session.providerSessionId ? { providerSessionId: session.providerSessionId } : {}), resumePolicy: session.providerSessionId || nextAdapter.manifest.capabilities.resume ? "same-session" : "controlled-reroute", state: "ACTIVE", attempt: run.attempt + 1, generation: run.generation + 1, leaseId: randomUUID(), revokedLeaseIds: [...(run.revokedLeaseIds ?? []), run.leaseId], startedAt: now, lastActivityAt: now, verification: { state: "PENDING", commands: [...contract.verification] } };
+        this.restoreLeaseAuthority(run);
+        this.leaseAuthority.revoke(run.id, run.leaseId, run.generation, `controlled reroute to ${nextProfileId}`, now);
+        this.persistLatestLeaseAudit(run.id);
+        const rerouted: Run = { ...run, id: session.runId, runnerId: profile.runnerId, providerId: profile.provider, profileId: nextProfileId, sessionId: session.id, ...(session.providerSessionId ? { providerSessionId: session.providerSessionId } : {}), resumePolicy: session.providerSessionId || nextAdapter.manifest.capabilities.resume ? "same-session" : "controlled-reroute", state: "ACTIVE", attempt: run.attempt + 1, generation: run.generation + 1, leaseId: randomUUID(), leaseExpiresAt: new Date(Date.parse(now) + 15 * 60_000).toISOString(), revokedLeaseIds: [...(run.revokedLeaseIds ?? []), run.leaseId], startedAt: now, lastActivityAt: now, verification: { state: "PENDING", commands: [...contract.verification] } };
         delete rerouted.endedAt;
         delete rerouted.failureReason;
         delete rerouted.resourceBlockReason;
@@ -1153,6 +1191,7 @@ export class ControllerService {
         delete rerouted.activitySummary;
         delete rerouted.prUrl;
         this.database.saveEntity("run", rerouted.id, json(rerouted));
+        this.restoreLeaseAuthority(rerouted);
         const stored = this.database.getCanonicalTask<JsonValue>(run.taskId);
         if (!stored) throw new SemanticPolicyError("INVALID_INPUT", `Unknown task ${run.taskId}`);
         const bound = this.tasks.execute({ id: `semantic:${context.workflowId}:bind`, taskId: run.taskId, baseRevision: stored.revision, actor: context.principal.id, command: { type: "task.set-current-run", runId: rerouted.id } });
@@ -1724,7 +1763,9 @@ export class ControllerService {
         throw error;
       }
       dispatched.run.branch = workspace.branch;
+      dispatched.run.leaseExpiresAt = new Date(Date.now() + 15 * 60_000).toISOString();
       this.database.saveEntity("run", dispatched.run.id, json(dispatched.run));
+      this.restoreLeaseAuthority(dispatched.run);
       this.fleetEvents.publish("run.changed", dispatched.run.id, { id: dispatched.run.id, taskId: dispatched.run.taskId, state: dispatched.run.state });
       const queued = this.tasks.execute({ id: `dispatch:${dispatched.run.id}:queued`, taskId: request.params.id, baseRevision: stored.revision, actor: "scheduler", command: { type: "task.transition", state: "QUEUED" } });
       this.tasks.execute({ id: `dispatch:${dispatched.run.id}:running`, taskId: request.params.id, baseRevision: queued.revision, actor: "scheduler", command: { type: "task.transition", state: "RUNNING" } });

@@ -1,8 +1,9 @@
 import type { ResourceSnapshot, RunState, Runner } from "@dispatcher/domain";
 
 export const LEGACY_PROTOCOL_VERSION = "1.0" as const;
-export const PROTOCOL_VERSION = "1.1" as const;
-export const SUPPORTED_PROTOCOL_VERSIONS = [LEGACY_PROTOCOL_VERSION, PROTOCOL_VERSION] as const;
+export const RESOURCE_PROTOCOL_VERSION = "1.1" as const;
+export const PROTOCOL_VERSION = "1.2" as const;
+export const SUPPORTED_PROTOCOL_VERSIONS = [LEGACY_PROTOCOL_VERSION, RESOURCE_PROTOCOL_VERSION, PROTOCOL_VERSION] as const;
 
 export type CommandPayload =
   | { type: "run.start"; runId: string }
@@ -14,11 +15,16 @@ export type CommandPayload =
   | { type: "run.tail_log"; runId: string; cursor?: string }
   | { type: "resource.probe"; profileId: string }
   | { type: "runner.health" }
+  | { type: "runner.drain"; draining: boolean }
+  | { type: "runner.reconcile" }
+  | { type: "lease.renew"; leaseId: string; generation: number; expiresAt: string }
+  | { type: "lease.revoke"; leaseId: string; generation: number; reason: string }
   | { type: "workspace.cleanup"; workspaceId: string };
 
 export type EventPayload =
   | { type: "runner.register"; runner: Runner }
   | { type: "runner.heartbeat"; runnerId: string; state: Runner["state"] }
+  | { type: "runner.reconcile"; runnerId: string; runs: Array<{ runId: string; generation: number; leaseId: string; processId?: number; workspace?: string }> }
   | { type: "run.state"; runId: string; state: RunState; reason?: string }
   | { type: "run.activity"; runId: string; summary: string }
   | { type: "resource.state"; resource: ResourceSnapshot }
@@ -38,6 +44,7 @@ export interface ProtocolEnvelope<TPayload extends ProtocolPayload = ProtocolPay
   traceId: string;
   runnerId: string;
   sequence: number;
+  ackSequence?: number;
   sentAt: string;
   kind: EnvelopeKind;
   payload: TPayload;
@@ -47,6 +54,9 @@ export interface ProtocolEnvelope<TPayload extends ProtocolPayload = ProtocolPay
   correlationId?: string;
   externalEventId?: string;
   idempotencyKey?: string;
+  leaseId?: string;
+  generation?: number;
+  leaseExpiresAt?: string;
 }
 
 const commandTypes = new Set<CommandPayload["type"]>([
@@ -59,11 +69,16 @@ const commandTypes = new Set<CommandPayload["type"]>([
   "run.tail_log",
   "resource.probe",
   "runner.health",
+  "runner.drain",
+  "runner.reconcile",
+  "lease.renew",
+  "lease.revoke",
   "workspace.cleanup",
 ]);
 const eventTypes = new Set<EventPayload["type"]>([
   "runner.register",
   "runner.heartbeat",
+  "runner.reconcile",
   "run.state",
   "run.activity",
   "resource.state",
@@ -108,6 +123,17 @@ export function parseEnvelope(value: unknown): ProtocolEnvelope {
       throw new ProtocolValidationError("INVALID_ENVELOPE", `${field} must be a string when present`);
     }
   }
+  if (value.ackSequence !== undefined && (typeof value.ackSequence !== "number" || !Number.isSafeInteger(value.ackSequence) || value.ackSequence < 0)) {
+    throw new ProtocolValidationError("INVALID_ENVELOPE", "ackSequence must be a non-negative safe integer when present");
+  }
+  if (value.generation !== undefined && (typeof value.generation !== "number" || !Number.isSafeInteger(value.generation) || value.generation < 0)) {
+    throw new ProtocolValidationError("INVALID_ENVELOPE", "generation must be a non-negative safe integer when present");
+  }
+  for (const field of ["leaseId", "leaseExpiresAt"] as const) {
+    if (value[field] !== undefined && typeof value[field] !== "string") {
+      throw new ProtocolValidationError("INVALID_ENVELOPE", `${field} must be a string when present`);
+    }
+  }
   if ("rawPayload" in value || "providerPayload" in value || "raw" in value.payload) {
     throw new ProtocolValidationError("INVALID_ENVELOPE", "Raw provider payloads are not allowed in protocol envelopes");
   }
@@ -127,6 +153,7 @@ export function createEnvelope<TPayload extends ProtocolPayload>(input: {
   traceId: string;
   runnerId: string;
   sequence: number;
+  ackSequence?: number;
   payload: TPayload;
   sentAt?: string;
   origin?: ProtocolEnvelope["origin"];
@@ -135,6 +162,9 @@ export function createEnvelope<TPayload extends ProtocolPayload>(input: {
   correlationId?: string;
   externalEventId?: string;
   idempotencyKey?: string;
+  leaseId?: string;
+  generation?: number;
+  leaseExpiresAt?: string;
 }): ProtocolEnvelope<TPayload> {
   const envelope: ProtocolEnvelope<TPayload> = {
     protocolVersion: PROTOCOL_VERSION,
@@ -142,6 +172,7 @@ export function createEnvelope<TPayload extends ProtocolPayload>(input: {
     traceId: input.traceId,
     runnerId: input.runnerId,
     sequence: input.sequence,
+    ...(input.ackSequence === undefined ? {} : { ackSequence: input.ackSequence }),
     sentAt: input.sentAt ?? new Date().toISOString(),
     kind: input.kind,
     payload: input.payload,
@@ -151,6 +182,9 @@ export function createEnvelope<TPayload extends ProtocolPayload>(input: {
     ...(input.correlationId ? { correlationId: input.correlationId } : {}),
     ...(input.externalEventId ? { externalEventId: input.externalEventId } : {}),
     ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
+    ...(input.leaseId ? { leaseId: input.leaseId } : {}),
+    ...(input.generation === undefined ? {} : { generation: input.generation }),
+    ...(input.leaseExpiresAt ? { leaseExpiresAt: input.leaseExpiresAt } : {}),
   };
   return parseEnvelope(envelope) as ProtocolEnvelope<TPayload>;
 }
@@ -166,6 +200,7 @@ export const runnerProtocolSchema = {
     traceId: { type: "string", minLength: 1 },
     runnerId: { type: "string", minLength: 1 },
     sequence: { type: "integer", minimum: 0 },
+    ackSequence: { type: "integer", minimum: 0 },
     sentAt: { type: "string", format: "date-time" },
     kind: { enum: ["command", "event", "response"] },
     payload: { type: "object", required: ["type"] },
@@ -175,6 +210,9 @@ export const runnerProtocolSchema = {
     correlationId: { type: "string", minLength: 1 },
     externalEventId: { type: "string", minLength: 1 },
     idempotencyKey: { type: "string", minLength: 1 },
+    leaseId: { type: "string", minLength: 1 },
+    generation: { type: "integer", minimum: 0 },
+    leaseExpiresAt: { type: "string", format: "date-time" },
   },
   additionalProperties: false,
 } as const;
