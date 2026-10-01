@@ -4,6 +4,7 @@ import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { arch, platform } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 import fastify, { type FastifyBaseLogger, type FastifyInstance } from "fastify";
 import fastifyStatic from "@fastify/static";
 import {
@@ -14,6 +15,7 @@ import {
   CursorAdapter,
   cursorManifest,
   KiroAdapter,
+  StructuredCliAdapter,
   kiroManifest,
   OpenCodeAdapter,
   GrokAdapter,
@@ -68,6 +70,7 @@ import {
   type SecretMetadata,
   type SecretStore,
   type DispatcherConfig,
+  type AgentProfileConfig,
 } from "@dispatcher/config";
 import {
   RESOURCE_STATES,
@@ -437,6 +440,7 @@ export class ControllerService {
   private readonly secureLinks: SecureDashboardLinkIssuer;
   private readonly messagingChannels = new Map<string, string>();
   private readonly agentAdapters = new Map<string, AgentAdapter>();
+  private readonly nativeProfileConfigurations = new Map<string, AgentProfileConfig>();
   private readonly rawWebhookBodies = new WeakMap<object, Uint8Array>();
   private readonly startedAt = Date.now();
   private readonly embeddedRunner?: EmbeddedRunner;
@@ -718,6 +722,15 @@ export class ControllerService {
   }
 
   private applyRuntimeConfiguration(config: DispatcherConfig): void {
+    const retainedNativeAdapters = new Map<string, AgentAdapter>();
+    for (const [id, previous] of this.nativeProfileConfigurations) {
+      const adapter = this.agentAdapters.get(id);
+      const next = config.agentProfiles.find((profile) => profile.id === id);
+      if (adapter && isDeepStrictEqual(previous, next)) retainedNativeAdapters.set(id, adapter);
+      else if (adapter instanceof StructuredCliAdapter && adapter.hasActiveOperations()) {
+        throw new ConfigPlanError("ACTIVE_AGENT_PROFILE", `Finish or cancel active harness operations before changing or removing profile ${id}`);
+      }
+    }
     this.llm.configure(llmConfiguration(config.internalLlm));
     this.repositories.clear();
     for (const repository of config.repositories) {
@@ -793,6 +806,10 @@ export class ControllerService {
     }
 
     this.agentAdapters.clear();
+    for (const [id, adapter] of retainedNativeAdapters) this.agentAdapters.set(id, adapter);
+    for (const id of this.nativeProfileConfigurations.keys()) {
+      if (!retainedNativeAdapters.has(id)) this.nativeProfileConfigurations.delete(id);
+    }
     const store = new DatabaseSessionStore(this.database);
     for (const profile of config.agentProfiles.filter((entry) => entry.provider === "codex")) {
       const codexHome = stringSetting(profile.settings?.codexHome);
@@ -832,6 +849,7 @@ export class ControllerService {
     }
     for (const profile of config.agentProfiles) {
       if (!isNativeCliProvider(profile.provider)) continue;
+      if (retainedNativeAdapters.has(profile.id)) continue;
       const adapterProfile: CliAgentProfile = { id: profile.id, alias: profile.alias,
         ...(typeof profile.settings?.approveTools === "boolean" ? { approveTools: profile.settings.approveTools } : {}),
         ...(stringSetting(profile.settings?.executable) ? { executable: stringSetting(profile.settings?.executable)! } : {}),
@@ -842,6 +860,7 @@ export class ControllerService {
       this.agentAdapters.set(profile.id, profile.provider === "opencode" ? new OpenCodeAdapter(adapterProfile, backend, store)
         : profile.provider === "grok" ? new GrokAdapter(adapterProfile, backend, store, resolveProviderCredential)
         : new PiAdapter(adapterProfile, backend, store));
+      this.nativeProfileConfigurations.set(profile.id, structuredClone(profile));
     }
     for (const profile of config.agentProfiles.filter((entry) => entry.provider === "devin")) {
       const organizationId = stringSetting(profile.settings?.organizationId);

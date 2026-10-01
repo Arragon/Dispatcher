@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -127,6 +127,51 @@ describe("installed native CLI harnesses", () => {
     await vi.waitFor(() => expect(turn.events!()).toContainEqual(expect.objectContaining({ summary: "ready" })));
     await turn.cancel();
     expect(await turn.result()).toMatchObject({ state: "cancelled" });
+  });
+
+  it("cancels tool grandchildren even after the direct child exits", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "harness-descendant-"));
+    const ready = join(directory, "ready");
+    let pid: number | undefined;
+    const alive = (): boolean => {
+      try { process.kill(pid!, 0); return true; } catch { return false; }
+    };
+    const grandchild = `process.on('SIGTERM',()=>{});require('node:fs').writeFileSync(${JSON.stringify(ready)},String(process.pid));setInterval(()=>{},1000)`;
+    const parent = `require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(grandchild)}],{stdio:'ignore'});setInterval(()=>{},1000)`;
+    const turn = new SpawnCliAgentBackend().start({ executable: process.execPath, args: ["-e", parent], workspacePath: directory });
+    try {
+      await vi.waitFor(() => expect(existsSync(ready)).toBe(true));
+      pid = Number(readFileSync(ready, "utf8"));
+      await turn.cancel();
+      await vi.waitFor(() => expect(alive()).toBe(false), { timeout: 3_000 });
+      expect(await turn.result()).toMatchObject({ state: "cancelled" });
+    } finally {
+      if (pid && alive()) process.kill(pid, "SIGKILL");
+      await turn.cancel();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it.each([OpenCodeAdapter, GrokAdapter, PiAdapter])("fails empty, malformed and initialization-only native streams (%s)", async (Adapter) => {
+    const init = Adapter === OpenCodeAdapter ? { type: "step_start", sessionID: "id" }
+      : Adapter === GrokAdapter ? { type: "system", subtype: "init", session_id: "id" }
+      : { type: "session", id: "id" };
+    for (const output of ["", "not JSON: startup failed", JSON.stringify(init)]) {
+      const calls: CliAgentBackend = { start: (input) => new SpawnCliAgentBackend().start({ ...input, executable: process.execPath, args: ["-e", `console.log(${JSON.stringify(output)})`] }) };
+      const adapter = new Adapter({ id: "local", alias: "Local" }, calls);
+      const session = await adapter.start({ runId: "run", workspacePath: process.cwd() });
+      expect(await adapter.result(session.id)).toMatchObject({ state: "FAILED", summary: "CLI exited without valid native execution evidence" });
+    }
+  });
+
+  it.each([OpenCodeAdapter, GrokAdapter, PiAdapter])("ignores informational records alongside valid native execution evidence (%s)", async (Adapter) => {
+    const message = Adapter === OpenCodeAdapter ? { type: "text", sessionID: "id", part: { text: "done" } }
+      : Adapter === GrokAdapter ? { type: "result", is_error: false, result: "done", session_id: "id" }
+      : { type: "message_end", message: { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "done" }] } };
+    const calls: CliAgentBackend = { start: (input) => new SpawnCliAgentBackend().start({ ...input, executable: process.execPath, args: ["-e", `console.log('not a protocol record');console.log(${JSON.stringify(JSON.stringify(message))})`] }) };
+    const adapter = new Adapter({ id: "local", alias: "Local" }, calls);
+    const session = await adapter.start({ runId: "run", workspacePath: process.cwd() });
+    expect(await adapter.result(session.id)).toMatchObject({ state: "COMPLETED", summary: "done" });
   });
 
   it("fails a lost active process handle and refuses to resume it concurrently", async () => {

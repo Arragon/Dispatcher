@@ -21,6 +21,8 @@ Cursor, Devin, Kiro, WorkBuddy/CodeBuddy, and hardened Generic CLI adapter
 boundaries plus a capability matrix used by scheduling and operator reroute.
 The local harness expansion adds OpenCode v2, Grok Build and pi through that
 same adapter contract and native JSON CLI streams.
+Controller retains unchanged native profile adapters across ConfigPlan applies;
+replacement/removal waits for their active operations to finish or cancel.
 Scale/HA remains
 outside this boundary.
 

@@ -29,11 +29,12 @@ describe("native harness Controller composition", () => {
     writeFileSync(executable, `#!${process.execPath}\nif(process.argv.includes('--help')) console.log('--standalone --format json --session --session-id --resume --mode streaming-messages-json'); else console.log('2.0.21');`);
     chmodSync(executable, 0o700);
     let blockedProvider: string | undefined;
+    let runningProvider: string | undefined;
     const calls = vi.fn((provider: string) => {
       const result = (): CliTurnResult => provider === blockedProvider
         ? { state: "failed", summary: "requires more credits", events: [{ type: "resource", state: "QUOTA_EXHAUSTED", reason: "requires more credits", source: "error", confidence: "high" }], providerSessionId: `${provider}-exact-session` }
         : { state: "completed", summary: "done", events: [], providerSessionId: `${provider}-exact-session` };
-      const backend: CliAgentBackend = { start: vi.fn(() => ({ status: () => "completed", result: async () => result(), cancel: async () => undefined })) };
+      const backend: CliAgentBackend = { start: vi.fn(() => ({ status: () => provider === runningProvider ? "running" : "completed", result: async () => result(), cancel: async () => undefined })) };
       return backend;
     });
     const service = new ControllerService({ dataDirectory: directory, ownerToken: "test-owner", withRunner: true, secretStore: secrets, cliBackendFactory: calls });
@@ -71,6 +72,32 @@ describe("native harness Controller composition", () => {
       expect(views).not.toContain(executable);
       const matrix = (await service.app.inject({ method: "GET", url: "/api/adapters/compatibility", headers: OWNER })).json().matrix;
       expect(matrix.find((row: { adapterId: string }) => row.adapterId === "opencode")).toMatchObject({ session: { resume: true, pause: false }, resource: true });
+      runningProvider = "grok";
+      const active = await service.app.inject({ method: "POST", url: "/api/agents/profiles/grok/runs", headers: OWNER, payload: { workspacePath: workspace.path, prompt: "long-running task" } });
+      const sessionId: string = active.json().session.id;
+      const configuredBefore = calls.mock.calls.length;
+      const added = await service.app.inject({ method: "POST", url: "/api/agents/pi/profiles", headers: OWNER, payload: { id: "pi-second", alias: "Pi second", executable } });
+      expect(added.statusCode, added.body).toBe(201);
+      expect(calls).toHaveBeenCalledTimes(configuredBefore + 1);
+      expect((await service.app.inject({ method: "GET", url: `/api/agents/profiles/grok/sessions/${sessionId}`, headers: OWNER })).json().session.state).toBe("RUNNING");
+      for (const remove of [false, true]) {
+        const before = (await service.app.inject({ method: "GET", url: "/api/config", headers: OWNER })).json();
+        const next = structuredClone(before.config);
+        if (remove) next.agentProfiles = next.agentProfiles.filter((profile: { id: string }) => profile.id !== "grok");
+        else next.agentProfiles.find((profile: { id: string }) => profile.id === "grok").settings.model = "different-model";
+        const change = (await service.app.inject({ method: "POST", url: "/api/config/plans", headers: OWNER, payload: { config: next } })).json().plan;
+        const rejected = await service.app.inject({ method: "POST", url: `/api/config/plans/${change.id}/apply`, headers: OWNER, payload: { confirmed: true } });
+        expect(rejected.statusCode, rejected.body).toBe(400);
+        expect(rejected.json()).toMatchObject({ code: "ACTIVE_AGENT_PROFILE", message: expect.stringContaining("Finish or cancel") });
+        expect((await service.app.inject({ method: "GET", url: "/api/config", headers: OWNER })).json().revision).toBe(before.revision);
+        expect((await service.app.inject({ method: "GET", url: `/api/agents/profiles/grok/sessions/${sessionId}`, headers: OWNER })).json().session.state).toBe("RUNNING");
+      }
+      runningProvider = undefined;
+      expect((await service.app.inject({ method: "GET", url: `/api/agents/profiles/grok/sessions/${sessionId}`, headers: OWNER })).json().session.state).toBe("COMPLETED");
+      const completed = (await service.app.inject({ method: "GET", url: "/api/config", headers: OWNER })).json().config;
+      completed.agentProfiles.find((profile: { id: string }) => profile.id === "grok").settings.model = "different-model";
+      const replacement = (await service.app.inject({ method: "POST", url: "/api/config/plans", headers: OWNER, payload: { config: completed } })).json().plan;
+      expect((await service.app.inject({ method: "POST", url: `/api/config/plans/${replacement.id}/apply`, headers: OWNER, payload: { confirmed: true } })).statusCode).toBe(200);
       for (const provider of ["opencode", "grok", "pi"]) {
         const taskId = `${provider}-canonical`;
         const now = new Date().toISOString();

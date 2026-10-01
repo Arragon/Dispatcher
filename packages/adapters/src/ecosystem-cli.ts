@@ -32,7 +32,7 @@ export interface CliDiscoveryResult {
 }
 
 export type NormalizedCliEvent =
-  | { type: "activity"; summary: string; providerSessionId?: string }
+  | { type: "activity"; summary: string; providerSessionId?: string; executionEvidence?: true }
   | { type: "waiting"; reason: string }
   | { type: "resource"; state: "RATE_LIMITED" | "QUOTA_EXHAUSTED" | "AUTH_ERROR" | "PROVIDER_DOWN" | "UNKNOWN"; reason: string; remaining?: number; resetsAt?: string; source: "event" | "error"; confidence: "high" | "medium" | "low" }
   | { type: "failure"; reason: string };
@@ -58,6 +58,7 @@ export interface CliStartInput {
   workspacePath: string;
   environment?: Record<string, string>;
   normalizeLine?: (line: string) => NormalizedCliEvent | undefined;
+  requireExecutionEvidence?: boolean;
 }
 
 export interface CliAgentBackend {
@@ -74,18 +75,19 @@ export class SpawnCliAgentBackend implements CliAgentBackend {
       stdio: ["ignore", "pipe", "pipe"],
       env: { ...process.env, ...input.environment, PWD: input.workspacePath },
       detached: process.platform !== "win32",
-    }), input.normalizeLine ?? normalizeCliLine);
+    }), input.normalizeLine ?? normalizeCliLine, input.requireExecutionEvidence === true);
   }
 }
 
 class SpawnedCliTurn implements CliTurn {
   private completed = false;
   private cancelled = false;
+  private cancellation: Promise<void> | undefined;
   private readonly outcome: Promise<CliTurnResult>;
   private readonly retainedEvents: NormalizedCliEvent[] = [];
   private resourceEvent: Extract<NormalizedCliEvent, { type: "resource" }> | undefined;
 
-  constructor(private readonly child: ChildProcess, normalizeLine: (line: string) => NormalizedCliEvent | undefined) {
+  constructor(private readonly child: ChildProcess, normalizeLine: (line: string) => NormalizedCliEvent | undefined, requireExecutionEvidence: boolean) {
     let stdout = "";
     let stderr = "";
     let droppingLine = false;
@@ -93,12 +95,13 @@ class SpawnedCliTurn implements CliTurn {
     let activity: Extract<NormalizedCliEvent, { type: "activity" }> | undefined;
     let waiting: Extract<NormalizedCliEvent, { type: "waiting" }> | undefined;
     let providerSessionId: string | undefined;
+    let executionEvidence = false;
     const record = (event: NormalizedCliEvent | undefined): void => {
       if (!event) return;
       this.retainedEvents.push(event);
       if (this.retainedEvents.length > 256) this.retainedEvents.shift();
       if (event.type === "failure" || (event.type === "resource" && event.state !== "UNKNOWN")) failure = event;
-      if (event.type === "activity") { activity = event; providerSessionId = event.providerSessionId ?? providerSessionId; }
+      if (event.type === "activity") { activity = event; providerSessionId = event.providerSessionId ?? providerSessionId; executionEvidence ||= event.executionEvidence === true; }
       if (event.type === "waiting") waiting = event;
       if (event.type === "resource") this.resourceEvent = event;
     };
@@ -122,6 +125,7 @@ class SpawnedCliTurn implements CliTurn {
         if (!droppingLine && stdout.trim()) record(normalizeLine(stdout));
         const error = normalizeCliError(stderr);
         if (error && code !== 0) record(error);
+        if (code === 0 && requireExecutionEvidence && !executionEvidence && !failure && !waiting && !this.cancelled) record({ type: "failure", reason: "CLI exited without valid native execution evidence" });
         resolve({
           state: this.cancelled ? "cancelled" : failure ? "failed" : waiting ? "waiting" : code === 0 ? "completed" : "failed",
           summary: failure?.reason ?? waiting?.reason ?? activity?.summary ?? error?.reason ?? (code === 0 ? "Agent completed" : `Agent exited with code ${code ?? "unknown"}`),
@@ -132,13 +136,29 @@ class SpawnedCliTurn implements CliTurn {
     });
   }
 
-  async cancel(): Promise<void> {
-    if (!this.completed) {
-      this.cancelled = true;
-      this.kill("SIGTERM");
-    }
-    const timer = setTimeout(() => this.kill("SIGKILL"), 2_000);
-    try { await this.outcome; } finally { clearTimeout(timer); }
+  cancel(): Promise<void> {
+    return this.cancellation ??= this.cancelGroup();
+  }
+  private async cancelGroup(): Promise<void> {
+    if (!this.completed) this.cancelled = true;
+    this.kill("SIGTERM");
+    // Direct child exit does not establish that its tool descendants stopped.
+    if (this.groupAlive()) await new Promise<void>((resolve, reject) => {
+      const finish = (error?: unknown): void => {
+        clearInterval(poll);
+        clearTimeout(escalation);
+        if (error) reject(error); else resolve();
+      };
+      const poll = setInterval(() => { try { if (!this.groupAlive()) finish(); } catch (error) { finish(error); } }, 25);
+      const escalation = setTimeout(() => { try { this.kill("SIGKILL"); finish(); } catch (error) { finish(error); } }, 2_000);
+    });
+    await this.outcome;
+  }
+  private groupAlive(): boolean {
+    if (process.platform === "win32") return !this.completed;
+    if (!this.child.pid) return false;
+    try { process.kill(-this.child.pid, 0); return true; }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === "ESRCH") return false; throw error; }
   }
   private kill(signal: NodeJS.Signals): void {
     try {
@@ -163,6 +183,7 @@ export interface CliProviderDefinition {
   environmentKey?: string;
   supportsResume: boolean;
   strictLifecycle?: boolean;
+  requireExecutionEvidence?: boolean;
   newSessionId?: () => string;
   resolveExecutable?: (profile: CliAgentProfile) => Promise<string>;
   normalizeLine?: (line: string) => NormalizedCliEvent | undefined;
@@ -242,6 +263,8 @@ export class StructuredCliAdapter implements AgentAdapter {
   private readonly backend: CliAgentBackend;
   private readonly store: SessionStore;
   private readonly sending = new Set<string>();
+  private starting = 0;
+  private cancelling = 0;
 
   constructor(
     private readonly definition: CliProviderDefinition,
@@ -256,28 +279,36 @@ export class StructuredCliAdapter implements AgentAdapter {
   }
 
   async start(input: { runId: string; workspacePath: string; backendId?: string; prompt?: string }): Promise<AdapterSession> {
-    const now = new Date().toISOString();
-    const session: AdapterSession = {
-      id: randomUUID(),
-      runId: input.runId,
-      backendId: input.backendId ?? this.manifest.backends[0]!.id,
-      workspacePath: input.workspacePath,
-      state: "RUNNING",
-      profileId: this.profile.id,
-      ...(this.definition.newSessionId ? { providerSessionId: this.definition.newSessionId() } : {}),
-      createdAt: now,
-      updatedAt: now,
-    };
-    const environment = await this.environment();
-    this.turns.set(session.id, this.backend.start({
-      executable: await this.executable(),
-      args: this.definition.startArgs({ prompt: input.prompt ?? "Inspect the task and report readiness.", newSession: true, approveTools: this.profile.approveTools === true, ...(session.providerSessionId ? { providerSessionId: session.providerSessionId } : {}), ...(this.profile.model ? { model: this.profile.model } : {}) }),
-      workspacePath: input.workspacePath,
-      ...(this.definition.normalizeLine ? { normalizeLine: this.definition.normalizeLine } : {}),
-      ...(environment ? { environment } : {}),
-    }));
-    this.store.save(session);
-    return structuredClone(session);
+    this.starting++;
+    try {
+      const now = new Date().toISOString();
+      const session: AdapterSession = {
+        id: randomUUID(),
+        runId: input.runId,
+        backendId: input.backendId ?? this.manifest.backends[0]!.id,
+        workspacePath: input.workspacePath,
+        state: "RUNNING",
+        profileId: this.profile.id,
+        ...(this.definition.newSessionId ? { providerSessionId: this.definition.newSessionId() } : {}),
+        createdAt: now,
+        updatedAt: now,
+      };
+      const environment = await this.environment();
+      this.turns.set(session.id, this.backend.start({
+        executable: await this.executable(),
+        args: this.definition.startArgs({ prompt: input.prompt ?? "Inspect the task and report readiness.", newSession: true, approveTools: this.profile.approveTools === true, ...(session.providerSessionId ? { providerSessionId: session.providerSessionId } : {}), ...(this.profile.model ? { model: this.profile.model } : {}) }),
+        workspacePath: input.workspacePath,
+        ...(this.definition.normalizeLine ? { normalizeLine: this.definition.normalizeLine } : {}),
+        ...(this.definition.requireExecutionEvidence ? { requireExecutionEvidence: true } : {}),
+        ...(environment ? { environment } : {}),
+      }));
+      this.store.save(session);
+      return structuredClone(session);
+    } finally { this.starting--; }
+  }
+
+  hasActiveOperations(): boolean {
+    return this.starting > 0 || this.cancelling > 0 || this.sending.size > 0 || [...this.turns.values()].some((turn) => turn.status() === "running");
   }
 
   async send(sessionId: string, message: string): Promise<AdapterEvent> {
@@ -297,6 +328,7 @@ export class StructuredCliAdapter implements AgentAdapter {
         args: this.definition.startArgs({ prompt: message, providerSessionId: session.providerSessionId, approveTools: this.profile.approveTools === true, ...(this.profile.model ? { model: this.profile.model } : {}) }),
         workspacePath: session.workspacePath,
         ...(this.definition.normalizeLine ? { normalizeLine: this.definition.normalizeLine } : {}),
+        ...(this.definition.requireExecutionEvidence ? { requireExecutionEvidence: true } : {}),
         ...(environment ? { environment } : {}),
       }));
       this.store.save({ ...session, state: "RUNNING", updatedAt: new Date().toISOString() });
@@ -310,9 +342,12 @@ export class StructuredCliAdapter implements AgentAdapter {
     return this.status(sessionId);
   }
   async cancel(sessionId: string): Promise<AdapterSession> {
-    this.update(sessionId, { state: "CANCELLED" });
-    await this.turns.get(sessionId)?.cancel();
-    return this.update(sessionId, { state: "CANCELLED" });
+    this.cancelling++;
+    try {
+      this.update(sessionId, { state: "CANCELLED" });
+      await this.turns.get(sessionId)?.cancel();
+      return this.update(sessionId, { state: "CANCELLED" });
+    } finally { this.cancelling--; }
   }
   async status(sessionId: string): Promise<AdapterSession> {
     const session = this.require(sessionId);

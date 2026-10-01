@@ -62,18 +62,18 @@ async function executable(provider: NativeCliProvider, profile: CliAgentProfile)
 const definitions: Record<NativeCliProvider, CliProviderDefinition> = {
   opencode: {
     manifest: opencodeManifest, defaultExecutable: "opencode", versionArgs: ["--version"], authArgs: [],
-    supportsResume: true, strictLifecycle: true, resolveExecutable: (profile) => executable("opencode", profile), normalizeLine: normalizeOpenCodeLine,
+    supportsResume: true, strictLifecycle: true, requireExecutionEvidence: true, resolveExecutable: (profile) => executable("opencode", profile), normalizeLine: normalizeOpenCodeLine,
     // v2's private server is owned by this child, so cancellation cannot strand a shared-service run.
     startArgs: ({ prompt, model, providerSessionId, approveTools }) => ["run", "--standalone", "--format", "json", ...(approveTools ? ["--auto"] : []), ...(model ? ["--model", model] : []), ...(providerSessionId ? ["--session", providerSessionId] : []), "--", prompt],
   },
   grok: {
     manifest: grokManifest, defaultExecutable: "grok", versionArgs: ["--version"], authArgs: [], environmentKey: "XAI_API_KEY",
-    supportsResume: true, strictLifecycle: true, newSessionId: randomUUID, resolveExecutable: (profile) => executable("grok", profile), normalizeLine: normalizeGrokLine,
+    supportsResume: true, strictLifecycle: true, requireExecutionEvidence: true, newSessionId: randomUUID, resolveExecutable: (profile) => executable("grok", profile), normalizeLine: normalizeGrokLine,
     startArgs: ({ prompt, model, providerSessionId, newSession, approveTools }) => ["--output-format", "streaming-messages-json", ...(approveTools ? ["--always-approve"] : []), ...(model ? ["--model", model] : []), ...(providerSessionId ? [newSession ? "--session-id" : "--resume", providerSessionId] : []), `--single=${prompt}`],
   },
   pi: {
     manifest: piManifest, defaultExecutable: "pi", versionArgs: ["--version"], authArgs: [],
-    supportsResume: true, strictLifecycle: true, newSessionId: randomUUID, resolveExecutable: (profile) => executable("pi", profile), normalizeLine: normalizePiLine,
+    supportsResume: true, strictLifecycle: true, requireExecutionEvidence: true, newSessionId: randomUUID, resolveExecutable: (profile) => executable("pi", profile), normalizeLine: normalizePiLine,
     startArgs: ({ prompt, model, providerSessionId, newSession }) => ["--print", "--mode", "json", ...(model ? ["--model", model] : []), ...(providerSessionId ? [newSession ? "--session-id" : "--session", providerSessionId] : []), "--", prompt],
   },
 };
@@ -133,8 +133,8 @@ function content(value: unknown): string | undefined {
   const result = value.map(object).filter((item) => item?.type === "text").map((item) => text(item?.text) ?? "").join("\n");
   return result ? result.slice(0, 2_000) : undefined;
 }
-function activity(summary: string, providerSessionId?: string): NormalizedCliEvent {
-  return { type: "activity", summary: summary.slice(0, 2_000), ...(providerSessionId ? { providerSessionId } : {}) };
+function activity(summary: string, providerSessionId?: string, executionEvidence = false): NormalizedCliEvent {
+  return { type: "activity", summary: summary.slice(0, 2_000), ...(providerSessionId ? { providerSessionId } : {}), ...(executionEvidence ? { executionEvidence: true as const } : {}) };
 }
 function error(message: string, status?: number): NormalizedCliEvent {
   if (status === 402 || /requires more credits|can only afford|insufficient.*balance/i.test(message)) return { type: "resource", state: "QUOTA_EXHAUSTED", reason: message.slice(0, 1_000), source: "error", confidence: "high" };
@@ -153,7 +153,7 @@ export function normalizeOpenCodeLine(line: string): NormalizedCliEvent | undefi
     return error(text(data?.message) ?? text(detail?.message) ?? text(value.message) ?? text(detail?.name) ?? "OpenCode failed", typeof data?.statusCode === "number" ? data.statusCode : undefined);
   }
   const part = object(value.part);
-  if (value.type === "text" && text(part?.text)) return activity(String(part!.text), sessionId);
+  if (value.type === "text" && text(part?.text)) return activity(String(part!.text), sessionId, true);
   if (value.type === "step_start" && sessionId) return activity("OpenCode turn started", sessionId);
   return undefined;
 }
@@ -165,11 +165,11 @@ export function normalizeGrokLine(line: string): NormalizedCliEvent | undefined 
   if (value.type === "result") {
     const result = text(value.result);
     if (value.is_error === true) return error(result ?? (Array.isArray(value.errors) ? value.errors.map(String).join("; ") : "Grok failed"));
-    if (result) return activity(result, sessionId);
+    if (result || value.is_error === false || value.subtype === "success") return activity(result ?? "Grok turn completed", sessionId, true);
   }
   if (value.type === "assistant") {
     const summary = content(object(value.message)?.content);
-    if (summary) return activity(summary, sessionId);
+    if (summary) return activity(summary, sessionId, true);
   }
   if (value.type === "system" && value.subtype === "init" && sessionId) return activity("Grok turn started", sessionId);
   if (value.type === "error") return error(text(value.message) ?? "Grok failed");
@@ -185,7 +185,7 @@ export function normalizePiLine(line: string): NormalizedCliEvent | undefined {
     if (message?.role !== "assistant") return undefined;
     if (message.stopReason === "error" || message.stopReason === "aborted") return error(text(message.errorMessage) ?? `pi request ${String(message.stopReason)}`);
     const summary = content(message.content);
-    if (summary) return activity(summary);
+    if (summary || message.stopReason === "stop") return activity(summary ?? "pi turn completed", undefined, true);
   }
   return undefined;
 }

@@ -60,6 +60,11 @@ provider IDs can continue a completed conversation; an active process cannot
 be reattached after Controller shutdown. A restored RUNNING snapshot without
 its handle is failed explicitly. Session handles are currently in process
 memory; use the existing operator recovery path after interrupted execution.
+Applying unrelated configuration or adding another profile preserves the three
+native adapters' live handles. A ConfigPlan changing or removing an active
+native profile is rejected as `ACTIVE_AGENT_PROFILE`; finish or cancel its
+operations first, then create a new plan. Pending startup, follow-up credential
+resolution and cancellation cleanup also count as active operations.
 
 ## Personal task loop
 
@@ -85,9 +90,12 @@ memory; use the existing operator recovery path after interrupted execution.
 Deterministic adapter tests cover native JSON/session IDs, leading-dash prompt
 argv, nested errors, zero-exit failures, resource retention, output bounds,
 missing executables, busy sends, cancellation during credential resolution and
-SIGKILL escalation. Controller tests cover all three provider profiles,
+SIGKILL escalation, including descendants surviving the direct child's exit.
+Empty, malformed or initialization-only native streams fail without valid
+execution evidence, even on exit zero. Controller tests cover all three provider profiles,
 ConfigPlan/discovery/test routes, managed-worktree enforcement, canonical
-routing and per-profile resource blocking. UI tests distinguish installation
+routing, live-handle preservation, active profile replacement rejection and
+per-profile resource blocking. UI tests distinguish installation
 from authentication.
 
 Real local invocations used disposable directories and literal marker files:

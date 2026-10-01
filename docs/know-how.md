@@ -70,6 +70,15 @@
   error records, retain resource evidence across later output, and distinguish
   unavailable model configuration from provider outages. OpenRouter HTTP 402
   and pi's missing API-key diagnostic are resource/auth failures.
+- Native JSON exit zero needs execution evidence, not merely initialization or
+  parseable informational records. Empty or invalid-only output must fail closed.
+- Unix child `close` does not prove its process group exited. A tool descendant
+  can ignore SIGTERM with detached stdio; retain SIGKILL escalation until the
+  group has stopped. Awaited cancellation also fences profile replacement.
+- ConfigPlan apply must preserve unchanged native adapter instances: replacing
+  them drops live process handles. Reject replacement/removal while startup,
+  follow-up or cancellation is pending, and keep the typed runtime rejection
+  after transaction rollback so operators know to finish or cancel first.
 - Grok's `--session-id` creates a new conversation; `--resume` continues one.
   A prompt starting with `-` requires the `--single=<prompt>` argv form. On
   Grok 1.0.46, `acceptEdits` and scoped Write/Edit allow rules did not approve
