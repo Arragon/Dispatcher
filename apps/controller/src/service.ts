@@ -15,6 +15,14 @@ import {
   cursorManifest,
   KiroAdapter,
   kiroManifest,
+  OpenCodeAdapter,
+  GrokAdapter,
+  PiAdapter,
+  opencodeManifest,
+  grokManifest,
+  piManifest,
+  isNativeCliProvider,
+  probeNativeCliProfile,
   DevinAdapter,
   devinManifest,
   LocalServiceAdapter,
@@ -41,6 +49,7 @@ import {
   type QoderProfileConfig,
   type CliAgentBackend,
   type CliAgentProfile,
+  type NativeCliProvider,
   type DevinBackend,
   type DevinProfileConfig,
   type LocalServiceProfileConfig,
@@ -144,7 +153,7 @@ export interface ControllerOptions {
   gitTransport?: GitTransport;
   codexBackendFactory?: (profile: CodexProfileConfig) => CodexBackend;
   qoderBackendFactory?: (profile: QoderProfileConfig) => QoderBackend;
-  cliBackendFactory?: (provider: "cursor" | "kiro", profile: CliAgentProfile) => CliAgentBackend;
+  cliBackendFactory?: (provider: "cursor" | "kiro" | NativeCliProvider, profile: CliAgentProfile) => CliAgentBackend;
   devinBackendFactory?: (profile: DevinProfileConfig) => DevinBackend;
   modules?: ServiceModule[];
   ownerToken?: string;
@@ -375,7 +384,7 @@ function llmConfiguration(config: DispatcherConfig["internalLlm"]): LlmConfigura
   };
 }
 
-const adapterManifests = [genericMockManifest, genericCliManifest, codexManifest, qoderManifest, cursorManifest, devinManifest, kiroManifest, localServiceManifest] as const;
+const adapterManifests = [genericMockManifest, genericCliManifest, codexManifest, qoderManifest, cursorManifest, devinManifest, kiroManifest, localServiceManifest, opencodeManifest, grokManifest, piManifest] as const;
 
 function manifestForProvider(provider: string) {
   if (provider === "workbuddy" || provider === "codebuddy") return localServiceManifest;
@@ -819,6 +828,18 @@ export class ControllerService {
       this.agentAdapters.set(profile.id, profile.provider === "cursor"
         ? new CursorAdapter(adapterProfile, backend, store, resolveProviderCredential)
         : new KiroAdapter(adapterProfile, backend, store, resolveProviderCredential));
+    }
+    for (const profile of config.agentProfiles) {
+      if (!isNativeCliProvider(profile.provider)) continue;
+      const adapterProfile: CliAgentProfile = { id: profile.id, alias: profile.alias,
+        ...(stringSetting(profile.settings?.executable) ? { executable: stringSetting(profile.settings?.executable)! } : {}),
+        ...(stringSetting(profile.settings?.model) ? { model: stringSetting(profile.settings?.model)! } : {}),
+        ...(profile.credentialRef ? { credentialRef: profile.credentialRef } : {}),
+      };
+      const backend = this.options.cliBackendFactory?.(profile.provider, adapterProfile);
+      this.agentAdapters.set(profile.id, profile.provider === "opencode" ? new OpenCodeAdapter(adapterProfile, backend, store)
+        : profile.provider === "grok" ? new GrokAdapter(adapterProfile, backend, store, resolveProviderCredential)
+        : new PiAdapter(adapterProfile, backend, store));
     }
     for (const profile of config.agentProfiles.filter((entry) => entry.provider === "devin")) {
       const organizationId = stringSetting(profile.settings?.organizationId);
@@ -1482,6 +1503,7 @@ export class ControllerService {
       execute: async (arguments_) => {
         const provider = String(arguments_.provider).toLocaleLowerCase();
         const alias = String(arguments_.alias);
+        if (isNativeCliProvider(provider)) return probeNativeCliProfile(provider, { id: alias.toLocaleLowerCase(), alias, ...(typeof arguments_.executable === "string" ? { executable: arguments_.executable } : {}), ...(typeof arguments_.model === "string" ? { model: arguments_.model } : {}) });
         if (provider === "qoder") return probeQoderProfile({ id: alias.toLocaleLowerCase(), alias, ...(typeof arguments_.executable === "string" ? { executable: arguments_.executable } : {}), ...(typeof arguments_.configDir === "string" ? { configDir: arguments_.configDir } : {}), ...(typeof arguments_.model === "string" ? { model: arguments_.model } : {}) });
         if (provider === "codex" && typeof arguments_.codexHome === "string") return probeCodexProfile({ id: alias.toLocaleLowerCase(), alias, codexHome: arguments_.codexHome, ...(typeof arguments_.executable === "string" ? { executable: arguments_.executable } : {}), ...(typeof arguments_.model === "string" ? { model: arguments_.model } : {}) });
         throw new SemanticPolicyError("INVALID_INPUT", `Unsupported discovery provider ${provider}`);
@@ -1492,6 +1514,7 @@ export class ControllerService {
       execute: async ({ target }) => {
         const profile = this.configuration.current().config.agentProfiles.find((entry) => entry.id === String(target));
         if (!profile) throw new SemanticPolicyError("INVALID_INPUT", `Unknown profile ${String(target)}`);
+        if (isNativeCliProvider(profile.provider)) return probeNativeCliProfile(profile.provider, { id: profile.id, alias: profile.alias, ...(stringSetting(profile.settings?.executable) ? { executable: stringSetting(profile.settings?.executable)! } : {}), ...(stringSetting(profile.settings?.model) ? { model: stringSetting(profile.settings?.model)! } : {}) });
         if (profile.provider === "qoder") return probeQoderProfile({ id: profile.id, alias: profile.alias, ...(stringSetting(profile.settings?.executable) ? { executable: stringSetting(profile.settings?.executable)! } : {}), ...(stringSetting(profile.settings?.configDir) ? { configDir: stringSetting(profile.settings?.configDir)! } : {}), ...(stringSetting(profile.settings?.model) ? { model: stringSetting(profile.settings?.model)! } : {}) });
         const codexHome = stringSetting(profile.settings?.codexHome);
         if (profile.provider === "codex" && codexHome) return probeCodexProfile({ id: profile.id, alias: profile.alias, codexHome, ...(stringSetting(profile.settings?.executable) ? { executable: stringSetting(profile.settings?.executable)! } : {}), ...(stringSetting(profile.settings?.model) ? { model: stringSetting(profile.settings?.model)! } : {}) });
@@ -2415,6 +2438,7 @@ export class ControllerService {
     this.app.post<{ Params: { provider: string }; Body: EcosystemProfileBody }>("/api/agents/:provider/discover", async (request, reply) => {
       const body = request.body;
       if (!body?.alias) return reply.code(400).send({ code: "AGENT_PROFILE_REQUIRED" });
+      if (isNativeCliProvider(request.params.provider)) return probeNativeCliProfile(request.params.provider, { id: body.id ?? `discovered-${request.params.provider}`, alias: body.alias, ...(body.executable ? { executable: body.executable } : {}), ...(body.model ? { model: body.model } : {}) });
       const resolveCredential = (reference: string): Promise<string> => this.secrets.resolve(reference, { principal: "controller", purpose: "provider" });
       if (request.params.provider === "cursor" || request.params.provider === "kiro") {
         const profile: CliAgentProfile = { id: body.id ?? `discovered-${request.params.provider}`, alias: body.alias, ...(body.executable ? { executable: body.executable } : {}), ...(body.credentialRef ? { credentialRef: body.credentialRef } : {}), ...(body.model ? { model: body.model } : {}) };
@@ -2443,7 +2467,12 @@ export class ControllerService {
       let provider = request.params.provider;
       let settings: Record<string, JsonValue>;
       let credentialRef = body.credentialRef;
-      if (provider === "cursor" || provider === "kiro") {
+      if (isNativeCliProvider(provider)) {
+        if (credentialRef && provider !== "grok") return reply.code(400).send({ code: "NATIVE_LOGIN_REQUIRED", message: "Use the harness's native provider login for this profile." });
+        const discovery = await probeNativeCliProfile(provider, { id: body.id, alias: body.alias, ...(body.executable ? { executable: body.executable } : {}), ...(body.model ? { model: body.model } : {}) });
+        if (!discovery.installed || !discovery.compatible) return reply.code(409).send({ code: "CLI_INCOMPATIBLE", discovery });
+        settings = { executable: discovery.executable, ...(body.model ? { model: body.model } : {}) };
+      } else if (provider === "cursor" || provider === "kiro") {
         settings = { ...(body.executable ? { executable: body.executable } : {}), ...(body.model ? { model: body.model } : {}) };
       } else if (provider === "devin") {
         if (!body.organizationId || !credentialRef) return reply.code(400).send({ code: "DEVIN_PROFILE_REQUIRED" });
@@ -2459,7 +2488,9 @@ export class ControllerService {
         credentialRef = undefined;
       } else return reply.code(404).send({ code: "ADAPTER_NOT_FOUND" });
       if (credentialRef && !(await this.secrets.metadata(credentialRef)).exists) return reply.code(409).send({ code: "SECRET_REFERENCE_MISSING" });
-      const next = structuredClone(current.config);
+      const latest = this.configuration.current();
+      if (latest.config.agentProfiles.some((profile) => profile.id === body.id)) return reply.code(409).send({ code: "PROFILE_EXISTS" });
+      const next = structuredClone(latest.config);
       next.agentProfiles.push({ id: body.id, provider, alias: body.alias, runnerId: body.runnerId ?? "local", ...(credentialRef ? { credentialRef } : {}), settings });
       const plan = this.configuration.buildPlan(next, "local-web", "web");
       const applied = this.configuration.applyPlan(plan.id, { confirmed: true });
@@ -2469,6 +2500,7 @@ export class ControllerService {
       const profile = this.configuration.current().config.agentProfiles.find((entry) => entry.id === request.params.id);
       const codexHome = stringSetting(profile?.settings?.codexHome);
       if (!profile) return reply.code(404).send({ code: "PROFILE_NOT_FOUND" });
+      if (isNativeCliProvider(profile.provider)) return probeNativeCliProfile(profile.provider, { id: profile.id, alias: profile.alias, ...(stringSetting(profile.settings?.executable) ? { executable: stringSetting(profile.settings?.executable)! } : {}), ...(stringSetting(profile.settings?.model) ? { model: stringSetting(profile.settings?.model)! } : {}) });
       if (profile.provider === "codex" && codexHome) return probeCodexProfile({
         id: profile.id,
         alias: profile.alias,
