@@ -165,6 +165,11 @@ export interface BackgroundWorkerOptions {
   runMaxDelayMs?: number;
 }
 
+type TaskDispatchResult = { run: Run; routing: { explanation: string; eligible: unknown[]; rejected: unknown[] } };
+class TaskDispatchError extends Error {
+  constructor(readonly code: string, readonly statusCode: number, message: string) { super(message); }
+}
+
 type AdvanceResult = { waiting: boolean; run: Run; task: Task; deliveries: JsonValue[] };
 
 const CREDENTIAL_PATTERN = /(?:sk-|xox[baprs]-|gh[op]_)[a-z0-9_-]{8,}/i;
@@ -416,6 +421,7 @@ export class ControllerService {
   private readonly requestPrincipals = new WeakMap<object, ControlPrincipal>();
   private readonly messagingInbox: MessagingInbox;
   private readonly background: BackgroundLoop;
+  private dispatchQueue: Promise<void> = Promise.resolve();
   private readonly runAdvances = new Map<string, Promise<AdvanceResult>>();
   private readonly runRetries = new Map<string, { failures: number; nextAttemptAt: number }>();
   private projectionDrain: Promise<unknown> | undefined;
@@ -1144,7 +1150,7 @@ export class ControllerService {
       if (session.state === "PAUSED") {
         assertRunTransition(run.state, "WAITING_USER");
         run.state = "WAITING_USER";
-        run.activitySummary = "Waiting for user input";
+        run.activitySummary = (await adapter.result(run.sessionId)).summary || "Waiting for user input";
         run.lastActivityAt = new Date().toISOString();
         this.database.saveEntity("run", run.id, json(run));
         const current = this.database.getCanonicalTask<JsonValue>(run.taskId)!;
@@ -1275,7 +1281,89 @@ export class ControllerService {
     };
   }
 
+  private dispatchTask(taskId: string, body: TaskDispatchBody, idempotencyKey?: string): Promise<TaskDispatchResult> {
+    const dispatch = this.dispatchQueue.then(() => this.performDispatchTask(taskId, body, idempotencyKey));
+    this.dispatchQueue = dispatch.then(() => undefined, () => undefined);
+    return dispatch;
+  }
+
+  private async performDispatchTask(taskId: string, body: TaskDispatchBody, idempotencyKey?: string): Promise<TaskDispatchResult> {
+    const existing = idempotencyKey ? this.database.getEntity<JsonValue>("task-dispatch", idempotencyKey) : undefined;
+    if (existing) return existing as unknown as TaskDispatchResult;
+    const stored = this.database.getCanonicalTask<JsonValue>(taskId);
+    const contract = this.database.getTaskContract<JsonValue>(taskId) as unknown as TaskContract | undefined;
+    if (!stored || !contract) throw new TaskDispatchError("TASK_NOT_FOUND", 404, `Unknown task or contract ${taskId}`);
+    if ((stored.document as unknown as Task).state !== "READY") throw new TaskDispatchError("TASK_NOT_READY", 409, `Task ${taskId} is not dispatchable from ${(stored.document as unknown as Task).state}; READY is required`);
+    if (body?.profileId && !this.agentAdapters.has(body.profileId)) throw new TaskDispatchError("PROFILE_NOT_FOUND", 404, `Unknown profile ${body.profileId}`);
+    const runners = new Map(this.runners.list().map((runner) => [runner.id, runner]));
+    const profiles = this.configuration.current().config.agentProfiles.filter((profile) => !body?.profileId || profile.id === body.profileId);
+    const repositoryId = body?.repositoryId ?? contract.delivery.repository;
+    const repositoryConfig = this.configuration.current().config.repositories.find((entry) => entry.id === repositoryId);
+    if (!repositoryId || !repositoryConfig) throw new TaskDispatchError("REPOSITORY_UNAVAILABLE", 409, "The task repository is not registered");
+    const activeRuns = this.database.listEntities<JsonValue>("run").map((value) => value as unknown as Run).filter((run) => run.state === "ACTIVE");
+    const scheduler = new CanonicalScheduler(() => profiles.flatMap((profile) => {
+      const runner = runners.get(profile.runnerId);
+      const adapter = this.agentAdapters.get(profile.id);
+      if (!runner || !adapter) return [];
+      return [{
+        runnerId: runner.id,
+        runnerTags: runner.capabilities,
+        capacity: runner.state === "ONLINE" || runner.state === "DEGRADED" ? runner.capacity : 0,
+        activeRuns: activeRuns.filter((run) => run.runnerId === runner.id).length,
+        providerId: profile.provider,
+        profileId: profile.id,
+        resourceState: this.profileResourceState(profile.id),
+        capabilities: [...new Set([...manifestCapabilities(adapter.manifest), ...runner.capabilities])],
+        adapter,
+      }];
+    }));
+    const runId = randomUUID();
+    const workspace = await this.workspaces.create({
+      repositoryId,
+      taskId: taskId,
+      runId,
+      attempt: 1,
+      baseRef: body?.baseRef ?? contract.delivery.baseBranch ?? repositoryConfig.defaultBaseRef,
+      scopePaths: repositoryConfig.scopePaths,
+    });
+    let dispatched: Awaited<ReturnType<CanonicalScheduler["dispatch"]>>;
+    try {
+      dispatched = await scheduler.dispatch({
+        task: stored.document as unknown as Task,
+        taskRevision: stored.revision,
+        contract,
+        requirements: {
+          capabilities: ["code", "git", ...(body?.capabilities ?? [])],
+          ...(body?.runnerTags?.length ? { runnerTags: body.runnerTags } : {}),
+          ...(body?.providerIds?.length ? { providerIds: body.providerIds } : {}),
+        },
+        workspacePath: workspace.path,
+        runId,
+      });
+    } catch (error) {
+      const cleanup = await this.workspaces.cleanupPlan(workspace);
+      if (cleanup.safe) await this.workspaces.cleanup(cleanup);
+      throw error;
+    }
+    dispatched.run.branch = workspace.branch;
+    dispatched.run.leaseExpiresAt = new Date(this.now().getTime() + 15 * 60_000).toISOString();
+    this.database.saveEntity("run", dispatched.run.id, json(dispatched.run));
+    this.restoreLeaseAuthority(dispatched.run);
+    this.fleetEvents.publish("run.changed", dispatched.run.id, { id: dispatched.run.id, taskId: dispatched.run.taskId, state: dispatched.run.state });
+    const bound = this.tasks.execute({ id: `dispatch:${dispatched.run.id}:bound`, taskId, baseRevision: stored.revision, actor: "scheduler", command: { type: "task.set-current-run", runId: dispatched.run.id } });
+    const queued = this.tasks.execute({ id: `dispatch:${dispatched.run.id}:queued`, taskId: taskId, baseRevision: bound.revision, actor: "scheduler", command: { type: "task.transition", state: "QUEUED" } });
+    this.tasks.execute({ id: `dispatch:${dispatched.run.id}:running`, taskId: taskId, baseRevision: queued.revision, actor: "scheduler", command: { type: "task.transition", state: "RUNNING" } });
+    const result = { run: dispatched.run, routing: { explanation: dispatched.decision.explanation, eligible: dispatched.decision.eligible, rejected: dispatched.decision.rejected } };
+    if (idempotencyKey) this.database.saveEntity("task-dispatch", idempotencyKey, json(result));
+    return result;
+  }
+
   private registerSemanticTools(): void {
+    this.semanticTools.register({
+      name: "task.dispatch", description: "Dispatch a READY task to a configured agent profile", risk: "privileged", requiredRoles: ["operator"],
+      input: { required: ["target"], properties: { target: "string", profileId: "string" }, additionalProperties: false },
+      execute: async ({ target, profileId }, context) => this.dispatchTask(String(target), typeof profileId === "string" ? { profileId } : {}, `semantic:${context.workflowId}`),
+    });
     this.semanticTools.register({
       name: "agent.discover", description: "Discover an installed agent provider", risk: "read", input: { required: ["provider", "alias"], properties: { provider: "string", alias: "string", executable: "string", configDir: "string", codexHome: "string", model: "string" }, additionalProperties: false },
       execute: async (arguments_) => {
@@ -1528,10 +1616,19 @@ export class ControllerService {
     });
   }
 
+  private taskIdentifierAliases(taskId: string): string[] {
+    const task = this.database.getCanonicalTask<JsonValue>(taskId)?.document as unknown as Task | undefined;
+    const extensions = task?.platformExtensions;
+    return Object.values(extensions ?? {}).flatMap((extension) => {
+      const identifier = extension && typeof extension === "object" && !Array.isArray(extension) ? (extension as Record<string, unknown>).identifier : undefined;
+      return typeof identifier === "string" ? [identifier] : [];
+    });
+  }
+
   private semanticCandidates(): ResolvableEntity[] {
     const snapshot = this.fleetSnapshot();
     return [
-      ...snapshot.tasks.map((task) => ({ id: task.id, kind: "task" as const, label: task.title, aliases: task.externalRefs?.map((reference) => reference.externalId) ?? [] })),
+      ...snapshot.tasks.map((task) => ({ id: task.id, kind: "task" as const, label: task.title, aliases: [...(task.externalRefs?.map((reference) => reference.externalId) ?? []), ...this.taskIdentifierAliases(task.id)] })),
       ...snapshot.runs.map((run) => ({ id: run.id, kind: "run" as const, label: run.id })),
       ...snapshot.profiles.map((profile) => ({ id: profile.id, kind: "profile" as const, label: profile.alias, aliases: [`${profile.provider}:${profile.alias}`] })),
       ...snapshot.connectors.map((connector) => ({ id: connector.id, kind: "connector" as const, label: connector.displayName })),
@@ -1568,22 +1665,52 @@ export class ControllerService {
     if (!this.attentionNotifications.shouldNotify({ taskId: run.taskId, state, generation: run.generation })) return;
     const idempotencyKey = `attention:${run.taskId}:${state}:${run.generation}`;
     if (this.database.getEntity<JsonValue>("attention-notification", idempotencyKey)) return;
-    const connector = this.connectors.list("messaging").find((entry) => this.messagingChannels.has(entry.instance.id)) as MessagingAdapter | undefined;
+    const binding = this.runConversation(run);
+    const connector = (binding ? this.connectors.get<MessagingAdapter>(binding.connectorInstanceId) : undefined)
+      ?? this.connectors.list("messaging").find((entry) => this.messagingChannels.has(entry.instance.id)) as MessagingAdapter | undefined;
     if (!connector) return;
-    const channel = this.messagingChannels.get(connector.instance.id)!;
+    const channel = binding?.conversationId ?? this.messagingChannels.get(connector.instance.id)!;
     const task = this.database.getCanonicalTask<JsonValue>(run.taskId)?.document as unknown as Task | undefined;
     const notification: Notification = {
       channel,
       subject: `${state}: ${task?.title ?? run.taskId}`,
-      body: run.prUrl ?? run.activitySummary ?? run.failureReason ?? run.resourceBlockReason ?? "Open the thread to inspect or respond.",
+      body: run.failureReason ?? run.resourceBlockReason ?? run.prUrl ?? run.activitySummary ?? "Open the thread to inspect or respond.",
       severity: state === "FAILED" ? "critical" : state === "REVIEW_READY" ? "info" : "warning",
       canonicalEntityId: run.taskId,
     };
-    const sent = await connector.send(notification, idempotencyKey);
+    const sent = binding && connector.reply
+      ? await connector.reply({ channel, threadId: binding.threadId, text: `${notification.subject}\n${notification.body}` }, idempotencyKey)
+      : await connector.send(notification, idempotencyKey);
     this.database.saveEntity("attention-notification", idempotencyKey, json({ idempotencyKey, taskId: run.taskId, state, generation: run.generation, externalMessageId: sent.externalMessageId, sentAt: new Date().toISOString() }));
     if (state === "WAITING_USER") {
-      this.conversations.bind({ connectorInstanceId: connector.instance.id, conversationId: channel, threadId: sent.externalMessageId, taskId: run.taskId, runId: run.id, sessionId: run.sessionId, generation: run.generation, state: "WAITING_USER" });
+      this.conversations.bind({ connectorInstanceId: connector.instance.id, conversationId: channel, threadId: binding?.threadId ?? sent.externalMessageId, taskId: run.taskId, runId: run.id, sessionId: run.sessionId, generation: run.generation, state: "WAITING_USER" });
     }
+  }
+
+  private runConversation(run: Run): ConversationBinding | undefined {
+    return this.database.listEntities<JsonValue>("messaging-conversation")
+      .map((value) => value as unknown as ConversationBinding)
+      .find((binding) => binding.runId === run.id && binding.sessionId === run.sessionId && binding.generation === run.generation);
+  }
+
+  private async executeMessagingWorkflow(workflow: SemanticWorkflowRecord): Promise<SemanticWorkflowRecord> {
+    const origin = this.database.getEntity<JsonValue>("messaging-workflow-origin", workflow.id) as unknown as { connectorInstanceId: string; conversationId: string; threadId: string } | undefined;
+    if (workflow.toolName === "task.dispatch" && workflow.state === "READY" && origin) {
+      const existing = this.database.getEntity<JsonValue>("messaging-conversation", `${origin.connectorInstanceId}:${origin.conversationId}:${origin.threadId}`);
+      if (existing) throw new ConnectorError("CONFLICT", "This thread already belongs to a run; dispatch in a new thread", { retryable: false, operation: "write" });
+    }
+    if (workflow.state === "READY") {
+      try { workflow = await this.semanticWorkflows.execute(workflow.id, workflow.revision); }
+      catch (error) {
+        if (!(error instanceof TaskDispatchError || error instanceof ConnectorError && error.code === "CONFLICT")) throw error;
+        workflow = this.semanticWorkflows.get(workflow.id)!;
+      }
+    }
+    if (workflow.toolName === "task.dispatch" && workflow.state === "EXECUTED" && origin) {
+      const run = (workflow.result as TaskDispatchResult).run;
+      this.conversations.bind({ ...origin, taskId: run.taskId, runId: run.id, sessionId: run.sessionId, generation: run.generation, state: this.runConversation(run)?.state ?? "ACTIVE" });
+    }
+    return workflow;
   }
 
   private async notifyOperationalAttention(input: { key: string; state: "SYNC_CONFLICT" | "CONNECTOR_AUTH" | "RUNNER_OFFLINE"; subject: string; body: string; canonicalEntityId?: string }): Promise<void> {
@@ -1615,8 +1742,11 @@ export class ControllerService {
       try { action = JSON.parse(message.action.value ?? "{}") as typeof action; } catch { throw new ConnectorError("INVALID_EVENT", "Workflow approval payload is malformed", { retryable: false, operation: "ingress" }); }
       const workflow = action.workflowId ? this.semanticWorkflows.get(action.workflowId) : undefined;
       if (!workflow || action.expectedRevision === undefined || workflow.principal.id !== principal.principalId || workflow.principal.roles.some((role) => !principal.roles.includes(role))) throw new ConnectorError("AUTH", "Workflow approval is not authorized", { retryable: false, operation: "auth" });
-      const approved = this.semanticWorkflows.approve(workflow.id, action.expectedRevision);
-      const executed = await this.semanticWorkflows.execute(approved.id, approved.revision);
+      const origin = this.database.getEntity<JsonValue>("messaging-workflow-origin", workflow.id) as unknown as { connectorInstanceId: string; conversationId: string; threadId: string } | undefined;
+      if (origin && (origin.connectorInstanceId !== adapter.instance.id || origin.conversationId !== message.conversationId || origin.threadId !== message.threadId)) throw new ConnectorError("AUTH", "Approve dispatch in its originating thread", { retryable: false, operation: "auth" });
+      const approved = workflow.state === "EXECUTED" || workflow.state === "FAILED" || workflow.state === "READY" && workflow.revision === action.expectedRevision + 1
+        ? workflow : this.semanticWorkflows.approve(workflow.id, action.expectedRevision);
+      const executed = await this.executeMessagingWorkflow(approved);
       const text = JSON.stringify(redactValue(executed.result)).slice(0, 3_000);
       return adapter.reply
         ? adapter.reply({ channel: message.conversationId, threadId: message.threadId, text }, `workflow-approval:${message.idempotencyKey}`)
@@ -1627,30 +1757,37 @@ export class ControllerService {
     if (binding?.state === "WAITING_USER" && binding.sessionId && binding.runId) {
       const expectedRevision = message.action?.expectedRevision ?? binding.revision;
       const generation = message.action?.generation ?? binding.generation;
-      this.conversations.resume(bindingId, { expectedRevision, generation });
       const run = this.database.getEntity<JsonValue>("run", binding.runId) as unknown as Run | undefined;
-      if (!run || run.generation !== generation || run.sessionId !== binding.sessionId) throw new ConnectorError("CONFLICT", "The referenced run is stale", { retryable: false, operation: "write" });
+      if (!run || run.generation !== generation || run.sessionId !== binding.sessionId || run.state !== "WAITING_USER") throw new ConnectorError("CONFLICT", "The referenced run is stale", { retryable: false, operation: "write" });
+      this.messagingIdentity.authorize(adapter.instance.id, message.principalExternalId, "operator");
+      if (binding.revision !== expectedRevision || binding.generation !== generation) throw new ConnectorError("CONFLICT", "Conversation binding is stale", { retryable: false, operation: "write" });
       const agent = this.agentAdapters.get(run.profileId);
       if (!agent) throw new ConnectorError("PERMANENT", "The run profile is unavailable", { retryable: false, operation: "write" });
       await agent.send(binding.sessionId, message.text || "Continue with the approved action.");
+      this.conversations.resume(bindingId, { expectedRevision, generation });
       if (run.state === "WAITING_USER") {
         assertRunTransition(run.state, "ACTIVE");
         run.state = "ACTIVE";
         run.lastActivityAt = new Date().toISOString();
         this.database.saveEntity("run", run.id, json(run));
+        const task = this.database.getCanonicalTask<JsonValue>(run.taskId)!;
+        if ((task.document as unknown as Task).state === "WAITING_USER") this.tasks.execute({ id: `messaging-resume:${message.idempotencyKey}`, taskId: run.taskId, baseRevision: task.revision, actor: principal.principalId, command: { type: "task.transition", state: "RUNNING" } });
+        this.attentionNotifications.recover(run.taskId);
       }
       return adapter.reply
         ? adapter.reply({ channel: message.conversationId, threadId: message.threadId, text: `Resumed run ${run.id} in the existing agent session.` }, `resume:${message.idempotencyKey}`)
         : adapter.send({ channel: message.conversationId, subject: "Run resumed", body: run.id, severity: "info" }, `resume:${message.idempotencyKey}`);
     }
+    const workflowId = `messaging:${adapter.instance.id}:${message.idempotencyKey}`;
     const intent = await this.parseAssistantIntent(message.text);
-    let workflow = this.semanticWorkflows.plan({
-      id: randomUUID(),
+    let workflow = this.semanticWorkflows.get(workflowId) ?? this.semanticWorkflows.plan({
+      id: workflowId,
       intent,
       principal: { id: principal.principalId, roles: principal.roles, channel: "messaging" },
       candidates: this.semanticCandidates(),
     });
-    if (workflow.state === "READY") workflow = await this.semanticWorkflows.execute(workflow.id, workflow.revision);
+    this.database.saveEntity("messaging-workflow-origin", workflowId, json({ connectorInstanceId: adapter.instance.id, conversationId: message.conversationId, threadId: message.threadId }));
+    workflow = await this.executeMessagingWorkflow(workflow);
     const text = workflow.state === "EXECUTED"
       ? JSON.stringify(redactValue(workflow.result)).slice(0, 3_000)
       : workflow.state === "NEEDS_APPROVAL"
@@ -2279,68 +2416,7 @@ export class ControllerService {
       return { ...task, contract: this.database.getTaskContract<JsonValue>(request.params.id), deliveries: this.database.listDeliveryEvidence<JsonValue>(request.params.id) };
     });
     this.app.post<{ Params: { id: string }; Body: TaskDispatchBody }>("/api/tasks/:id/dispatch", async (request, reply) => {
-      const stored = this.database.getCanonicalTask<JsonValue>(request.params.id);
-      const contract = this.database.getTaskContract<JsonValue>(request.params.id) as unknown as TaskContract | undefined;
-      if (!stored || !contract) return reply.code(404).send({ code: "TASK_NOT_FOUND" });
-      if (request.body?.profileId && !this.agentAdapters.has(request.body.profileId)) return reply.code(404).send({ code: "PROFILE_NOT_FOUND" });
-      const runners = new Map(this.runners.list().map((runner) => [runner.id, runner]));
-      const profiles = this.configuration.current().config.agentProfiles.filter((profile) => !request.body?.profileId || profile.id === request.body.profileId);
-      const repositoryId = request.body?.repositoryId ?? contract.delivery.repository;
-      const repositoryConfig = this.configuration.current().config.repositories.find((entry) => entry.id === repositoryId);
-      if (!repositoryId || !repositoryConfig) return reply.code(409).send({ code: "REPOSITORY_UNAVAILABLE", message: "The task repository is not registered" });
-      const activeRuns = this.database.listEntities<JsonValue>("run").map((value) => value as unknown as Run).filter((run) => run.state === "ACTIVE");
-      const scheduler = new CanonicalScheduler(() => profiles.flatMap((profile) => {
-        const runner = runners.get(profile.runnerId);
-        const adapter = this.agentAdapters.get(profile.id);
-        if (!runner || !adapter) return [];
-        return [{
-          runnerId: runner.id,
-          runnerTags: runner.capabilities,
-          capacity: runner.state === "ONLINE" || runner.state === "DEGRADED" ? runner.capacity : 0,
-          activeRuns: activeRuns.filter((run) => run.runnerId === runner.id).length,
-          providerId: profile.provider,
-          profileId: profile.id,
-          resourceState: this.profileResourceState(profile.id),
-          capabilities: [...new Set([...manifestCapabilities(adapter.manifest), ...runner.capabilities])],
-          adapter,
-        }];
-      }));
-      const runId = randomUUID();
-      const workspace = await this.workspaces.create({
-        repositoryId,
-        taskId: request.params.id,
-        runId,
-        attempt: 1,
-        baseRef: request.body?.baseRef ?? contract.delivery.baseBranch ?? repositoryConfig.defaultBaseRef,
-        scopePaths: repositoryConfig.scopePaths,
-      });
-      let dispatched: Awaited<ReturnType<CanonicalScheduler["dispatch"]>>;
-      try {
-        dispatched = await scheduler.dispatch({
-          task: stored.document as unknown as Task,
-          taskRevision: stored.revision,
-          contract,
-          requirements: {
-            capabilities: ["code", "git", ...(request.body?.capabilities ?? [])],
-            ...(request.body?.runnerTags?.length ? { runnerTags: request.body.runnerTags } : {}),
-            ...(request.body?.providerIds?.length ? { providerIds: request.body.providerIds } : {}),
-          },
-          workspacePath: workspace.path,
-          runId,
-        });
-      } catch (error) {
-        const cleanup = await this.workspaces.cleanupPlan(workspace);
-        if (cleanup.safe) await this.workspaces.cleanup(cleanup);
-        throw error;
-      }
-      dispatched.run.branch = workspace.branch;
-      dispatched.run.leaseExpiresAt = new Date(Date.now() + 15 * 60_000).toISOString();
-      this.database.saveEntity("run", dispatched.run.id, json(dispatched.run));
-      this.restoreLeaseAuthority(dispatched.run);
-      this.fleetEvents.publish("run.changed", dispatched.run.id, { id: dispatched.run.id, taskId: dispatched.run.taskId, state: dispatched.run.state });
-      const queued = this.tasks.execute({ id: `dispatch:${dispatched.run.id}:queued`, taskId: request.params.id, baseRevision: stored.revision, actor: "scheduler", command: { type: "task.transition", state: "QUEUED" } });
-      this.tasks.execute({ id: `dispatch:${dispatched.run.id}:running`, taskId: request.params.id, baseRevision: queued.revision, actor: "scheduler", command: { type: "task.transition", state: "RUNNING" } });
-      return reply.code(201).send({ run: dispatched.run, routing: { explanation: dispatched.decision.explanation, eligible: dispatched.decision.eligible, rejected: dispatched.decision.rejected } });
+      return reply.code(201).send(await this.dispatchTask(request.params.id, request.body ?? {}));
     });
     this.app.get<{ Params: { id: string } }>("/api/runs/:id", async (request, reply) => {
       const run = this.database.getEntity<JsonValue>("run", request.params.id);
@@ -2543,14 +2619,14 @@ export class ControllerService {
       const semanticStatus = error instanceof SemanticPolicyError
         ? error.code === "FORBIDDEN" ? 403 : error.code === "STALE_WORKFLOW" ? 409 : 400
         : undefined;
-      const status = error instanceof RevisionConflictError
+      const status = error instanceof TaskDispatchError ? error.statusCode : error instanceof RevisionConflictError
         ? 409
         : error instanceof LlmRuntimeError
           ? error.code === "NO_AVAILABLE_PROFILE" ? 503 : 400
         : error instanceof ConfigPlanError || error instanceof ConfigValidationError
           ? 400
           : semanticStatus ?? workspaceStatus ?? connectorStatus ?? secretStatus ?? 500;
-      const code = error instanceof RevisionConflictError || error instanceof ConfigPlanError || error instanceof SecretStoreError || error instanceof LlmRuntimeError || error instanceof ConnectorError || error instanceof WorkspacePolicyError || error instanceof SemanticPolicyError
+      const code = error instanceof TaskDispatchError || error instanceof RevisionConflictError || error instanceof ConfigPlanError || error instanceof SecretStoreError || error instanceof LlmRuntimeError || error instanceof ConnectorError || error instanceof WorkspacePolicyError || error instanceof SemanticPolicyError
         ? error.code
         : error instanceof ConfigValidationError
           ? error.code
