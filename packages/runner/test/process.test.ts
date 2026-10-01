@@ -31,6 +31,12 @@ describe("bounded raw logs", () => {
 });
 
 describe("ProcessManager", () => {
+  it("rejects a missing executable with its spawn cause and no unhandled error", async () => {
+    const manager = new ProcessManager(directory());
+    await expect(manager.start({ runId: "missing", file: join(directory(), "missing-executable"), args: [], cwd: process.cwd() })).rejects.toThrow(/ENOENT/);
+    expect(manager.activeCount).toBe(0);
+    await manager.shutdown();
+  });
   it("lazily spawns a real child, streams bounded activity, and classifies success", async () => {
     const manager = new ProcessManager(directory(), { maxFileBytes: 1_024, maxTotalBytes: 2_048, retentionFiles: 2, tailBytes: 256 });
     expect(manager.activeCount).toBe(0);

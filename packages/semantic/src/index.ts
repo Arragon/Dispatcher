@@ -220,6 +220,8 @@ export class SemanticWorkflowEngine {
     const normalizedIntent: TypedIntentV2 = resolvedTarget && "target" in input.intent.arguments
       ? { ...structuredClone(input.intent), arguments: { ...structuredClone(input.intent.arguments), target: resolvedTarget } }
       : structuredClone(input.intent);
+    const resolvedProfile = resolutions.find((resolution) => resolution.reference.kind === "profile" && resolution.status === "RESOLVED")?.matches[0]?.id;
+    if (input.intent.action === "task.dispatch" && resolvedProfile && "profileId" in normalizedIntent.arguments) normalizedIntent.arguments.profileId = resolvedProfile;
     const state: SemanticWorkflowState = input.intent.confidence < 0.7 || ambiguous.length
       ? "NEEDS_CLARIFICATION"
       : tool.risk === "privileged"
@@ -286,6 +288,17 @@ export class SemanticWorkflowEngine {
 
 export function parseFixedCommand(text: string): TypedIntentV2 | undefined {
   const normalized = text.trim();
+  const dispatch = /^(?:\/)?task\s+dispatch(?:\s+(.*))?$/i.exec(normalized);
+  if (dispatch) {
+    const values = dispatch[1]?.trim().split(/\s+/) ?? [];
+    if (!values[0] || values.length > 2) throw new SemanticPolicyError("INVALID_INPUT", "Use task dispatch <task> [profile]");
+    return {
+      version: 2, action: "task.dispatch",
+      entities: [{ kind: "task", value: values[0] }, ...(values[1] ? [{ kind: "profile" as const, value: values[1] }] : [])],
+      arguments: { target: values[0], ...(values[1] ? { profileId: values[1] } : {}) },
+      confidence: 1, source: "fixed-command",
+    };
+  }
   const match = /^(?:\/)?(task|run|fleet|profile)\s+(status|list|cancel|pause|resume|reroute)(?:\s+(.+))?$/i.exec(normalized);
   if (!match) return undefined;
   const [, kind, operation, value] = match;

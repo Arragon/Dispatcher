@@ -118,7 +118,10 @@ export class ProcessManager {
     let classification: ExitClassification | undefined;
     let settled = false;
     const child = spawnProcess(input.file, input.args, { cwd: input.cwd, shell: false, detached: platform() !== "win32", stdio: ["pipe", "pipe", "pipe"] });
-    if (child.pid === undefined) throw new Error("Process did not receive a pid");
+    const spawned = new Promise<void>((resolve, reject) => {
+      child.once("error", reject);
+      child.once("spawn", resolve);
+    });
     const emit = (stream: ActivityEvent["stream"], text: string): void => {
       const event = { sessionId: id, stream, summary: stripAnsi(redact(text)).slice(-500), occurredAt: new Date().toISOString() };
       for (const listener of listeners) listener(event);
@@ -170,6 +173,8 @@ export class ProcessManager {
         resolve({ sessionId: id, exitCode: code, signal: signal as NodeJS.Signals | null, classification: resolved, stdoutTail: stdout.tail(), stderrTail: stderr.tail(), durationMs: Date.now() - startedAt });
       });
     });
+    await spawned;
+    if (child.pid === undefined) throw new Error("Process did not receive a pid");
     const handle: ManagedProcessHandle = {
       id,
       pid: child.pid,

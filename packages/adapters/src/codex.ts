@@ -137,7 +137,7 @@ class SpawnedCodexTurn implements CodexTurn {
         const waiting = events.findLast((event) => event.type === "waiting");
         resolve({
           state: this.cancelled ? "cancelled" : waiting ? "waiting" : code === 0 ? "completed" : "failed",
-          summary: last?.type === "activity" ? last.summary : waiting?.reason ?? (code === 0 ? "Codex completed" : "Codex failed"),
+          summary: last?.type === "failure" ? last.reason : last?.type === "activity" ? last.summary : waiting?.reason ?? (code === 0 ? "Codex completed" : stderr.slice(0, 500) || "Codex failed"),
           ...(providerSessionId ? { providerSessionId } : {}),
           events,
         });

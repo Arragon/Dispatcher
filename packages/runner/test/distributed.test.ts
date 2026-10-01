@@ -14,6 +14,16 @@ import {
 
 const tempDirectories: string[] = [];
 
+it("cannot renew an expired lease or revive revoked or old generation authority", () => {
+  const authority = new RunnerLeaseAuthority();
+  authority.issue({ runId: "renew", runnerId: "local", leaseId: "lease-1", generation: 1, expiresAt: "2026-10-01T00:15:00Z" }, "2026-10-01T00:00:00Z");
+  expect(() => authority.renew("renew", "lease-1", 1, "2026-10-01T00:30:00Z", "2026-10-01T00:16:00Z")).toThrow(/expired/);
+  authority.issue({ runId: "renew", runnerId: "local", leaseId: "lease-2", generation: 2, expiresAt: "2026-10-01T00:30:00Z" }, "2026-10-01T00:16:00Z");
+  expect(() => authority.renew("renew", "lease-1", 1, "2026-10-01T00:40:00Z", "2026-10-01T00:17:00Z")).toThrow(/not current/);
+  authority.revoke("renew", "lease-2", 2, "cancelled", "2026-10-01T00:17:00Z");
+  expect(() => authority.renew("renew", "lease-2", 2, "2026-10-01T00:40:00Z", "2026-10-01T00:18:00Z")).toThrow(/revoked/);
+});
+
 afterEach(() => {
   for (const directory of tempDirectories.splice(0)) rmSync(directory, { recursive: true, force: true });
 });
@@ -63,6 +73,41 @@ describe("remote runner control plane", () => {
     const client = new RemoteRunnerClient({ url: `ws://127.0.0.1:${address.port}`, bearerToken: "wrong", runner: runner("intruder") });
     await expect(client.start()).rejects.toThrow("unauthorized");
     expect(registry.list()).toEqual([]);
+    await server.close();
+  });
+
+  it("drains an in-flight command on shutdown and replays its durable response after restart", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "dispatcher-remote-shutdown-"));
+    tempDirectories.push(directory);
+    const journalPath = join(directory, "runner.sqlite");
+    const server = new RemoteRunnerServer({ registry: new RunnerRegistry(), port: 0, authenticate: () => true });
+    await server.ready();
+    const url = `ws://127.0.0.1:${server.address()!.port}`;
+    const journal = new RunnerJournal(journalPath);
+    const client = new RemoteRunnerClient({ url, bearerToken: "token", runner: runner(), journal });
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    client.register("run.start", async () => { entered.resolve(); await release.promise; return { started: true }; });
+    await client.start();
+    const pending = server.sendCommand("remote-mac", { type: "run.start", runId: "run-1" }, { messageId: "start-during-shutdown" }).catch(() => undefined);
+    await entered.promise;
+    const stopped = client.stop();
+    // Let the socket close before the handler finishes; journal closure must wait for it.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    release.resolve();
+    await stopped;
+    await pending;
+    expect(journal.replay(0)).toContainEqual(expect.objectContaining({ envelope: expect.objectContaining({ payload: { type: "rpc.result", correlationId: "start-during-shutdown", result: { started: true } } }) }));
+    journal.close();
+    const restoredJournal = new RunnerJournal(journalPath);
+    const restored = new RemoteRunnerClient({ url, bearerToken: "token", runner: runner(), journal: restoredJournal });
+    const duplicateHandler = vi.fn();
+    restored.register("run.start", duplicateHandler);
+    await restored.start();
+    expect((await server.sendCommand("remote-mac", { type: "run.start", runId: "run-1" }, { messageId: "start-during-shutdown" })).payload).toMatchObject({ type: "rpc.result", result: { started: true } });
+    expect(duplicateHandler).not.toHaveBeenCalled();
+    await restored.stop();
+    restoredJournal.close();
     await server.close();
   });
 

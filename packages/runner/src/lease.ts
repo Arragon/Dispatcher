@@ -42,6 +42,8 @@ export class RunnerLeaseAuthority {
   renew(runId: string, leaseId: string, generation: number, expiresAt: string, now = new Date().toISOString()): RunnerLease {
     const lease = this.assertIdentity(runId, leaseId, generation, now);
     if (lease.revokedAt) throw this.denied(lease, "LEASE_REVOKED", "lease is revoked", now);
+    if (!Number.isFinite(Date.parse(lease.expiresAt)) || Date.parse(lease.expiresAt) <= Date.parse(now)) throw this.denied(lease, "LEASE_EXPIRED", "lease expired", now);
+    if (!Number.isFinite(Date.parse(expiresAt)) || Date.parse(expiresAt) <= Date.parse(now)) throw this.denied(lease, "LEASE_EXPIRED", "renewal expiry must be in the future", now);
     const renewed = { ...lease, expiresAt };
     this.leases.set(runId, renewed);
     this.record(renewed, "RENEW", "lease renewed", now);
@@ -59,7 +61,7 @@ export class RunnerLeaseAuthority {
   fence(runId: string, leaseId: string, generation: number, operation: string, now = new Date().toISOString()): RunnerLease {
     const lease = this.assertIdentity(runId, leaseId, generation, now);
     if (lease.revokedAt) throw this.denied(lease, "LEASE_REVOKED", `${operation}: lease is revoked`, now);
-    if (Date.parse(lease.expiresAt) <= Date.parse(now)) throw this.denied(lease, "LEASE_EXPIRED", `${operation}: lease expired`, now);
+    if (!Number.isFinite(Date.parse(lease.expiresAt)) || Date.parse(lease.expiresAt) <= Date.parse(now)) throw this.denied(lease, "LEASE_EXPIRED", `${operation}: lease expired`, now);
     this.record(lease, "FENCE_ALLOW", operation, now);
     return structuredClone(lease);
   }

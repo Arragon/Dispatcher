@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { ConnectorDefinition, ConnectorInstance } from "@dispatcher/domain";
 import { ConnectorError, createConnectorDefinition, type ConnectorProbeResult } from "./contracts.js";
-import type { DeliveryRequest, RepositoryRef, ScmAdapter } from "./scm.js";
+import type { DeliveryRequest, PullRequestStatus, RepositoryRef, ScmAdapter } from "./scm.js";
 import { assertDeliveryGate } from "./scm.js";
 import type { IntegrationFetch, SecretResolver } from "./linear.js";
 
@@ -94,7 +94,7 @@ export class GitHubScmConnector implements ScmAdapter {
   async push(repository: RepositoryRef, branch: string): Promise<{ commit: string }> {
     return this.options.transport.push(repository, branch);
   }
-  async createOrGetPullRequest(request: DeliveryRequest): Promise<{ id: string; url: string; state: "OPEN" | "MERGED" | "CLOSED" }> {
+  async createOrGetPullRequest(request: DeliveryRequest): Promise<PullRequestStatus> {
     assertDeliveryGate(request);
     const repositoryPath = `/repos/${encodeURIComponent(request.repository.owner)}/${encodeURIComponent(request.repository.name)}`;
     const existing = await this.request(`${repositoryPath}/pulls?state=all&head=${encodeURIComponent(`${request.repository.owner}:${request.headBranch}`)}`);
@@ -105,11 +105,35 @@ export class GitHubScmConnector implements ScmAdapter {
     });
     return githubPullRequest(created);
   }
+  async getPullRequest(repository: RepositoryRef, number: number): Promise<PullRequestStatus> {
+    if (!Number.isInteger(number) || number < 1) throw new ConnectorError("PERMANENT", "Invalid pull request number", { retryable: false, operation: "read" });
+    return githubPullRequest(await this.request(`/repos/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.name)}/pulls/${number}`));
+  }
   async getCiStatus(repository: RepositoryRef, ref: string): Promise<{ state: "PENDING" | "PASSED" | "FAILED"; url?: string }> {
-    const data = await this.request(`/repos/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.name)}/commits/${encodeURIComponent(ref)}/status`);
+    const path = `/repos/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.name)}/commits/${encodeURIComponent(ref)}`;
+    const data = await this.request(`${path}/status`);
     const value = data && typeof data === "object" ? data as Record<string, unknown> : {};
-    const state = value.state === "success" ? "PASSED" : value.state === "failure" || value.state === "error" ? "FAILED" : "PENDING";
-    return { state, ...(typeof value.url === "string" ? { url: value.url } : {}) };
+    // Combined status covers every context even when its statuses array is paginated.
+    const statusCount = typeof value.total_count === "number" ? value.total_count : Array.isArray(value.statuses) ? value.statuses.length : value.state === "success" || value.state === "failure" || value.state === "error" ? 1 : 0;
+    const states: Array<"PENDING" | "PASSED" | "FAILED"> = statusCount ? [value.state === "success" ? "PASSED" : value.state === "failure" || value.state === "error" ? "FAILED" : "PENDING"] : [];
+    let checked = 0;
+    let checkUrl: string | undefined;
+    for (let page = 1; ; page += 1) {
+      const response = await this.request(`${path}/check-runs?filter=latest&per_page=100&page=${page}`);
+      const checks = response && typeof response === "object" ? response as Record<string, unknown> : {};
+      if (!Array.isArray(checks.check_runs) || typeof checks.total_count !== "number") throw new ConnectorError("TEMPORARY", "GitHub returned invalid check runs", { retryable: true, operation: "read" });
+      for (const entry of checks.check_runs) {
+        const check = entry && typeof entry === "object" ? entry as Record<string, unknown> : {};
+        states.push(["failure", "timed_out", "cancelled", "action_required", "startup_failure", "stale"].includes(String(check.conclusion)) ? "FAILED" : check.status === "completed" && ["success", "neutral", "skipped"].includes(String(check.conclusion)) ? "PASSED" : "PENDING");
+        if (!checkUrl && typeof check.html_url === "string") checkUrl = check.html_url;
+      }
+      checked += checks.check_runs.length;
+      if (checked >= checks.total_count) break;
+      if (!checks.check_runs.length || page >= 100) throw new ConnectorError("TEMPORARY", "GitHub check runs are incomplete", { retryable: true, operation: "read" });
+    }
+    const state = states.includes("FAILED") ? "FAILED" : !states.length || states.includes("PENDING") ? "PENDING" : "PASSED";
+    const url = checkUrl ?? (typeof value.url === "string" ? value.url : undefined);
+    return { state, ...(url ? { url } : {}) };
   }
 
   private async request(path: string, init: RequestInit = {}): Promise<unknown> {
@@ -133,11 +157,12 @@ export class GitHubScmConnector implements ScmAdapter {
   }
 }
 
-function githubPullRequest(value: unknown): { id: string; url: string; state: "OPEN" | "MERGED" | "CLOSED" } {
+function githubPullRequest(value: unknown): PullRequestStatus {
   const item = value && typeof value === "object" ? value as Record<string, unknown> : {};
   if ((typeof item.id !== "number" && typeof item.id !== "string") || typeof item.html_url !== "string") {
     throw new ConnectorError("PERMANENT", "GitHub returned an invalid pull request", { retryable: false, operation: "delivery" });
   }
   const state = item.merged_at ? "MERGED" : item.state === "closed" ? "CLOSED" : "OPEN";
-  return { id: String(item.id), url: item.html_url, state };
+  const head = item.head && typeof item.head === "object" ? item.head as Record<string, unknown> : {};
+  return { id: String(item.id), url: item.html_url, state, ...(typeof item.number === "number" ? { number: item.number } : {}), ...(typeof head.sha === "string" ? { headCommit: head.sha } : {}) };
 }

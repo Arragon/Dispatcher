@@ -794,6 +794,15 @@ export class DispatcherDatabase {
     return result.changes === 1;
   }
 
+  updateDeliveryEvidence(input: { id: string; externalId: string; document: JsonValue; updatedAt: string }, baseRevision: number): boolean {
+    if (!input.document || typeof input.document !== "object" || Array.isArray(input.document) || input.document.revision !== baseRevision + 1) throw new Error("Delivery evidence update must increment its revision");
+    const result = this.handle.prepare(`
+      UPDATE delivery_evidence SET external_id = ?, document_json = ?, updated_at = ?
+      WHERE id = ? AND json_extract(document_json, '$.revision') = ?
+    `).run(input.externalId, encode(input.document), input.updatedAt, input.id, baseRevision);
+    return result.changes === 1;
+  }
+
   listDeliveryEvidence<T extends JsonValue>(taskId: string): T[] {
     const rows = this.handle.prepare("SELECT document_json FROM delivery_evidence WHERE task_id = ? ORDER BY updated_at").all(taskId);
     return rows.map((value) => decode(String(rowObject(value)?.document_json)) as T);

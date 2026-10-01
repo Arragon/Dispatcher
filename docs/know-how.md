@@ -176,6 +176,34 @@
 
 ## Tooling details
 
+- Delivery evidence insertion is intentionally idempotent (`INSERT OR IGNORE`).
+  Use `updateDeliveryEvidence` with its current revision for CI/PR changes;
+  calling the insert method again silently retains the old evidence. No schema
+  migration is needed: the existing evidence JSON carries its revision.
+- Workspace package imports resolve built `dist` files. Rebuild changed
+  packages before Controller integration tests, or a passing source-unit test
+  can coexist with an integration test exercising old code.
+- A Linear binding's external ID is the issue UUID. Its human identifier
+  (`INH-xxx`) is stored in the normalized task platform extension and must be
+  included separately in semantic aliases.
+- `doneOnCiPassed` defaults to false. Configuring it true makes CI success a
+  terminal acceptance decision; later CI regression produces comments and
+  Slack feedback. The canonical domain does not automatically reopen DONE;
+  an operator must decide how to track any follow-up work.
+- Run advancement may await verification or GitHub while heartbeats renew its
+  lease. Recheck the stored state/generation before saving and preserve the
+  latest expiry; saving the original snapshot shortens the durable lease.
+- Waiting episodes need distinct canonical command IDs. A Run-only command
+  key deduplicates the second WAITING_USER transition after resume. Consumed
+  Slack answers need durable receipts independently of notification delivery;
+  retrying the old inbox message must not answer a later question.
+- Reserve Run/task dispatch before adapter startup, then use the latest task
+  revision when finalizing. A harmless concurrent comment otherwise leaves a
+  live Run outside its canonical task lifecycle.
+- Remote runner shutdown waits for in-flight command results to reach the
+  journal. A reply belongs to its originating socket and must not be sent
+  through a replacement connection.
+
 - Required runtime: Node.js 24.12+ and pnpm 11.19.
 - `pnpm typecheck` builds project references first. Calling an individual
   package typecheck from a clean tree may otherwise lack referenced declarations.

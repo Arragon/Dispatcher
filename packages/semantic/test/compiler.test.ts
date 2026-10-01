@@ -67,4 +67,17 @@ describe("semantic controller v2", () => {
     expect(parseFixedCommand("/task status INH-42")).toMatchObject({ action: "task.status", confidence: 1, source: "fixed-command" });
     expect(parseFixedCommand("/run reroute run-1 qoder-main")).toMatchObject({ action: "run.reroute", arguments: { target: "run-1", profileId: "qoder-main" } });
   });
+
+  it("resolves both dispatch task and profile aliases and refuses ambiguous task identifiers", () => {
+    const intent = parseFixedCommand("task dispatch INH-42 Orion")!;
+    expect(intent).toMatchObject({ action: "task.dispatch", entities: [{ kind: "task", value: "INH-42" }, { kind: "profile", value: "Orion" }], arguments: { target: "INH-42", profileId: "Orion" } });
+    const tools = new SemanticToolRegistry();
+    tools.register({ name: "task.dispatch", description: "Dispatch", risk: "privileged", requiredRoles: ["operator"], input: { required: ["target"], properties: { target: "string", profileId: "string" }, additionalProperties: false }, execute: async () => ({}) });
+    const engine = new SemanticWorkflowEngine(tools, new MemorySemanticWorkflowStore());
+    const candidates = [{ id: "task-1", kind: "task" as const, label: "Task", aliases: ["INH-42"] }, { id: "orion", kind: "profile" as const, label: "Orion" }];
+    const planned = engine.plan({ id: "dispatch", intent, principal: { ...principal, roles: ["operator"] }, candidates });
+    expect(planned).toMatchObject({ state: "NEEDS_APPROVAL", intent: { arguments: { target: "task-1", profileId: "orion" } } });
+    const ambiguous = engine.plan({ id: "ambiguous", intent, principal: { ...principal, roles: ["operator"] }, candidates: [...candidates, { id: "task-2", kind: "task", label: "Other", aliases: ["INH-42"] }] });
+    expect(ambiguous.state).toBe("NEEDS_CLARIFICATION");
+  });
 });
