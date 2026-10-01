@@ -171,6 +171,17 @@ class TaskDispatchError extends Error {
 }
 
 type AdvanceResult = { waiting: boolean; run: Run; task: Task; deliveries: JsonValue[] };
+interface MessagingResumeReceipt {
+  version: 1;
+  runId: string;
+  sessionId: string;
+  generation: number;
+  interventionRevision: number;
+  principalId: string;
+  connectorInstanceId: string;
+  conversationId: string;
+  threadId: string;
+}
 interface DeliveryFeedback {
   version: 1;
   id: string;
@@ -639,6 +650,14 @@ export class ControllerService {
     const task = this.database.getCanonicalTask<JsonValue>(current.taskId);
     if (task && !["DONE", "FAILED", "CANCELLED"].includes((task.document as unknown as Task).state)) this.tasks.execute({ id: `run:${current.id}:${current.generation}:failed`, taskId: current.taskId, baseRevision: task.revision, actor: "run-worker", command: { type: "task.transition", state: "FAILED" } });
     this.fleetEvents.publish("run.changed", current.id, { id: current.id, state: current.state });
+    if (!current.sessionId.startsWith("unstarted:")) {
+      try { await this.agentAdapters.get(current.profileId)?.cancel(current.sessionId); }
+      catch (error) {
+        current.failureReason += `; agent cleanup failed: ${String(redactValue(error instanceof Error ? error.message : "unknown error"))}`;
+        this.database.saveEntity("run", current.id, json(current));
+        this.app.log.warn({ runId: current.id, error: redactValue(error) }, "failed run agent cleanup failed");
+      }
+    }
     await this.notifyAttention(current);
   }
 
@@ -1218,7 +1237,7 @@ export class ControllerService {
         this.saveAdvancedRun(run, "ACTIVE");
         const current = this.database.getCanonicalTask<JsonValue>(run.taskId)!;
         if ((current.document as unknown as Task).state === "RUNNING") {
-          this.tasks.execute({ id: `run:${run.id}:waiting-user`, taskId: run.taskId, baseRevision: current.revision, actor: "run-worker", command: { type: "task.transition", state: "WAITING_USER" } });
+          this.tasks.execute({ id: `run:${run.id}:${run.generation}:waiting-user:${current.revision}`, taskId: run.taskId, baseRevision: current.revision, actor: "run-worker", command: { type: "task.transition", state: "WAITING_USER" } });
         }
         return { waiting: true, run, task: this.database.getCanonicalTask<JsonValue>(run.taskId)!.document as unknown as Task, deliveries: [] };
       }
@@ -1352,7 +1371,11 @@ export class ControllerService {
 
   private async performDispatchTask(taskId: string, body: TaskDispatchBody, idempotencyKey?: string): Promise<TaskDispatchResult> {
     const existing = idempotencyKey ? this.database.getEntity<JsonValue>("task-dispatch", idempotencyKey) : undefined;
-    if (existing) return existing as unknown as TaskDispatchResult;
+    if (existing) {
+      const result = existing as unknown as TaskDispatchResult;
+      const current = this.database.getEntity<JsonValue>("run", result.run.id) as unknown as Run | undefined;
+      return current?.generation === result.run.generation ? { ...result, run: current } : result;
+    }
     const stored = this.database.getCanonicalTask<JsonValue>(taskId);
     const contract = this.database.getTaskContract<JsonValue>(taskId) as unknown as TaskContract | undefined;
     if (!stored || !contract) throw new TaskDispatchError("TASK_NOT_FOUND", 404, `Unknown task or contract ${taskId}`);
@@ -1363,7 +1386,7 @@ export class ControllerService {
     const repositoryId = body?.repositoryId ?? contract.delivery.repository;
     const repositoryConfig = this.configuration.current().config.repositories.find((entry) => entry.id === repositoryId);
     if (!repositoryId || !repositoryConfig) throw new TaskDispatchError("REPOSITORY_UNAVAILABLE", 409, "The task repository is not registered");
-    const activeRuns = this.database.listEntities<JsonValue>("run").map((value) => value as unknown as Run).filter((run) => run.state === "ACTIVE");
+    const activeRuns = this.database.listEntities<JsonValue>("run").map((value) => value as unknown as Run).filter((run) => !isTerminalRunState(run.state));
     const scheduler = new CanonicalScheduler(() => profiles.flatMap((profile) => {
       const runner = runners.get(profile.runnerId);
       const adapter = this.agentAdapters.get(profile.id);
@@ -1402,27 +1425,49 @@ export class ControllerService {
         },
         workspacePath: workspace.path,
         runId,
+        onRunStarting: (run, decision) => {
+          run.branch = workspace.branch;
+          run.leaseExpiresAt = new Date(this.now().getTime() + 15 * 60_000).toISOString();
+          this.database.transaction(() => {
+            const current = this.database.getCanonicalTask<JsonValue>(taskId);
+            const currentContract = this.database.getTaskContract<JsonValue>(taskId) as unknown as TaskContract | undefined;
+            if (!current || (current.document as unknown as Task).state !== "READY" || currentContract?.revision !== contract.revision) throw new TaskDispatchError("TASK_CHANGED", 409, "Task changed before dispatch reservation");
+            this.database.saveEntity("run", run.id, json(run));
+            const bound = this.tasks.execute({ id: `dispatch:${run.id}:bound`, taskId, baseRevision: current.revision, actor: "scheduler", command: { type: "task.set-current-run", runId: run.id } });
+            this.tasks.execute({ id: `dispatch:${run.id}:queued`, taskId, baseRevision: bound.revision, actor: "scheduler", command: { type: "task.transition", state: "QUEUED" } });
+            if (idempotencyKey) this.database.saveEntity("task-dispatch", idempotencyKey, json({ run, routing: { explanation: decision.explanation, eligible: decision.eligible, rejected: decision.rejected } }));
+          });
+          this.restoreLeaseAuthority(run);
+        },
       });
     } catch (error) {
       const cleanup = await this.workspaces.cleanupPlan(workspace);
       if (cleanup.safe) await this.workspaces.cleanup(cleanup);
-      throw error;
+      if (error instanceof TaskDispatchError || error instanceof ConnectorError) throw error;
+      throw new TaskDispatchError("DISPATCH_UNAVAILABLE", 409, error instanceof Error ? error.message : "Dispatch is unavailable");
     }
     dispatched.run.branch = workspace.branch;
     if (dispatched.run.failureReason) dispatched.run.failureReason = String(redactValue(dispatched.run.failureReason));
-    dispatched.run.leaseExpiresAt = new Date(this.now().getTime() + 15 * 60_000).toISOString();
-    this.database.saveEntity("run", dispatched.run.id, json(dispatched.run));
-    this.restoreLeaseAuthority(dispatched.run);
-    this.fleetEvents.publish("run.changed", dispatched.run.id, { id: dispatched.run.id, taskId: dispatched.run.taskId, state: dispatched.run.state });
-    const bound = this.tasks.execute({ id: `dispatch:${dispatched.run.id}:bound`, taskId, baseRevision: stored.revision, actor: "scheduler", command: { type: "task.set-current-run", runId: dispatched.run.id } });
-    const queued = this.tasks.execute({ id: `dispatch:${dispatched.run.id}:queued`, taskId: taskId, baseRevision: bound.revision, actor: "scheduler", command: { type: "task.transition", state: "QUEUED" } });
-    this.tasks.execute({ id: `dispatch:${dispatched.run.id}:running`, taskId: taskId, baseRevision: queued.revision, actor: "scheduler", command: { type: "task.transition", state: "RUNNING" } });
-    if (dispatched.run.state === "FAILED") {
-      const current = this.database.getCanonicalTask<JsonValue>(taskId)!;
-      this.tasks.execute({ id: `dispatch:${dispatched.run.id}:failed`, taskId, baseRevision: current.revision, actor: "scheduler", command: { type: "task.transition", state: "FAILED" } });
-    }
     const result = { run: dispatched.run, routing: { explanation: dispatched.decision.explanation, eligible: dispatched.decision.eligible, rejected: dispatched.decision.rejected } };
-    if (idempotencyKey) this.database.saveEntity("task-dispatch", idempotencyKey, json(result));
+    try {
+      this.database.transaction(() => {
+        const current = this.database.getCanonicalTask<JsonValue>(taskId)!;
+        const task = current.document as unknown as Task;
+        if (task.state !== "QUEUED" || task.currentRunId !== dispatched.run.id) throw new TaskDispatchError("TASK_CHANGED", 409, "Task changed during agent startup");
+        this.saveAdvancedRun(dispatched.run, "STARTING");
+        const state = dispatched.run.state === "FAILED" ? "FAILED" : "RUNNING";
+        this.tasks.execute({ id: `dispatch:${dispatched.run.id}:${state}`, taskId, baseRevision: current.revision, actor: "scheduler", command: { type: "task.transition", state } });
+        if (idempotencyKey) this.database.saveEntity("task-dispatch", idempotencyKey, json(result));
+      });
+    } catch (error) {
+      if (!dispatched.run.sessionId.startsWith("unstarted:")) {
+        try { await this.agentAdapters.get(dispatched.run.profileId)?.cancel(dispatched.run.sessionId); }
+        catch (cleanupError) { this.app.log.warn({ error: redactValue(cleanupError), runId: dispatched.run.id }, "dispatch cleanup failed"); }
+      }
+      await this.failRun(dispatched.run, "Task or run authority changed during agent startup");
+      throw error;
+    }
+    this.fleetEvents.publish("run.changed", dispatched.run.id, { id: dispatched.run.id, taskId: dispatched.run.taskId, state: dispatched.run.state });
     return result;
   }
 
@@ -1822,6 +1867,25 @@ export class ControllerService {
     }
   }
 
+  private assertMessagingInputAuthority(run: Run, binding: ConversationBinding, expectedRevision: number): void {
+    const current = this.database.getEntity<JsonValue>("run", run.id) as unknown as Run | undefined;
+    const task = this.database.getCanonicalTask<JsonValue>(run.taskId)?.document as unknown as Task | undefined;
+    const conversation = this.database.getEntity<JsonValue>("messaging-conversation", binding.id) as unknown as ConversationBinding | undefined;
+    if (!current || !task || current.generation !== run.generation || current.leaseId !== run.leaseId || current.sessionId !== binding.sessionId || current.state !== "WAITING_USER" || task.currentRunId && task.currentRunId !== run.id || !conversation || conversation.revision !== expectedRevision || conversation.generation !== run.generation || conversation.state !== "WAITING_USER") throw new ConnectorError("CONFLICT", "Run or intervention authority changed", { retryable: false, operation: "write" });
+    this.restoreLeaseAuthority(current);
+    try { this.leaseAuthority.fence(run.id, run.leaseId, run.generation, "user-input", this.now().toISOString()); }
+    catch (error) {
+      if (error instanceof LeaseFenceError) throw new ConnectorError("CONFLICT", error.message, { retryable: false, operation: "write" });
+      throw error;
+    } finally { this.persistLatestLeaseAudit(run.id); }
+  }
+
+  private replyMessagingResume(adapter: MessagingAdapter, message: NormalizedMessage, runId: string): Promise<{ externalMessageId: string }> {
+    return adapter.reply
+      ? adapter.reply({ channel: message.conversationId, threadId: message.threadId, text: `Resumed run ${runId} in the existing agent session.` }, `resume:${message.idempotencyKey}`)
+      : adapter.send({ channel: message.conversationId, subject: "Run resumed", body: runId, severity: "info" }, `resume:${message.idempotencyKey}`);
+  }
+
   private async handleMessagingMessage(adapter: MessagingAdapter, message: NormalizedMessage, options: { credentialRedacted?: boolean } = {}): Promise<{ externalMessageId: string }> {
     const principal = this.messagingIdentity.authorize(adapter.instance.id, message.principalExternalId);
     if (options.credentialRedacted || CREDENTIAL_PATTERN.test(message.text)) {
@@ -1847,6 +1911,14 @@ export class ControllerService {
         ? adapter.reply({ channel: message.conversationId, threadId: message.threadId, text }, `workflow-approval:${message.idempotencyKey}`)
         : adapter.send({ channel: message.conversationId, subject: "Workflow approved", body: text, severity: "info" }, `workflow-approval:${message.idempotencyKey}`);
     }
+    const resumeKey = `${adapter.instance.id}:${message.idempotencyKey}`;
+    const receipt = this.database.getEntity<JsonValue>("messaging-resume", resumeKey) as unknown as MessagingResumeReceipt | undefined;
+    if (receipt) {
+      this.messagingIdentity.authorize(adapter.instance.id, message.principalExternalId, "operator");
+      const current = this.database.getEntity<JsonValue>("run", receipt.runId) as unknown as Run | undefined;
+      if (receipt.principalId !== principal.principalId || receipt.connectorInstanceId !== adapter.instance.id || receipt.conversationId !== message.conversationId || receipt.threadId !== message.threadId || !current || current.generation !== receipt.generation || current.sessionId !== receipt.sessionId) throw new ConnectorError("CONFLICT", "Consumed reply belongs to an obsolete intervention", { retryable: false });
+      return this.replyMessagingResume(adapter, message, receipt.runId);
+    }
     const bindingId = `${adapter.instance.id}:${message.conversationId}:${message.threadId}`;
     const binding = this.database.getEntity<JsonValue>("messaging-conversation", bindingId) as unknown as ConversationBinding | undefined;
     if (binding?.state === "WAITING_USER" && binding.sessionId && binding.runId) {
@@ -1858,20 +1930,27 @@ export class ControllerService {
       if (binding.revision !== expectedRevision || binding.generation !== generation) throw new ConnectorError("CONFLICT", "Conversation binding is stale", { retryable: false, operation: "write" });
       const agent = this.agentAdapters.get(run.profileId);
       if (!agent) throw new ConnectorError("PERMANENT", "The run profile is unavailable", { retryable: false, operation: "write" });
+      this.assertMessagingInputAuthority(run, binding, expectedRevision);
       await agent.send(binding.sessionId, message.text || "Continue with the approved action.");
-      this.conversations.resume(bindingId, { expectedRevision, generation });
-      if (run.state === "WAITING_USER") {
+      try {
+        this.assertMessagingInputAuthority(run, binding, expectedRevision);
+      } catch (error) {
+        try { await agent.cancel(binding.sessionId); }
+        catch (cleanupError) { this.app.log.warn({ error: redactValue(cleanupError), runId: run.id }, "stale input session cleanup failed"); }
+        throw error;
+      }
+      this.database.transaction(() => {
         assertRunTransition(run.state, "ACTIVE");
         run.state = "ACTIVE";
         run.lastActivityAt = new Date().toISOString();
-        this.database.saveEntity("run", run.id, json(run));
+        this.saveAdvancedRun(run, "WAITING_USER");
+        this.conversations.resume(bindingId, { expectedRevision, generation });
         const task = this.database.getCanonicalTask<JsonValue>(run.taskId)!;
         if ((task.document as unknown as Task).state === "WAITING_USER") this.tasks.execute({ id: `messaging-resume:${message.idempotencyKey}`, taskId: run.taskId, baseRevision: task.revision, actor: principal.principalId, command: { type: "task.transition", state: "RUNNING" } });
-        this.attentionNotifications.recover(run.taskId);
-      }
-      return adapter.reply
-        ? adapter.reply({ channel: message.conversationId, threadId: message.threadId, text: `Resumed run ${run.id} in the existing agent session.` }, `resume:${message.idempotencyKey}`)
-        : adapter.send({ channel: message.conversationId, subject: "Run resumed", body: run.id, severity: "info" }, `resume:${message.idempotencyKey}`);
+        this.database.saveEntity("messaging-resume", resumeKey, json({ version: 1, runId: run.id, sessionId: run.sessionId, generation: run.generation, interventionRevision: expectedRevision, principalId: principal.principalId, connectorInstanceId: adapter.instance.id, conversationId: message.conversationId, threadId: message.threadId } satisfies MessagingResumeReceipt));
+      });
+      this.attentionNotifications.recover(run.taskId);
+      return this.replyMessagingResume(adapter, message, run.id);
     }
     const workflowId = `messaging:${adapter.instance.id}:${message.idempotencyKey}`;
     const intent = await this.parseAssistantIntent(message.text);

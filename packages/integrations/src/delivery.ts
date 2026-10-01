@@ -62,7 +62,9 @@ export class DeliveryService {
     const number = typeof pullRequest.metadata.pullRequestNumber === "number" ? pullRequest.metadata.pullRequestNumber : Number(/\/pull\/(\d+)(?:$|[/?#])/.exec(pullRequest.url ?? "")?.[1]);
     const status = adapter.getPullRequest && number > 0 ? await adapter.getPullRequest(input.repository, number) : undefined;
     const ref = status?.headCommit ?? ci.externalId;
-    const checked = await adapter.getCiStatus(input.repository, ref);
+    let checked: Awaited<ReturnType<ScmAdapter["getCiStatus"]>>;
+    try { checked = await adapter.getCiStatus(input.repository, ref); }
+    catch { checked = { state: "PENDING" }; }
     input.assertCurrent();
     const now = new Date().toISOString();
     const prRevision = pullRequest.revision;
@@ -78,6 +80,7 @@ export class DeliveryService {
     }
     const state = checked.state === "FAILED" ? "FAILED" : checked.state === "PASSED" ? "READY" : "PENDING";
     if (ci.state !== state || ci.externalId !== ref || checked.url && ci.url !== checked.url) {
+      if (ci.externalId !== ref && !checked.url) delete ci.url;
       ci.state = state;
       ci.externalId = ref;
       ci.revision += 1;

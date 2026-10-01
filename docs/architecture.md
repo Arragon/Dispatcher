@@ -27,16 +27,28 @@ and the confirmed operator-only `task.dispatch` semantic tool. Slack task and
 profile aliases resolve before approval. A durable workflow origin and dispatch
 result bind subsequent attention and user-input messages to the original
 thread. `currentRunId` identifies the canonical task's current execution.
+The scheduler calls back before starting the adapter so Controller can reserve
+STARTING Run, QUEUED task, currentRunId and dispatch receipt in one transaction.
+The completion transaction rechecks current authority and task revision.
+Non-terminal Runs occupy runner capacity, including waiting and verification.
+Slack input rechecks lease/session/binding authority after the adapter await;
+the consumed intervention and acknowledgement receipt commit with Run/task
+resume, so a reply retry cannot answer a subsequent question.
 
 Embedded Runner heartbeats renew non-terminal leases while verification or SCM
 calls are awaiting I/O. Renewal expiry is persisted and cannot revive expired,
 revoked, or older-generation authority. Startup failures retain a failed Run
 and readable diagnostics instead of disappearing before Run persistence.
+Lease failure fences the Run before cancelling its current agent session;
+cleanup errors remain visible in the failure reason.
 
 GitHub delivery persists PR/commit evidence before CI reads. A bounded background
 reconcile reads PR state/current head, commit statuses and paginated check runs,
 then updates evidence through revision CAS in persistence. Zero checks and
-incomplete reads remain pending. Durable feedback records drive canonical
+incomplete reads remain pending.
+PR observations remain durable during a CI outage, and a changed head loses
+the preceding commit's passing CI and check URL until reread.
+Durable feedback records drive canonical
 comments/outbox projection and retried Slack thread notifications. Task REVIEW
 maps through the Linear connector's `settings.statusIds.REVIEW`; CI success
 keeps REVIEW unless GitHub connector `settings.doneOnCiPassed` is explicitly

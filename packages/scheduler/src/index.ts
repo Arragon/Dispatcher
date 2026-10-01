@@ -70,6 +70,7 @@ export class CanonicalScheduler {
     workspacePath: string;
     generation?: number;
     runId?: string;
+    onRunStarting?: (run: Run, decision: RoutingDecision) => void;
   }): Promise<{ run: Run; decision: RoutingDecision }> {
     if (input.task.state !== "READY" && input.task.state !== "QUEUED") throw new Error(`Task ${input.task.id} is not dispatchable from ${input.task.state}`);
     const decision = routeDeterministically(input.requirements, this.candidates());
@@ -96,6 +97,7 @@ export class CanonicalScheduler {
       lastActivityAt: now,
       verification: { state: "PENDING", commands: [...input.contract.verification] },
     };
+    input.onRunStarting?.(run, decision);
     try {
       const session = await decision.selected.adapter.start({ runId, workspacePath: input.workspacePath, prompt: renderTaskContract(input.contract) });
       run.sessionId = session.id;

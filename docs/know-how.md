@@ -193,6 +193,13 @@
 - Run advancement may await verification or GitHub while heartbeats renew its
   lease. Recheck the stored state/generation before saving and preserve the
   latest expiry; saving the original snapshot shortens the durable lease.
+- Waiting episodes need distinct canonical command IDs. A Run-only command
+  key deduplicates the second WAITING_USER transition after resume. Consumed
+  Slack answers need durable receipts independently of notification delivery;
+  retrying the old inbox message must not answer a later question.
+- Reserve Run/task dispatch before adapter startup, then use the latest task
+  revision when finalizing. A harmless concurrent comment otherwise leaves a
+  live Run outside its canonical task lifecycle.
 - Remote runner shutdown waits for in-flight command results to reach the
   journal. A reply belongs to its originating socket and must not be sent
   through a replacement connection.

@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import type { CodexBackend, CodexTurnResult } from "@dispatcher/adapters";
+import type { AgentAdapter, CodexBackend, CodexTurnResult } from "@dispatcher/adapters";
 import type { DispatcherConfig, SecretMetadata, SecretStore } from "@dispatcher/config";
 import type { Run, Task } from "@dispatcher/domain";
 import type { JsonValue } from "@dispatcher/persistence";
@@ -42,11 +42,12 @@ async function setup(options: { realCodex?: boolean; executable?: string; verifi
   const starts: Array<{ providerSessionId?: string; prompt: string }> = [];
   const slack: Array<Record<string, unknown>> = [];
   const linear: Array<Record<string, unknown>> = [];
-  const control = { turn: "running" as "running" | "waiting" | "completed" | "failed", ci: "pending" as "pending" | "success" | "failure", slackFailures: 0, ciFailures: 0, prs: 0, pushes: 0, now: new Date(), throwStart: false, prState: "open" as "open" | "closed", merged: false, headCommit: "commit-1", pushGate: undefined as Promise<void> | undefined };
+  const control = { turn: "running" as "running" | "waiting" | "completed" | "failed", ci: "pending" as "pending" | "success" | "failure", slackFailures: 0, ciFailures: 0, prs: 0, pushes: 0, cancellations: 0, now: new Date(), throwStart: false, prState: "open" as "open" | "closed", merged: false, headCommit: "commit-1", pushGate: undefined as Promise<void> | undefined, onStart: undefined as (() => void) | undefined };
   const backend: CodexBackend = { start: (input) => {
     if (control.throwStart) throw new Error("spawn missing-codex ENOENT");
     starts.push({ prompt: input.prompt, ...(input.providerSessionId ? { providerSessionId: input.providerSessionId } : {}) });
-    return { cancel: async () => undefined, status: () => control.turn === "running" ? "running" : "completed", result: async (): Promise<CodexTurnResult> => ({ state: control.turn === "running" ? "completed" : control.turn, summary: control.turn === "waiting" ? "Choose the implementation approach" : control.turn === "failed" ? "agent crashed" : "implemented", providerSessionId: "provider-thread-1", events: control.turn === "waiting" ? [{ type: "waiting", reason: "input_required" }] : [] }) };
+    control.onStart?.();
+    return { cancel: async () => { control.cancellations += 1; }, status: () => control.turn === "running" ? "running" : "completed", result: async (): Promise<CodexTurnResult> => ({ state: control.turn === "running" ? "completed" : control.turn, summary: control.turn === "waiting" ? "Choose the implementation approach" : control.turn === "failed" ? "agent crashed" : "implemented", providerSessionId: "provider-thread-1", events: control.turn === "waiting" ? [{ type: "waiting", reason: "input_required" }] : [] }) };
   } };
   const secrets = new Secrets();
   const integrationFetch = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
@@ -115,6 +116,113 @@ async function setup(options: { realCodex?: boolean; executable?: string; verifi
 }
 
 describe("personal Slack–Linear loop", () => {
+  async function waitingFixture() {
+    const f = await setup();
+    await f.send(f.service, "dispatch", "task dispatch INH-42");
+    await f.service.runBackgroundCycle();
+    await f.approve();
+    f.control.turn = "waiting";
+    await f.service.runBackgroundCycle();
+    return f;
+  }
+
+  it("retries only the consumed answer's acknowledgement after restart", async () => {
+    const f = await waitingFixture();
+    f.control.turn = "running";
+    f.control.slackFailures = 1;
+    await f.send(f.service, "answer-one", "approved answer for first question");
+    await f.service.runBackgroundCycle();
+    expect(f.starts).toHaveLength(2);
+    f.control.turn = "waiting";
+    await f.service.runBackgroundCycle();
+    expect(f.run().state).toBe("WAITING_USER");
+    await f.service.stop();
+    const restored = await f.make();
+    f.control.now = new Date(f.control.now.getTime() + 60_000);
+    await restored.runBackgroundCycle();
+    expect(f.starts).toHaveLength(2);
+    expect(f.run(restored).state).toBe("WAITING_USER");
+    expect(f.slack.some((body) => String(body.text).includes("Resumed run"))).toBe(true);
+  });
+
+  it("projects the second WAITING_USER episode independently of the first", async () => {
+    const f = await waitingFixture();
+    f.control.turn = "running";
+    await f.send(f.service, "answer-one", "continue");
+    await f.service.runBackgroundCycle();
+    f.control.turn = "waiting";
+    await f.service.runBackgroundCycle();
+    expect(f.run().state).toBe("WAITING_USER");
+    expect(f.task().state).toBe("WAITING_USER");
+  });
+
+  it("rechecks run authority after awaiting agent input and preserves a renewed lease", async () => {
+    const f = await waitingFixture();
+    const agent = (f.service as unknown as { agentAdapters: Map<string, AgentAdapter> }).agentAdapters.get("orion")!;
+    const original = agent.send.bind(agent);
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    agent.send = async (...args) => { entered.resolve(); await release.promise; return original(...args); };
+    f.control.turn = "running";
+    await f.send(f.service, "held-answer", "continue");
+    const cycle = f.service.runBackgroundCycle();
+    try {
+      await entered.promise;
+      f.control.now = new Date(f.control.now.getTime() + 11 * 60_000);
+      await f.service.events.publish("runnerChanged", f.service.runners.heartbeat("local", f.control.now.toISOString()));
+      const renewed = f.run();
+      f.service.database.saveEntity("run", renewed.id, JSON.parse(JSON.stringify({ ...renewed, state: "SUPERSEDED", generation: 2 })) as JsonValue);
+      release.resolve();
+      await cycle;
+      expect(f.run()).toMatchObject({ state: "SUPERSEDED", generation: 2, leaseExpiresAt: renewed.leaseExpiresAt });
+      expect(f.task().state).toBe("WAITING_USER");
+      expect(f.control.cancellations).toBe(1);
+    } finally { release.resolve(); await cycle; }
+  });
+
+  it("keeps waiting runs within runner capacity", async () => {
+    const f = await waitingFixture();
+    const second = "task-second";
+    const task = { ...f.task(), id: second, state: "READY", currentRunId: null };
+    f.service.database.writeCanonicalTask(second, 0, JSON.parse(JSON.stringify(task)) as JsonValue);
+    f.service.database.saveTaskContract(second, { ...(f.service.database.getTaskContract<JsonValue>(f.taskId) as Record<string, JsonValue>), taskId: second });
+    const response = await f.service.app.inject({ headers: OWNER, method: "POST", url: `/api/tasks/${second}/dispatch`, payload: {} });
+    expect(response.statusCode).toBe(409);
+    expect(f.starts).toHaveLength(1);
+    expect(f.service.database.listEntities("run")).toHaveLength(1);
+  });
+
+  it("keeps dispatch coherent when a canonical comment arrives during agent startup", async () => {
+    const f = await setup();
+    f.control.onStart = () => {
+      const current = f.service.database.getCanonicalTask<JsonValue>(f.taskId)!;
+      expect(f.task()).toMatchObject({ state: "QUEUED", currentRunId: f.run().id });
+      expect(f.run().state).toBe("STARTING");
+      f.service.tasks.execute({ id: "comment-during-start", taskId: f.taskId, baseRevision: current.revision, actor: "owner", command: { type: "task.comment", body: "Keep this comment" } });
+    };
+    const response = await f.service.app.inject({ headers: OWNER, method: "POST", url: `/api/tasks/${f.taskId}/dispatch`, payload: {} });
+    expect(response.statusCode).toBe(201);
+    expect(f.task()).toMatchObject({ state: "RUNNING", currentRunId: f.run().id });
+    expect(f.run().state).toBe("ACTIVE");
+  });
+
+  it("reports a closed PR and invalidates old CI evidence even when the CI read is unavailable", async () => {
+    const f = await setup({ doneOnCiPassed: true });
+    await f.service.app.inject({ headers: OWNER, method: "POST", url: `/api/tasks/${f.taskId}/dispatch`, payload: {} });
+    f.control.turn = "completed";
+    f.control.ci = "success";
+    await f.service.runBackgroundCycle();
+    f.control.prState = "closed";
+    f.control.headCommit = "commit-2";
+    f.control.ciFailures = 1;
+    f.control.now = new Date(f.control.now.getTime() + 60_000);
+    await f.service.runBackgroundCycle();
+    expect(f.service.database.listDeliveryEvidence(f.taskId)).toContainEqual(expect.objectContaining({ kind: "pull-request", state: "FAILED", metadata: expect.objectContaining({ headCommit: "commit-2" }) }));
+    expect(f.service.database.listDeliveryEvidence(f.taskId)).toContainEqual(expect.objectContaining({ kind: "ci", state: "PENDING", externalId: "commit-2" }));
+    expect(f.service.database.listDeliveryEvidence(f.taskId).find((entry) => entry.kind === "ci")).not.toHaveProperty("url");
+    expect(f.slack.some((body) => String(body.text).includes("PR_CLOSED"))).toBe(true);
+  });
+
   it("confirms dispatch without an LLM, deduplicates, and resumes in the originating thread", async () => {
     const f = await setup();
     expect((await f.send(f.service, "dispatch", "task dispatch INH-42 Orion")).statusCode).toBe(202);
@@ -206,6 +314,7 @@ describe("personal Slack–Linear loop", () => {
     f.control.now = new Date(f.control.now.getTime() + 16 * 60_000);
     await f.service.runBackgroundCycle();
     expect(f.run()).toMatchObject({ state: "FAILED", failureReason: expect.stringMatching(/lease expired/i) });
+    expect(f.control.cancellations).toBe(1);
     expect(f.control.prs).toBe(0);
   });
 
