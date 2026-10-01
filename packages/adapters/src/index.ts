@@ -4,6 +4,7 @@ export * from "./generic.js";
 export * from "./codex.js";
 export * from "./qoder.js";
 export * from "./ecosystem-cli.js";
+export * from "./native-cli.js";
 export * from "./devin.js";
 export * from "./local-service.js";
 export * from "./compatibility.js";

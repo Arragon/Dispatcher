@@ -22,6 +22,18 @@ function configured(overrides: Partial<DispatcherConfig["controller"]> = {}): Di
 }
 
 describe("configuration schema", () => {
+  it("validates explicit native tool approval and native credential ownership", () => {
+    const input = structuredClone(defaultDispatcherConfig);
+    input.agentProfiles = [{ id: "grok", provider: "grok", alias: "Grok", runnerId: "local", settings: { approveTools: "true" } }];
+    expect(() => validateConfig(input)).toThrowError(/approveTools/);
+    input.agentProfiles[0]!.settings = { approveTools: true };
+    expect(() => validateConfig(input)).not.toThrow();
+    input.agentProfiles[0]!.provider = "pi";
+    expect(() => validateConfig(input)).toThrowError(/approveTools/);
+    input.agentProfiles[0]!.settings = {};
+    input.agentProfiles[0]!.credentialRef = "secret://pi/test";
+    expect(() => validateConfig(input)).toThrowError(/native login/);
+  });
   it("normalizes equivalent inputs deterministically", () => {
     const input = structuredClone(defaultDispatcherConfig);
     input.runners[0]!.tags = ["z", "a"];

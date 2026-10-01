@@ -60,6 +60,33 @@
 - Cursor and Kiro CLI credentials are `secret://` references resolved only at
   process start into provider-specific environment variables. Version/auth
   probes prove installation and login, not a business invocation.
+- OpenCode desktop's bundled v2 CLI and a PATH v1 CLI can coexist. Prefer the
+  known macOS app-bundled v2 path, or select an explicit executable; v1 lacks
+  `--standalone` and is rejected by the native adapter capability probe.
+- Bind both child `cwd` and `PWD` to the worktree. OpenCode v2 consulted the
+  inherited PWD and wrote in Controller's directory despite the correct child
+  cwd. Real file verification detected it; normalizing PWD fixed the invocation.
+- Headless CLI errors can be JSON on stdout with exit code zero. Inspect native
+  error records, retain resource evidence across later output, and distinguish
+  unavailable model configuration from provider outages. OpenRouter HTTP 402
+  and pi's missing API-key diagnostic are resource/auth failures.
+- Native JSON exit zero needs execution evidence, not merely initialization or
+  parseable informational records. Empty or invalid-only output must fail closed.
+- Unix child `close` does not prove its process group exited. A tool descendant
+  can ignore SIGTERM with detached stdio; retain SIGKILL escalation until the
+  group has stopped. Awaited cancellation also fences profile replacement.
+- ConfigPlan apply must preserve unchanged native adapter instances: replacing
+  them drops live process handles. Reject replacement/removal while startup,
+  follow-up or cancellation is pending, and keep the typed runtime rejection
+  after transaction rollback so operators know to finish or cancel first.
+- Grok's `--session-id` creates a new conversation; `--resume` continues one.
+  A prompt starting with `-` requires the `--single=<prompt>` argv form. On
+  Grok 1.0.46, `acceptEdits` and scoped Write/Edit allow rules did not approve
+  the observed native `write` tool in headless mode. Explicit `approveTools`
+  opts into `--always-approve`; default profiles preserve native policy.
+- CLI print/JSON mode accepts follow-up turns after completion, not live
+  permission responses. Never start two turns against one provider session.
+  Native credential discovery must not call export/print-credential commands.
 - Devin v3 has verified create/get/message session operations, waiting/resource
   normalization, and PR evidence. Do not claim remote cancel support until an
   official endpoint is verified; the adapter intentionally declares no cancel

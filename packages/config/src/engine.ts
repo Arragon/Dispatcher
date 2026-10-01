@@ -224,7 +224,7 @@ export class ConfigurationEngine {
             ? error.code
             : runtimeRollbackFailed
               ? "CONFIG_RUNTIME_ROLLBACK_FAILED"
-              : "CONFIG_APPLY_FAILED",
+              : error instanceof ConfigPlanError ? error.code : "CONFIG_APPLY_FAILED",
         },
         updatedAt: now,
       };
@@ -244,6 +244,7 @@ export class ConfigurationEngine {
       if (runtimeRollbackFailed) {
         throw new ConfigPlanError("CONFIG_RUNTIME_ROLLBACK_FAILED", "Configuration plan failed and runtime rollback also failed", { cause: error });
       }
+      if (error instanceof ConfigPlanError) throw error;
       throw new ConfigPlanError("CONFIG_APPLY_FAILED", "Configuration plan failed and was rolled back", { cause: error });
     }
   }

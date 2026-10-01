@@ -20,6 +20,7 @@ export interface CliAgentProfile {
   executable?: string;
   credentialRef?: string;
   model?: string;
+  approveTools?: boolean;
 }
 
 export interface CliDiscoveryResult {
@@ -31,7 +32,7 @@ export interface CliDiscoveryResult {
 }
 
 export type NormalizedCliEvent =
-  | { type: "activity"; summary: string; providerSessionId?: string }
+  | { type: "activity"; summary: string; providerSessionId?: string; executionEvidence?: true }
   | { type: "waiting"; reason: string }
   | { type: "resource"; state: "RATE_LIMITED" | "QUOTA_EXHAUSTED" | "AUTH_ERROR" | "PROVIDER_DOWN" | "UNKNOWN"; reason: string; remaining?: number; resetsAt?: string; source: "event" | "error"; confidence: "high" | "medium" | "low" }
   | { type: "failure"; reason: string };
@@ -48,87 +49,145 @@ export interface CliTurn {
   cancel(): Promise<void>;
   status(): "running" | "completed";
   result(): Promise<CliTurnResult>;
+  events?(): NormalizedCliEvent[];
+}
+
+export interface CliStartInput {
+  executable: string;
+  args: string[];
+  workspacePath: string;
+  environment?: Record<string, string>;
+  normalizeLine?: (line: string) => NormalizedCliEvent | undefined;
+  requireExecutionEvidence?: boolean;
 }
 
 export interface CliAgentBackend {
-  start(input: { executable: string; args: string[]; workspacePath: string; environment?: Record<string, string> }): CliTurn;
+  start(input: CliStartInput): CliTurn;
 }
 
 export type CredentialResolver = (reference: string) => Promise<string>;
 
 export class SpawnCliAgentBackend implements CliAgentBackend {
-  start(input: { executable: string; args: string[]; workspacePath: string; environment?: Record<string, string> }): CliTurn {
+  start(input: CliStartInput): CliTurn {
     return new SpawnedCliTurn(spawn(input.executable, input.args, {
       cwd: input.workspacePath,
       shell: false,
       stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, ...input.environment },
-    }));
+      env: { ...process.env, ...input.environment, PWD: input.workspacePath },
+      detached: process.platform !== "win32",
+    }), input.normalizeLine ?? normalizeCliLine, input.requireExecutionEvidence === true);
   }
 }
 
 class SpawnedCliTurn implements CliTurn {
   private completed = false;
   private cancelled = false;
+  private cancellation: Promise<void> | undefined;
   private readonly outcome: Promise<CliTurnResult>;
+  private readonly retainedEvents: NormalizedCliEvent[] = [];
+  private resourceEvent: Extract<NormalizedCliEvent, { type: "resource" }> | undefined;
 
-  constructor(private readonly child: ChildProcess) {
+  constructor(private readonly child: ChildProcess, normalizeLine: (line: string) => NormalizedCliEvent | undefined, requireExecutionEvidence: boolean) {
     let stdout = "";
     let stderr = "";
-    const events: NormalizedCliEvent[] = [];
-    this.child.stdout?.on("data", (chunk: Buffer) => {
-      stdout = (stdout + chunk.toString("utf8")).slice(-262_144);
+    let droppingLine = false;
+    let failure: Extract<NormalizedCliEvent, { type: "failure" | "resource" }> | undefined;
+    let activity: Extract<NormalizedCliEvent, { type: "activity" }> | undefined;
+    let waiting: Extract<NormalizedCliEvent, { type: "waiting" }> | undefined;
+    let providerSessionId: string | undefined;
+    let executionEvidence = false;
+    const record = (event: NormalizedCliEvent | undefined): void => {
+      if (!event) return;
+      this.retainedEvents.push(event);
+      if (this.retainedEvents.length > 256) this.retainedEvents.shift();
+      if (event.type === "failure" || (event.type === "resource" && event.state !== "UNKNOWN")) failure = event;
+      if (event.type === "activity") { activity = event; providerSessionId = event.providerSessionId ?? providerSessionId; executionEvidence ||= event.executionEvidence === true; }
+      if (event.type === "waiting") waiting = event;
+      if (event.type === "resource") this.resourceEvent = event;
+    };
+    this.child.stdout?.setEncoding("utf8");
+    this.child.stdout?.on("data", (chunk: string) => {
+      stdout += chunk;
       const lines = stdout.split("\n");
       stdout = lines.pop() ?? "";
       for (const line of lines) {
-        const event = normalizeCliLine(line);
-        if (event) events.push(event);
+        if (!droppingLine && line.length <= 1_048_576) record(normalizeLine(line));
+        else if (!droppingLine) record({ type: "failure", reason: "CLI output record exceeds 1 MiB" });
+        droppingLine = false;
       }
+      if (stdout.length > 1_048_576) { stdout = ""; droppingLine = true; record({ type: "failure", reason: "CLI output record exceeds 1 MiB" }); }
     });
     this.child.stderr?.on("data", (chunk: Buffer) => { stderr = (stderr + chunk.toString("utf8")).slice(-32_768); });
     this.outcome = new Promise((resolve) => {
       child.on("error", (error) => { stderr = error.message; });
       child.on("close", (code) => {
         this.completed = true;
-        if (stdout.trim()) {
-          const event = normalizeCliLine(stdout);
-          if (event) events.push(event);
-        }
+        if (!droppingLine && stdout.trim()) record(normalizeLine(stdout));
         const error = normalizeCliError(stderr);
-        if (error) events.push(error);
-        const waiting = events.findLast((event) => event.type === "waiting");
-        const activity = events.findLast((event) => event.type === "activity");
-        const sessionEvent = events.findLast((event): event is Extract<NormalizedCliEvent, { type: "activity" }> => event.type === "activity" && Boolean(event.providerSessionId));
-        const providerSessionId = sessionEvent?.providerSessionId;
+        if (error && code !== 0) record(error);
+        if (code === 0 && requireExecutionEvidence && !executionEvidence && !failure && !waiting && !this.cancelled) record({ type: "failure", reason: "CLI exited without valid native execution evidence" });
         resolve({
-          state: this.cancelled ? "cancelled" : waiting ? "waiting" : code === 0 ? "completed" : "failed",
-          summary: activity?.summary ?? waiting?.reason ?? error?.reason ?? (code === 0 ? "Agent completed" : `Agent exited with code ${code ?? "unknown"}`),
-          events,
+          state: this.cancelled ? "cancelled" : failure ? "failed" : waiting ? "waiting" : code === 0 ? "completed" : "failed",
+          summary: failure?.reason ?? waiting?.reason ?? activity?.summary ?? error?.reason ?? (code === 0 ? "Agent completed" : `Agent exited with code ${code ?? "unknown"}`),
+          events: this.events(),
           ...(providerSessionId ? { providerSessionId } : {}),
         });
       });
     });
   }
 
-  async cancel(): Promise<void> {
-    if (!this.completed) {
-      this.cancelled = true;
-      this.child.kill("SIGTERM");
-    }
+  cancel(): Promise<void> {
+    return this.cancellation ??= this.cancelGroup();
+  }
+  private async cancelGroup(): Promise<void> {
+    if (!this.completed) this.cancelled = true;
+    this.kill("SIGTERM");
+    // Direct child exit does not establish that its tool descendants stopped.
+    if (this.groupAlive()) await new Promise<void>((resolve, reject) => {
+      const finish = (error?: unknown): void => {
+        clearInterval(poll);
+        clearTimeout(escalation);
+        if (error) reject(error); else resolve();
+      };
+      const poll = setInterval(() => { try { if (!this.groupAlive()) finish(); } catch (error) { finish(error); } }, 25);
+      const escalation = setTimeout(() => { try { this.kill("SIGKILL"); finish(); } catch (error) { finish(error); } }, 2_000);
+    });
     await this.outcome;
+  }
+  private groupAlive(): boolean {
+    if (process.platform === "win32") return !this.completed;
+    if (!this.child.pid) return false;
+    try { process.kill(-this.child.pid, 0); return true; }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === "ESRCH") return false; throw error; }
+  }
+  private kill(signal: NodeJS.Signals): void {
+    try {
+      if (process.platform !== "win32" && this.child.pid) process.kill(-this.child.pid, signal);
+      else this.child.kill(signal);
+    } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error; }
+  }
+  events(): NormalizedCliEvent[] {
+    const events = [...this.retainedEvents];
+    if (this.resourceEvent && !events.includes(this.resourceEvent)) { events.push(this.resourceEvent); if (events.length > 256) events.shift(); }
+    return structuredClone(events);
   }
   status(): "running" | "completed" { return this.completed ? "completed" : "running"; }
   result(): Promise<CliTurnResult> { return this.outcome; }
 }
 
-interface CliProviderDefinition {
+export interface CliProviderDefinition {
   manifest: AdapterManifest;
   defaultExecutable: string;
   versionArgs: string[];
   authArgs: string[];
   environmentKey?: string;
   supportsResume: boolean;
-  startArgs(input: { prompt: string; model?: string; providerSessionId?: string }): string[];
+  strictLifecycle?: boolean;
+  requireExecutionEvidence?: boolean;
+  newSessionId?: () => string;
+  resolveExecutable?: (profile: CliAgentProfile) => Promise<string>;
+  normalizeLine?: (line: string) => NormalizedCliEvent | undefined;
+  startArgs(input: { prompt: string; model?: string; providerSessionId?: string; newSession?: boolean; approveTools?: boolean }): string[];
 }
 
 export const cursorManifest: AdapterManifest = {
@@ -198,11 +257,14 @@ const kiroDefinition: CliProviderDefinition = {
   ],
 };
 
-class StructuredCliAdapter implements AgentAdapter {
+export class StructuredCliAdapter implements AgentAdapter {
   readonly manifest: AdapterManifest;
   private readonly turns = new Map<string, CliTurn>();
   private readonly backend: CliAgentBackend;
   private readonly store: SessionStore;
+  private readonly sending = new Set<string>();
+  private starting = 0;
+  private cancelling = 0;
 
   constructor(
     private readonly definition: CliProviderDefinition,
@@ -217,41 +279,61 @@ class StructuredCliAdapter implements AgentAdapter {
   }
 
   async start(input: { runId: string; workspacePath: string; backendId?: string; prompt?: string }): Promise<AdapterSession> {
-    const now = new Date().toISOString();
-    const session: AdapterSession = {
-      id: randomUUID(),
-      runId: input.runId,
-      backendId: input.backendId ?? this.manifest.backends[0]!.id,
-      workspacePath: input.workspacePath,
-      state: "RUNNING",
-      profileId: this.profile.id,
-      createdAt: now,
-      updatedAt: now,
-    };
-    const environment = await this.environment();
-    this.turns.set(session.id, this.backend.start({
-      executable: this.profile.executable ?? this.definition.defaultExecutable,
-      args: this.definition.startArgs({ prompt: input.prompt ?? "Inspect the task and report readiness.", ...(this.profile.model ? { model: this.profile.model } : {}) }),
-      workspacePath: input.workspacePath,
-      ...(environment ? { environment } : {}),
-    }));
-    this.store.save(session);
-    return structuredClone(session);
+    this.starting++;
+    try {
+      const now = new Date().toISOString();
+      const session: AdapterSession = {
+        id: randomUUID(),
+        runId: input.runId,
+        backendId: input.backendId ?? this.manifest.backends[0]!.id,
+        workspacePath: input.workspacePath,
+        state: "RUNNING",
+        profileId: this.profile.id,
+        ...(this.definition.newSessionId ? { providerSessionId: this.definition.newSessionId() } : {}),
+        createdAt: now,
+        updatedAt: now,
+      };
+      const environment = await this.environment();
+      this.turns.set(session.id, this.backend.start({
+        executable: await this.executable(),
+        args: this.definition.startArgs({ prompt: input.prompt ?? "Inspect the task and report readiness.", newSession: true, approveTools: this.profile.approveTools === true, ...(session.providerSessionId ? { providerSessionId: session.providerSessionId } : {}), ...(this.profile.model ? { model: this.profile.model } : {}) }),
+        workspacePath: input.workspacePath,
+        ...(this.definition.normalizeLine ? { normalizeLine: this.definition.normalizeLine } : {}),
+        ...(this.definition.requireExecutionEvidence ? { requireExecutionEvidence: true } : {}),
+        ...(environment ? { environment } : {}),
+      }));
+      this.store.save(session);
+      return structuredClone(session);
+    } finally { this.starting--; }
+  }
+
+  hasActiveOperations(): boolean {
+    return this.starting > 0 || this.cancelling > 0 || this.sending.size > 0 || [...this.turns.values()].some((turn) => turn.status() === "running");
   }
 
   async send(sessionId: string, message: string): Promise<AdapterEvent> {
     if (!this.definition.supportsResume) throw new AdapterContractError("UNSUPPORTED_CAPABILITY", `${this.manifest.displayName} headless runs do not accept mid-session input`);
-    const session = await this.finish(sessionId);
-    if (!session.providerSessionId) throw new AdapterContractError("SESSION_NOT_RESUMABLE", `${this.manifest.displayName} did not emit a provider session id`);
-    const environment = await this.environment();
-    this.turns.set(sessionId, this.backend.start({
-      executable: this.profile.executable ?? this.definition.defaultExecutable,
-      args: this.definition.startArgs({ prompt: message, providerSessionId: session.providerSessionId, ...(this.profile.model ? { model: this.profile.model } : {}) }),
-      workspacePath: session.workspacePath,
-      ...(environment ? { environment } : {}),
-    }));
-    this.store.save({ ...session, state: "RUNNING", updatedAt: new Date().toISOString() });
-    return { type: "session.message", sessionId, occurredAt: new Date().toISOString(), data: { acceptedCharacters: message.length, providerSessionId: session.providerSessionId } };
+    if (this.definition.strictLifecycle && !this.turns.has(sessionId) && !["COMPLETED", "PAUSED"].includes(this.require(sessionId).state)) throw new AdapterContractError("SESSION_DETACHED", "Active or failed process handles cannot be recovered; use controlled operator recovery");
+    if (this.definition.strictLifecycle && (this.turns.get(sessionId)?.status() === "running" || this.sending.has(sessionId))) throw new AdapterContractError("SESSION_BUSY", "Wait for the current CLI turn before sending another message");
+    if (this.require(sessionId).state === "CANCELLED") throw new AdapterContractError("SESSION_CANCELLED", "Cancelled sessions cannot accept input");
+    this.sending.add(sessionId);
+    try {
+      const session = await this.finish(sessionId);
+      if (!session.providerSessionId) throw new AdapterContractError("SESSION_NOT_RESUMABLE", `${this.manifest.displayName} did not emit a provider session id`);
+      const environment = await this.environment();
+      const executable = await this.executable();
+      if (this.require(sessionId).state === "CANCELLED") throw new AdapterContractError("SESSION_CANCELLED", "Session was cancelled before the next turn started");
+      this.turns.set(sessionId, this.backend.start({
+        executable,
+        args: this.definition.startArgs({ prompt: message, providerSessionId: session.providerSessionId, approveTools: this.profile.approveTools === true, ...(this.profile.model ? { model: this.profile.model } : {}) }),
+        workspacePath: session.workspacePath,
+        ...(this.definition.normalizeLine ? { normalizeLine: this.definition.normalizeLine } : {}),
+        ...(this.definition.requireExecutionEvidence ? { requireExecutionEvidence: true } : {}),
+        ...(environment ? { environment } : {}),
+      }));
+      this.store.save({ ...session, state: "RUNNING", updatedAt: new Date().toISOString() });
+      return { type: "session.message", sessionId, occurredAt: new Date().toISOString(), data: { acceptedCharacters: message.length, providerSessionId: session.providerSessionId } };
+    } finally { this.sending.delete(sessionId); }
   }
   async pause(): Promise<AdapterSession> { throw new AdapterContractError("UNSUPPORTED_CAPABILITY", `${this.manifest.displayName} cannot pause a headless turn`); }
   async resume(sessionId: string): Promise<AdapterSession> {
@@ -260,12 +342,17 @@ class StructuredCliAdapter implements AgentAdapter {
     return this.status(sessionId);
   }
   async cancel(sessionId: string): Promise<AdapterSession> {
-    await this.turns.get(sessionId)?.cancel();
-    return this.update(sessionId, { state: "CANCELLED" });
+    this.cancelling++;
+    try {
+      this.update(sessionId, { state: "CANCELLED" });
+      await this.turns.get(sessionId)?.cancel();
+      return this.update(sessionId, { state: "CANCELLED" });
+    } finally { this.cancelling--; }
   }
   async status(sessionId: string): Promise<AdapterSession> {
     const session = this.require(sessionId);
     const turn = this.turns.get(sessionId);
+    if (!turn && this.definition.strictLifecycle && session.state === "RUNNING") return this.update(sessionId, { state: "FAILED" });
     return !turn || turn.status() === "running" ? structuredClone(session) : this.finish(sessionId);
   }
   async result(sessionId: string): Promise<AdapterResult> {
@@ -274,8 +361,10 @@ class StructuredCliAdapter implements AgentAdapter {
     return { sessionId, state: session.state, summary: result?.summary ?? `${this.manifest.displayName} session ${session.state.toLowerCase()}`, artifacts: extractArtifacts(result?.summary ?? "") };
   }
   async usage(sessionId: string): Promise<Record<string, unknown>> {
-    const result = await this.turns.get(sessionId)?.result();
-    return result?.events.filter((event) => event.type === "resource").at(-1) ?? { state: "UNKNOWN", reason: "Provider did not emit a resource signal", source: "probe", confidence: "low" };
+    this.require(sessionId);
+    const turn = this.turns.get(sessionId);
+    const events = turn?.events ? turn.events() : turn?.status() === "completed" ? (await turn.result()).events : [];
+    return events.filter((event) => event.type === "resource").at(-1) ?? { state: "UNKNOWN", reason: "Provider did not emit a resource signal", source: "probe", confidence: "low" };
   }
   async diagnostics(sessionId: string): Promise<Record<string, unknown>> {
     const session = this.require(sessionId);
@@ -287,12 +376,16 @@ class StructuredCliAdapter implements AgentAdapter {
     if (!this.definition.environmentKey || !this.resolveCredential) throw new AdapterContractError("SECRET_RESOLVER_UNAVAILABLE", "Credential references require a SecretStore resolver");
     return { [this.definition.environmentKey]: await this.resolveCredential(this.profile.credentialRef) };
   }
+  private executable(): Promise<string> {
+    return this.definition.resolveExecutable?.(this.profile) ?? Promise.resolve(this.profile.executable ?? this.definition.defaultExecutable);
+  }
   private async finish(sessionId: string): Promise<AdapterSession> {
     const session = this.require(sessionId);
     if (session.state === "CANCELLED") return structuredClone(session);
     const turn = this.turns.get(sessionId);
-    if (!turn) return structuredClone(session);
+    if (!turn) return this.definition.strictLifecycle && session.state === "RUNNING" ? this.update(sessionId, { state: "FAILED" }) : structuredClone(session);
     const result = await turn.result();
+    if (this.require(sessionId).state === "CANCELLED") return structuredClone(this.require(sessionId));
     return this.update(sessionId, {
       state: result.state === "completed" ? "COMPLETED" : result.state === "cancelled" ? "CANCELLED" : result.state === "waiting" ? "PAUSED" : "FAILED",
       ...(result.providerSessionId ? { providerSessionId: result.providerSessionId } : {}),
@@ -379,9 +472,10 @@ export function normalizeCliError(message: string): CliErrorEvent | undefined {
   if (!message.trim()) return undefined;
   const reason = message.slice(0, 1_000);
   const lower = reason.toLowerCase();
-  if (/quota|credit.*exhaust|insufficient credit/.test(lower)) return { type: "resource", state: "QUOTA_EXHAUSTED", reason, source: "error", confidence: "high" };
+  if (/model unavailable|model not found|unknown model/.test(lower)) return { type: "failure", reason };
+  if (/quota|credit.*exhaust|insufficient credit|requires more credits|can only afford/.test(lower)) return { type: "resource", state: "QUOTA_EXHAUSTED", reason, source: "error", confidence: "high" };
   if (/rate.?limit|too many requests/.test(lower)) return { type: "resource", state: "RATE_LIMITED", reason, source: "error", confidence: "high" };
-  if (/unauth|not logged in|login required|forbidden/.test(lower)) return { type: "resource", state: "AUTH_ERROR", reason, source: "error", confidence: "high" };
+  if (/unauth|not logged in|login required|forbidden|no api key|invalid api.?key/.test(lower)) return { type: "resource", state: "AUTH_ERROR", reason, source: "error", confidence: "high" };
   if (/unavailable|econn|network|timeout/.test(lower)) return { type: "resource", state: "PROVIDER_DOWN", reason, source: "error", confidence: "medium" };
   return { type: "failure", reason };
 }

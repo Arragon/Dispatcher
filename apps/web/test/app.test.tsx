@@ -6,6 +6,7 @@ import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Navigation, SecureInput } from "../src/App.js";
 import SettingsPage from "../src/SettingsPage.js";
+import AgentsPage from "../src/AgentsPage.js";
 
 afterEach(() => {
   cleanup();
@@ -13,6 +14,19 @@ afterEach(() => {
 });
 
 describe("Dashboard shell", () => {
+  it("distinguishes installed harnesses from verified authentication", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      if (input === "/api/adapters/manifests") return new Response(JSON.stringify({ manifests: [{ id: "opencode", displayName: "OpenCode", platforms: ["darwin"], configSchema: { type: "object", properties: {} }, uiSchema: {}, secretFields: [], backends: [], capabilities: {} }] }));
+      if (input === "/api/agents/profiles") return new Response(JSON.stringify({ profiles: [], sessions: [] }));
+      if (input === "/api/adapters/compatibility") return new Response(JSON.stringify({ matrix: [] }));
+      return new Response(JSON.stringify({ installed: true, compatible: true, authenticated: false, authentication: "unknown", version: "2.0.21", diagnostic: "Authentication remains unverified." }));
+    });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={client}><AgentsPage /></QueryClientProvider>);
+    await userEvent.click(await screen.findByRole("button", { name: "Scan & test health" }));
+    expect(await screen.findByText(/Authentication remains unverified/)).toBeTruthy();
+    expect(screen.queryByText(/health check passed/)).toBeNull();
+  });
   it("exposes every M1 navigation surface", () => {
     render(<MemoryRouter><Navigation /></MemoryRouter>);
     expect(screen.getByRole("navigation", { name: "Main navigation" })).toBeTruthy();

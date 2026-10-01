@@ -66,8 +66,8 @@ export default function AgentsPage(): React.JSX.Element {
     try {
       const result = await api<{ authenticated?: boolean; healthy?: boolean; installed?: boolean; version?: string; profile?: { alias: string }; diagnostic?: string; selected?: { authenticated: boolean; version?: string; executable: string }; candidates?: unknown[] }>(`/api/agents/${activeManifest.id}/discover`, { method: "POST", body: JSON.stringify({ ...draft, id: String(draft.id ?? `${activeManifest.id}-profile`) }) });
       const candidate = result.selected ?? result;
-      const ready = candidate.authenticated || result.healthy || result.installed;
-      setMessage(ready ? `${String(draft.alias ?? result.profile?.alias ?? activeManifest.displayName)} health check passed (${candidate.version ?? "version unknown"}).` : result.diagnostic ?? `${result.candidates?.length ?? 0} installation candidates found; authentication or an explicit selection is required.`);
+      const ready = candidate.authenticated || result.healthy;
+      setMessage(ready ? `${String(draft.alias ?? result.profile?.alias ?? activeManifest.displayName)} health check passed (${candidate.version ?? "version unknown"}).` : result.diagnostic ?? (result.installed ? `CLI installed (${candidate.version ?? "version unknown"}); authentication remains unverified.` : `${result.candidates?.length ?? 0} installation candidates found; authentication or an explicit selection is required.`));
     } catch (error) { setMessage(error instanceof Error ? error.message : `${activeManifest.displayName} scan failed.`); }
   }
   async function saveProfile(): Promise<void> {
@@ -82,10 +82,10 @@ export default function AgentsPage(): React.JSX.Element {
   async function testProfile(id: string): Promise<void> {
     setMessage("Testing the isolated provider login…");
     try {
-      const result = await api<{ authenticated?: boolean; profile?: { alias: string }; version?: string; selected?: { authenticated: boolean; version?: string } }>(`/api/agents/profiles/${id}/test`, { method: "POST" });
+      const result = await api<{ authenticated?: boolean; diagnostic?: string; profile?: { alias: string }; version?: string; selected?: { authenticated: boolean; version?: string } }>(`/api/agents/profiles/${id}/test`, { method: "POST" });
       const profile = profiles.data?.profiles.find((entry) => entry.id === id);
       const tested = result.selected ?? result;
-      setMessage(tested.authenticated ? `${profile?.alias ?? result.profile?.alias ?? id} login passed (${tested.version ?? "version unknown"}).` : `${profile?.alias ?? id} requires authentication.`);
+      setMessage(tested.authenticated ? `${profile?.alias ?? result.profile?.alias ?? id} login passed (${tested.version ?? "version unknown"}).` : result.diagnostic ?? `${profile?.alias ?? id} requires authentication.`);
     } catch (error) { setMessage(error instanceof Error ? error.message : "Login test failed."); }
   }
   async function startRun(): Promise<void> {

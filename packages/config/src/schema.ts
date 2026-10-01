@@ -431,6 +431,13 @@ export function validateConfig(input: unknown): DispatcherConfig {
     if (profile.provider === "codex" && (typeof profile.settings?.codexHome !== "string" || !profile.settings.codexHome)) {
       throw new ConfigValidationError([`/agentProfiles/${profile.id}/settings/codexHome is required for Codex`]);
     }
+    if (["opencode", "grok", "pi"].includes(profile.provider) && profile.settings?.approveTools !== undefined
+      && (profile.provider === "pi" || typeof profile.settings.approveTools !== "boolean")) {
+      throw new ConfigValidationError([`/agentProfiles/${profile.id}/settings/approveTools must be boolean and is supported only by OpenCode or Grok`]);
+    }
+    if ((profile.provider === "opencode" || profile.provider === "pi") && profile.credentialRef) {
+      throw new ConfigValidationError([`/agentProfiles/${profile.id} uses native login; credentialRef is not supported`]);
+    }
     if (profile.credentialRef && !profile.credentialRef.startsWith(`secret://${profile.provider}/`)) {
       throw new ConfigValidationError([`/agentProfiles/${profile.id}/credentialRef must use the ${profile.provider} secret namespace`]);
     }
