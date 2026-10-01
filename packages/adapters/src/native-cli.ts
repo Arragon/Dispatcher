@@ -29,6 +29,7 @@ function manifest(id: NativeCliProvider, displayName: string, credential = false
         executable: { type: "string", minLength: 1, description: "Optional explicit CLI path; otherwise use the known local installation or PATH." },
         model: { type: "string", minLength: 1, description: id === "grok" ? "Grok model ID" : "provider/model; omit to use the CLI default" },
         ...(credential ? { credentialRef: { type: "string", pattern: "^secret://grok/" } } : {}),
+        ...(id !== "pi" ? { approveTools: { type: "boolean", default: false, title: "Unattended native tool approval", description: "Explicitly approve native tools for this trusted worktree. Grok approves all tools; OpenCode retains explicitly denied permissions." } } : {}),
       },
     },
     uiSchema: credential ? { credentialRef: { "ui:widget": "hidden" } } : {},
@@ -63,12 +64,12 @@ const definitions: Record<NativeCliProvider, CliProviderDefinition> = {
     manifest: opencodeManifest, defaultExecutable: "opencode", versionArgs: ["--version"], authArgs: [],
     supportsResume: true, strictLifecycle: true, resolveExecutable: (profile) => executable("opencode", profile), normalizeLine: normalizeOpenCodeLine,
     // v2's private server is owned by this child, so cancellation cannot strand a shared-service run.
-    startArgs: ({ prompt, model, providerSessionId }) => ["run", "--standalone", "--format", "json", ...(model ? ["--model", model] : []), ...(providerSessionId ? ["--session", providerSessionId] : []), "--", prompt],
+    startArgs: ({ prompt, model, providerSessionId, approveTools }) => ["run", "--standalone", "--format", "json", ...(approveTools ? ["--auto"] : []), ...(model ? ["--model", model] : []), ...(providerSessionId ? ["--session", providerSessionId] : []), "--", prompt],
   },
   grok: {
     manifest: grokManifest, defaultExecutable: "grok", versionArgs: ["--version"], authArgs: [], environmentKey: "XAI_API_KEY",
     supportsResume: true, strictLifecycle: true, newSessionId: randomUUID, resolveExecutable: (profile) => executable("grok", profile), normalizeLine: normalizeGrokLine,
-    startArgs: ({ prompt, model, providerSessionId, newSession }) => ["--output-format", "streaming-messages-json", ...(model ? ["--model", model] : []), ...(providerSessionId ? [newSession ? "--session-id" : "--resume", providerSessionId] : []), `--single=${prompt}`],
+    startArgs: ({ prompt, model, providerSessionId, newSession, approveTools }) => ["--output-format", "streaming-messages-json", ...(approveTools ? ["--always-approve"] : []), ...(model ? ["--model", model] : []), ...(providerSessionId ? [newSession ? "--session-id" : "--resume", providerSessionId] : []), `--single=${prompt}`],
   },
   pi: {
     manifest: piManifest, defaultExecutable: "pi", versionArgs: ["--version"], authArgs: [],
@@ -136,6 +137,7 @@ function activity(summary: string, providerSessionId?: string): NormalizedCliEve
   return { type: "activity", summary: summary.slice(0, 2_000), ...(providerSessionId ? { providerSessionId } : {}) };
 }
 function error(message: string, status?: number): NormalizedCliEvent {
+  if (status === 402 || /requires more credits|can only afford|insufficient.*balance/i.test(message)) return { type: "resource", state: "QUOTA_EXHAUSTED", reason: message.slice(0, 1_000), source: "error", confidence: "high" };
   if (status === 401 || status === 403 || /invalid.*(?:api.?key|token)|authentication|unauthorized/i.test(message)) return { type: "resource", state: "AUTH_ERROR", reason: message.slice(0, 1_000), source: "error", confidence: "high" };
   if (status === 429) return { type: "resource", state: "RATE_LIMITED", reason: message.slice(0, 1_000), source: "error", confidence: "high" };
   return normalizeCliError(message) ?? { type: "failure", reason: "Provider failed without a diagnostic" };

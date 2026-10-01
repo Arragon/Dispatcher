@@ -28,9 +28,12 @@ describe("native harness Controller composition", () => {
     execFileSync("git", ["-C", repository, "commit", "-m", "fixture"]);
     writeFileSync(executable, `#!${process.execPath}\nif(process.argv.includes('--help')) console.log('--standalone --format json --session --session-id --resume --mode streaming-messages-json'); else console.log('2.0.21');`);
     chmodSync(executable, 0o700);
+    let blockedProvider: string | undefined;
     const calls = vi.fn((provider: string) => {
-      const result: CliTurnResult = { state: "completed", summary: "done", events: [], providerSessionId: `${provider}-exact-session` };
-      const backend: CliAgentBackend = { start: vi.fn(() => ({ status: () => "completed", result: async () => result, cancel: async () => undefined })) };
+      const result = (): CliTurnResult => provider === blockedProvider
+        ? { state: "failed", summary: "requires more credits", events: [{ type: "resource", state: "QUOTA_EXHAUSTED", reason: "requires more credits", source: "error", confidence: "high" }], providerSessionId: `${provider}-exact-session` }
+        : { state: "completed", summary: "done", events: [], providerSessionId: `${provider}-exact-session` };
+      const backend: CliAgentBackend = { start: vi.fn(() => ({ status: () => "completed", result: async () => result(), cancel: async () => undefined })) };
       return backend;
     });
     const service = new ControllerService({ dataDirectory: directory, ownerToken: "test-owner", withRunner: true, secretStore: secrets, cliBackendFactory: calls });
@@ -47,7 +50,7 @@ describe("native harness Controller composition", () => {
         const discovery = await service.app.inject({ method: "POST", url: `/api/agents/${provider}/discover`, headers: OWNER, payload: { id: provider, alias: provider, executable } });
         expect(discovery.statusCode).toBe(200);
         expect(discovery.json()).toMatchObject({ installed: true, compatible: true, authenticated: false, authentication: "unknown" });
-        const saved = await service.app.inject({ method: "POST", url: `/api/agents/${provider}/profiles`, headers: OWNER, payload: { id: provider, alias: provider, executable } });
+        const saved = await service.app.inject({ method: "POST", url: `/api/agents/${provider}/profiles`, headers: OWNER, payload: { id: provider, alias: provider, executable, ...(provider === "grok" ? { approveTools: true } : {}) } });
         expect(saved.statusCode).toBe(201);
         expect(saved.json().profile.state).toBe("CONFIGURED");
         expect((await service.app.inject({ method: "POST", url: `/api/agents/profiles/${provider}/runs`, headers: OWNER, payload: { workspacePath: directory, prompt: "hello" } })).statusCode).toBe(400);
@@ -61,10 +64,29 @@ describe("native harness Controller composition", () => {
         expect(tested.json()).toMatchObject({ compatible: true, authentication: "unknown" });
       }
       expect(calls.mock.calls.map(([provider]) => provider)).toEqual(expect.arrayContaining(["opencode", "grok", "pi"]));
+      const config = (await service.app.inject({ method: "GET", url: "/api/config", headers: OWNER })).json().config;
+      expect(config.agentProfiles.find((profile: { id: string }) => profile.id === "grok").settings.approveTools).toBe(true);
+      expect((await service.app.inject({ method: "POST", url: "/api/agents/pi/profiles", headers: OWNER, payload: { id: "invalid-pi", alias: "Invalid pi", approveTools: true } })).statusCode).toBe(400);
       const views = (await service.app.inject({ method: "GET", url: "/api/agents/profiles", headers: OWNER })).body;
       expect(views).not.toContain(executable);
       const matrix = (await service.app.inject({ method: "GET", url: "/api/adapters/compatibility", headers: OWNER })).json().matrix;
       expect(matrix.find((row: { adapterId: string }) => row.adapterId === "opencode")).toMatchObject({ session: { resume: true, pause: false }, resource: true });
+      for (const provider of ["opencode", "grok", "pi"]) {
+        const taskId = `${provider}-canonical`;
+        const now = new Date().toISOString();
+        service.tasks.execute({ id: `create:${taskId}`, taskId, baseRevision: 0, actor: "test", command: { type: "task.create", task: { id: taskId, projectId: "fixture", title: "Harness task", state: "READY", labels: [], createdAt: now, updatedAt: now }, bindings: [] } });
+        service.database.saveTaskContract(taskId, { version: 1, revision: 1, goal: "Harness task", scope: ["README.md"], acceptanceCriteria: ["done"], verification: ["check"], constraints: [], delivery: { type: "none", repository: "fixture", baseBranch: "main" } });
+        blockedProvider = provider;
+        // Embedded capacity is fixed at boot; simulate an online four-slot Runner for this fixture.
+        service.runners.register({ ...service.runners.list()[0]!, capacity: 4 });
+        const dispatched = await service.app.inject({ method: "POST", url: `/api/tasks/${taskId}/dispatch`, headers: OWNER, payload: { profileId: provider } });
+        expect(dispatched.statusCode, dispatched.body).toBe(201);
+        expect(dispatched.json().run.providerId).toBe(provider);
+        const advanced = await service.app.inject({ method: "POST", url: `/api/runs/${dispatched.json().run.id}/advance`, headers: OWNER });
+        expect(advanced.statusCode).toBe(202);
+        expect(advanced.json().run.state).toBe("RESOURCE_BLOCKED");
+        expect(advanced.json().task.state).toBe("WAITING_RESOURCE");
+      }
     } finally { await service.stop(); rmSync(directory, { recursive: true, force: true }); }
   });
 });

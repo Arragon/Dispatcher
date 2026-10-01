@@ -20,6 +20,7 @@ export interface CliAgentProfile {
   executable?: string;
   credentialRef?: string;
   model?: string;
+  approveTools?: boolean;
 }
 
 export interface CliDiscoveryResult {
@@ -71,7 +72,7 @@ export class SpawnCliAgentBackend implements CliAgentBackend {
       cwd: input.workspacePath,
       shell: false,
       stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, ...input.environment },
+      env: { ...process.env, ...input.environment, PWD: input.workspacePath },
       detached: process.platform !== "win32",
     }), input.normalizeLine ?? normalizeCliLine);
   }
@@ -165,7 +166,7 @@ export interface CliProviderDefinition {
   newSessionId?: () => string;
   resolveExecutable?: (profile: CliAgentProfile) => Promise<string>;
   normalizeLine?: (line: string) => NormalizedCliEvent | undefined;
-  startArgs(input: { prompt: string; model?: string; providerSessionId?: string; newSession?: boolean }): string[];
+  startArgs(input: { prompt: string; model?: string; providerSessionId?: string; newSession?: boolean; approveTools?: boolean }): string[];
 }
 
 export const cursorManifest: AdapterManifest = {
@@ -270,7 +271,7 @@ export class StructuredCliAdapter implements AgentAdapter {
     const environment = await this.environment();
     this.turns.set(session.id, this.backend.start({
       executable: await this.executable(),
-      args: this.definition.startArgs({ prompt: input.prompt ?? "Inspect the task and report readiness.", newSession: true, ...(session.providerSessionId ? { providerSessionId: session.providerSessionId } : {}), ...(this.profile.model ? { model: this.profile.model } : {}) }),
+      args: this.definition.startArgs({ prompt: input.prompt ?? "Inspect the task and report readiness.", newSession: true, approveTools: this.profile.approveTools === true, ...(session.providerSessionId ? { providerSessionId: session.providerSessionId } : {}), ...(this.profile.model ? { model: this.profile.model } : {}) }),
       workspacePath: input.workspacePath,
       ...(this.definition.normalizeLine ? { normalizeLine: this.definition.normalizeLine } : {}),
       ...(environment ? { environment } : {}),
@@ -281,24 +282,25 @@ export class StructuredCliAdapter implements AgentAdapter {
 
   async send(sessionId: string, message: string): Promise<AdapterEvent> {
     if (!this.definition.supportsResume) throw new AdapterContractError("UNSUPPORTED_CAPABILITY", `${this.manifest.displayName} headless runs do not accept mid-session input`);
+    if (this.definition.strictLifecycle && !this.turns.has(sessionId) && !["COMPLETED", "PAUSED"].includes(this.require(sessionId).state)) throw new AdapterContractError("SESSION_DETACHED", "Active or failed process handles cannot be recovered; use controlled operator recovery");
     if (this.definition.strictLifecycle && (this.turns.get(sessionId)?.status() === "running" || this.sending.has(sessionId))) throw new AdapterContractError("SESSION_BUSY", "Wait for the current CLI turn before sending another message");
     if (this.require(sessionId).state === "CANCELLED") throw new AdapterContractError("SESSION_CANCELLED", "Cancelled sessions cannot accept input");
     this.sending.add(sessionId);
     try {
-    const session = await this.finish(sessionId);
-    if (!session.providerSessionId) throw new AdapterContractError("SESSION_NOT_RESUMABLE", `${this.manifest.displayName} did not emit a provider session id`);
-    const environment = await this.environment();
-    const executable = await this.executable();
-    if (this.require(sessionId).state === "CANCELLED") throw new AdapterContractError("SESSION_CANCELLED", "Session was cancelled before the next turn started");
-    this.turns.set(sessionId, this.backend.start({
-      executable,
-      args: this.definition.startArgs({ prompt: message, providerSessionId: session.providerSessionId, ...(this.profile.model ? { model: this.profile.model } : {}) }),
-      workspacePath: session.workspacePath,
-      ...(this.definition.normalizeLine ? { normalizeLine: this.definition.normalizeLine } : {}),
-      ...(environment ? { environment } : {}),
-    }));
-    this.store.save({ ...session, state: "RUNNING", updatedAt: new Date().toISOString() });
-    return { type: "session.message", sessionId, occurredAt: new Date().toISOString(), data: { acceptedCharacters: message.length, providerSessionId: session.providerSessionId } };
+      const session = await this.finish(sessionId);
+      if (!session.providerSessionId) throw new AdapterContractError("SESSION_NOT_RESUMABLE", `${this.manifest.displayName} did not emit a provider session id`);
+      const environment = await this.environment();
+      const executable = await this.executable();
+      if (this.require(sessionId).state === "CANCELLED") throw new AdapterContractError("SESSION_CANCELLED", "Session was cancelled before the next turn started");
+      this.turns.set(sessionId, this.backend.start({
+        executable,
+        args: this.definition.startArgs({ prompt: message, providerSessionId: session.providerSessionId, approveTools: this.profile.approveTools === true, ...(this.profile.model ? { model: this.profile.model } : {}) }),
+        workspacePath: session.workspacePath,
+        ...(this.definition.normalizeLine ? { normalizeLine: this.definition.normalizeLine } : {}),
+        ...(environment ? { environment } : {}),
+      }));
+      this.store.save({ ...session, state: "RUNNING", updatedAt: new Date().toISOString() });
+      return { type: "session.message", sessionId, occurredAt: new Date().toISOString(), data: { acceptedCharacters: message.length, providerSessionId: session.providerSessionId } };
     } finally { this.sending.delete(sessionId); }
   }
   async pause(): Promise<AdapterSession> { throw new AdapterContractError("UNSUPPORTED_CAPABILITY", `${this.manifest.displayName} cannot pause a headless turn`); }
@@ -346,7 +348,7 @@ export class StructuredCliAdapter implements AgentAdapter {
     const session = this.require(sessionId);
     if (session.state === "CANCELLED") return structuredClone(session);
     const turn = this.turns.get(sessionId);
-    if (!turn) return structuredClone(session);
+    if (!turn) return this.definition.strictLifecycle && session.state === "RUNNING" ? this.update(sessionId, { state: "FAILED" }) : structuredClone(session);
     const result = await turn.result();
     if (this.require(sessionId).state === "CANCELLED") return structuredClone(this.require(sessionId));
     return this.update(sessionId, {
@@ -435,9 +437,10 @@ export function normalizeCliError(message: string): CliErrorEvent | undefined {
   if (!message.trim()) return undefined;
   const reason = message.slice(0, 1_000);
   const lower = reason.toLowerCase();
-  if (/quota|credit.*exhaust|insufficient credit/.test(lower)) return { type: "resource", state: "QUOTA_EXHAUSTED", reason, source: "error", confidence: "high" };
+  if (/model unavailable|model not found|unknown model/.test(lower)) return { type: "failure", reason };
+  if (/quota|credit.*exhaust|insufficient credit|requires more credits|can only afford/.test(lower)) return { type: "resource", state: "QUOTA_EXHAUSTED", reason, source: "error", confidence: "high" };
   if (/rate.?limit|too many requests/.test(lower)) return { type: "resource", state: "RATE_LIMITED", reason, source: "error", confidence: "high" };
-  if (/unauth|not logged in|login required|forbidden/.test(lower)) return { type: "resource", state: "AUTH_ERROR", reason, source: "error", confidence: "high" };
+  if (/unauth|not logged in|login required|forbidden|no api key|invalid api.?key/.test(lower)) return { type: "resource", state: "AUTH_ERROR", reason, source: "error", confidence: "high" };
   if (/unavailable|econn|network|timeout/.test(lower)) return { type: "resource", state: "PROVIDER_DOWN", reason, source: "error", confidence: "medium" };
   return { type: "failure", reason };
 }

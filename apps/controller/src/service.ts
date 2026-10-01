@@ -316,6 +316,7 @@ interface EcosystemProfileBody {
   credentialRef?: string;
   executable?: string;
   model?: string;
+  approveTools?: boolean;
   organizationId?: string;
   apiBase?: string;
   maxSessionAcu?: number;
@@ -832,6 +833,7 @@ export class ControllerService {
     for (const profile of config.agentProfiles) {
       if (!isNativeCliProvider(profile.provider)) continue;
       const adapterProfile: CliAgentProfile = { id: profile.id, alias: profile.alias,
+        ...(typeof profile.settings?.approveTools === "boolean" ? { approveTools: profile.settings.approveTools } : {}),
         ...(stringSetting(profile.settings?.executable) ? { executable: stringSetting(profile.settings?.executable)! } : {}),
         ...(stringSetting(profile.settings?.model) ? { model: stringSetting(profile.settings?.model)! } : {}),
         ...(profile.credentialRef ? { credentialRef: profile.credentialRef } : {}),
@@ -2468,10 +2470,11 @@ export class ControllerService {
       let settings: Record<string, JsonValue>;
       let credentialRef = body.credentialRef;
       if (isNativeCliProvider(provider)) {
+        if (body.approveTools !== undefined && (provider === "pi" || typeof body.approveTools !== "boolean")) return reply.code(400).send({ code: "INVALID_TOOL_APPROVAL" });
         if (credentialRef && provider !== "grok") return reply.code(400).send({ code: "NATIVE_LOGIN_REQUIRED", message: "Use the harness's native provider login for this profile." });
         const discovery = await probeNativeCliProfile(provider, { id: body.id, alias: body.alias, ...(body.executable ? { executable: body.executable } : {}), ...(body.model ? { model: body.model } : {}) });
         if (!discovery.installed || !discovery.compatible) return reply.code(409).send({ code: "CLI_INCOMPATIBLE", discovery });
-        settings = { executable: discovery.executable, ...(body.model ? { model: body.model } : {}) };
+        settings = { executable: discovery.executable, ...(body.model ? { model: body.model } : {}), ...(body.approveTools !== undefined ? { approveTools: body.approveTools } : {}) };
       } else if (provider === "cursor" || provider === "kiro") {
         settings = { ...(body.executable ? { executable: body.executable } : {}), ...(body.model ? { model: body.model } : {}) };
       } else if (provider === "devin") {

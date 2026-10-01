@@ -6,7 +6,8 @@ import {
   GrokAdapter, OpenCodeAdapter, PiAdapter, SpawnCliAgentBackend,
   normalizeGrokLine, normalizeOpenCodeLine, normalizePiLine,
   grokManifest, opencodeManifest, piManifest,
-  probeNativeCliProfile,
+  probeNativeCliProfile, normalizeCliError,
+  MemorySessionStore,
   type CliAgentBackend, type CliTurnResult,
 } from "../src/index.js";
 
@@ -31,6 +32,8 @@ describe("installed native CLI harnesses", () => {
     expect(args[args.indexOf(resumeFlag) + 1]).toBe("provider-exact-id");
     expect(args).toContain(Adapter === GrokAdapter ? "--single=-next; $(literal)" : "-next; $(literal)");
     expect(adapter.manifest.id).toBe(manifest.id);
+    expect(inputs[0]?.args).not.toContain("--always-approve");
+    expect(inputs[0]?.args).not.toContain("--auto");
     expect((await adapter.result(session.id)).summary).toBe("done");
   });
 
@@ -44,6 +47,14 @@ describe("installed native CLI harnesses", () => {
     expect(calls.start).toHaveBeenCalledTimes(1);
   });
 
+  it.each([[GrokAdapter, "--always-approve"], [OpenCodeAdapter, "--auto"]] as const)("requires explicit opt-in to unattended native tool approval (%s)", async (Adapter, flag) => {
+    const calls = backend({ state: "completed", summary: "done", events: [], providerSessionId: "same" });
+    const adapter = new Adapter({ id: "local", alias: "Local", executable: "harness", approveTools: true }, calls);
+    const session = await adapter.start({ runId: "run", workspacePath: "/workspace" });
+    await adapter.send(session.id, "next");
+    for (const [input] of vi.mocked(calls.start).mock.calls) expect(input.args).toContain(flag);
+  });
+
   it("normalizes nested native output without turning token usage into quota exhaustion", () => {
     expect(normalizeOpenCodeLine(JSON.stringify({ type: "text", sessionID: "ses_a", part: { type: "text", text: "OpenCode done" } }))).toMatchObject({ type: "activity", summary: "OpenCode done", providerSessionId: "ses_a" });
     expect(normalizeOpenCodeLine(JSON.stringify({ type: "error", error: { name: "APIError", data: { statusCode: 429, message: "Too many requests" } } }))).toMatchObject({ type: "resource", state: "RATE_LIMITED" });
@@ -54,6 +65,9 @@ describe("installed native CLI harnesses", () => {
     expect(normalizePiLine(JSON.stringify({ type: "message_end", message: { role: "assistant", stopReason: "error", errorMessage: "Invalid API key" } }))).toMatchObject({ type: "resource", state: "AUTH_ERROR" });
     expect(normalizeOpenCodeLine("not json")).toBeUndefined();
     expect(normalizePiLine("null")).toBeUndefined();
+    expect(normalizeOpenCodeLine(JSON.stringify({ type: "error", error: { name: "APIError", data: { statusCode: 402, message: "This request requires more credits, or fewer max_tokens." } } }))).toMatchObject({ type: "resource", state: "QUOTA_EXHAUSTED" });
+    expect(normalizeCliError("No API key found for the selected model")).toMatchObject({ type: "resource", state: "AUTH_ERROR" });
+    expect(normalizeCliError("Model unavailable: provider/missing-model")).toMatchObject({ type: "failure" });
   });
 
   it("treats a structured error as failure even if the CLI exits zero", async () => {
@@ -105,6 +119,42 @@ describe("installed native CLI harnesses", () => {
       expect(await probeNativeCliProfile("opencode", { id: "oc", alias: "OC", executable: file })).toMatchObject({ installed: true, compatible: false, authenticated: false });
       writeFileSync(file, `#!${process.execPath}\nconsole.error('sk-private-test-secret'); process.exit(1);`);
       expect(JSON.stringify(await probeNativeCliProfile("grok", { id: "grok", alias: "Grok", executable: file }))).not.toContain("sk-private-test-secret");
+    } finally { rmSync(directory, { recursive: true, force: true }); }
+  });
+
+  it("cancels a child that ignores SIGTERM and retains CANCELLED after result settles", async () => {
+    const turn = new SpawnCliAgentBackend().start({ executable: process.execPath, args: ["-e", 'process.on("SIGTERM",()=>{});console.log(JSON.stringify({type:"text",part:{text:"ready"}}));setInterval(()=>{},1000)'], workspacePath: process.cwd(), normalizeLine: normalizeOpenCodeLine });
+    await vi.waitFor(() => expect(turn.events!()).toContainEqual(expect.objectContaining({ summary: "ready" })));
+    await turn.cancel();
+    expect(await turn.result()).toMatchObject({ state: "cancelled" });
+  });
+
+  it("fails a lost active process handle and refuses to resume it concurrently", async () => {
+    const store = new MemorySessionStore();
+    const calls: CliAgentBackend = { start: () => ({ status: () => "running", result: () => new Promise(() => {}), cancel: async () => undefined }) };
+    const original = new GrokAdapter({ id: "grok", alias: "Grok", executable: "grok" }, calls, store);
+    const session = await original.start({ runId: "run", workspacePath: "/workspace" });
+    const restored = new GrokAdapter({ id: "grok", alias: "Grok", executable: "grok" }, calls, store);
+    expect((await restored.result(session.id)).state).toBe("FAILED");
+    await expect(restored.send(session.id, "next")).rejects.toMatchObject({ code: "SESSION_DETACHED" });
+  });
+
+  it("continues a recorded completed conversation using its persisted provider ID", async () => {
+    const store = new MemorySessionStore();
+    const calls = backend({ state: "completed", summary: "done", events: [], providerSessionId: "recorded-provider" });
+    const original = new OpenCodeAdapter({ id: "oc", alias: "OC", executable: "harness" }, calls, store);
+    const session = await original.start({ runId: "run", workspacePath: "/workspace" });
+    await original.status(session.id);
+    const restored = new OpenCodeAdapter({ id: "oc", alias: "OC", executable: "harness" }, calls, store);
+    await restored.send(session.id, "next");
+    expect(vi.mocked(calls.start).mock.calls.at(-1)?.[0].args).toEqual(expect.arrayContaining(["--session", "recorded-provider"]));
+  });
+
+  it("binds the child PWD environment to the managed worktree", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "harness-pwd-"));
+    try {
+      const turn = new SpawnCliAgentBackend().start({ executable: process.execPath, args: ["-e", 'console.log(process.env.PWD)'], workspacePath: directory, environment: { PWD: "/stale-controller-directory" } });
+      expect((await turn.result()).summary).toBe(directory);
     } finally { rmSync(directory, { recursive: true, force: true }); }
   });
 });

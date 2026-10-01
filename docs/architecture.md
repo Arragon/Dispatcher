@@ -19,6 +19,8 @@ Remote Runners with durable replay and lease fencing, plus platform adapters
 for launchd, Windows Service, systemd, Unix PTY, and ConPTY. M14 adds the
 Cursor, Devin, Kiro, WorkBuddy/CodeBuddy, and hardened Generic CLI adapter
 boundaries plus a capability matrix used by scheduling and operator reroute.
+The local harness expansion adds OpenCode v2, Grok Build and pi through that
+same adapter contract and native JSON CLI streams.
 Scale/HA remains
 outside this boundary.
 
@@ -190,7 +192,7 @@ explicit—there is no background health polling. Adapter manifests are exposed
 read-only to the Agents page, where their JSON Schema and UI Schema generate
 the base configuration form.
 
-The Agents page discovers Codex and Qoder CLI installations, creates alias-based
+The Agents page discovers Codex, Qoder and native CLI harness installations, creates alias-based
 profiles through ConfigPlan, tests authentication explicitly, and shows only
 profile aliases and normalized session state. `CODEX_HOME`, provider account IDs, and
 credentials are never returned by profile/session APIs.
@@ -310,6 +312,31 @@ WorkBuddy/CodeBuddy adapter uses an explicitly configured local HTTP contract;
 endpoint templates require `{sessionId}` as a complete path segment. Generic
 CLI keeps a fixed executable and argv template and grants only its declared
 capabilities.
+
+OpenCode v2, Grok Build and pi share bounded fixed-argv process execution with
+provider-specific JSON normalization inside `adapters`. Child `cwd` and `PWD`
+both point to the worktree. OpenCode uses its
+private `--standalone` server so a local cancellation owns the execution rather
+than leaving it in a shared background service. Grok and pi reserve a provider
+session ID on the first turn; follow-ups use the exact ID, while OpenCode uses
+the ID emitted by its stream. A busy session rejects a second turn. Resource
+snapshots do not wait for an active process to finish, and structured errors
+can fail a turn even when the CLI exits zero. Native token usage does not imply
+quota remaining. Process groups are cancelled on Unix, with bounded escalation.
+
+Installation/capability probes remain separate from authentication. pi can
+check a selected model's readiness without refreshing or exporting credentials;
+OpenCode/Grok discovery reports authentication as unknown until invocation.
+OpenCode and pi retain their native credential stores. Grok additionally accepts
+an opaque `secret://grok/` reference resolved only into the child environment.
+OpenCode/Grok unattended native tool approval requires an explicit
+`settings.approveTools: true` profile choice through ConfigPlan; the default
+retains native permission policy. Follow-up input starts a new turn in the
+same conversation; live permission dialogs and process reattachment after a
+Controller restart are not part of this headless backend contract. A stored
+RUNNING session without a process handle is marked FAILED rather than reported
+as still attached. See `docs/agent-harnesses.md` for installation evidence and
+operator steps.
 
 `GET /api/adapters/compatibility` derives backend, session, input, artifact,
 and resource support from manifests and returns explicit unsupported reasons.
