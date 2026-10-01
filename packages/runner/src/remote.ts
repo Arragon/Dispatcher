@@ -151,6 +151,13 @@ export class RemoteRunnerServer {
     });
   }
 
+  disconnect(runnerId: string, reason: string): boolean {
+    const connection = this.connections.get(runnerId);
+    if (!connection) return false;
+    connection.socket.close(1008, reason.slice(0, 100));
+    return true;
+  }
+
   async close(): Promise<void> {
     clearInterval(this.monitor);
     for (const connection of this.connections.values()) connection.socket.close(1001, "controller shutdown");

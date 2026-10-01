@@ -127,7 +127,10 @@ import {
 } from "@dispatcher/semantic";
 import { CanonicalScheduler } from "@dispatcher/scheduler";
 import { RepositoryRegistry, WorkspaceManager, WorkspacePolicyError } from "@dispatcher/workspace";
+import { BackgroundLoop, backoffDelayMs, runBounded } from "./background.js";
+import { ControlPlaneAuth, OWNER_PRINCIPAL_ID, OWNER_ROLES, OWNER_TOKEN_REFERENCE, type ControlPrincipal } from "./control-auth.js";
 import { LifecycleManager, type ServiceModule } from "./lifecycle.js";
+import { MESSAGING_INBOX_KIND, MessagingInbox, type MessagingInboxRecord } from "./messaging-inbox.js";
 
 export interface ControllerOptions {
   dataDirectory: string;
@@ -144,7 +147,28 @@ export interface ControllerOptions {
   cliBackendFactory?: (provider: "cursor" | "kiro", profile: CliAgentProfile) => CliAgentBackend;
   devinBackendFactory?: (profile: DevinProfileConfig) => DevinBackend;
   modules?: ServiceModule[];
+  ownerToken?: string;
+  allowedHosts?: string[];
+  clock?: () => Date;
+  backgroundWorker?: BackgroundWorkerOptions;
 }
+
+export interface BackgroundWorkerOptions {
+  enabled?: boolean;
+  intervalMs?: number;
+  maxConcurrentRuns?: number;
+  inboxBatchSize?: number;
+  inboxMaxAttempts?: number;
+  inboxBaseDelayMs?: number;
+  inboxMaxDelayMs?: number;
+  runBaseDelayMs?: number;
+  runMaxDelayMs?: number;
+}
+
+type AdvanceResult = { waiting: boolean; run: Run; task: Task; deliveries: JsonValue[] };
+
+const CREDENTIAL_PATTERN = /(?:sk-|xox[baprs]-|gh[op]_)[a-z0-9_-]{8,}/i;
+const ADVANCEABLE_RUN_STATES = new Set<Run["state"]>(["ACTIVE", "VERIFYING", "DELIVERING"]);
 
 class DatabaseSessionStore implements SessionStore {
   constructor(private readonly database: DispatcherDatabase) {}
@@ -388,6 +412,14 @@ export class ControllerService {
   private dashboardClients = 0;
   private readonly secretTestStates = new Map<string, SecretTestState>();
   private readonly agentProcesses: ProcessManager;
+  private readonly controlAuth: ControlPlaneAuth;
+  private readonly requestPrincipals = new WeakMap<object, ControlPrincipal>();
+  private readonly messagingInbox: MessagingInbox;
+  private readonly background: BackgroundLoop;
+  private readonly runAdvances = new Map<string, Promise<AdvanceResult>>();
+  private readonly runRetries = new Map<string, { failures: number; nextAttemptAt: number }>();
+  private projectionDrain: Promise<unknown> | undefined;
+  private ownerToken: Promise<string> | undefined;
 
   constructor(readonly options: ControllerOptions) {
     const logger = createLogger({ level: process.env.LOG_LEVEL ?? "info" });
@@ -406,9 +438,22 @@ export class ControllerService {
     this.resourceRegistry.restore(this.database.listEntities<JsonValue>("resource-signal") as unknown as ResourceSnapshot[]);
     this.resourceProbes.restore(this.database.listEntities<JsonValue>("resource-probe-schedule") as unknown as ResourceProbeSchedule[]);
     this.workspaces = new WorkspaceManager(this.repositories, join(options.dataDirectory, "worktrees"));
-    this.tasks = new CanonicalTaskService(this.database);
+    this.tasks = new CanonicalTaskService(this.database, () => this.now());
     this.projections = new ProjectionWorker(this.database, this.connectors);
     this.secrets = options.secretStore ?? createDefaultSecretStore({ dataDirectory: options.dataDirectory });
+    const worker = options.backgroundWorker ?? {};
+    this.messagingInbox = new MessagingInbox(this.database, {
+      workerId: randomUUID(),
+      clock: () => this.now(),
+      ...(worker.inboxMaxAttempts === undefined ? {} : { maxAttempts: worker.inboxMaxAttempts }),
+      ...(worker.inboxBaseDelayMs === undefined ? {} : { baseDelayMs: worker.inboxBaseDelayMs }),
+      ...(worker.inboxMaxDelayMs === undefined ? {} : { maxDelayMs: worker.inboxMaxDelayMs }),
+    });
+    this.controlAuth = new ControlPlaneAuth({
+      resolveOwnerToken: () => this.resolveOwnerToken(),
+      allowedHosts: [...new Set(["localhost", "127.0.0.1", "::1", ...(options.host && !["0.0.0.0", "::"].includes(options.host) ? [options.host] : []), ...(options.allowedHosts ?? [])])],
+      clock: () => this.now(),
+    });
     this.secureLinks = new SecureDashboardLinkIssuer(`http://${options.host ?? "127.0.0.1"}:${options.port ?? 8347}`, randomUUID());
     this.llm = new LlmRuntime(this.database, (reference) => this.secrets.resolve(reference, { principal: "controller", purpose: "llm" }), options.llmFetch);
     this.configuration = new ConfigurationEngine(this.database, { apply: (config) => this.applyRuntimeConfiguration(config) });
@@ -480,8 +525,27 @@ export class ControllerService {
       },
     });
     modules.push(...(options.modules ?? []));
+    this.background = new BackgroundLoop([
+      { name: "messaging-inbox", run: () => this.processMessagingInbox(worker.inboxBatchSize ?? 10) },
+      { name: "run-advancement", run: () => this.advanceDueRuns(worker.maxConcurrentRuns ?? 2, worker.runBaseDelayMs ?? 1_000, worker.runMaxDelayMs ?? 5 * 60_000) },
+      { name: "projection-drain", run: async () => { await this.drainProjections(this.now()); } },
+    ], {
+      intervalMs: worker.intervalMs ?? 2_000,
+      onError: (job, error) => logger.error({ error: redactValue(error), job }, "background job failed"),
+    });
+    if (worker.enabled) modules.push({ name: "background-worker", start: () => this.background.start(), stop: () => this.background.stop() });
     this.lifecycle = new LifecycleManager(modules);
     this.registerRoutes();
+  }
+
+  runBackgroundCycle(): Promise<void> {
+    return this.background.tick();
+  }
+
+  issueDashboardLogin(baseUrl?: string): { url: string; expiresAt: string } {
+    const issued = this.controlAuth.issueLoginCode();
+    const host = !this.options.host || ["0.0.0.0", "::"].includes(this.options.host) ? "127.0.0.1" : this.options.host;
+    return { url: `${baseUrl ?? `http://${host}:${this.options.port ?? 8347}`}/#login=${issued.code}`, expiresAt: issued.expiresAt };
   }
 
   async start(input: { listen?: boolean } = {}): Promise<void> {
@@ -1039,7 +1103,7 @@ export class ControllerService {
       this.database.saveEntity("resource-recovery", decision.idempotencyKey, json({ ...decision, runId: run.id, profileId, assessment, recoveredAt: run.lastActivityAt }));
       this.attentionNotifications.recover(run.taskId);
       await this.notifyResourceRecovery(run, decision.idempotencyKey);
-      await this.projections.drain();
+      await this.drainProjections();
       this.fleetEvents.publish("run.changed", run.id, { id: run.id, state: run.state, recoveryReason: run.recoveryReason });
       outcomes.push({ runId: run.id, action: decision.action, reason: decision.reason });
     }
@@ -1202,7 +1266,7 @@ export class ControllerService {
     if (pullRequest?.url) {
       this.tasks.execute({ id: `run:${run.id}:delivery-comment`, taskId: run.taskId, baseRevision: current.revision, actor: "run-worker", command: { type: "task.comment", body: `Pull request ready: ${pullRequest.url}` } });
     }
-    await this.projections.drain();
+    await this.drainProjections();
     return {
       waiting: false,
       run,
@@ -1536,9 +1600,9 @@ export class ControllerService {
     }
   }
 
-  private async handleMessagingMessage(adapter: MessagingAdapter, message: NormalizedMessage): Promise<{ externalMessageId: string }> {
+  private async handleMessagingMessage(adapter: MessagingAdapter, message: NormalizedMessage, options: { credentialRedacted?: boolean } = {}): Promise<{ externalMessageId: string }> {
     const principal = this.messagingIdentity.authorize(adapter.instance.id, message.principalExternalId);
-    if (/(?:sk-|xox[baprs]-|gh[op]_)[a-z0-9_-]{8,}/i.test(message.text)) {
+    if (options.credentialRedacted || CREDENTIAL_PATTERN.test(message.text)) {
       const expiresAt = new Date(Date.now() + 5 * 60_000).toISOString();
       const secureLink = this.secureLinks.issue({ principalId: principal.principalId, expiresAt });
       const text = `Credentials are not accepted in Slack. Use the secure Dashboard input instead: ${secureLink}`;
@@ -1600,7 +1664,164 @@ export class ControllerService {
       : adapter.send({ channel: message.conversationId, subject: "Dispatcher", body: text, severity: "info" }, `workflow:${message.idempotencyKey}`);
   }
 
+  private now(): Date {
+    return this.options.clock?.() ?? new Date();
+  }
+
+  private principalFor(request: object): ControlPrincipal {
+    const principal = this.requestPrincipals.get(request);
+    if (!principal) throw new ConnectorError("AUTH", "Control-plane authentication is required", { retryable: false, operation: "auth" });
+    return principal;
+  }
+
+  private async resolveOwnerToken(): Promise<string> {
+    if (this.options.ownerToken) return this.options.ownerToken;
+    if ((await this.secrets.metadata(OWNER_TOKEN_REFERENCE)).exists) {
+      return this.secrets.resolve(OWNER_TOKEN_REFERENCE, { principal: "controller", purpose: "provider" });
+    }
+    this.ownerToken ??= (async () => {
+      const token = randomBytes(32).toString("base64url");
+      await this.secrets.put(OWNER_TOKEN_REFERENCE, token);
+      return token;
+    })().finally(() => {
+      this.ownerToken = undefined;
+    });
+    return this.ownerToken;
+  }
+
+  private async drainProjections(now?: Date): Promise<Awaited<ReturnType<ProjectionWorker["drain"]>>> {
+    while (this.projectionDrain) await this.projectionDrain.catch(() => undefined);
+    const drain = this.projections.drain(now ?? this.now());
+    this.projectionDrain = drain;
+    try {
+      return await drain;
+    } finally {
+      if (this.projectionDrain === drain) this.projectionDrain = undefined;
+    }
+  }
+
+  private advanceRunExclusive(runId: string): Promise<AdvanceResult> {
+    const existing = this.runAdvances.get(runId);
+    if (existing) return existing;
+    const advance = (async () => {
+      const advanced = await this.advanceRun(runId);
+      this.fleetEvents.publish("run.changed", advanced.run.id, { id: advanced.run.id, taskId: advanced.run.taskId, state: advanced.run.state, lastActivityAt: advanced.run.lastActivityAt });
+      try {
+        await this.notifyAttention(advanced.run);
+      } catch (error) {
+        this.app.log.error({ error: redactValue(error), runId: advanced.run.id }, "attention notification failed");
+      }
+      return advanced;
+    })().finally(() => {
+      this.runAdvances.delete(runId);
+    });
+    this.runAdvances.set(runId, advance);
+    return advance;
+  }
+
+  private async advanceDueRuns(limit: number, baseDelayMs: number, maxDelayMs: number): Promise<void> {
+    const now = this.now().getTime();
+    const due = this.database.listEntities<JsonValue>("run")
+      .map((value) => value as unknown as Run)
+      .filter((run) => ADVANCEABLE_RUN_STATES.has(run.state) && !this.runAdvances.has(run.id) && (this.runRetries.get(run.id)?.nextAttemptAt ?? 0) <= now);
+    await runBounded(due, limit, async (run) => {
+      try {
+        await this.advanceRunExclusive(run.id);
+        this.runRetries.delete(run.id);
+      } catch (error) {
+        const failures = (this.runRetries.get(run.id)?.failures ?? 0) + 1;
+        this.runRetries.set(run.id, { failures, nextAttemptAt: this.now().getTime() + backoffDelayMs(failures, baseDelayMs, maxDelayMs) });
+        this.app.log.warn({ error: redactValue(error), runId: run.id, failures }, "background run advancement failed");
+      }
+    });
+  }
+
+  private async processMessagingInbox(limit: number): Promise<void> {
+    for (const record of this.messagingInbox.claimDue(limit)) await this.processMessagingInboxRecord(record);
+  }
+
+  private async processMessagingInboxRecord(record: MessagingInboxRecord): Promise<void> {
+    const message = record.message;
+    if (!message) return;
+    const adapter = this.connectors.list("messaging").find((entry) => entry.instance.id === record.connectorInstanceId) as MessagingAdapter | undefined;
+    try {
+      if (!adapter) throw new ConnectorError("TEMPORARY", "Messaging connector is not configured", { retryable: true, operation: "ingress" });
+      if (!this.messagingPrincipalLinked(adapter.instance.id, message.principalExternalId)) {
+        const sent = await this.replyUnauthorized(adapter, message);
+        this.messagingInbox.complete(record.id, "UNAUTHORIZED", sent?.externalMessageId);
+        return;
+      }
+      try {
+        const sent = await this.handleMessagingMessage(adapter, message, { credentialRedacted: record.credentialRedacted });
+        this.messagingInbox.complete(record.id, "REPLIED", sent.externalMessageId);
+      } catch (error) {
+        if (!(error instanceof SemanticPolicyError && error.code === "FORBIDDEN")) throw error;
+        const sent = await this.replyUnauthorized(adapter, message);
+        this.messagingInbox.complete(record.id, "UNAUTHORIZED", sent?.externalMessageId);
+      }
+    } catch (error) {
+      const retryable = error instanceof ConnectorError ? error.options.retryable : !(error instanceof SemanticPolicyError || error instanceof RevisionConflictError);
+      const reason = String(redactValue(error instanceof Error ? error.message : "messaging workflow failed")).slice(0, 500);
+      const failed = this.messagingInbox.fail(record.id, reason, retryable);
+      this.app.log.warn({ error: redactValue(error), inboxId: record.id, status: failed.status, attempts: failed.attempts }, "messaging inbox processing failed");
+      if (failed.status === "DEAD_LETTER" && adapter) {
+        try {
+          await this.replyToMessage(adapter, message, "Dispatcher could not process this message. The owner can inspect it in the Dashboard dead-letter queue.", `dead-letter:${message.idempotencyKey}`);
+        } catch (replyError) {
+          this.app.log.warn({ error: redactValue(replyError), inboxId: record.id }, "messaging dead-letter notice failed");
+        }
+      }
+    }
+  }
+
+  private messagingPrincipalLinked(connectorInstanceId: string, externalPrincipalId: string): boolean {
+    try {
+      this.messagingIdentity.authorize(connectorInstanceId, externalPrincipalId);
+      return true;
+    } catch (error) {
+      if (error instanceof ConnectorError && error.code === "AUTH") return false;
+      throw error;
+    }
+  }
+
+  private async replyUnauthorized(adapter: MessagingAdapter, message: NormalizedMessage): Promise<{ externalMessageId: string } | undefined> {
+    const key = `unauthorized:${adapter.instance.id}:${message.conversationId}:${message.threadId}:${message.principalExternalId}`;
+    if (this.database.getEntity<JsonValue>("messaging-unauthorized-notice", key)) return undefined;
+    const sent = await this.replyToMessage(adapter, message, "You are not authorized to run this Dispatcher action. Ask the Dispatcher owner to link your account or grant the required role.", key);
+    this.database.saveEntity("messaging-unauthorized-notice", key, json({ key, connectorInstanceId: adapter.instance.id, principalExternalId: message.principalExternalId, externalMessageId: sent.externalMessageId, sentAt: this.now().toISOString() }));
+    return sent;
+  }
+
+  private replyToMessage(adapter: MessagingAdapter, message: NormalizedMessage, text: string, idempotencyKey: string): Promise<{ externalMessageId: string }> {
+    return adapter.reply
+      ? adapter.reply({ channel: message.conversationId, threadId: message.threadId, text }, idempotencyKey)
+      : adapter.send({ channel: message.conversationId, subject: "Dispatcher", body: text, severity: "warning" }, idempotencyKey);
+  }
+
+  private async revokeRunnerCredential(runnerId: string, credentialRef: string | undefined): Promise<void> {
+    this.enrollments.revoke(runnerId, this.now());
+    if (credentialRef && (await this.secrets.metadata(credentialRef)).exists) await this.secrets.delete(credentialRef);
+    this.remoteRunnerServer.disconnect(runnerId, "credential revoked");
+    this.database.saveEntity("runner-identity", runnerId, json({ runnerId, ...(credentialRef ? { credentialRef } : {}), revokedAt: this.now().toISOString() }));
+  }
+
   private registerRoutes(): void {
+    this.app.addHook("onRequest", async (request, reply) => {
+      const decision = await this.controlAuth.evaluate({ method: request.method, url: request.url, headers: request.headers, ip: request.ip });
+      if (decision.kind === "authenticated") this.requestPrincipals.set(request, decision.principal);
+      if (decision.kind !== "rejected") return;
+      if (decision.retryAfterSeconds) reply.header("retry-after", String(decision.retryAfterSeconds));
+      return reply.code(decision.status).send({ code: decision.code, message: decision.message });
+    });
+    this.app.addHook("onSend", async (request, reply, payload) => {
+      reply.header("x-content-type-options", "nosniff");
+      reply.header("x-frame-options", "DENY");
+      reply.header("referrer-policy", "no-referrer");
+      reply.header("cross-origin-opener-policy", "same-origin");
+      reply.header("content-security-policy", "frame-ancestors 'none'; base-uri 'self'; object-src 'none'");
+      if (request.url.startsWith("/api/") || request.url.startsWith("/auth/")) reply.header("cache-control", "no-store");
+      return payload;
+    });
     this.app.addHook("preParsing", async (request, _reply, payload) => {
       if (!request.url.startsWith("/api/connectors/") || !request.url.endsWith("/webhook")) return payload;
       const chunks: Buffer[] = [];
@@ -1634,11 +1855,38 @@ export class ControllerService {
       return reply.redirect(`/config?secureInput=1&principal=${encodeURIComponent(verified.principalId)}`);
     });
 
+    this.app.post<{ Body: { token?: string; code?: string } }>("/auth/session", async (request, reply) => {
+      const token = typeof request.body?.token === "string" ? request.body.token : undefined;
+      const code = typeof request.body?.code === "string" ? request.body.code : undefined;
+      const session = await this.controlAuth.createSession({ ...(token ? { token } : {}), ...(code ? { code } : {}) }, request.ip);
+      if (!session) return reply.code(401).send({ code: "AUTH_REJECTED", message: "Login credential is invalid or expired" });
+      reply.header("set-cookie", this.controlAuth.sessionCookies(session, request.protocol === "https"));
+      return reply.code(201).send({ principal: { id: OWNER_PRINCIPAL_ID, roles: [...OWNER_ROLES] }, csrfToken: session.csrfToken, expiresAt: session.expiresAt });
+    });
+    this.app.get("/auth/session", async (request) => ({
+      authenticated: true,
+      principal: this.principalFor(request),
+      csrfToken: this.controlAuth.sessionCsrfToken(request.headers.cookie) ?? null,
+    }));
+    this.app.delete("/auth/session", async (request, reply) => {
+      this.controlAuth.revokeSession(request.headers.cookie);
+      reply.header("set-cookie", this.controlAuth.clearedCookies());
+      return reply.code(204).send();
+    });
+    this.app.post("/auth/login-codes", async (_request, reply) => reply.code(201).send(this.issueDashboardLogin()));
+    this.app.post("/auth/owner-token/rotate", async (_request, reply) => {
+      if (this.options.ownerToken) return reply.code(409).send({ code: "OWNER_TOKEN_STATIC", message: "The owner token is supplied by the process environment" });
+      const token = randomBytes(32).toString("base64url");
+      await this.secrets.put(OWNER_TOKEN_REFERENCE, token);
+      this.controlAuth.revokeAllSessions();
+      return reply.code(201).send({ token, credentialRef: OWNER_TOKEN_REFERENCE });
+    });
+
     this.app.get("/api/runners", async () => ({ runners: this.runners.list() }));
     this.app.post<{ Params: { id: string }; Body: { ttlMs?: number } }>("/api/runners/:id/enrollment", async (request, reply) => {
       const runner = this.configuration.current().config.runners.find((candidate) => candidate.id === request.params.id && candidate.mode === "remote");
       if (!runner) return reply.code(404).send({ code: "REMOTE_RUNNER_NOT_FOUND" });
-      const issued = this.enrollments.issue(runner.id, request.body?.ttlMs);
+      const issued = this.enrollments.issue(runner.id, request.body?.ttlMs, this.now());
       return reply.code(201).send({ runnerId: runner.id, token: issued.token, expiresAt: issued.record.expiresAt });
     });
     this.app.post<{ Body: RunnerEnrollmentBody }>("/api/runners/enroll", async (request, reply) => {
@@ -1646,14 +1894,28 @@ export class ControllerService {
       const runner = this.configuration.current().config.runners.find((candidate) => candidate.id === request.body!.runnerId && candidate.mode === "remote");
       if (!runner?.credentialRef) return reply.code(404).send({ code: "REMOTE_RUNNER_NOT_FOUND" });
       try {
-        this.enrollments.consume(runner.id, request.body.token);
+        this.enrollments.consume(runner.id, request.body.token, this.now());
       } catch (error) {
+        this.controlAuth.recordFailure(request.ip);
         return reply.code(401).send({ code: "ENROLLMENT_REJECTED", message: error instanceof Error ? error.message : "Enrollment rejected" });
       }
       const bearerToken = randomBytes(32).toString("base64url");
       await this.secrets.put(runner.credentialRef, bearerToken);
-      this.database.saveEntity("runner-identity", runner.id, json({ runnerId: runner.id, credentialRef: runner.credentialRef, enrolledAt: new Date().toISOString() }));
+      this.database.saveEntity("runner-identity", runner.id, json({ runnerId: runner.id, credentialRef: runner.credentialRef, enrolledAt: this.now().toISOString() }));
       return reply.code(201).send({ runnerId: runner.id, credentialRef: runner.credentialRef, bearerToken, protocolVersion: "1.2" });
+    });
+    this.app.post<{ Params: { id: string } }>("/api/runners/:id/credential/revoke", async (request, reply) => {
+      const runner = this.configuration.current().config.runners.find((candidate) => candidate.id === request.params.id && candidate.mode === "remote");
+      if (!runner) return reply.code(404).send({ code: "REMOTE_RUNNER_NOT_FOUND" });
+      await this.revokeRunnerCredential(runner.id, runner.credentialRef);
+      return { runnerId: runner.id, revoked: true };
+    });
+    this.app.post<{ Params: { id: string }; Body: { ttlMs?: number } }>("/api/runners/:id/credential/rotate", async (request, reply) => {
+      const runner = this.configuration.current().config.runners.find((candidate) => candidate.id === request.params.id && candidate.mode === "remote");
+      if (!runner) return reply.code(404).send({ code: "REMOTE_RUNNER_NOT_FOUND" });
+      await this.revokeRunnerCredential(runner.id, runner.credentialRef);
+      const issued = this.enrollments.issue(runner.id, request.body?.ttlMs, this.now());
+      return reply.code(201).send({ runnerId: runner.id, token: issued.token, expiresAt: issued.record.expiresAt });
     });
     this.app.get("/api/adapters/manifests", async () => ({ manifests: adapterManifests }));
     this.app.get("/api/adapters/compatibility", async () => ({ matrix: buildAdapterCompatibilityMatrix(adapterManifests) }));
@@ -1892,9 +2154,16 @@ export class ControllerService {
       if (probe.health === "AUTH_REQUIRED") await this.notifyOperationalAttention({ key: connector.instance.id, state: "CONNECTOR_AUTH", subject: `Connector authentication required: ${connector.instance.displayName}`, body: probe.message ?? "Open Integrations to repair credentials." });
       return { probe };
     });
-    this.app.post("/api/connectors/projections/drain", async () => this.projections.drain());
+    this.app.post("/api/connectors/projections/drain", async () => this.drainProjections());
     this.app.get("/api/connectors/dead-letters", async () => ({ deadLetters: this.database.listDeadLetters<JsonValue>() }));
     this.app.post<{ Params: { id: string } }>("/api/connectors/dead-letters/:id/retry", async (request, reply) => {
+      const deadLetter = this.database.listDeadLetters<JsonValue>().find((entry) => entry.id === request.params.id);
+      const inboxPrefix = `${MESSAGING_INBOX_KIND}:`;
+      if (deadLetter?.source === "inbox" && deadLetter.sourceId.startsWith(inboxPrefix)) {
+        if (!this.messagingInbox.requeue(deadLetter.sourceId.slice(inboxPrefix.length))) return reply.code(409).send({ code: "DEAD_LETTER_NOT_RETRYABLE" });
+        this.database.resolveDeadLetter(request.params.id);
+        return { retried: true };
+      }
       if (!this.database.retryDeadLetter(request.params.id)) return reply.code(409).send({ code: "DEAD_LETTER_NOT_RETRYABLE" });
       return reply.code(202).send({ accepted: true });
     });
@@ -1946,22 +2215,27 @@ export class ControllerService {
       if (adapter.instance.kind === "messaging") {
         const messaging = adapter as MessagingAdapter;
         if (!messaging.ingress) return reply.code(409).send({ code: "MESSAGING_INGRESS_UNSUPPORTED" });
-        const ingress = await messaging.ingress(raw, headers);
-        if (ingress.kind === "challenge") return { challenge: ingress.challenge };
-        if (ingress.kind === "ignored" || !ingress.message) return reply.code(202).send({ accepted: true, ignored: true });
-        const existing = this.database.getEntity<JsonValue>("messaging-inbox", ingress.message.idempotencyKey) as { status?: string; replyId?: string } | undefined;
-        if (existing?.status === "PROCESSED") return reply.code(202).send({ accepted: true, duplicate: true, eventId: ingress.message.externalMessageId, replyId: existing.replyId });
-        const receivedAt = new Date().toISOString();
-        const inboxMessage = /(?:sk-|xox[baprs]-|gh[op]_)[a-z0-9_-]{8,}/i.test(ingress.message.text) ? { ...ingress.message, text: "[REDACTED]" } : ingress.message;
-        this.database.saveEntity("messaging-inbox", ingress.message.idempotencyKey, json({ status: "RECEIVED", message: inboxMessage, receivedAt }), receivedAt);
-        try {
-          const sent = await this.handleMessagingMessage(messaging, ingress.message);
-          this.database.saveEntity("messaging-inbox", ingress.message.idempotencyKey, json({ status: "PROCESSED", message: inboxMessage, receivedAt, processedAt: new Date().toISOString(), replyId: sent.externalMessageId }));
-          return reply.code(202).send({ accepted: true, eventId: ingress.message.externalMessageId, replyId: sent.externalMessageId });
-        } catch (error) {
-          this.database.saveEntity("messaging-inbox", ingress.message.idempotencyKey, json({ status: "FAILED", message: inboxMessage, receivedAt, failedAt: new Date().toISOString(), error: error instanceof Error ? error.message : "messaging workflow failed" }));
+        const ingress = await messaging.ingress(raw, headers).catch((error: unknown) => {
+          if (error instanceof ConnectorError && error.code === "CONFLICT" && error.options.operation === "ingress") return undefined;
           throw error;
+        });
+        if (!ingress) return reply.code(200).send({ accepted: true, duplicate: true });
+        if (ingress.kind === "challenge") return { challenge: ingress.challenge };
+        if (ingress.kind === "ignored" || !ingress.message) {
+          if (ingress.idempotencyKey) this.messagingInbox.ignore(ingress.idempotencyKey, messaging.instance.id, ingress.ignoredReason ?? "ignored", ingress.delivery);
+          return reply.code(202).send({ accepted: true, ignored: true, ...(ingress.ignoredReason ? { reason: ingress.ignoredReason } : {}) });
         }
+        const received = this.messagingInbox.receive(ingress.message, {
+          credentialRedacted: CREDENTIAL_PATTERN.test(ingress.message.text),
+          ...(ingress.delivery ? { delivery: ingress.delivery } : {}),
+        });
+        return reply.code(202).send({
+          accepted: true,
+          duplicate: received.duplicate,
+          eventId: ingress.message.externalMessageId,
+          status: received.record.status,
+          ...(received.record.replyId ? { replyId: received.record.replyId } : {}),
+        });
       }
       return reply.code(409).send({ code: "WEBHOOK_UNSUPPORTED" });
     });
@@ -2076,10 +2350,7 @@ export class ControllerService {
     this.app.post<{ Params: { id: string } }>("/api/runs/:id/advance", async (request, reply) => {
       const run = this.database.getEntity<JsonValue>("run", request.params.id);
       if (!run) return reply.code(404).send({ code: "RUN_NOT_FOUND" });
-      const advanced = await this.advanceRun(request.params.id);
-      this.fleetEvents.publish("run.changed", advanced.run.id, { id: advanced.run.id, taskId: advanced.run.taskId, state: advanced.run.state, lastActivityAt: advanced.run.lastActivityAt });
-      try { await this.notifyAttention(advanced.run); }
-      catch (error) { this.app.log.error({ error: redactValue(error), runId: advanced.run.id }, "attention notification failed"); }
+      const advanced = await this.advanceRunExclusive(request.params.id);
       return reply.code(advanced.waiting ? 202 : 200).send(advanced);
     });
     this.app.get("/api/system-impact", async () => {
@@ -2104,7 +2375,7 @@ export class ControllerService {
       if (!request.body?.config) return reply.code(400).send({ code: "LLM_CONFIG_REQUIRED" });
       const current = this.configuration.current();
       const next: DispatcherConfig = { ...structuredClone(current.config), internalLlm: structuredClone(request.body.config) };
-      const plan = this.configuration.buildPlan(next, request.body.actor ?? "local-web", "web");
+      const plan = this.configuration.buildPlan(next, this.principalFor(request).id, "web");
       await assertRequiredSecretsAvailable(next, this.secrets);
       const applied = this.configuration.applyPlan(plan.id, { confirmed: request.body.confirmed ?? true });
       return { plan, revision: applied.revision, config: applied.config.internalLlm, state: this.llm.snapshot().state };
@@ -2128,7 +2399,7 @@ export class ControllerService {
       const workflow = this.semanticWorkflows.plan({
         id: randomUUID(),
         intent,
-        principal: { id: request.body.actor ?? "local-web", roles: request.body.roles ?? ["admin"], channel: request.body.channel ?? "web" },
+        principal: { ...this.principalFor(request), channel: "web" },
         candidates: this.semanticCandidates(),
       });
       return reply.code(201).send({ workflow, mode: this.llm.snapshot().state.mode });
@@ -2182,7 +2453,7 @@ export class ControllerService {
     this.app.get("/api/config/audit", async () => ({ audit: this.database.listAudit() }));
     this.app.post<{ Body: ConfigPlanBody }>("/api/config/plans", async (request, reply) => {
       if (request.body?.config === undefined) return reply.code(400).send({ code: "CONFIG_REQUIRED" });
-      const plan = this.configuration.buildPlan(request.body.config, request.body.actor ?? "local-web", "web");
+      const plan = this.configuration.buildPlan(request.body.config, this.principalFor(request).id, "web");
       return reply.code(201).send({ plan });
     });
     this.app.post<{ Params: { id: string }; Body: ApplyPlanBody }>("/api/config/plans/:id/apply", async (request) => {

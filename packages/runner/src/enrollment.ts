@@ -7,6 +7,7 @@ export interface RunnerEnrollmentRecord {
   expiresAt: string;
   createdAt: string;
   consumedAt?: string;
+  revokedAt?: string;
 }
 
 function digest(token: string): string {
@@ -42,7 +43,7 @@ export class RunnerEnrollmentAuthority {
     const supplied = Buffer.from(digest(token));
     const record = [...this.records.values()].find((candidate) => {
       const expected = Buffer.from(candidate.tokenHash);
-      return candidate.runnerId === runnerId && !candidate.consumedAt && supplied.length === expected.length && timingSafeEqual(supplied, expected);
+      return candidate.runnerId === runnerId && !candidate.consumedAt && !candidate.revokedAt && supplied.length === expected.length && timingSafeEqual(supplied, expected);
     });
     if (!record) throw new Error("Enrollment token is invalid or already consumed");
     if (Date.parse(record.expiresAt) <= now.getTime()) throw new Error("Enrollment token has expired");
@@ -50,6 +51,18 @@ export class RunnerEnrollmentAuthority {
     this.records.set(record.id, consumed);
     this.onChange(structuredClone(consumed));
     return structuredClone(consumed);
+  }
+
+  revoke(runnerId: string, now = new Date()): number {
+    let revoked = 0;
+    for (const record of [...this.records.values()]) {
+      if (record.runnerId !== runnerId || record.consumedAt || record.revokedAt) continue;
+      const updated = { ...record, revokedAt: now.toISOString() };
+      this.records.set(record.id, updated);
+      this.onChange(structuredClone(updated));
+      revoked += 1;
+    }
+    return revoked;
   }
 }
 

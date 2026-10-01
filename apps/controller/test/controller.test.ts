@@ -9,6 +9,9 @@ import { RemoteRunnerClient } from "@dispatcher/runner";
 import { ControllerService } from "../src/service.js";
 import { LifecycleManager } from "../src/lifecycle.js";
 
+const TEST_OWNER_TOKEN = "test-owner-token";
+const OWNER = { authorization: `Bearer ${TEST_OWNER_TOKEN}` };
+
 const temporaryDirectories: string[] = [];
 function dataDirectory(): string {
   const directory = mkdtempSync(join(tmpdir(), "dispatcher-controller-"));
@@ -30,11 +33,11 @@ class FakeSecretStore implements SecretStore {
 
 describe("ControllerService", () => {
   it("starts with an Embedded Runner and distinguishes readiness", async () => {
-    const service = new ControllerService({ dataDirectory: dataDirectory(), withRunner: true, secretStore: new FakeSecretStore() });
+    const service = new ControllerService({ ownerToken: TEST_OWNER_TOKEN, dataDirectory: dataDirectory(), withRunner: true, secretStore: new FakeSecretStore() });
     await service.start({ listen: false });
-    const health = await service.app.inject({ method: "GET", url: "/health" });
-    const ready = await service.app.inject({ method: "GET", url: "/ready" });
-    const runners = await service.app.inject({ method: "GET", url: "/api/runners" });
+    const health = await service.app.inject({ headers: OWNER,  method: "GET", url: "/health" });
+    const ready = await service.app.inject({ headers: OWNER,  method: "GET", url: "/ready" });
+    const runners = await service.app.inject({ headers: OWNER,  method: "GET", url: "/api/runners" });
     expect(health.json()).toMatchObject({ status: "ok", lifecycle: "READY", mode: "embedded" });
     expect(ready.statusCode).toBe(200);
     expect(runners.json().runners[0]).toMatchObject({ id: "local", state: "ONLINE" });
@@ -43,30 +46,30 @@ describe("ControllerService", () => {
 
   it("restores persisted runner state across restart", async () => {
     const directory = dataDirectory();
-    const first = new ControllerService({ dataDirectory: directory, withRunner: true, secretStore: new FakeSecretStore() });
+    const first = new ControllerService({ ownerToken: TEST_OWNER_TOKEN, dataDirectory: directory, withRunner: true, secretStore: new FakeSecretStore() });
     await first.start({ listen: false });
     await first.stop();
-    const second = new ControllerService({ dataDirectory: directory, withRunner: true, secretStore: new FakeSecretStore() });
+    const second = new ControllerService({ ownerToken: TEST_OWNER_TOKEN, dataDirectory: directory, withRunner: true, secretStore: new FakeSecretStore() });
     await second.start({ listen: false });
-    const runners = await second.app.inject({ method: "GET", url: "/api/runners" });
+    const runners = await second.app.inject({ headers: OWNER,  method: "GET", url: "/api/runners" });
     expect(runners.json().runners[0]).toMatchObject({ id: "local", state: "ONLINE" });
     await second.stop();
   });
 
   it("authenticates a separately connected Remote Runner on the controller websocket", async () => {
     const secrets = new FakeSecretStore();
-    const service = new ControllerService({ dataDirectory: dataDirectory(), host: "127.0.0.1", port: 0, secretStore: secrets });
+    const service = new ControllerService({ ownerToken: TEST_OWNER_TOKEN, dataDirectory: dataDirectory(), host: "127.0.0.1", port: 0, secretStore: secrets });
     const next = structuredClone(service.configuration.current().config);
     next.runners.push({ id: "build-01", displayName: "Build 01", mode: "remote", capacity: 2, tags: ["ci"], credentialRef: "secret://runner/dispatcher/build-01" });
     const plan = service.configuration.buildPlan(next, "test", "api");
     service.configuration.applyPlan(plan.id, { confirmed: true });
     await service.start();
-    const issued = await service.app.inject({ method: "POST", url: "/api/runners/build-01/enrollment", payload: { ttlMs: 60_000 } });
+    const issued = await service.app.inject({ headers: OWNER,  method: "POST", url: "/api/runners/build-01/enrollment", payload: { ttlMs: 60_000 } });
     expect(issued.statusCode).toBe(201);
-    const enrolled = await service.app.inject({ method: "POST", url: "/api/runners/enroll", payload: { runnerId: "build-01", token: issued.json().token } });
+    const enrolled = await service.app.inject({ headers: OWNER,  method: "POST", url: "/api/runners/enroll", payload: { runnerId: "build-01", token: issued.json().token } });
     expect(enrolled.statusCode).toBe(201);
     expect(enrolled.json()).toMatchObject({ runnerId: "build-01", credentialRef: "secret://runner/dispatcher/build-01", protocolVersion: "1.2" });
-    const replay = await service.app.inject({ method: "POST", url: "/api/runners/enroll", payload: { runnerId: "build-01", token: issued.json().token } });
+    const replay = await service.app.inject({ headers: OWNER,  method: "POST", url: "/api/runners/enroll", payload: { runnerId: "build-01", token: issued.json().token } });
     expect(replay.statusCode).toBe(401);
     const address = service.app.server.address();
     if (!address || typeof address === "string") throw new Error("Controller did not bind a TCP port");
@@ -77,20 +80,20 @@ describe("ControllerService", () => {
     });
     client.register("runner.health", () => ({ ok: true }));
     await client.start();
-    const runners = await service.app.inject({ method: "GET", url: "/api/runners" });
+    const runners = await service.app.inject({ headers: OWNER,  method: "GET", url: "/api/runners" });
     expect(runners.json().runners).toEqual(expect.arrayContaining([expect.objectContaining({ id: "build-01", state: "ONLINE" })]));
     await client.stop();
     await service.stop();
   });
 
   it("creates and applies configuration plans through the API", async () => {
-    const service = new ControllerService({ dataDirectory: dataDirectory(), secretStore: new FakeSecretStore() });
+    const service = new ControllerService({ ownerToken: TEST_OWNER_TOKEN, dataDirectory: dataDirectory(), secretStore: new FakeSecretStore() });
     await service.start({ listen: false });
-    const current = (await service.app.inject({ method: "GET", url: "/api/config" })).json();
+    const current = (await service.app.inject({ headers: OWNER,  method: "GET", url: "/api/config" })).json();
     current.config.controller.id = "api-controller";
-    const built = await service.app.inject({ method: "POST", url: "/api/config/plans", payload: { config: current.config } });
+    const built = await service.app.inject({ headers: OWNER,  method: "POST", url: "/api/config/plans", payload: { config: current.config } });
     expect(built.statusCode).toBe(201);
-    const applied = await service.app.inject({ method: "POST", url: `/api/config/plans/${built.json().plan.id}/apply`, payload: {} });
+    const applied = await service.app.inject({ headers: OWNER,  method: "POST", url: `/api/config/plans/${built.json().plan.id}/apply`, payload: {} });
     expect(applied.statusCode).toBe(200);
     expect(applied.json().config.controller.id).toBe("api-controller");
     await service.stop();
@@ -99,9 +102,9 @@ describe("ControllerService", () => {
   it("never exposes a secret read endpoint", async () => {
     const secrets = new FakeSecretStore();
     const directory = dataDirectory();
-    const service = new ControllerService({ dataDirectory: directory, secretStore: secrets });
+    const service = new ControllerService({ ownerToken: TEST_OWNER_TOKEN, dataDirectory: directory, secretStore: secrets });
     await service.start({ listen: false });
-    const saved = await service.app.inject({ method: "PUT", url: "/api/secrets/linear/main", payload: { value: "canary-secret-value" } });
+    const saved = await service.app.inject({ headers: OWNER,  method: "PUT", url: "/api/secrets/linear/main", payload: { value: "canary-secret-value" } });
     expect(saved.statusCode).toBe(201);
     expect(saved.body).not.toContain("canary-secret-value");
     expect(saved.json().secret).toMatchObject({
@@ -111,10 +114,10 @@ describe("ControllerService", () => {
       lastTestStatus: null,
       lastTestedAt: null,
     });
-    const tested = await service.app.inject({ method: "POST", url: "/api/secrets/linear/main/test" });
+    const tested = await service.app.inject({ headers: OWNER,  method: "POST", url: "/api/secrets/linear/main/test" });
     expect(tested.json()).toMatchObject({ ok: true, secret: { lastTestStatus: "ok" } });
     expect(tested.body).not.toContain("canary-secret-value");
-    const read = await service.app.inject({ method: "GET", url: "/api/secrets/linear/main" });
+    const read = await service.app.inject({ headers: OWNER,  method: "GET", url: "/api/secrets/linear/main" });
     expect(read.statusCode).toBe(404);
     expect(JSON.stringify(service.configuration.exportRedacted())).not.toContain("canary-secret-value");
     expect(JSON.stringify(service.database.listAudit())).not.toContain("canary-secret-value");
@@ -126,40 +129,40 @@ describe("ControllerService", () => {
 
   it("blocks activation until every required secret reference exists", async () => {
     const secrets = new FakeSecretStore();
-    const service = new ControllerService({ dataDirectory: dataDirectory(), secretStore: secrets });
+    const service = new ControllerService({ ownerToken: TEST_OWNER_TOKEN, dataDirectory: dataDirectory(), secretStore: secrets });
     await service.start({ listen: false });
-    const current = (await service.app.inject({ method: "GET", url: "/api/config" })).json();
+    const current = (await service.app.inject({ headers: OWNER,  method: "GET", url: "/api/config" })).json();
     current.config.integrations.linear = { enabled: true, credentialRef: "secret://linear/main" };
-    const built = await service.app.inject({ method: "POST", url: "/api/config/plans", payload: { config: current.config } });
-    const missing = await service.app.inject({
+    const built = await service.app.inject({ headers: OWNER,  method: "POST", url: "/api/config/plans", payload: { config: current.config } });
+    const missing = await service.app.inject({ headers: OWNER, 
       method: "POST",
       url: `/api/config/plans/${built.json().plan.id}/apply`,
       payload: { confirmed: true },
     });
     expect(missing.statusCode).toBe(400);
     expect(missing.json()).toMatchObject({ code: "SECRET_REFERENCE_MISSING" });
-    expect((await service.app.inject({ method: "GET", url: "/api/config" })).json().revision).toBe(current.revision);
-    await service.app.inject({ method: "PUT", url: "/api/secrets/linear/main", payload: { value: "canary-secret-value" } });
-    const applied = await service.app.inject({
+    expect((await service.app.inject({ headers: OWNER,  method: "GET", url: "/api/config" })).json().revision).toBe(current.revision);
+    await service.app.inject({ headers: OWNER,  method: "PUT", url: "/api/secrets/linear/main", payload: { value: "canary-secret-value" } });
+    const applied = await service.app.inject({ headers: OWNER, 
       method: "POST",
       url: `/api/config/plans/${built.json().plan.id}/apply`,
       payload: { confirmed: true },
     });
     expect(applied.statusCode).toBe(200);
-    const inUse = await service.app.inject({ method: "DELETE", url: "/api/secrets/linear/main" });
+    const inUse = await service.app.inject({ headers: OWNER,  method: "DELETE", url: "/api/secrets/linear/main" });
     expect(inUse.statusCode).toBe(409);
     expect(inUse.json()).toMatchObject({ code: "SECRET_IN_USE" });
-    await service.app.inject({ method: "POST", url: `/api/config/plans/${built.json().plan.id}/rollback` });
-    expect((await service.app.inject({ method: "DELETE", url: "/api/secrets/linear/main" })).statusCode).toBe(204);
+    await service.app.inject({ headers: OWNER,  method: "POST", url: `/api/config/plans/${built.json().plan.id}/rollback` });
+    expect((await service.app.inject({ headers: OWNER,  method: "DELETE", url: "/api/secrets/linear/main" })).statusCode).toBe(204);
     await service.stop();
   });
 
   it("returns schema validation failures as safe client errors", async () => {
-    const service = new ControllerService({ dataDirectory: dataDirectory(), secretStore: new FakeSecretStore() });
+    const service = new ControllerService({ ownerToken: TEST_OWNER_TOKEN, dataDirectory: dataDirectory(), secretStore: new FakeSecretStore() });
     await service.start({ listen: false });
-    const current = (await service.app.inject({ method: "GET", url: "/api/config" })).json();
+    const current = (await service.app.inject({ headers: OWNER,  method: "GET", url: "/api/config" })).json();
     current.config.integrations.linear = { enabled: true };
-    const response = await service.app.inject({ method: "POST", url: "/api/config/plans", payload: { config: current.config } });
+    const response = await service.app.inject({ headers: OWNER,  method: "POST", url: "/api/config/plans", payload: { config: current.config } });
     expect(response.statusCode).toBe(400);
     expect(response.json()).toMatchObject({ code: "INVALID_CONFIGURATION" });
     await service.stop();
@@ -170,7 +173,7 @@ describe("ControllerService", () => {
     secrets.values.set("secret://llm/primary", "primary-secret");
     secrets.values.set("secret://llm/backup", "backup-secret");
     let backupFails = false;
-    const service = new ControllerService({
+    const service = new ControllerService({ ownerToken: TEST_OWNER_TOKEN,
       dataDirectory: dataDirectory(),
       secretStore: secrets,
       llmFetch: async (input) => {
@@ -196,44 +199,44 @@ describe("ControllerService", () => {
       roleBindings: [{ role: "command_parser", poolId: "default" }],
       defaultPoolId: "default",
     };
-    const applied = await service.app.inject({ method: "PUT", url: "/api/llm/config", payload: { config, confirmed: true } });
+    const applied = await service.app.inject({ headers: OWNER,  method: "PUT", url: "/api/llm/config", payload: { config, confirmed: true } });
     expect(applied.statusCode).toBe(200);
     expect(applied.json().plan).toMatchObject({ risk: "sensitive", state: "PLANNED" });
-    await service.app.inject({ method: "POST", url: "/api/llm/roles/command_parser/switch", payload: { profileId: "primary" } });
+    await service.app.inject({ headers: OWNER,  method: "POST", url: "/api/llm/roles/command_parser/switch", payload: { profileId: "primary" } });
     backupFails = true;
-    const failed = await service.app.inject({ method: "POST", url: "/api/llm/roles/command_parser/switch", payload: { profileId: "backup" } });
+    const failed = await service.app.inject({ headers: OWNER,  method: "POST", url: "/api/llm/roles/command_parser/switch", payload: { profileId: "backup" } });
     expect(failed.statusCode).toBe(503);
-    const view = (await service.app.inject({ method: "GET", url: "/api/llm" })).json();
+    const view = (await service.app.inject({ headers: OWNER,  method: "GET", url: "/api/llm" })).json();
     expect(view.state.activeProfileByRole.command_parser).toBe("primary");
     expect(JSON.stringify(view)).not.toContain("primary-secret");
     await service.stop();
   });
 
   it("persists wizard progress without draft secret data", async () => {
-    const service = new ControllerService({ dataDirectory: dataDirectory(), secretStore: new FakeSecretStore() });
+    const service = new ControllerService({ ownerToken: TEST_OWNER_TOKEN, dataDirectory: dataDirectory(), secretStore: new FakeSecretStore() });
     await service.start({ listen: false });
-    const setup = (await service.app.inject({ method: "GET", url: "/api/setup" })).json();
-    const saved = await service.app.inject({ method: "POST", url: "/api/setup", payload: { step: 2, completed: false, configRevision: setup.config.revision } });
+    const setup = (await service.app.inject({ headers: OWNER,  method: "GET", url: "/api/setup" })).json();
+    const saved = await service.app.inject({ headers: OWNER,  method: "POST", url: "/api/setup", payload: { step: 2, completed: false, configRevision: setup.config.revision } });
     expect(saved.statusCode).toBe(200);
     expect(saved.body).not.toContain("secret");
-    expect((await service.app.inject({ method: "GET", url: "/api/setup" })).json().state.step).toBe(2);
+    expect((await service.app.inject({ headers: OWNER,  method: "GET", url: "/api/setup" })).json().state.step).toBe(2);
     await service.stop();
   });
 
   it("restores the completed setup step and canonical config after restart", async () => {
     const directory = dataDirectory();
-    const first = new ControllerService({ dataDirectory: directory, secretStore: new FakeSecretStore() });
+    const first = new ControllerService({ ownerToken: TEST_OWNER_TOKEN, dataDirectory: directory, secretStore: new FakeSecretStore() });
     await first.start({ listen: false });
-    const current = (await first.app.inject({ method: "GET", url: "/api/config" })).json();
+    const current = (await first.app.inject({ headers: OWNER,  method: "GET", url: "/api/config" })).json();
     current.config.controller.id = "wizard-controller";
-    const built = await first.app.inject({ method: "POST", url: "/api/config/plans", payload: { config: current.config, actor: "setup-wizard" } });
-    const applied = await first.app.inject({ method: "POST", url: `/api/config/plans/${built.json().plan.id}/apply`, payload: {} });
-    await first.app.inject({ method: "POST", url: "/api/setup", payload: { step: 4, completed: true, configRevision: applied.json().revision } });
+    const built = await first.app.inject({ headers: OWNER,  method: "POST", url: "/api/config/plans", payload: { config: current.config, actor: "setup-wizard" } });
+    const applied = await first.app.inject({ headers: OWNER,  method: "POST", url: `/api/config/plans/${built.json().plan.id}/apply`, payload: {} });
+    await first.app.inject({ headers: OWNER,  method: "POST", url: "/api/setup", payload: { step: 4, completed: true, configRevision: applied.json().revision } });
     await first.stop();
 
-    const second = new ControllerService({ dataDirectory: directory, secretStore: new FakeSecretStore() });
+    const second = new ControllerService({ ownerToken: TEST_OWNER_TOKEN, dataDirectory: directory, secretStore: new FakeSecretStore() });
     await second.start({ listen: false });
-    const restored = (await second.app.inject({ method: "GET", url: "/api/setup" })).json();
+    const restored = (await second.app.inject({ headers: OWNER,  method: "GET", url: "/api/setup" })).json();
     expect(restored.state).toMatchObject({ step: 4, completed: true, configRevision: applied.json().revision });
     expect(restored.config.config.controller.id).toBe("wizard-controller");
     expect(() => JSON.parse(JSON.stringify(second.configuration.exportRedacted()))).not.toThrow();
@@ -248,16 +251,16 @@ describe("ControllerService", () => {
         result: async () => ({ state: "completed", summary: "done", providerSessionId: input.providerSessionId ?? "thread-1", events: [] }),
       }),
     };
-    const service = new ControllerService({ dataDirectory: dataDirectory(), withRunner: true, secretStore: new FakeSecretStore(), codexBackendFactory: () => backend });
+    const service = new ControllerService({ ownerToken: TEST_OWNER_TOKEN, dataDirectory: dataDirectory(), withRunner: true, secretStore: new FakeSecretStore(), codexBackendFactory: () => backend });
     await service.start({ listen: false });
-    const manifests = await service.app.inject({ method: "GET", url: "/api/adapters/manifests" });
+    const manifests = await service.app.inject({ headers: OWNER,  method: "GET", url: "/api/adapters/manifests" });
     expect(manifests.json().manifests.map((manifest: { id: string }) => manifest.id)).toContain("codex");
-    const created = await service.app.inject({ method: "POST", url: "/api/agents/codex/profiles", payload: { id: "orion", alias: "Orion", runnerId: "local", codexHome: "/private/orion" } });
+    const created = await service.app.inject({ headers: OWNER,  method: "POST", url: "/api/agents/codex/profiles", payload: { id: "orion", alias: "Orion", runnerId: "local", codexHome: "/private/orion" } });
     expect(created.statusCode).toBe(201);
-    const profiles = await service.app.inject({ method: "GET", url: "/api/agents/profiles" });
+    const profiles = await service.app.inject({ headers: OWNER,  method: "GET", url: "/api/agents/profiles" });
     expect(profiles.json().profiles).toContainEqual(expect.objectContaining({ id: "orion", alias: "Orion", state: "CONFIGURED" }));
     expect(profiles.body).not.toContain("/private/orion");
-    const run = await service.app.inject({ method: "POST", url: "/api/agents/profiles/orion/runs", payload: { workspacePath: "/worktree", prompt: "do it" } });
+    const run = await service.app.inject({ headers: OWNER,  method: "POST", url: "/api/agents/profiles/orion/runs", payload: { workspacePath: "/worktree", prompt: "do it" } });
     expect(run.statusCode).toBe(400);
     expect(run.json()).toMatchObject({ code: "UNMANAGED_WORKSPACE" });
     await service.stop();
@@ -272,21 +275,21 @@ describe("ControllerService", () => {
       get: async () => ({ sessionId: "devin-1", status: "running", acusConsumed: 1, pullRequests: [] }),
       send: async () => ({ sessionId: "devin-1", status: "running", pullRequests: [] }),
     };
-    const service = new ControllerService({ dataDirectory: dataDirectory(), withRunner: true, secretStore: secrets, devinBackendFactory: () => backend });
+    const service = new ControllerService({ ownerToken: TEST_OWNER_TOKEN, dataDirectory: dataDirectory(), withRunner: true, secretStore: secrets, devinBackendFactory: () => backend });
     await service.start({ listen: false });
-    const manifests = (await service.app.inject({ method: "GET", url: "/api/adapters/manifests" })).json().manifests;
+    const manifests = (await service.app.inject({ headers: OWNER,  method: "GET", url: "/api/adapters/manifests" })).json().manifests;
     expect(manifests.map((manifest: { id: string }) => manifest.id)).toEqual(expect.arrayContaining(["cursor", "devin", "kiro", "workbuddy-codebuddy", "generic-cli"]));
-    const matrix = await service.app.inject({ method: "GET", url: "/api/adapters/compatibility" });
+    const matrix = await service.app.inject({ headers: OWNER,  method: "GET", url: "/api/adapters/compatibility" });
     expect(matrix.json().matrix).toEqual(expect.arrayContaining([expect.objectContaining({ adapterId: "cursor", backendId: "cursor-local-cli" }), expect.objectContaining({ adapterId: "devin", backendId: "devin-v3-api" })]));
 
-    const missingSecret = await service.app.inject({ method: "POST", url: "/api/agents/devin/profiles", payload: { id: "devin-missing", alias: "Missing", organizationId: "org-test", credentialRef: "secret://devin/missing" } });
+    const missingSecret = await service.app.inject({ headers: OWNER,  method: "POST", url: "/api/agents/devin/profiles", payload: { id: "devin-missing", alias: "Missing", organizationId: "org-test", credentialRef: "secret://devin/missing" } });
     expect(missingSecret.statusCode).toBe(409);
-    const created = await service.app.inject({ method: "POST", url: "/api/agents/devin/profiles", payload: { id: "devin-main", alias: "Devin", organizationId: "org-test", credentialRef: "secret://devin/main", maxSessionAcu: 20 } });
+    const created = await service.app.inject({ headers: OWNER,  method: "POST", url: "/api/agents/devin/profiles", payload: { id: "devin-main", alias: "Devin", organizationId: "org-test", credentialRef: "secret://devin/main", maxSessionAcu: 20 } });
     expect(created.statusCode).toBe(201);
-    const profiles = await service.app.inject({ method: "GET", url: "/api/agents/profiles" });
+    const profiles = await service.app.inject({ headers: OWNER,  method: "GET", url: "/api/agents/profiles" });
     expect(profiles.json().profiles).toContainEqual(expect.objectContaining({ id: "devin-main", provider: "devin", state: "CONFIGURED", capabilities: expect.arrayContaining(["code", "git", "waiting-user", "resource-probe"]) }));
     expect(profiles.body).not.toContain("cog-test-token");
-    const tested = await service.app.inject({ method: "POST", url: "/api/agents/profiles/devin-main/test" });
+    const tested = await service.app.inject({ headers: OWNER,  method: "POST", url: "/api/agents/profiles/devin-main/test" });
     expect(tested.json()).toMatchObject({ authenticated: true, apiVersion: "v3" });
     await service.stop();
   });
@@ -302,7 +305,7 @@ describe("ControllerService", () => {
     execFileSync("git", ["-C", repositoryRoot, "add", "README.md"]);
     execFileSync("git", ["-C", repositoryRoot, "commit", "-m", "fixture"]);
     const starts: Array<{ codexHome: string; workspacePath: string }> = [];
-    const service = new ControllerService({
+    const service = new ControllerService({ ownerToken: TEST_OWNER_TOKEN,
       dataDirectory: directory,
       withRunner: true,
       secretStore: new FakeSecretStore(),
@@ -318,14 +321,14 @@ describe("ControllerService", () => {
       }),
     });
     await service.start({ listen: false });
-    const current = (await service.app.inject({ method: "GET", url: "/api/config" })).json();
+    const current = (await service.app.inject({ headers: OWNER,  method: "GET", url: "/api/config" })).json();
     current.config.agentProfiles = [
       { id: "atlas", provider: "codex", alias: "Atlas", runnerId: "local", settings: { codexHome: "/profiles/atlas" } },
       { id: "orion", provider: "codex", alias: "Orion", runnerId: "local", settings: { codexHome: "/profiles/orion" } },
     ];
     current.config.repositories = [{ id: "acme/repo", root: repositoryRoot, defaultBaseRef: "main", scopePaths: [], verificationCommands: [] }];
-    const plan = await service.app.inject({ method: "POST", url: "/api/config/plans", payload: { config: current.config } });
-    expect((await service.app.inject({ method: "POST", url: `/api/config/plans/${plan.json().plan.id}/apply`, payload: { confirmed: true } })).statusCode).toBe(200);
+    const plan = await service.app.inject({ headers: OWNER,  method: "POST", url: "/api/config/plans", payload: { config: current.config } });
+    expect((await service.app.inject({ headers: OWNER,  method: "POST", url: `/api/config/plans/${plan.json().plan.id}/apply`, payload: { confirmed: true } })).statusCode).toBe(200);
     expect(starts).toEqual([]);
 
     const [atlasWorkspace, orionWorkspace] = await Promise.all([
@@ -333,8 +336,8 @@ describe("ControllerService", () => {
       service.workspaces.create({ repositoryId: "acme/repo", taskId: "task-orion", runId: "run-orion", attempt: 1, baseRef: "main", scopePaths: [] }),
     ]);
     const [atlas, orion] = await Promise.all([
-      service.app.inject({ method: "POST", url: "/api/agents/profiles/atlas/runs", payload: { workspacePath: atlasWorkspace.path, prompt: "atlas work" } }),
-      service.app.inject({ method: "POST", url: "/api/agents/profiles/orion/runs", payload: { workspacePath: orionWorkspace.path, prompt: "orion work" } }),
+      service.app.inject({ headers: OWNER,  method: "POST", url: "/api/agents/profiles/atlas/runs", payload: { workspacePath: atlasWorkspace.path, prompt: "atlas work" } }),
+      service.app.inject({ headers: OWNER,  method: "POST", url: "/api/agents/profiles/orion/runs", payload: { workspacePath: orionWorkspace.path, prompt: "orion work" } }),
     ]);
     expect([atlas.statusCode, orion.statusCode]).toEqual([201, 201]);
     expect(atlas.json().session).toMatchObject({ profileId: "atlas" });
@@ -371,9 +374,9 @@ describe("ControllerService", () => {
         };
       },
     };
-    const service = new ControllerService({ dataDirectory: directory, withRunner: true, secretStore: new FakeSecretStore(), codexBackendFactory: () => backend });
+    const service = new ControllerService({ ownerToken: TEST_OWNER_TOKEN, dataDirectory: directory, withRunner: true, secretStore: new FakeSecretStore(), codexBackendFactory: () => backend });
     await service.start({ listen: false });
-    const current = (await service.app.inject({ method: "GET", url: "/api/config" })).json();
+    const current = (await service.app.inject({ headers: OWNER,  method: "GET", url: "/api/config" })).json();
     current.config.agentProfiles = [{ id: "atlas", provider: "codex", alias: "Atlas", runnerId: "local", settings: { codexHome: "/profiles/atlas" } }];
     current.config.repositories = [{
       id: "acme/repo",
@@ -382,15 +385,15 @@ describe("ControllerService", () => {
       scopePaths: [],
       verificationCommands: [{ id: "fail", file: process.execPath, args: ["-e", "process.exit(1)"], required: true, timeoutMs: 5_000, outputLimitBytes: 4_096 }],
     }];
-    const plan = await service.app.inject({ method: "POST", url: "/api/config/plans", payload: { config: current.config } });
-    expect((await service.app.inject({ method: "POST", url: `/api/config/plans/${plan.json().plan.id}/apply`, payload: { confirmed: true } })).statusCode).toBe(200);
+    const plan = await service.app.inject({ headers: OWNER,  method: "POST", url: "/api/config/plans", payload: { config: current.config } });
+    expect((await service.app.inject({ headers: OWNER,  method: "POST", url: `/api/config/plans/${plan.json().plan.id}/apply`, payload: { confirmed: true } })).statusCode).toBe(200);
 
     const waitingWorkspace = await service.workspaces.create({ repositoryId: "acme/repo", taskId: "task-waiting", runId: "run-waiting", attempt: 1, baseRef: "main", scopePaths: [] });
     const failingWorkspace = await service.workspaces.create({ repositoryId: "acme/repo", taskId: "task-failing", runId: "run-failing", attempt: 1, baseRef: "main", scopePaths: [] });
-    const waitingSession = (await service.app.inject({ method: "POST", url: "/api/agents/profiles/atlas/runs", payload: { workspacePath: waitingWorkspace.path, prompt: "needs input" } })).json().session;
-    const failingSession = (await service.app.inject({ method: "POST", url: "/api/agents/profiles/atlas/runs", payload: { workspacePath: failingWorkspace.path, prompt: "complete" } })).json().session;
+    const waitingSession = (await service.app.inject({ headers: OWNER,  method: "POST", url: "/api/agents/profiles/atlas/runs", payload: { workspacePath: waitingWorkspace.path, prompt: "needs input" } })).json().session;
+    const failingSession = (await service.app.inject({ headers: OWNER,  method: "POST", url: "/api/agents/profiles/atlas/runs", payload: { workspacePath: failingWorkspace.path, prompt: "complete" } })).json().session;
     expect(backendInputs).toEqual([{ prompt: "needs input" }, { prompt: "complete" }]);
-    expect((await service.app.inject({ method: "GET", url: `/api/agents/profiles/atlas/sessions/${waitingSession.id}` })).json().session).toMatchObject({ state: "PAUSED" });
+    expect((await service.app.inject({ headers: OWNER,  method: "GET", url: `/api/agents/profiles/atlas/sessions/${waitingSession.id}` })).json().session).toMatchObject({ state: "PAUSED" });
     for (const fixture of [
       { taskId: "task-waiting", runId: "run-waiting", sessionId: waitingSession.id as string, workspace: waitingWorkspace, verification: [] },
       { taskId: "task-failing", runId: "run-failing", sessionId: failingSession.id as string, workspace: failingWorkspace, verification: ["fail"] },
@@ -412,10 +415,10 @@ describe("ControllerService", () => {
       });
     }
 
-    const waiting = await service.app.inject({ method: "POST", url: "/api/runs/run-waiting/advance" });
+    const waiting = await service.app.inject({ headers: OWNER,  method: "POST", url: "/api/runs/run-waiting/advance" });
     expect(waiting.json()).toMatchObject({ run: { state: "WAITING_USER" }, task: { state: "WAITING_USER" } });
     expect(waiting.statusCode).toBe(202);
-    expect((await service.app.inject({
+    expect((await service.app.inject({ headers: OWNER, 
       method: "POST",
       url: `/api/agents/profiles/atlas/sessions/${waitingSession.id}/input`,
       payload: { message: "approved" },
@@ -423,7 +426,7 @@ describe("ControllerService", () => {
     expect(service.database.getEntity("run", "run-waiting")).toMatchObject({ state: "ACTIVE", sessionId: waitingSession.id });
     expect(service.database.getCanonicalTask("task-waiting")?.document).toMatchObject({ state: "RUNNING" });
 
-    const failed = await service.app.inject({ method: "POST", url: "/api/runs/run-failing/advance" });
+    const failed = await service.app.inject({ headers: OWNER,  method: "POST", url: "/api/runs/run-failing/advance" });
     expect(failed.statusCode).toBe(200);
     expect(failed.json()).toMatchObject({
       run: { state: "FAILED", failureReason: "Required verification failed", verification: { state: "FAILED", commands: ["fail"] } },
@@ -452,15 +455,15 @@ describe("ControllerService", () => {
           : { state: "failed", summary: "quota", providerSessionId: "thread-quota", events: [{ type: "resource", state: "QUOTA_EXHAUSTED", reason: "quota exhausted", resetsAt: "2026-09-23T01:00:00.000Z", source: "error", confidence: "high" }] },
       }),
     };
-    const service = new ControllerService({ dataDirectory: directory, withRunner: true, secretStore: new FakeSecretStore(), codexBackendFactory: () => backend });
+    const service = new ControllerService({ ownerToken: TEST_OWNER_TOKEN, dataDirectory: directory, withRunner: true, secretStore: new FakeSecretStore(), codexBackendFactory: () => backend });
     await service.start({ listen: false });
-    const current = (await service.app.inject({ method: "GET", url: "/api/config" })).json();
+    const current = (await service.app.inject({ headers: OWNER,  method: "GET", url: "/api/config" })).json();
     current.config.agentProfiles = [{ id: "atlas", provider: "codex", alias: "Atlas", runnerId: "local", settings: { codexHome: "/profiles/atlas" } }];
     current.config.repositories = [{ id: "acme/repo", root: repositoryRoot, defaultBaseRef: "main", scopePaths: [], verificationCommands: [] }];
-    const plan = await service.app.inject({ method: "POST", url: "/api/config/plans", payload: { config: current.config } });
-    expect((await service.app.inject({ method: "POST", url: `/api/config/plans/${plan.json().plan.id}/apply`, payload: { confirmed: true } })).statusCode).toBe(200);
+    const plan = await service.app.inject({ headers: OWNER,  method: "POST", url: "/api/config/plans", payload: { config: current.config } });
+    expect((await service.app.inject({ headers: OWNER,  method: "POST", url: `/api/config/plans/${plan.json().plan.id}/apply`, payload: { confirmed: true } })).statusCode).toBe(200);
     const workspace = await service.workspaces.create({ repositoryId: "acme/repo", taskId: "task-quota", runId: "run-quota", attempt: 1, baseRef: "main", scopePaths: [] });
-    const started = await service.app.inject({ method: "POST", url: "/api/agents/profiles/atlas/runs", payload: { workspacePath: workspace.path, prompt: "work" } });
+    const started = await service.app.inject({ headers: OWNER,  method: "POST", url: "/api/agents/profiles/atlas/runs", payload: { workspacePath: workspace.path, prompt: "work" } });
     const sessionId = started.json().session.id as string;
     service.database.writeCanonicalTask("task-quota", 0, {
       id: "task-quota", projectId: "project", title: "Quota task", state: "RUNNING", currentRunId: "run-quota",
@@ -478,17 +481,17 @@ describe("ControllerService", () => {
       verification: { state: "PENDING", commands: ["check"] },
     });
 
-    const advanced = await service.app.inject({ method: "POST", url: "/api/runs/run-quota/advance" });
+    const advanced = await service.app.inject({ headers: OWNER,  method: "POST", url: "/api/runs/run-quota/advance" });
     expect(advanced.statusCode).toBe(202);
     expect(advanced.json()).toMatchObject({ run: { state: "RESOURCE_BLOCKED", resourceBlockReason: "quota exhausted" }, task: { state: "WAITING_RESOURCE" } });
-    const profiles = await service.app.inject({ method: "GET", url: "/api/agents/profiles" });
+    const profiles = await service.app.inject({ headers: OWNER,  method: "GET", url: "/api/agents/profiles" });
     expect(profiles.json().profiles).toContainEqual(expect.objectContaining({ id: "atlas", resourceState: "QUOTA_EXHAUSTED" }));
-    const resources = await service.app.inject({ method: "GET", url: "/api/resources" });
+    const resources = await service.app.inject({ headers: OWNER,  method: "GET", url: "/api/resources" });
     expect(resources.json().resources).toContainEqual(expect.objectContaining({ profileId: "atlas", state: "QUOTA_EXHAUSTED", source: "error", confidence: "high", affectedTasks: ["task-quota"] }));
     expect(resources.json().schedules).toContainEqual(expect.objectContaining({ profileId: "atlas", status: "SCHEDULED" }));
 
     resourceReady = true;
-    const probed = await service.app.inject({ method: "POST", url: "/api/resources/atlas/probe" });
+    const probed = await service.app.inject({ headers: OWNER,  method: "POST", url: "/api/resources/atlas/probe" });
     expect(probed.statusCode).toBe(200);
     expect(probed.json()).toMatchObject({ assessment: { state: "AVAILABLE", source: "probe" } });
     expect(service.database.getEntity("run", "run-quota")).toMatchObject({ state: "ACTIVE", sessionId, recoveryReason: expect.stringContaining("Original provider session") });

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { accessSync, constants, existsSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
+import { randomBytes } from "node:crypto";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,6 +14,7 @@ import {
 import { DispatcherDatabase } from "@dispatcher/persistence";
 import { installLaunchAgent, LAUNCHD_LABEL, launchctl, tailLog } from "./launchd.js";
 import { normalizeCliArguments } from "./cli-args.js";
+import { OWNER_TOKEN_REFERENCE } from "./control-auth.js";
 import { ControllerService } from "./service.js";
 
 function flag(args: string[], name: string, fallback?: string): string | undefined {
@@ -39,6 +41,9 @@ async function serve(args: string[]): Promise<void> {
     withRunner: args.includes("--with-runner"),
     host: flag(args, "--host") ?? "127.0.0.1",
     port: Number(flag(args, "--port", "8347")),
+    allowedHosts: (flag(args, "--allowed-hosts") ?? process.env.DISPATCHER_ALLOWED_HOSTS ?? "").split(",").map((host) => host.trim()).filter(Boolean),
+    ...(process.env.DISPATCHER_OWNER_TOKEN ? { ownerToken: process.env.DISPATCHER_OWNER_TOKEN } : {}),
+    backgroundWorker: { enabled: !args.includes("--no-background-worker") },
   });
   const shutdown = async () => {
     await service.stop();
@@ -47,6 +52,21 @@ async function serve(args: string[]): Promise<void> {
   process.once("SIGINT", () => void shutdown());
   process.once("SIGTERM", () => void shutdown());
   await service.start();
+  if (process.stdout.isTTY) {
+    const login = service.issueDashboardLogin();
+    console.log(`Dashboard login link (single use, expires ${login.expiresAt}): ${login.url}`);
+  }
+}
+
+async function authCommand(args: string[]): Promise<void> {
+  if (args[1] !== "token") throw new Error("Use auth token");
+  if (process.env.DISPATCHER_OWNER_TOKEN) {
+    console.log(process.env.DISPATCHER_OWNER_TOKEN);
+    return;
+  }
+  const secrets = createDefaultSecretStore({ dataDirectory: dataDirectory(args) });
+  if (!(await secrets.metadata(OWNER_TOKEN_REFERENCE)).exists) await secrets.put(OWNER_TOKEN_REFERENCE, randomBytes(32).toString("base64url"));
+  console.log(await secrets.resolve(OWNER_TOKEN_REFERENCE, { principal: "controller", purpose: "provider" }));
 }
 
 async function configCommand(args: string[]): Promise<void> {
@@ -123,8 +143,9 @@ async function main(): Promise<void> {
   if (command === "serve") await serve(args);
   else if (command === "config") await configCommand(args);
   else if (command === "doctor") await doctor(args);
+  else if (command === "auth") await authCommand(args);
   else if (["install", "start", "stop", "restart", "status", "logs", "uninstall"].includes(command)) await serviceCommand(command, args);
-  else throw new Error("Usage: dispatcher serve|config|install|start|stop|restart|status|doctor|logs|uninstall");
+  else throw new Error("Usage: dispatcher serve|config|auth|install|start|stop|restart|status|doctor|logs|uninstall");
 }
 
 main().catch((error: unknown) => {

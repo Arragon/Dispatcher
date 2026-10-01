@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -51,7 +51,7 @@ describe("WorkspaceManager", () => {
     const handle = await manager.create({ repositoryId: "repo", taskId: "INH-2", runId: "clean", attempt: 1, baseRef: "main", scopePaths: ["src"] });
     symlinkSync("/tmp", join(handle.path, "src", "escape"));
     await expect(manager.assertPathAllowed(handle, "src/escape/file.txt")).rejects.toMatchObject({ code: "SYMLINK_ESCAPE" });
-    rmSync(join(handle.path, "src", "escape"));
+    unlinkSync(join(handle.path, "src", "escape"));
     const plan = await manager.cleanupPlan(handle);
     expect(plan.safe).toBe(true);
     const forged = { ...handle, runId: "forged" };

@@ -19,3 +19,5 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm check
       - run: pnpm benchmark -- --scenario smoke --duration 2
+        env:
+          DISPATCHER_SECRET_STORE_KEY: ci-benchmark-ephemeral-store-key-not-a-secret
