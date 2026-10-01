@@ -14,6 +14,16 @@ import {
 
 const tempDirectories: string[] = [];
 
+it("cannot renew an expired lease or revive revoked or old generation authority", () => {
+  const authority = new RunnerLeaseAuthority();
+  authority.issue({ runId: "renew", runnerId: "local", leaseId: "lease-1", generation: 1, expiresAt: "2026-10-01T00:15:00Z" }, "2026-10-01T00:00:00Z");
+  expect(() => authority.renew("renew", "lease-1", 1, "2026-10-01T00:30:00Z", "2026-10-01T00:16:00Z")).toThrow(/expired/);
+  authority.issue({ runId: "renew", runnerId: "local", leaseId: "lease-2", generation: 2, expiresAt: "2026-10-01T00:30:00Z" }, "2026-10-01T00:16:00Z");
+  expect(() => authority.renew("renew", "lease-1", 1, "2026-10-01T00:40:00Z", "2026-10-01T00:17:00Z")).toThrow(/not current/);
+  authority.revoke("renew", "lease-2", 2, "cancelled", "2026-10-01T00:17:00Z");
+  expect(() => authority.renew("renew", "lease-2", 2, "2026-10-01T00:40:00Z", "2026-10-01T00:18:00Z")).toThrow(/revoked/);
+});
+
 afterEach(() => {
   for (const directory of tempDirectories.splice(0)) rmSync(directory, { recursive: true, force: true });
 });

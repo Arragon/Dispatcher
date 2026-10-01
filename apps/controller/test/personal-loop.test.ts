@@ -190,4 +190,45 @@ describe("personal Slack–Linear loop", () => {
     expect(f.starts).toHaveLength(1);
     expect(f.service.database.getEntity("messaging-conversation", "slack:C1:100.1")).toMatchObject({ state: "WAITING_USER", revision: 1 });
   });
+
+  it("renews a live embedded run beyond forty minutes and rejects expiry after missed heartbeats", async () => {
+    const f = await setup();
+    const dispatched = await f.service.app.inject({ headers: OWNER, method: "POST", url: `/api/tasks/${f.taskId}/dispatch`, payload: {} });
+    expect(dispatched.statusCode).toBe(201);
+    for (let tick = 0; tick < 9; tick += 1) {
+      f.control.now = new Date(f.control.now.getTime() + 5 * 60_000);
+      await f.service.events.publish("runnerChanged", f.service.runners.heartbeat("local", f.control.now.toISOString()));
+      await f.service.runBackgroundCycle();
+      expect(Date.parse(f.run().leaseExpiresAt!)).toBeGreaterThan(f.control.now.getTime());
+      expect(f.run().state).toBe("ACTIVE");
+    }
+    f.control.now = new Date(f.control.now.getTime() + 16 * 60_000);
+    await f.service.runBackgroundCycle();
+    expect(f.run()).toMatchObject({ state: "FAILED", failureReason: expect.stringMatching(/lease expired/i) });
+    expect(f.control.prs).toBe(0);
+  });
+
+  it("persists synchronous start failure and notifies its dispatch thread without delivery", async () => {
+    const f = await setup();
+    f.control.throwStart = true;
+    await f.send(f.service, "dispatch", "task dispatch INH-42");
+    await f.service.runBackgroundCycle();
+    await f.approve();
+    expect(f.run()).toMatchObject({ state: "FAILED", failureReason: expect.stringContaining("ENOENT") });
+    expect(f.task().state).toBe("FAILED");
+    expect(f.slack.some((message) => message.channel === "C1" && message.thread_ts === "100.1" && String(message.text).includes("FAILED") && String(message.text).includes("ENOENT"))).toBe(true);
+    expect(f.control.prs).toBe(0);
+  });
+
+  it("reports a real missing Codex executable as FAILED with a readable Slack cause", async () => {
+    const f = await setup({ realCodex: true, executable: "/nonexistent/dispatcher-codex" });
+    await f.send(f.service, "dispatch", "task dispatch INH-42");
+    await f.service.runBackgroundCycle();
+    await f.approve();
+    await expect.poll(async () => { await f.service.runBackgroundCycle(); return f.run().state; }).toBe("FAILED");
+    expect(f.run()).toMatchObject({ state: "FAILED", failureReason: expect.stringContaining("ENOENT") });
+    expect(f.task().state).toBe("FAILED");
+    expect(f.slack.some((message) => String(message.text).includes("FAILED") && String(message.text).includes("ENOENT"))).toBe(true);
+    expect(f.control.prs).toBe(0);
+  });
 });

@@ -482,6 +482,7 @@ export class ControllerService {
     this.events.subscribe("runnerChanged", async (runner) => {
       this.database.saveEntity("runner", runner.id, json(runner));
       this.fleetEvents.publish("runner.changed", runner.id, redactValue(runner));
+      if (this.embeddedRunner?.runner.id === runner.id && runner.state === "ONLINE") await this.renewEmbeddedLeases();
       if (runner.state === "OFFLINE") await this.notifyOperationalAttention({ key: runner.id, state: "RUNNER_OFFLINE", subject: `Runner offline: ${runner.displayName}`, body: `${runner.id} stopped reporting capacity.` });
     });
     this.remoteRunnerServer = new RemoteRunnerServer({
@@ -532,8 +533,10 @@ export class ControllerService {
     });
     modules.push(...(options.modules ?? []));
     this.background = new BackgroundLoop([
+      { name: "embedded-leases", run: () => this.renewEmbeddedLeases() },
       { name: "messaging-inbox", run: () => this.processMessagingInbox(worker.inboxBatchSize ?? 10) },
       { name: "run-advancement", run: () => this.advanceDueRuns(worker.maxConcurrentRuns ?? 2, worker.runBaseDelayMs ?? 1_000, worker.runMaxDelayMs ?? 5 * 60_000) },
+      { name: "run-attention", run: () => this.notifyDueAttention() },
       { name: "projection-drain", run: async () => { await this.drainProjections(this.now()); } },
     ], {
       intervalMs: worker.intervalMs ?? 2_000,
@@ -584,15 +587,17 @@ export class ControllerService {
 
   private restoreLeaseAuthority(run: Run): void {
     if (this.leaseAuthority.current(run.id)) return;
-    const expiresAt = run.leaseExpiresAt ?? new Date(Date.now() + 15 * 60_000).toISOString();
+    const expiresAt = run.leaseExpiresAt ?? new Date(this.now().getTime() + 15 * 60_000).toISOString();
     this.leaseAuthority.issue({ runId: run.id, runnerId: run.runnerId, leaseId: run.leaseId, generation: run.generation, expiresAt });
     this.persistLatestLeaseAudit(run.id);
   }
 
   private fenceDelivery(run: Run, operation: "branch" | "push" | "pull-request" | "complete"): void {
+    const current = this.database.getEntity<JsonValue>("run", run.id) as unknown as Run | undefined;
+    if (!current || current.generation !== run.generation || current.leaseId !== run.leaseId || !["VERIFYING", "DELIVERING"].includes(current.state)) throw new ConnectorError("CONFLICT", "Delivery authority rejected: stale or terminal run", { retryable: false, operation: "delivery" });
     this.restoreLeaseAuthority(run);
     try {
-      this.leaseAuthority.fence(run.id, run.leaseId, run.generation, operation);
+      this.leaseAuthority.fence(run.id, run.leaseId, run.generation, operation, this.now().toISOString());
       this.persistLatestLeaseAudit(run.id);
     } catch (error) {
       this.persistLatestLeaseAudit(run.id);
@@ -608,6 +613,43 @@ export class ControllerService {
     const record = audit.at(-1);
     if (!record) return;
     this.database.saveEntity("lease-audit", `${runId}:${audit.length}`, json(record), record.occurredAt);
+  }
+
+  private async failRun(run: Run, reason: string): Promise<void> {
+    const current = this.database.getEntity<JsonValue>("run", run.id) as unknown as Run | undefined;
+    if (!current || current.generation !== run.generation || isTerminalRunState(current.state)) return;
+    assertRunTransition(current.state, "FAILED");
+    current.state = "FAILED";
+    current.failureReason = String(redactValue(reason));
+    current.endedAt = this.now().toISOString();
+    this.database.saveEntity("run", current.id, json(current));
+    const task = this.database.getCanonicalTask<JsonValue>(current.taskId);
+    if (task && !["DONE", "FAILED", "CANCELLED"].includes((task.document as unknown as Task).state)) this.tasks.execute({ id: `run:${current.id}:${current.generation}:failed`, taskId: current.taskId, baseRevision: task.revision, actor: "run-worker", command: { type: "task.transition", state: "FAILED" } });
+    this.fleetEvents.publish("run.changed", current.id, { id: current.id, state: current.state });
+    await this.notifyAttention(current);
+  }
+
+  private async renewEmbeddedLeases(): Promise<void> {
+    const runnerId = this.embeddedRunner?.runner.id;
+    if (!runnerId || !this.runners.list().some((runner) => runner.id === runnerId && runner.state === "ONLINE")) return;
+    const now = this.now();
+    for (const value of this.database.listEntities<JsonValue>("run")) {
+      const run = value as unknown as Run;
+      if (run.runnerId !== runnerId || isTerminalRunState(run.state)) continue;
+      this.restoreLeaseAuthority(run);
+      const lease = this.leaseAuthority.current(run.id)!;
+      if (lease.generation === run.generation && lease.leaseId === run.leaseId && !lease.revokedAt && Date.parse(lease.expiresAt) - now.getTime() > 5 * 60_000) continue;
+      try {
+        const renewed = this.leaseAuthority.renew(run.id, run.leaseId, run.generation, new Date(now.getTime() + 15 * 60_000).toISOString(), now.toISOString());
+        run.leaseExpiresAt = renewed.expiresAt;
+        this.database.saveEntity("run", run.id, json(run));
+        this.persistLatestLeaseAudit(run.id);
+      } catch (error) {
+        this.persistLatestLeaseAudit(run.id);
+        if (!(error instanceof LeaseFenceError)) throw error;
+        await this.failRun(run, `Embedded Runner ${error.message}`);
+      }
+    }
   }
 
   private genericProcessExecutor(): ProcessExecutor {
@@ -1177,7 +1219,7 @@ export class ControllerService {
       if (session.state !== "COMPLETED") {
         assertRunTransition(run.state, "FAILED");
         run.state = "FAILED";
-        run.failureReason = `Agent session ${session.state.toLowerCase()}`;
+        run.failureReason = String(redactValue((await adapter.result(run.sessionId)).summary || `Agent session ${session.state.toLowerCase()}`));
         run.endedAt = new Date().toISOString();
         this.database.saveEntity("run", run.id, json(run));
         const current = this.database.getCanonicalTask<JsonValue>(run.taskId)!;
@@ -1346,6 +1388,7 @@ export class ControllerService {
       throw error;
     }
     dispatched.run.branch = workspace.branch;
+    if (dispatched.run.failureReason) dispatched.run.failureReason = String(redactValue(dispatched.run.failureReason));
     dispatched.run.leaseExpiresAt = new Date(this.now().getTime() + 15 * 60_000).toISOString();
     this.database.saveEntity("run", dispatched.run.id, json(dispatched.run));
     this.restoreLeaseAuthority(dispatched.run);
@@ -1353,6 +1396,10 @@ export class ControllerService {
     const bound = this.tasks.execute({ id: `dispatch:${dispatched.run.id}:bound`, taskId, baseRevision: stored.revision, actor: "scheduler", command: { type: "task.set-current-run", runId: dispatched.run.id } });
     const queued = this.tasks.execute({ id: `dispatch:${dispatched.run.id}:queued`, taskId: taskId, baseRevision: bound.revision, actor: "scheduler", command: { type: "task.transition", state: "QUEUED" } });
     this.tasks.execute({ id: `dispatch:${dispatched.run.id}:running`, taskId: taskId, baseRevision: queued.revision, actor: "scheduler", command: { type: "task.transition", state: "RUNNING" } });
+    if (dispatched.run.state === "FAILED") {
+      const current = this.database.getCanonicalTask<JsonValue>(taskId)!;
+      this.tasks.execute({ id: `dispatch:${dispatched.run.id}:failed`, taskId, baseRevision: current.revision, actor: "scheduler", command: { type: "task.transition", state: "FAILED" } });
+    }
     const result = { run: dispatched.run, routing: { explanation: dispatched.decision.explanation, eligible: dispatched.decision.eligible, rejected: dispatched.decision.rejected } };
     if (idempotencyKey) this.database.saveEntity("task-dispatch", idempotencyKey, json(result));
     return result;
@@ -1662,10 +1709,11 @@ export class ControllerService {
 
   private async notifyAttention(run: Run): Promise<void> {
     const state = run.state === "RESOURCE_BLOCKED" ? "WAITING_RESOURCE" : run.state === "COMPLETE" && run.prUrl ? "REVIEW_READY" : run.state;
-    if (!this.attentionNotifications.shouldNotify({ taskId: run.taskId, state, generation: run.generation })) return;
-    const idempotencyKey = `attention:${run.taskId}:${state}:${run.generation}`;
-    if (this.database.getEntity<JsonValue>("attention-notification", idempotencyKey)) return;
     const binding = this.runConversation(run);
+    const attentionSubject = state === "WAITING_USER" ? `${run.taskId}:${binding?.revision ?? 1}` : run.taskId;
+    if (!this.attentionNotifications.shouldNotify({ taskId: attentionSubject, state, generation: run.generation })) return;
+    const idempotencyKey = `attention:${run.taskId}:${state}:${run.generation}${state === "WAITING_USER" ? `:${binding?.revision ?? 1}` : ""}`;
+    if (this.database.getEntity<JsonValue>("attention-notification", idempotencyKey)) return;
     const connector = (binding ? this.connectors.get<MessagingAdapter>(binding.connectorInstanceId) : undefined)
       ?? this.connectors.list("messaging").find((entry) => this.messagingChannels.has(entry.instance.id)) as MessagingAdapter | undefined;
     if (!connector) return;
@@ -1685,6 +1733,26 @@ export class ControllerService {
     if (state === "WAITING_USER") {
       this.conversations.bind({ connectorInstanceId: connector.instance.id, conversationId: channel, threadId: binding?.threadId ?? sent.externalMessageId, taskId: run.taskId, runId: run.id, sessionId: run.sessionId, generation: run.generation, state: "WAITING_USER" });
     }
+  }
+
+  private async notifyDueAttention(): Promise<void> {
+    for (const value of this.database.listEntities<JsonValue>("run")) {
+      const run = value as unknown as Run;
+      if (!["WAITING_USER", "RESOURCE_BLOCKED", "FAILED", "COMPLETE"].includes(run.state)) continue;
+      try { await this.notifyAttention(run); }
+      catch (error) {
+        this.attentionNotifications.recover(run.taskId);
+        this.app.log.warn({ error: redactValue(error), runId: run.id }, "attention notification will retry");
+      }
+    }
+  }
+
+  private messagingWorkflowText(workflow: SemanticWorkflowRecord): string {
+    if (workflow.toolName === "task.dispatch" && workflow.state === "EXECUTED") {
+      const result = workflow.result as TaskDispatchResult;
+      return result.run.state === "FAILED" ? `Run ${result.run.id} FAILED: ${result.run.failureReason ?? "Agent could not start"}` : `Dispatched run ${result.run.id}.\n${result.routing.explanation}`;
+    }
+    return JSON.stringify(redactValue(workflow.result)).slice(0, 3_000);
   }
 
   private runConversation(run: Run): ConversationBinding | undefined {
@@ -1747,7 +1815,7 @@ export class ControllerService {
       const approved = workflow.state === "EXECUTED" || workflow.state === "FAILED" || workflow.state === "READY" && workflow.revision === action.expectedRevision + 1
         ? workflow : this.semanticWorkflows.approve(workflow.id, action.expectedRevision);
       const executed = await this.executeMessagingWorkflow(approved);
-      const text = JSON.stringify(redactValue(executed.result)).slice(0, 3_000);
+      const text = this.messagingWorkflowText(executed);
       return adapter.reply
         ? adapter.reply({ channel: message.conversationId, threadId: message.threadId, text }, `workflow-approval:${message.idempotencyKey}`)
         : adapter.send({ channel: message.conversationId, subject: "Workflow approved", body: text, severity: "info" }, `workflow-approval:${message.idempotencyKey}`);
@@ -1788,8 +1856,8 @@ export class ControllerService {
     });
     this.database.saveEntity("messaging-workflow-origin", workflowId, json({ connectorInstanceId: adapter.instance.id, conversationId: message.conversationId, threadId: message.threadId }));
     workflow = await this.executeMessagingWorkflow(workflow);
-    const text = workflow.state === "EXECUTED"
-      ? JSON.stringify(redactValue(workflow.result)).slice(0, 3_000)
+    const text = workflow.state === "EXECUTED" || workflow.state === "FAILED"
+      ? this.messagingWorkflowText(workflow)
       : workflow.state === "NEEDS_APPROVAL"
         ? `Approval required for ${workflow.toolName}. Open the Dashboard or use the bound approval action.`
         : workflow.questions.join(" ") || `Workflow state: ${workflow.state}`;
@@ -1846,6 +1914,7 @@ export class ControllerService {
       try {
         await this.notifyAttention(advanced.run);
       } catch (error) {
+        this.attentionNotifications.recover(advanced.run.taskId);
         this.app.log.error({ error: redactValue(error), runId: advanced.run.id }, "attention notification failed");
       }
       return advanced;

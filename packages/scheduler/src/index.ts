@@ -75,11 +75,6 @@ export class CanonicalScheduler {
     const decision = routeDeterministically(input.requirements, this.candidates());
     if (!decision.selected) throw new Error(decision.explanation);
     const runId = input.runId ?? randomUUID();
-    const session = await decision.selected.adapter.start({
-      runId,
-      workspacePath: input.workspacePath,
-      prompt: renderTaskContract(input.contract),
-    });
     const now = new Date().toISOString();
     const run: Run = {
       id: runId,
@@ -87,10 +82,9 @@ export class CanonicalScheduler {
       runnerId: decision.selected.runnerId,
       providerId: decision.selected.providerId,
       profileId: decision.selected.profileId,
-      sessionId: session.id,
-      ...(session.providerSessionId ? { providerSessionId: session.providerSessionId } : {}),
-      resumePolicy: session.providerSessionId || decision.selected.adapter.manifest.capabilities.resume ? "same-session" : "controlled-reroute",
-      state: "ACTIVE",
+      sessionId: `unstarted:${runId}`,
+      resumePolicy: decision.selected.adapter.manifest.capabilities.resume ? "same-session" : "controlled-reroute",
+      state: "STARTING",
       attempt: 1,
       generation: input.generation ?? 1,
       leaseId: randomUUID(),
@@ -102,6 +96,17 @@ export class CanonicalScheduler {
       lastActivityAt: now,
       verification: { state: "PENDING", commands: [...input.contract.verification] },
     };
+    try {
+      const session = await decision.selected.adapter.start({ runId, workspacePath: input.workspacePath, prompt: renderTaskContract(input.contract) });
+      run.sessionId = session.id;
+      if (session.providerSessionId) run.providerSessionId = session.providerSessionId;
+      run.resumePolicy = session.providerSessionId || decision.selected.adapter.manifest.capabilities.resume ? "same-session" : "controlled-reroute";
+      run.state = "ACTIVE";
+    } catch (error) {
+      run.state = "FAILED";
+      run.failureReason = `Agent start failed: ${error instanceof Error ? error.message : "unknown process error"}`;
+      run.endedAt = new Date().toISOString();
+    }
     return { run, decision };
   }
 }
