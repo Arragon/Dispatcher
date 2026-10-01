@@ -48,22 +48,32 @@ export interface CliTurn {
   cancel(): Promise<void>;
   status(): "running" | "completed";
   result(): Promise<CliTurnResult>;
+  events?(): NormalizedCliEvent[];
+}
+
+export interface CliStartInput {
+  executable: string;
+  args: string[];
+  workspacePath: string;
+  environment?: Record<string, string>;
+  normalizeLine?: (line: string) => NormalizedCliEvent | undefined;
 }
 
 export interface CliAgentBackend {
-  start(input: { executable: string; args: string[]; workspacePath: string; environment?: Record<string, string> }): CliTurn;
+  start(input: CliStartInput): CliTurn;
 }
 
 export type CredentialResolver = (reference: string) => Promise<string>;
 
 export class SpawnCliAgentBackend implements CliAgentBackend {
-  start(input: { executable: string; args: string[]; workspacePath: string; environment?: Record<string, string> }): CliTurn {
+  start(input: CliStartInput): CliTurn {
     return new SpawnedCliTurn(spawn(input.executable, input.args, {
       cwd: input.workspacePath,
       shell: false,
       stdio: ["ignore", "pipe", "pipe"],
       env: { ...process.env, ...input.environment },
-    }));
+      detached: process.platform !== "win32",
+    }), input.normalizeLine ?? normalizeCliLine);
   }
 }
 
@@ -71,39 +81,50 @@ class SpawnedCliTurn implements CliTurn {
   private completed = false;
   private cancelled = false;
   private readonly outcome: Promise<CliTurnResult>;
+  private readonly retainedEvents: NormalizedCliEvent[] = [];
+  private resourceEvent: Extract<NormalizedCliEvent, { type: "resource" }> | undefined;
 
-  constructor(private readonly child: ChildProcess) {
+  constructor(private readonly child: ChildProcess, normalizeLine: (line: string) => NormalizedCliEvent | undefined) {
     let stdout = "";
     let stderr = "";
-    const events: NormalizedCliEvent[] = [];
-    this.child.stdout?.on("data", (chunk: Buffer) => {
-      stdout = (stdout + chunk.toString("utf8")).slice(-262_144);
+    let droppingLine = false;
+    let failure: Extract<NormalizedCliEvent, { type: "failure" | "resource" }> | undefined;
+    let activity: Extract<NormalizedCliEvent, { type: "activity" }> | undefined;
+    let waiting: Extract<NormalizedCliEvent, { type: "waiting" }> | undefined;
+    let providerSessionId: string | undefined;
+    const record = (event: NormalizedCliEvent | undefined): void => {
+      if (!event) return;
+      this.retainedEvents.push(event);
+      if (this.retainedEvents.length > 256) this.retainedEvents.shift();
+      if (event.type === "failure" || (event.type === "resource" && event.state !== "UNKNOWN")) failure = event;
+      if (event.type === "activity") { activity = event; providerSessionId = event.providerSessionId ?? providerSessionId; }
+      if (event.type === "waiting") waiting = event;
+      if (event.type === "resource") this.resourceEvent = event;
+    };
+    this.child.stdout?.setEncoding("utf8");
+    this.child.stdout?.on("data", (chunk: string) => {
+      stdout += chunk;
       const lines = stdout.split("\n");
       stdout = lines.pop() ?? "";
       for (const line of lines) {
-        const event = normalizeCliLine(line);
-        if (event) events.push(event);
+        if (!droppingLine && line.length <= 1_048_576) record(normalizeLine(line));
+        else if (!droppingLine) record({ type: "failure", reason: "CLI output record exceeds 1 MiB" });
+        droppingLine = false;
       }
+      if (stdout.length > 1_048_576) { stdout = ""; droppingLine = true; record({ type: "failure", reason: "CLI output record exceeds 1 MiB" }); }
     });
     this.child.stderr?.on("data", (chunk: Buffer) => { stderr = (stderr + chunk.toString("utf8")).slice(-32_768); });
     this.outcome = new Promise((resolve) => {
       child.on("error", (error) => { stderr = error.message; });
       child.on("close", (code) => {
         this.completed = true;
-        if (stdout.trim()) {
-          const event = normalizeCliLine(stdout);
-          if (event) events.push(event);
-        }
+        if (!droppingLine && stdout.trim()) record(normalizeLine(stdout));
         const error = normalizeCliError(stderr);
-        if (error) events.push(error);
-        const waiting = events.findLast((event) => event.type === "waiting");
-        const activity = events.findLast((event) => event.type === "activity");
-        const sessionEvent = events.findLast((event): event is Extract<NormalizedCliEvent, { type: "activity" }> => event.type === "activity" && Boolean(event.providerSessionId));
-        const providerSessionId = sessionEvent?.providerSessionId;
+        if (error && code !== 0) record(error);
         resolve({
-          state: this.cancelled ? "cancelled" : waiting ? "waiting" : code === 0 ? "completed" : "failed",
-          summary: activity?.summary ?? waiting?.reason ?? error?.reason ?? (code === 0 ? "Agent completed" : `Agent exited with code ${code ?? "unknown"}`),
-          events,
+          state: this.cancelled ? "cancelled" : failure ? "failed" : waiting ? "waiting" : code === 0 ? "completed" : "failed",
+          summary: failure?.reason ?? waiting?.reason ?? activity?.summary ?? error?.reason ?? (code === 0 ? "Agent completed" : `Agent exited with code ${code ?? "unknown"}`),
+          events: this.events(),
           ...(providerSessionId ? { providerSessionId } : {}),
         });
       });
@@ -113,22 +134,38 @@ class SpawnedCliTurn implements CliTurn {
   async cancel(): Promise<void> {
     if (!this.completed) {
       this.cancelled = true;
-      this.child.kill("SIGTERM");
+      this.kill("SIGTERM");
     }
-    await this.outcome;
+    const timer = setTimeout(() => this.kill("SIGKILL"), 2_000);
+    try { await this.outcome; } finally { clearTimeout(timer); }
+  }
+  private kill(signal: NodeJS.Signals): void {
+    try {
+      if (process.platform !== "win32" && this.child.pid) process.kill(-this.child.pid, signal);
+      else this.child.kill(signal);
+    } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error; }
+  }
+  events(): NormalizedCliEvent[] {
+    const events = [...this.retainedEvents];
+    if (this.resourceEvent && !events.includes(this.resourceEvent)) { events.push(this.resourceEvent); if (events.length > 256) events.shift(); }
+    return structuredClone(events);
   }
   status(): "running" | "completed" { return this.completed ? "completed" : "running"; }
   result(): Promise<CliTurnResult> { return this.outcome; }
 }
 
-interface CliProviderDefinition {
+export interface CliProviderDefinition {
   manifest: AdapterManifest;
   defaultExecutable: string;
   versionArgs: string[];
   authArgs: string[];
   environmentKey?: string;
   supportsResume: boolean;
-  startArgs(input: { prompt: string; model?: string; providerSessionId?: string }): string[];
+  strictLifecycle?: boolean;
+  newSessionId?: () => string;
+  resolveExecutable?: (profile: CliAgentProfile) => Promise<string>;
+  normalizeLine?: (line: string) => NormalizedCliEvent | undefined;
+  startArgs(input: { prompt: string; model?: string; providerSessionId?: string; newSession?: boolean }): string[];
 }
 
 export const cursorManifest: AdapterManifest = {
@@ -198,11 +235,12 @@ const kiroDefinition: CliProviderDefinition = {
   ],
 };
 
-class StructuredCliAdapter implements AgentAdapter {
+export class StructuredCliAdapter implements AgentAdapter {
   readonly manifest: AdapterManifest;
   private readonly turns = new Map<string, CliTurn>();
   private readonly backend: CliAgentBackend;
   private readonly store: SessionStore;
+  private readonly sending = new Set<string>();
 
   constructor(
     private readonly definition: CliProviderDefinition,
@@ -225,14 +263,16 @@ class StructuredCliAdapter implements AgentAdapter {
       workspacePath: input.workspacePath,
       state: "RUNNING",
       profileId: this.profile.id,
+      ...(this.definition.newSessionId ? { providerSessionId: this.definition.newSessionId() } : {}),
       createdAt: now,
       updatedAt: now,
     };
     const environment = await this.environment();
     this.turns.set(session.id, this.backend.start({
-      executable: this.profile.executable ?? this.definition.defaultExecutable,
-      args: this.definition.startArgs({ prompt: input.prompt ?? "Inspect the task and report readiness.", ...(this.profile.model ? { model: this.profile.model } : {}) }),
+      executable: await this.executable(),
+      args: this.definition.startArgs({ prompt: input.prompt ?? "Inspect the task and report readiness.", newSession: true, ...(session.providerSessionId ? { providerSessionId: session.providerSessionId } : {}), ...(this.profile.model ? { model: this.profile.model } : {}) }),
       workspacePath: input.workspacePath,
+      ...(this.definition.normalizeLine ? { normalizeLine: this.definition.normalizeLine } : {}),
       ...(environment ? { environment } : {}),
     }));
     this.store.save(session);
@@ -241,17 +281,25 @@ class StructuredCliAdapter implements AgentAdapter {
 
   async send(sessionId: string, message: string): Promise<AdapterEvent> {
     if (!this.definition.supportsResume) throw new AdapterContractError("UNSUPPORTED_CAPABILITY", `${this.manifest.displayName} headless runs do not accept mid-session input`);
+    if (this.definition.strictLifecycle && (this.turns.get(sessionId)?.status() === "running" || this.sending.has(sessionId))) throw new AdapterContractError("SESSION_BUSY", "Wait for the current CLI turn before sending another message");
+    if (this.require(sessionId).state === "CANCELLED") throw new AdapterContractError("SESSION_CANCELLED", "Cancelled sessions cannot accept input");
+    this.sending.add(sessionId);
+    try {
     const session = await this.finish(sessionId);
     if (!session.providerSessionId) throw new AdapterContractError("SESSION_NOT_RESUMABLE", `${this.manifest.displayName} did not emit a provider session id`);
     const environment = await this.environment();
+    const executable = await this.executable();
+    if (this.require(sessionId).state === "CANCELLED") throw new AdapterContractError("SESSION_CANCELLED", "Session was cancelled before the next turn started");
     this.turns.set(sessionId, this.backend.start({
-      executable: this.profile.executable ?? this.definition.defaultExecutable,
+      executable,
       args: this.definition.startArgs({ prompt: message, providerSessionId: session.providerSessionId, ...(this.profile.model ? { model: this.profile.model } : {}) }),
       workspacePath: session.workspacePath,
+      ...(this.definition.normalizeLine ? { normalizeLine: this.definition.normalizeLine } : {}),
       ...(environment ? { environment } : {}),
     }));
     this.store.save({ ...session, state: "RUNNING", updatedAt: new Date().toISOString() });
     return { type: "session.message", sessionId, occurredAt: new Date().toISOString(), data: { acceptedCharacters: message.length, providerSessionId: session.providerSessionId } };
+    } finally { this.sending.delete(sessionId); }
   }
   async pause(): Promise<AdapterSession> { throw new AdapterContractError("UNSUPPORTED_CAPABILITY", `${this.manifest.displayName} cannot pause a headless turn`); }
   async resume(sessionId: string): Promise<AdapterSession> {
@@ -260,12 +308,14 @@ class StructuredCliAdapter implements AgentAdapter {
     return this.status(sessionId);
   }
   async cancel(sessionId: string): Promise<AdapterSession> {
+    this.update(sessionId, { state: "CANCELLED" });
     await this.turns.get(sessionId)?.cancel();
     return this.update(sessionId, { state: "CANCELLED" });
   }
   async status(sessionId: string): Promise<AdapterSession> {
     const session = this.require(sessionId);
     const turn = this.turns.get(sessionId);
+    if (!turn && this.definition.strictLifecycle && session.state === "RUNNING") return this.update(sessionId, { state: "FAILED" });
     return !turn || turn.status() === "running" ? structuredClone(session) : this.finish(sessionId);
   }
   async result(sessionId: string): Promise<AdapterResult> {
@@ -274,8 +324,10 @@ class StructuredCliAdapter implements AgentAdapter {
     return { sessionId, state: session.state, summary: result?.summary ?? `${this.manifest.displayName} session ${session.state.toLowerCase()}`, artifacts: extractArtifacts(result?.summary ?? "") };
   }
   async usage(sessionId: string): Promise<Record<string, unknown>> {
-    const result = await this.turns.get(sessionId)?.result();
-    return result?.events.filter((event) => event.type === "resource").at(-1) ?? { state: "UNKNOWN", reason: "Provider did not emit a resource signal", source: "probe", confidence: "low" };
+    this.require(sessionId);
+    const turn = this.turns.get(sessionId);
+    const events = turn?.events ? turn.events() : turn?.status() === "completed" ? (await turn.result()).events : [];
+    return events.filter((event) => event.type === "resource").at(-1) ?? { state: "UNKNOWN", reason: "Provider did not emit a resource signal", source: "probe", confidence: "low" };
   }
   async diagnostics(sessionId: string): Promise<Record<string, unknown>> {
     const session = this.require(sessionId);
@@ -287,12 +339,16 @@ class StructuredCliAdapter implements AgentAdapter {
     if (!this.definition.environmentKey || !this.resolveCredential) throw new AdapterContractError("SECRET_RESOLVER_UNAVAILABLE", "Credential references require a SecretStore resolver");
     return { [this.definition.environmentKey]: await this.resolveCredential(this.profile.credentialRef) };
   }
+  private executable(): Promise<string> {
+    return this.definition.resolveExecutable?.(this.profile) ?? Promise.resolve(this.profile.executable ?? this.definition.defaultExecutable);
+  }
   private async finish(sessionId: string): Promise<AdapterSession> {
     const session = this.require(sessionId);
     if (session.state === "CANCELLED") return structuredClone(session);
     const turn = this.turns.get(sessionId);
     if (!turn) return structuredClone(session);
     const result = await turn.result();
+    if (this.require(sessionId).state === "CANCELLED") return structuredClone(this.require(sessionId));
     return this.update(sessionId, {
       state: result.state === "completed" ? "COMPLETED" : result.state === "cancelled" ? "CANCELLED" : result.state === "waiting" ? "PAUSED" : "FAILED",
       ...(result.providerSessionId ? { providerSessionId: result.providerSessionId } : {}),
