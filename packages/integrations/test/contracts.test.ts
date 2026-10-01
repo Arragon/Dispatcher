@@ -282,4 +282,23 @@ describe("SCM delivery contract", () => {
     expect(operations).toEqual(["branch", "push", "pull-request", "complete"]);
     database.close();
   });
+
+  it("persists CI changes after delivery without repeating push or PR creation", async () => {
+    const database = new DispatcherDatabase(":memory:");
+    const adapter = new FakeScmConnector();
+    let state: "PENDING" | "PASSED" | "FAILED" = "PENDING";
+    adapter.getCiStatus = async () => ({ state });
+    const delivery = new DeliveryService(database);
+    const input = request();
+    input.idempotencyKey = "delivery:run-1:2";
+    await delivery.deliver(adapter, input);
+    state = "FAILED";
+    await delivery.reconcile(adapter, { taskId: "task-1", runId: "run-1", generation: 2, repository: input.repository, assertCurrent: () => undefined });
+    expect(database.listDeliveryEvidence("task-1")).toContainEqual(expect.objectContaining({ kind: "ci", state: "FAILED", revision: 2 }));
+    const repeated = await delivery.deliver(adapter, input);
+    expect(repeated.duplicate).toBe(true);
+    expect(adapter.pullRequests).toHaveLength(1);
+    expect(database.listDeliveryEvidence("task-1")).toHaveLength(3);
+    database.close();
+  });
 });

@@ -23,10 +23,19 @@ export interface DeliveryRequest {
   assertAuthority?: (operation: "branch" | "push" | "pull-request" | "complete") => void;
 }
 
+export interface PullRequestStatus {
+  id: string;
+  url: string;
+  state: "OPEN" | "MERGED" | "CLOSED";
+  number?: number;
+  headCommit?: string;
+}
+
 export interface ScmAdapter extends ConnectorAdapter {
   ensureBranch(repository: RepositoryRef, branch: string, baseBranch: string, idempotencyKey: string): Promise<void>;
   push(repository: RepositoryRef, branch: string, idempotencyKey: string): Promise<{ commit: string }>;
-  createOrGetPullRequest(request: DeliveryRequest): Promise<{ id: string; url: string; state: "OPEN" | "MERGED" | "CLOSED" }>;
+  createOrGetPullRequest(request: DeliveryRequest): Promise<PullRequestStatus>;
+  getPullRequest?(repository: RepositoryRef, number: number): Promise<PullRequestStatus>;
   getCiStatus(repository: RepositoryRef, ref: string): Promise<{ state: "PENDING" | "PASSED" | "FAILED"; url?: string }>;
 }
 

@@ -171,6 +171,17 @@ class TaskDispatchError extends Error {
 }
 
 type AdvanceResult = { waiting: boolean; run: Run; task: Task; deliveries: JsonValue[] };
+interface DeliveryFeedback {
+  version: 1;
+  id: string;
+  runId: string;
+  generation: number;
+  body: string;
+  severity: Notification["severity"];
+  status: "PENDING" | "SENT" | "OBSOLETE";
+  failures: number;
+  nextAttemptAt: string;
+}
 
 const CREDENTIAL_PATTERN = /(?:sk-|xox[baprs]-|gh[op]_)[a-z0-9_-]{8,}/i;
 const ADVANCEABLE_RUN_STATES = new Set<Run["state"]>(["ACTIVE", "VERIFYING", "DELIVERING"]);
@@ -537,6 +548,8 @@ export class ControllerService {
       { name: "messaging-inbox", run: () => this.processMessagingInbox(worker.inboxBatchSize ?? 10) },
       { name: "run-advancement", run: () => this.advanceDueRuns(worker.maxConcurrentRuns ?? 2, worker.runBaseDelayMs ?? 1_000, worker.runMaxDelayMs ?? 5 * 60_000) },
       { name: "run-attention", run: () => this.notifyDueAttention() },
+      { name: "delivery-reconcile", run: () => this.reconcileDeliveryRuns(worker.maxConcurrentRuns ?? 2) },
+      { name: "delivery-feedback", run: () => this.notifyDeliveryFeedback() },
       { name: "projection-drain", run: async () => { await this.drainProjections(this.now()); } },
     ], {
       intervalMs: worker.intervalMs ?? 2_000,
@@ -1171,6 +1184,14 @@ export class ControllerService {
     }
   }
 
+  private saveAdvancedRun(run: Run, expectedState: Run["state"]): void {
+    const current = this.database.getEntity<JsonValue>("run", run.id) as unknown as Run | undefined;
+    if (!current || current.generation !== run.generation || current.leaseId !== run.leaseId || current.state !== expectedState) throw new ConnectorError("CONFLICT", "Run changed while advancement was awaiting work", { retryable: false });
+    // Heartbeats can renew the same generation while verification or SCM awaits.
+    if (current.leaseExpiresAt) run.leaseExpiresAt = current.leaseExpiresAt;
+    this.database.saveEntity("run", run.id, json(run));
+  }
+
   private async advanceRun(runId: string): Promise<{ waiting: boolean; run: Run; task: Task; deliveries: JsonValue[] }> {
     const storedRun = this.database.getEntity<JsonValue>("run", runId);
     if (!storedRun) throw new ConnectorError("PERMANENT", `Unknown run ${runId}`);
@@ -1194,7 +1215,7 @@ export class ControllerService {
         run.state = "WAITING_USER";
         run.activitySummary = (await adapter.result(run.sessionId)).summary || "Waiting for user input";
         run.lastActivityAt = new Date().toISOString();
-        this.database.saveEntity("run", run.id, json(run));
+        this.saveAdvancedRun(run, "ACTIVE");
         const current = this.database.getCanonicalTask<JsonValue>(run.taskId)!;
         if ((current.document as unknown as Task).state === "RUNNING") {
           this.tasks.execute({ id: `run:${run.id}:waiting-user`, taskId: run.taskId, baseRevision: current.revision, actor: "run-worker", command: { type: "task.transition", state: "WAITING_USER" } });
@@ -1209,7 +1230,7 @@ export class ControllerService {
         run.resourceBlockReason = resource.reason ?? resource.state;
         if (pausedSession.providerSessionId) run.providerSessionId = pausedSession.providerSessionId;
         run.resumePolicy = pausedSession.providerSessionId || adapter.manifest.capabilities.resume ? "same-session" : "controlled-reroute";
-        this.database.saveEntity("run", run.id, json(run));
+        this.saveAdvancedRun(run, "ACTIVE");
         const current = this.database.getCanonicalTask<JsonValue>(run.taskId)!;
         if ((current.document as unknown as Task).state === "RUNNING") {
           this.tasks.execute({ id: `run:${run.id}:resource-blocked`, taskId: run.taskId, baseRevision: current.revision, actor: "run-worker", command: { type: "task.transition", state: "WAITING_RESOURCE" } });
@@ -1221,7 +1242,7 @@ export class ControllerService {
         run.state = "FAILED";
         run.failureReason = String(redactValue((await adapter.result(run.sessionId)).summary || `Agent session ${session.state.toLowerCase()}`));
         run.endedAt = new Date().toISOString();
-        this.database.saveEntity("run", run.id, json(run));
+        this.saveAdvancedRun(run, "ACTIVE");
         const current = this.database.getCanonicalTask<JsonValue>(run.taskId)!;
         if ((current.document as unknown as Task).state === "RUNNING") {
           this.tasks.execute({ id: `run:${run.id}:failed`, taskId: run.taskId, baseRevision: current.revision, actor: "run-worker", command: { type: "task.transition", state: "FAILED" } });
@@ -1233,7 +1254,7 @@ export class ControllerService {
       run.state = "VERIFYING";
       run.activitySummary = result.summary;
       run.lastActivityAt = new Date().toISOString();
-      this.database.saveEntity("run", run.id, json(run));
+      this.saveAdvancedRun(run, "ACTIVE");
       const current = this.database.getCanonicalTask<JsonValue>(run.taskId)!;
       if ((current.document as unknown as Task).state === "RUNNING") {
         this.tasks.execute({ id: `run:${run.id}:verifying`, taskId: run.taskId, baseRevision: current.revision, actor: "run-worker", command: { type: "task.transition", state: "VERIFYING" } });
@@ -1268,7 +1289,7 @@ export class ControllerService {
         run.state = "FAILED";
         run.failureReason = "Required verification failed";
         run.endedAt = new Date().toISOString();
-        this.database.saveEntity("run", run.id, json(run));
+        this.saveAdvancedRun(run, "VERIFYING");
         const current = this.database.getCanonicalTask<JsonValue>(run.taskId)!;
         if ((current.document as unknown as Task).state === "VERIFYING") {
           this.tasks.execute({ id: `run:${run.id}:verification-failed`, taskId: run.taskId, baseRevision: current.revision, actor: "run-worker", command: { type: "task.transition", state: "FAILED" } });
@@ -1277,7 +1298,7 @@ export class ControllerService {
       }
       assertRunTransition(run.state, "DELIVERING");
       run.state = "DELIVERING";
-      this.database.saveEntity("run", run.id, json(run));
+      this.saveAdvancedRun(run, "VERIFYING");
     }
 
     if (run.state !== "DELIVERING" || !run.worktree || !run.branch) throw new ConnectorError("CONFLICT", `Run ${run.id} is not ready for delivery`);
@@ -1305,7 +1326,7 @@ export class ControllerService {
     run.state = "COMPLETE";
     run.endedAt = new Date().toISOString();
     if (pullRequest?.url) run.prUrl = pullRequest.url;
-    this.database.saveEntity("run", run.id, json(run));
+    this.saveAdvancedRun(run, "DELIVERING");
     let current = this.database.getCanonicalTask<JsonValue>(run.taskId)!;
     if ((current.document as unknown as Task).state === "VERIFYING") {
       this.tasks.execute({ id: `run:${run.id}:review`, taskId: run.taskId, baseRevision: current.revision, actor: "run-worker", command: { type: "task.transition", state: "REVIEW" } });
@@ -1739,7 +1760,13 @@ export class ControllerService {
     for (const value of this.database.listEntities<JsonValue>("run")) {
       const run = value as unknown as Run;
       if (!["WAITING_USER", "RESOURCE_BLOCKED", "FAILED", "COMPLETE"].includes(run.state)) continue;
-      try { await this.notifyAttention(run); }
+      try {
+        if (run.state === "FAILED") {
+          const task = this.database.getCanonicalTask<JsonValue>(run.taskId);
+          if (task) this.tasks.execute({ id: `failure-comment:${run.id}:${run.generation}`, taskId: run.taskId, baseRevision: task.revision, actor: "run-worker", command: { type: "task.comment", body: `Run ${run.id} FAILED: ${run.failureReason ?? "Execution failed"}` } });
+        }
+        await this.notifyAttention(run);
+      }
       catch (error) {
         this.attentionNotifications.recover(run.taskId);
         this.app.log.warn({ error: redactValue(error), runId: run.id }, "attention notification will retry");
@@ -1940,6 +1967,88 @@ export class ControllerService {
         this.app.log.warn({ error: redactValue(error), runId: run.id, failures }, "background run advancement failed");
       }
     });
+  }
+
+  private assertCurrentDeliveryRun(run: Run): void {
+    const current = this.database.getEntity<JsonValue>("run", run.id) as unknown as Run | undefined;
+    const task = this.database.getCanonicalTask<JsonValue>(run.taskId)?.document as unknown as Task | undefined;
+    if (!current || !task || current.state !== "COMPLETE" || current.generation !== run.generation || current.leaseId !== run.leaseId || task.currentRunId && task.currentRunId !== run.id) throw new ConnectorError("CONFLICT", "Delivery feedback belongs to an obsolete run", { retryable: false, operation: "read" });
+  }
+
+  private async reconcileDeliveryRuns(limit: number): Promise<void> {
+    const now = this.now();
+    const due = this.database.listEntities<JsonValue>("run").map((value) => value as unknown as Run).filter((run) => {
+      if (run.state !== "COMPLETE" || !run.prUrl) return false;
+      const monitor = this.database.getEntity<JsonValue>("delivery-monitor", `${run.id}:${run.generation}`) as unknown as { nextAttemptAt: string } | undefined;
+      return !monitor || Date.parse(monitor.nextAttemptAt) <= now.getTime();
+    });
+    await runBounded(due, limit, async (run) => {
+      const id = `${run.id}:${run.generation}`;
+      try {
+        this.assertCurrentDeliveryRun(run);
+        const contract = this.database.getTaskContract<JsonValue>(run.taskId) as unknown as TaskContract | undefined;
+        const [owner, name] = contract?.delivery.repository?.split("/") ?? [];
+        if (!owner || !name) return;
+        const evidence = this.database.listDeliveryEvidence<JsonValue>(run.taskId) as unknown as Array<{ kind: string; runId: string; connectorInstanceId: string }>;
+        const connectorId = evidence.find((item) => item.kind === "pull-request" && item.runId === run.id)?.connectorInstanceId;
+        const scm = connectorId ? this.connectors.get<ScmAdapter>(connectorId) : undefined;
+        if (!scm) return;
+        const reconciled = await new DeliveryService(this.database).reconcile(scm, { taskId: run.taskId, runId: run.id, generation: run.generation, repository: { owner, name }, assertCurrent: () => this.assertCurrentDeliveryRun(run) });
+        if (!reconciled) return;
+        const { pullRequest, ci } = reconciled;
+        const feedbackId = `delivery-feedback:${id}:${pullRequest.revision}:${ci.revision}`;
+        const ciLabel = ci.state === "READY" ? "CI_PASSED" : ci.state === "FAILED" ? "CI_FAILED" : "CI_PENDING";
+        const prLabel = pullRequest.state === "MERGED" ? "PR_MERGED" : pullRequest.state === "FAILED" ? "PR_CLOSED" : "PR_OPEN";
+        const body = `${ciLabel} / ${prLabel}: ${pullRequest.url ?? run.prUrl}\nCommit: ${ci.externalId}${ci.url ? `\nChecks: ${ci.url}` : ""}`;
+        this.database.transaction(() => {
+          this.assertCurrentDeliveryRun(run);
+          if (!this.database.getEntity("delivery-feedback", feedbackId)) {
+            const task = this.database.getCanonicalTask<JsonValue>(run.taskId)!;
+            this.tasks.execute({ id: feedbackId, taskId: run.taskId, baseRevision: task.revision, actor: "delivery-worker", command: { type: "task.comment", body } });
+            this.database.saveEntity("delivery-feedback", feedbackId, json({ version: 1, id: feedbackId, runId: run.id, generation: run.generation, body, severity: ci.state === "FAILED" || pullRequest.state === "FAILED" ? "critical" : "info", status: "PENDING", failures: 0, nextAttemptAt: now.toISOString() } satisfies DeliveryFeedback));
+          }
+          const doneOnCiPassed = this.configuration.current().config.connectors.find((connector) => connector.id === scm.instance.id)?.settings?.doneOnCiPassed === true;
+          const current = this.database.getCanonicalTask<JsonValue>(run.taskId)!;
+          if (doneOnCiPassed && ci.state === "READY" && pullRequest.state !== "FAILED" && (current.document as unknown as Task).state === "REVIEW") this.tasks.execute({ id: `${feedbackId}:done`, taskId: run.taskId, baseRevision: current.revision, actor: "delivery-worker", command: { type: "task.transition", state: "DONE" } });
+          this.database.saveEntity("delivery-monitor", id, json({ version: 1, nextAttemptAt: new Date(now.getTime() + 30_000).toISOString(), failures: 0 }));
+        });
+        this.fleetEvents.publish("task.changed", run.taskId, { id: run.taskId, ci: ci.state, pr: pullRequest.state });
+      } catch (error) {
+        const previous = this.database.getEntity<JsonValue>("delivery-monitor", id) as unknown as { failures?: number } | undefined;
+        const failures = (previous?.failures ?? 0) + 1;
+        this.database.saveEntity("delivery-monitor", id, json({ version: 1, failures, nextAttemptAt: new Date(now.getTime() + backoffDelayMs(failures, 1_000, 5 * 60_000)).toISOString() }));
+        this.app.log.warn({ error: redactValue(error), runId: run.id }, "delivery reconciliation will retry");
+      }
+    });
+  }
+
+  private async notifyDeliveryFeedback(): Promise<void> {
+    const now = this.now();
+    const due = (this.database.listEntities<JsonValue>("delivery-feedback") as unknown as DeliveryFeedback[])
+      .filter((feedback) => feedback.status === "PENDING" && Date.parse(feedback.nextAttemptAt) <= now.getTime()).slice(0, 10);
+    for (const feedback of due) {
+      const run = this.database.getEntity<JsonValue>("run", feedback.runId) as unknown as Run | undefined;
+      try {
+        if (!run || run.generation !== feedback.generation) throw new ConnectorError("CONFLICT", "Stale delivery notification", { retryable: false });
+        this.assertCurrentDeliveryRun(run);
+        const binding = this.runConversation(run);
+        const connector = (binding ? this.connectors.get<MessagingAdapter>(binding.connectorInstanceId) : undefined) ?? this.connectors.list("messaging").find((entry) => this.messagingChannels.has(entry.instance.id)) as MessagingAdapter | undefined;
+        if (!connector) continue;
+        const channel = binding?.conversationId ?? this.messagingChannels.get(connector.instance.id)!;
+        if (binding && connector.reply) await connector.reply({ channel, threadId: binding.threadId, text: feedback.body }, feedback.id);
+        else await connector.send({ channel, subject: "Delivery status", body: feedback.body, severity: feedback.severity, canonicalEntityId: run.taskId }, feedback.id);
+        feedback.status = "SENT";
+      } catch (error) {
+        if (error instanceof ConnectorError && error.code === "CONFLICT") feedback.status = "OBSOLETE";
+        else {
+          feedback.failures += 1;
+          const delay = error instanceof ConnectorError ? error.options.retryAfterMs : undefined;
+          feedback.nextAttemptAt = new Date(now.getTime() + (delay ?? backoffDelayMs(feedback.failures, 1_000, 5 * 60_000))).toISOString();
+          this.app.log.warn({ error: redactValue(error), runId: feedback.runId }, "delivery notification will retry");
+        }
+      }
+      this.database.saveEntity("delivery-feedback", feedback.id, json(feedback));
+    }
   }
 
   private async processMessagingInbox(limit: number): Promise<void> {

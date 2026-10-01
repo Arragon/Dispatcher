@@ -271,6 +271,7 @@ export interface RemoteRunnerClientOptions {
 export class RemoteRunnerClient {
   private readonly handlers = new Map<CommandPayload["type"], CommandHandler>();
   private readonly responses = new Map<string, ProtocolEnvelope<ResponsePayload>>();
+  private readonly pendingReceives = new Set<Promise<void>>();
   private socket: WebSocket | undefined;
   private nextSequence: number;
   private lastReceivedSequence = 0;
@@ -323,7 +324,11 @@ export class RemoteRunnerClient {
             return;
           }
           socket.off("error", fail);
-          socket.on("message", (message) => void this.receive(message));
+          socket.on("message", (message) => {
+            if (this.stopping || this.socket !== socket) return;
+            const pending = this.receive(message, socket).catch(() => socket.terminate()).finally(() => this.pendingReceives.delete(pending));
+            this.pendingReceives.add(pending);
+          });
           resolve();
         });
       });
@@ -354,14 +359,14 @@ export class RemoteRunnerClient {
     this.heartbeat = undefined;
     const socket = this.socket;
     this.socket = undefined;
-    if (!socket) return;
-    await new Promise<void>((resolve) => {
+    if (socket) await new Promise<void>((resolve) => {
       socket.once("close", () => resolve());
       socket.close(1000, "runner shutdown");
     });
+    await Promise.all(this.pendingReceives);
   }
 
-  private async receive(data: RawData): Promise<void> {
+  private async receive(data: RawData, socket: WebSocket): Promise<void> {
     const envelope = parseEnvelope(decode(data)) as ProtocolEnvelope<CommandPayload>;
     if (envelope.kind !== "command") return;
     if (envelope.ackSequence !== undefined) {
@@ -371,42 +376,45 @@ export class RemoteRunnerClient {
     const duplicate = this.responses.get(envelope.messageId);
     if (duplicate) {
       if (envelope.sequence > this.lastReceivedSequence + 1) {
-        await this.respond(envelope, { type: "rpc.error", correlationId: envelope.messageId, code: "OUT_OF_ORDER", message: `Expected sequence ${this.lastReceivedSequence + 1}, received ${envelope.sequence}` });
+        await this.respond(envelope, { type: "rpc.error", correlationId: envelope.messageId, code: "OUT_OF_ORDER", message: `Expected sequence ${this.lastReceivedSequence + 1}, received ${envelope.sequence}` }, socket);
         return;
       }
       if (envelope.sequence === this.lastReceivedSequence + 1) this.lastReceivedSequence = envelope.sequence;
-      await this.respond(envelope, duplicate.payload);
+      await this.respond(envelope, duplicate.payload, socket);
       return;
     }
     if (envelope.sequence !== this.lastReceivedSequence + 1) {
-      await this.respond(envelope, { type: "rpc.error", correlationId: envelope.messageId, code: "OUT_OF_ORDER", message: `Expected sequence ${this.lastReceivedSequence + 1}, received ${envelope.sequence}` });
+      await this.respond(envelope, { type: "rpc.error", correlationId: envelope.messageId, code: "OUT_OF_ORDER", message: `Expected sequence ${this.lastReceivedSequence + 1}, received ${envelope.sequence}` }, socket);
       return;
     }
     this.lastReceivedSequence = envelope.sequence;
     if (envelope.payload.type === "runner.drain") {
       this.currentState = envelope.payload.draining ? "DRAINING" : "ONLINE";
       await this.sendEvent({ type: "runner.heartbeat", runnerId: this.options.runner.id, state: this.currentState });
-      await this.respond(envelope, { type: "rpc.result", correlationId: envelope.messageId, result: { state: this.currentState } });
+      await this.respond(envelope, { type: "rpc.result", correlationId: envelope.messageId, result: { state: this.currentState } }, socket);
       return;
     }
     const handler = this.handlers.get(envelope.payload.type);
     if (!handler) {
-      await this.respond(envelope, { type: "rpc.error", correlationId: envelope.messageId, code: "UNSUPPORTED_COMMAND", message: `No handler registered for ${envelope.payload.type}` });
+      await this.respond(envelope, { type: "rpc.error", correlationId: envelope.messageId, code: "UNSUPPORTED_COMMAND", message: `No handler registered for ${envelope.payload.type}` }, socket);
       return;
     }
+    let payload: ResponsePayload;
     try {
       const result = await handler(envelope.payload, envelope);
-      await this.respond(envelope, { type: "rpc.result", correlationId: envelope.messageId, result });
+      payload = { type: "rpc.result", correlationId: envelope.messageId, result };
     } catch (error) {
-      await this.respond(envelope, { type: "rpc.error", correlationId: envelope.messageId, code: "HANDLER_FAILED", message: error instanceof Error ? error.message : "Command handler failed" });
+      payload = { type: "rpc.error", correlationId: envelope.messageId, code: "HANDLER_FAILED", message: error instanceof Error ? error.message : "Command handler failed" };
     }
+    await this.respond(envelope, payload, socket);
   }
 
-  private async respond(command: ProtocolEnvelope<CommandPayload>, payload: ResponsePayload): Promise<void> {
+  private async respond(command: ProtocolEnvelope<CommandPayload>, payload: ResponsePayload, socket: WebSocket): Promise<void> {
     const response = createEnvelope({ kind: "response", messageId: randomUUID(), traceId: command.traceId, runnerId: this.options.runner.id, sequence: this.nextSequence++, ackSequence: this.lastReceivedSequence, correlationId: command.messageId, payload, origin: "runner" });
     this.responses.set(command.messageId, response);
     this.options.journal?.append(response);
-    sendJson(this.requireSocket(), response, this.options.maxBufferedBytes ?? 1_048_576);
+    // A completed command remains replayable even when its originating socket closed.
+    if (this.socket === socket && socket.readyState === WebSocket.OPEN) sendJson(socket, response, this.options.maxBufferedBytes ?? 1_048_576);
   }
 
   private requireSocket(): WebSocket {

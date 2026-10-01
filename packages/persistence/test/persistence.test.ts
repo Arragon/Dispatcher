@@ -85,6 +85,21 @@ describe("DispatcherDatabase", () => {
     db.close();
   });
 
+  it("updates delivery evidence with revision CAS without weakening insert deduplication", () => {
+    const path = databasePath();
+    const db = new DispatcherDatabase(path);
+    const input = { id: "ci-1", taskId: "task-1", runId: "run-1", connectorInstanceId: "github", kind: "ci", externalId: "commit-1", document: { id: "ci-1", revision: 1, state: "PENDING" }, updatedAt: "2026-10-01T00:00:00Z" };
+    expect(db.saveDeliveryEvidence(input)).toBe(true);
+    expect(db.saveDeliveryEvidence({ ...input, document: { revision: 2, state: "FAILED" } })).toBe(false);
+    expect(db.updateDeliveryEvidence({ id: input.id, externalId: "commit-2", document: { id: input.id, revision: 2, state: "FAILED" }, updatedAt: "2026-10-01T00:01:00Z" }, 1)).toBe(true);
+    expect(db.updateDeliveryEvidence({ id: input.id, externalId: "commit-stale", document: { id: input.id, revision: 2, state: "READY" }, updatedAt: "2026-10-01T00:02:00Z" }, 1)).toBe(false);
+    db.close();
+    const restored = new DispatcherDatabase(path);
+    expect(restored.listDeliveryEvidence("task-1")).toEqual([{ id: "ci-1", revision: 2, state: "FAILED" }]);
+    expect(restored.handle.prepare("SELECT external_id FROM delivery_evidence WHERE id = ?").get("ci-1")).toEqual({ external_id: "commit-2" });
+    restored.close();
+  });
+
   it("atomically persists canonical task, binding, inbox and outbox state", () => {
     const db = new DispatcherDatabase(":memory:");
     const now = "2026-09-22T00:00:00.000Z";

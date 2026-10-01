@@ -18,21 +18,23 @@
 
 ## Task 2: Step4 / INH-1382
 
-文件：`apps/controller/src/service.ts`、`packages/runner/src/lease.ts`、`packages/runner/src/process.ts`、`packages/scheduler/src/index.ts`、`packages/adapters/src/codex.ts`；回归：`packages/runner/test/process.test.ts`、`packages/runner/test/distributed.test.ts`、`apps/controller/test/personal-loop.test.ts`。
+文件：`apps/controller/src/service.ts`、`packages/runner/src/lease.ts`、`packages/runner/src/process.ts`、`packages/runner/src/remote.ts`、`packages/scheduler/src/index.ts`、`packages/adapters/src/codex.ts`；回归：`packages/runner/test/process.test.ts`、`packages/runner/test/distributed.test.ts`、`apps/controller/test/personal-loop.test.ts`。
 
 - 通过 Embedded Runner heartbeat 与后台循环续租当前非终态 run；续租独立于长时间 verification/SCM await。持久化 expiry；禁止过期、撤销、旧 generation 续租或交付。
 - ProcessManager 在读取 pid 前安装 error/close handler 并等待 spawn；保留原始可读原因。
 - 启动失败留下 FAILED run/task 与原因，无 PR；Codex 异步 spawn 失败结果保留诊断，Slack 收到 FAILED。
+- 异步 advance 落盘前重新校验 state/generation，并保留 heartbeat 已续租的 expiry。修复基线 runner shutdown/replay race：等待进行中命令落 journal，关闭后的原连接不再发送，也不借用新连接回复。
 - 定向命令：`pnpm vitest run packages/runner/test/process.test.ts packages/runner/test/distributed.test.ts packages/scheduler/test/scheduler.test.ts packages/adapters/test/codex.test.ts apps/controller/test/personal-loop.test.ts`。测试时钟推进超过 40 分钟并验证旧 lease fence。
 
 ## Task 3: Step5 / INH-1383
 
-文件：`packages/integrations/src/github.ts`、`packages/integrations/src/delivery.ts`、`apps/controller/src/service.ts`；回归：`packages/integrations/test/github.test.ts`、`apps/controller/test/personal-loop.test.ts`。
+文件：`packages/integrations/src/github.ts`、`packages/integrations/src/scm.ts`、`packages/integrations/src/delivery.ts`、`packages/persistence/src/index.ts`、`apps/controller/src/service.ts`；回归：`packages/integrations/test/github.test.ts`、`packages/persistence/test/persistence.test.ts`、`packages/integrations/test/contracts.test.ts`、`apps/controller/test/personal-loop.test.ts`。
 
 - CI 合并 commit statuses 与 paginated check-runs：失败优先，其次 pending，所有观察到的检查通过才 PASSED；零检查为 PENDING。
 - 先持久化 commit/PR，再读 CI；CI 读取失败不重复 push/PR。后台继续读取 COMPLETE run 的 CI 并持久化 evidence，重启后继续。
 - PR 已创建时 task 为 REVIEW（Linear 配置 `statusIds.REVIEW` 映射 In Review）；CI pending/failed 不能自动 Done。默认通过后仍 REVIEW；GitHub connector `settings.doneOnCiPassed=true` 才自动 Done。
 - CI 状态变化写 canonical comment → durable outbox，并在原 Slack 线程通知；失败通知可重试，幂等。过期 generation/currentRun 不得推进新任务投影。
+- 既有 delivery evidence 插入只去重，需新增按 evidence revision 的更新 CAS；不改变表结构，也不把这一 CAS 扩大表述为 run 排他/inbox claim 的跨进程保证。
 - 定向命令：`pnpm vitest run packages/integrations/test/github.test.ts packages/integrations/test/contracts.test.ts apps/controller/test/personal-loop.test.ts apps/controller/test/m6-e2e.test.ts`。
 
 ## 可直接写回 Linear 的文案（INH-1381）
@@ -47,7 +49,9 @@ Linear connector 当前需要重新认证；本文件提供文案，尚未写入
 
 ## 验证与真实使用边界
 
-环境要求从仓库配置取得：Node >=24.12，pnpm 11.19。全量 gate：`pnpm check`（build/typecheck/lint/boundaries/test）；定向测试见各步。基线：34 文件/195 测试断言通过，但 Remote Runner restart 测试出现 `Remote runner client is not started` 未处理异常，check exit 1，须在最终验证明确记录。
+环境要求从仓库配置取得：Node >=24.12，pnpm 11.19；本次实际使用 bundled Node 24.19.0、pnpm 11.25.0。全量 gate：`pnpm check`（build/typecheck/lint/boundaries/test）；定向测试见各步。基线：34 文件/195 测试断言通过，但 Remote Runner restart 测试出现 `Remote runner client is not started` 未处理异常，check exit 1；已添加 shutdown/replay 回归并修复，最终检查重新执行。
+
+Controller 集成测试使用 workspace `dist`，因此改动 packages 后先运行 `pnpm build`，再执行定向命令。Step3：3 文件/14 测试通过；Step4：5 文件/29 测试通过；Step5 初轮：5 文件/41 测试通过。续租快照与 shutdown/replay 回归从失败到通过；全量 `pnpm check` 通过，36 文件/222 测试，无未处理异常（2026-10-01；审查前结果，审查修复后重新核对）。
 
 单 Controller 可用循环的自动化测试必须覆盖：Linear 导入 → Slack 确认派发 → WAITING_USER 同 session 回复 → verification → 一个 PR → CI pending/failed/passed → Linear/Slack；重复事件、重启、Slack 429、verification 失败与不可执行路径。
 

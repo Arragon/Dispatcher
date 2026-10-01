@@ -76,6 +76,41 @@ describe("remote runner control plane", () => {
     await server.close();
   });
 
+  it("drains an in-flight command on shutdown and replays its durable response after restart", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "dispatcher-remote-shutdown-"));
+    tempDirectories.push(directory);
+    const journalPath = join(directory, "runner.sqlite");
+    const server = new RemoteRunnerServer({ registry: new RunnerRegistry(), port: 0, authenticate: () => true });
+    await server.ready();
+    const url = `ws://127.0.0.1:${server.address()!.port}`;
+    const journal = new RunnerJournal(journalPath);
+    const client = new RemoteRunnerClient({ url, bearerToken: "token", runner: runner(), journal });
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    client.register("run.start", async () => { entered.resolve(); await release.promise; return { started: true }; });
+    await client.start();
+    const pending = server.sendCommand("remote-mac", { type: "run.start", runId: "run-1" }, { messageId: "start-during-shutdown" }).catch(() => undefined);
+    await entered.promise;
+    const stopped = client.stop();
+    // Let the socket close before the handler finishes; journal closure must wait for it.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    release.resolve();
+    await stopped;
+    await pending;
+    expect(journal.replay(0)).toContainEqual(expect.objectContaining({ envelope: expect.objectContaining({ payload: { type: "rpc.result", correlationId: "start-during-shutdown", result: { started: true } } }) }));
+    journal.close();
+    const restoredJournal = new RunnerJournal(journalPath);
+    const restored = new RemoteRunnerClient({ url, bearerToken: "token", runner: runner(), journal: restoredJournal });
+    const duplicateHandler = vi.fn();
+    restored.register("run.start", duplicateHandler);
+    await restored.start();
+    expect((await server.sendCommand("remote-mac", { type: "run.start", runId: "run-1" }, { messageId: "start-during-shutdown" })).payload).toMatchObject({ type: "rpc.result", result: { started: true } });
+    expect(duplicateHandler).not.toHaveBeenCalled();
+    await restored.stop();
+    restoredJournal.close();
+    await server.close();
+  });
+
   it("rejects an unsafe runner version before authentication", async () => {
     const registry = new RunnerRegistry();
     const server = new RemoteRunnerServer({ registry, port: 0, authenticate: () => true });

@@ -42,7 +42,7 @@ async function setup(options: { realCodex?: boolean; executable?: string; verifi
   const starts: Array<{ providerSessionId?: string; prompt: string }> = [];
   const slack: Array<Record<string, unknown>> = [];
   const linear: Array<Record<string, unknown>> = [];
-  const control = { turn: "running" as "running" | "waiting" | "completed" | "failed", ci: "pending" as "pending" | "success" | "failure", slackFailures: 0, ciFailures: 0, prs: 0, pushes: 0, now: new Date(), throwStart: false };
+  const control = { turn: "running" as "running" | "waiting" | "completed" | "failed", ci: "pending" as "pending" | "success" | "failure", slackFailures: 0, ciFailures: 0, prs: 0, pushes: 0, now: new Date(), throwStart: false, prState: "open" as "open" | "closed", merged: false, headCommit: "commit-1", pushGate: undefined as Promise<void> | undefined };
   const backend: CodexBackend = { start: (input) => {
     if (control.throwStart) throw new Error("spawn missing-codex ENOENT");
     starts.push({ prompt: input.prompt, ...(input.providerSessionId ? { providerSessionId: input.providerSessionId } : {}) });
@@ -71,13 +71,14 @@ async function setup(options: { realCodex?: boolean; executable?: string; verifi
         return respond({ state: control.ci, total_count: 1, statuses: [{ context: "test", state: control.ci }], url: "https://github.invalid/checks/1" });
       }
       if (url.includes("/pulls?")) return respond(control.prs ? [{ id: 7, html_url: "https://github.invalid/acme/repo/pull/7", state: "open" }] : []);
-      if (url.endsWith("/pulls")) { control.prs += 1; return respond({ id: 7, html_url: "https://github.invalid/acme/repo/pull/7", state: "open" }, 201); }
+      if (url.endsWith("/pulls")) { control.prs += 1; return respond({ id: 7, number: 7, html_url: "https://github.invalid/acme/repo/pull/7", state: "open", head: { sha: control.headCommit } }, 201); }
+      if (url.endsWith("/pulls/7")) return respond({ id: 7, number: 7, html_url: "https://github.invalid/acme/repo/pull/7", state: control.prState, merged_at: control.merged ? new Date().toISOString() : null, head: { sha: control.headCommit } });
       return respond({ login: "fixture" });
     }
     throw new Error(`Unexpected fixture URL ${url}`);
   };
   const make = async () => {
-    const service = new ControllerService({ ownerToken: "test-owner-token", dataDirectory: join(directory, "data"), withRunner: true, secretStore: secrets, integrationFetch, clock: () => control.now, gitTransport: { ensureBranch: async () => undefined, push: async () => { control.pushes += 1; return { commit: "commit-1" }; } }, ...(options.realCodex ? {} : { codexBackendFactory: () => backend }) });
+    const service = new ControllerService({ ownerToken: "test-owner-token", dataDirectory: join(directory, "data"), withRunner: true, secretStore: secrets, integrationFetch, clock: () => control.now, gitTransport: { ensureBranch: async () => undefined, push: async () => { control.pushes += 1; await control.pushGate; return { commit: "commit-1" }; } }, ...(options.realCodex ? {} : { codexBackendFactory: () => backend }) });
     fixture.services.push(service);
     await service.start({ listen: false });
     return service;
@@ -208,6 +209,27 @@ describe("personal Slack–Linear loop", () => {
     expect(f.control.prs).toBe(0);
   });
 
+  it("preserves heartbeat renewal while an asynchronous delivery holds an older run snapshot", async () => {
+    const f = await setup();
+    await f.service.app.inject({ headers: OWNER, method: "POST", url: `/api/tasks/${f.taskId}/dispatch`, payload: {} });
+    const release = Promise.withResolvers<void>();
+    f.control.pushGate = release.promise;
+    f.control.turn = "completed";
+    const cycle = f.service.runBackgroundCycle();
+    try {
+      await expect.poll(() => f.control.pushes).toBe(1);
+      f.control.now = new Date(f.control.now.getTime() + 11 * 60_000);
+      await f.service.events.publish("runnerChanged", f.service.runners.heartbeat("local", f.control.now.toISOString()));
+      const renewedExpiry = f.run().leaseExpiresAt;
+      release.resolve();
+      await cycle;
+      expect(f.run()).toMatchObject({ state: "COMPLETE", leaseExpiresAt: renewedExpiry });
+    } finally {
+      release.resolve();
+      await cycle;
+    }
+  });
+
   it("persists synchronous start failure and notifies its dispatch thread without delivery", async () => {
     const f = await setup();
     f.control.throwStart = true;
@@ -230,5 +252,78 @@ describe("personal Slack–Linear loop", () => {
     expect(f.task().state).toBe("FAILED");
     expect(f.slack.some((message) => String(message.text).includes("FAILED") && String(message.text).includes("ENOENT"))).toBe(true);
     expect(f.control.prs).toBe(0);
+  });
+
+  it("keeps pending CI in review, feeds failures to Linear/Slack, retries Slack, and converges after restart", async () => {
+    const f = await setup({ doneOnCiPassed: true });
+    await f.send(f.service, "dispatch", "task dispatch INH-42");
+    await f.service.runBackgroundCycle();
+    await f.approve();
+    f.control.turn = "completed";
+    await f.service.runBackgroundCycle();
+    expect(f.run().state).toBe("COMPLETE");
+    expect(f.task().state).toBe("REVIEW");
+    expect(f.control.prs).toBe(1);
+    expect(f.linear.some((body) => (body.variables as { input?: { stateId?: string } }).input?.stateId === "in-review")).toBe(true);
+    f.control.ci = "failure";
+    f.control.slackFailures = 1;
+    f.control.now = new Date(f.control.now.getTime() + 60_000);
+    await f.service.runBackgroundCycle();
+    expect(f.task().state).toBe("REVIEW");
+    expect(f.service.database.listDeliveryEvidence(f.taskId)).toContainEqual(expect.objectContaining({ kind: "ci", state: "FAILED" }));
+    expect(f.linear.some((body) => String((body.variables as { input?: { body?: string } }).input?.body).includes("CI_FAILED"))).toBe(true);
+    f.control.now = new Date(f.control.now.getTime() + 60_000);
+    await f.service.runBackgroundCycle();
+    expect(f.slack.some((body) => body.channel === "C1" && body.thread_ts === "100.1" && String(body.text).includes("CI_FAILED"))).toBe(true);
+    const commentsBefore = f.linear.filter((body) => String(body.query).includes("commentCreate")).length;
+    await f.service.stop();
+    const restored = await f.make();
+    f.control.ci = "success";
+    f.control.now = new Date(f.control.now.getTime() + 60_000);
+    await restored.runBackgroundCycle();
+    expect(f.task(restored).state).toBe("DONE");
+    expect(f.control.prs).toBe(1);
+    expect(f.control.pushes).toBe(1);
+    expect(f.slack.some((body) => body.thread_ts === "100.1" && String(body.text).includes("CI_PASSED"))).toBe(true);
+    expect(f.linear.filter((body) => String(body.query).includes("commentCreate")).length).toBe(commentsBefore + 1);
+  });
+
+  it("persists PR evidence even if the initial CI read fails and leaves passed CI in review by default", async () => {
+    const f = await setup();
+    const dispatched = await f.service.app.inject({ headers: OWNER, method: "POST", url: `/api/tasks/${f.taskId}/dispatch`, payload: {} });
+    expect(dispatched.statusCode).toBe(201);
+    f.control.turn = "completed";
+    f.control.ciFailures = 1;
+    await f.service.runBackgroundCycle();
+    expect(f.run().state).toBe("COMPLETE");
+    expect(f.service.database.listDeliveryEvidence(f.taskId)).toContainEqual(expect.objectContaining({ kind: "pull-request", externalId: "7" }));
+    f.control.ci = "success";
+    f.control.now = new Date(f.control.now.getTime() + 60_000);
+    await f.service.runBackgroundCycle();
+    expect(f.task().state).toBe("REVIEW");
+    expect(f.control.prs).toBe(1);
+    expect(f.control.pushes).toBe(1);
+    f.control.headCommit = "commit-2";
+    f.control.ci = "pending";
+    f.control.now = new Date(f.control.now.getTime() + 60_000);
+    await f.service.runBackgroundCycle();
+    expect(f.service.database.listDeliveryEvidence(f.taskId)).toContainEqual(expect.objectContaining({ kind: "ci", externalId: "commit-2", state: "PENDING" }));
+    f.control.prState = "closed";
+    f.control.now = new Date(f.control.now.getTime() + 60_000);
+    await f.service.runBackgroundCycle();
+    expect(f.slack.some((body) => String(body.text).includes("PR_CLOSED"))).toBe(true);
+  });
+
+  it("blocks PR delivery on verification failure and reports the failure to Linear and Slack", async () => {
+    const f = await setup({ verificationFails: true });
+    await f.send(f.service, "dispatch", "task dispatch INH-42");
+    await f.service.runBackgroundCycle();
+    await f.approve();
+    f.control.turn = "completed";
+    await f.service.runBackgroundCycle();
+    expect(f.run()).toMatchObject({ state: "FAILED", verification: { state: "FAILED" } });
+    expect(f.control.prs).toBe(0);
+    expect(f.slack.some((body) => String(body.text).includes("Required verification failed"))).toBe(true);
+    expect(f.linear.some((body) => String((body.variables as { input?: { body?: string } }).input?.body).includes("Required verification failed"))).toBe(true);
   });
 });
