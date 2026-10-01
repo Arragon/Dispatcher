@@ -33,7 +33,10 @@ function ownerFor(field: string, mapping?: TaskFieldMapping): FieldOwner {
 }
 
 export class CanonicalTaskService {
-  constructor(private readonly database: DispatcherDatabase) {}
+  constructor(
+    private readonly database: DispatcherDatabase,
+    private readonly clock: () => Date = () => new Date(),
+  ) {}
 
   ingest(event: ExternalEvent): boolean {
     return this.database.appendInboxEvent({
@@ -59,7 +62,7 @@ export class CanonicalTaskService {
         eventType: input.command.type,
         normalized: json(input),
         status: "PENDING",
-        receivedAt: new Date().toISOString(),
+        receivedAt: this.clock().toISOString(),
       });
       const existing = this.database.getCanonicalTask<JsonValue>(input.taskId);
       if (!inserted) {
@@ -111,7 +114,7 @@ export class CanonicalTaskService {
         ];
       }
 
-      const updatedAt = new Date().toISOString();
+      const updatedAt = this.clock().toISOString();
       next.updatedAt = updatedAt;
       next.revision = input.baseRevision + 1;
       const revision = this.database.writeCanonicalTask(input.taskId, input.baseRevision, json(next), updatedAt);

@@ -1,7 +1,7 @@
-import { lazy, Suspense, useRef, useState, type FormEvent } from "react";
+import { lazy, Suspense, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, NavLink, Navigate, Route, Routes } from "react-router-dom";
-import { api, type ConfigResponse } from "./api.js";
+import { api, AUTH_REQUIRED_EVENT, currentSession, signIn, type ConfigResponse } from "./api.js";
 import "./styles.css";
 
 const SettingsPage = lazy(() => import("./SettingsPage.js"));
@@ -121,11 +121,61 @@ export function SecureInput({
   );
 }
 
+export function AuthGate({ children }: { children: ReactNode }): React.JSX.Element {
+  const [state, setState] = useState<"checking" | "signed-in" | "signed-out">("checking");
+  const [error, setError] = useState<string>();
+  const token = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const code = new URLSearchParams(window.location.hash.slice(1)).get("login");
+      if (code) {
+        window.history.replaceState(null, "", window.location.pathname + window.location.search);
+        await signIn({ code }).catch(() => setError("The login link is invalid or expired."));
+      }
+      const session = await currentSession().catch(() => undefined);
+      if (!cancelled) setState(session ? "signed-in" : "signed-out");
+    })();
+    const onAuthRequired = () => setState("signed-out");
+    window.addEventListener(AUTH_REQUIRED_EVENT, onAuthRequired);
+    return () => {
+      cancelled = true;
+      window.removeEventListener(AUTH_REQUIRED_EVENT, onAuthRequired);
+    };
+  }, []);
+  async function submit(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+    const value = token.current?.value ?? "";
+    if (token.current) token.current.value = "";
+    try {
+      await signIn({ token: value });
+      setError(undefined);
+      setState("signed-in");
+    } catch {
+      setError("The owner token was rejected.");
+    }
+  }
+  if (state === "checking") return <PageState title="Loading" detail="Checking your Dispatcher session…" />;
+  if (state === "signed-in") return <>{children}</>;
+  return (
+    <main className="login">
+      <form className="secure-input" onSubmit={(event) => void submit(event)}>
+        <h1>Sign in to Agent Dispatcher</h1>
+        <p>Open the single-use login link printed by <code>dispatcher serve</code>, or paste the owner token from <code>dispatcher auth token</code>.</p>
+        <label htmlFor="owner-token">Owner token</label>
+        <div><input ref={token} id="owner-token" type="password" autoComplete="off" required /><button type="submit">Sign in</button></div>
+        {error ? <small role="alert">{error}</small> : null}
+      </form>
+    </main>
+  );
+}
+
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: 10_000 } } });
 
 export function App(): React.JSX.Element {
   return (
     <QueryClientProvider client={queryClient}>
+      <AuthGate>
       <BrowserRouter>
         <div className="shell">
           <Navigation />
@@ -149,6 +199,7 @@ export function App(): React.JSX.Element {
           </main>
         </div>
       </BrowserRouter>
+      </AuthGate>
     </QueryClientProvider>
   );
 }

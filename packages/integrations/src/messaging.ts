@@ -29,11 +29,21 @@ export interface NormalizedMessage {
   action?: { id: string; value?: string; expectedRevision?: number; generation?: number };
 }
 
+export interface MessagingDelivery {
+  retryAttempt: number;
+  reason?: string;
+}
+
 export interface MessagingIngress {
   kind: "message" | "challenge" | "ignored";
   message?: NormalizedMessage;
   challenge?: string;
+  ignoredReason?: string;
+  idempotencyKey?: string;
+  delivery?: MessagingDelivery;
 }
+
+const SLACK_USER_SUBTYPES = new Set(["file_share", "thread_broadcast", "me_message"]);
 
 export interface OutboundMessage {
   channel: string;
@@ -198,7 +208,11 @@ export class SlackMessagingConnector implements MessagingAdapter {
     this.replays.set(replayKey, nowSeconds);
     const payload = this.parseBody(body, headers["content-type"] ?? "application/json");
     if (payload.type === "url_verification" && typeof payload.challenge === "string") return { kind: "challenge", challenge: payload.challenge };
-    return this.normalize(payload, replayKey);
+    const normalized = this.normalize(payload, replayKey);
+    const retryAttempt = Number(headers["x-slack-retry-num"]);
+    if (!Number.isSafeInteger(retryAttempt) || retryAttempt < 1) return normalized;
+    const reason = headers["x-slack-retry-reason"];
+    return { ...normalized, delivery: { retryAttempt, ...(reason ? { reason } : {}) } };
   }
 
   async send(notification: Notification, idempotencyKey: string): Promise<{ externalMessageId: string }> {
@@ -245,6 +259,9 @@ export class SlackMessagingConnector implements MessagingAdapter {
 
   private normalize(payload: Record<string, unknown>, replayKey: string): MessagingIngress {
     const event = payload.event && typeof payload.event === "object" ? payload.event as Record<string, unknown> : undefined;
+    const idempotencyKey = `${this.instance.id}:${String(payload.event_id ?? replayKey)}`;
+    const ignoredReason = event ? this.ignoredEventReason(event, payload) : undefined;
+    if (ignoredReason) return { kind: "ignored", ignoredReason, idempotencyKey };
     const actionPayload = Array.isArray(payload.actions) ? payload : undefined;
     const command = typeof payload.command === "string" ? payload : undefined;
     const source = event ?? actionPayload ?? command;
@@ -272,10 +289,23 @@ export class SlackMessagingConnector implements MessagingAdapter {
         principalExternalId,
         text: String(event?.text ?? payload.text ?? parsedAction?.text ?? ""),
         occurredAt: this.now().toISOString(),
-        idempotencyKey: `${this.instance.id}:${String(payload.event_id ?? replayKey)}`,
+        idempotencyKey,
         ...(firstAction ? { action: { id: String(firstAction.action_id ?? firstAction.block_id ?? "action"), ...(actionValue ? { value: actionValue } : {}), ...(typeof parsedAction?.expectedRevision === "number" ? { expectedRevision: parsedAction.expectedRevision } : {}), ...(typeof parsedAction?.generation === "number" ? { generation: parsedAction.generation } : {}) } } : {}),
       },
     };
+  }
+
+  private ignoredEventReason(event: Record<string, unknown>, payload: Record<string, unknown>): string | undefined {
+    if (typeof event.bot_id === "string" || (event.bot_profile !== null && typeof event.bot_profile === "object") || event.subtype === "bot_message") return "bot-message";
+    const authorizations = Array.isArray(payload.authorizations) ? payload.authorizations : [];
+    const botUsers = authorizations.flatMap((entry) => {
+      if (!entry || typeof entry !== "object") return [];
+      const authorization = entry as Record<string, unknown>;
+      return authorization.is_bot === true && typeof authorization.user_id === "string" ? [authorization.user_id] : [];
+    });
+    if (typeof event.user === "string" && botUsers.includes(event.user)) return "self-message";
+    if (typeof event.subtype === "string" && !SLACK_USER_SUBTYPES.has(event.subtype)) return `subtype:${event.subtype}`;
+    return undefined;
   }
 
   private async slack(method: string, body: Record<string, unknown>): Promise<SlackApiResponse> {

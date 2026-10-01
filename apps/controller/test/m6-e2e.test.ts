@@ -9,6 +9,9 @@ import type { SecretMetadata, SecretStore } from "@dispatcher/config";
 import type { GitTransport } from "@dispatcher/integrations";
 import { ControllerService } from "../src/service.js";
 
+const TEST_OWNER_TOKEN = "test-owner-token";
+const OWNER = { authorization: `Bearer ${TEST_OWNER_TOKEN}` };
+
 const directories: string[] = [];
 
 class MemorySecrets implements SecretStore {
@@ -77,9 +80,9 @@ describe("M6 vertical gate", () => {
       push: async () => ({ commit: "commit-1" }),
     };
 
-    const first = new ControllerService({ dataDirectory, withRunner: true, secretStore: secrets, integrationFetch, gitTransport: transport, codexBackendFactory: () => backend });
+    const first = new ControllerService({ ownerToken: TEST_OWNER_TOKEN, dataDirectory, withRunner: true, secretStore: secrets, integrationFetch, gitTransport: transport, codexBackendFactory: () => backend });
     await first.start({ listen: false });
-    const current = (await first.app.inject({ method: "GET", url: "/api/config" })).json();
+    const current = (await first.app.inject({ headers: OWNER,  method: "GET", url: "/api/config" })).json();
     current.config.connectors = [
       { id: "linear-main", definitionId: "task.linear", kind: "task", displayName: "Linear", enabled: true, credentialRef: "secret://linear/token", settings: { webhookSecretRef: "secret://linear/webhook", repository: "acme/repo", endpoint: "https://linear.invalid/graphql" } },
       { id: "github-main", definitionId: "scm.github", kind: "scm", displayName: "GitHub", enabled: true, credentialRef: "secret://github/token", settings: { apiBase: "https://github.invalid" } },
@@ -89,15 +92,15 @@ describe("M6 vertical gate", () => {
       id: "acme/repo", root: repositoryRoot, defaultBaseRef: "main", scopePaths: [],
       verificationCommands: [{ id: "check", file: process.execPath, args: ["-e", "process.exit(0)"], required: true, timeoutMs: 5_000, outputLimitBytes: 4_096 }],
     }];
-    const plan = await first.app.inject({ method: "POST", url: "/api/config/plans", payload: { config: current.config } });
-    expect((await first.app.inject({ method: "POST", url: `/api/config/plans/${plan.json().plan.id}/apply`, payload: { confirmed: true } })).statusCode).toBe(200);
+    const plan = await first.app.inject({ headers: OWNER,  method: "POST", url: "/api/config/plans", payload: { config: current.config } });
+    expect((await first.app.inject({ headers: OWNER,  method: "POST", url: `/api/config/plans/${plan.json().plan.id}/apply`, payload: { confirmed: true } })).statusCode).toBe(200);
 
     const createdAt = new Date().toISOString();
     const webhookBody = JSON.stringify({ webhookId: "webhook-1", type: "Issue", action: "update", createdAt, data: { id: "linear-1", title: "Deliver M6", updatedAt: "r1" } });
     const signature = createHmac("sha256", "webhook-secret").update(webhookBody).digest("hex");
-    const ingress = await first.app.inject({ method: "POST", url: "/api/connectors/linear-main/webhook", headers: { "linear-signature": signature, "content-type": "application/json" }, payload: webhookBody });
+    const ingress = await first.app.inject({ method: "POST", url: "/api/connectors/linear-main/webhook", headers: { ...OWNER,  "linear-signature": signature, "content-type": "application/json" }, payload: webhookBody });
     expect(ingress.statusCode).toBe(202);
-    const taskList = (await first.app.inject({ method: "GET", url: "/api/tasks" })).json();
+    const taskList = (await first.app.inject({ headers: OWNER,  method: "GET", url: "/api/tasks" })).json();
     expect(taskList.tasks).toHaveLength(1);
     expect(taskList.tasks[0].document).toMatchObject({ title: "Deliver M6", state: "READY" });
     const initialTaskId = taskList.tasks[0].document.id as string;
@@ -106,26 +109,28 @@ describe("M6 vertical gate", () => {
     expect(await first.projections.drain(new Date(Date.now() + 60_000))).toMatchObject({ retried: 1 });
     await first.stop();
 
-    const second = new ControllerService({ dataDirectory, withRunner: true, secretStore: secrets, integrationFetch, gitTransport: transport, codexBackendFactory: () => backend });
+    const second = new ControllerService({ ownerToken: TEST_OWNER_TOKEN, dataDirectory, withRunner: true, secretStore: secrets, integrationFetch, gitTransport: transport, codexBackendFactory: () => backend });
     await second.start({ listen: false });
-    const duplicate = await second.app.inject({ method: "POST", url: "/api/connectors/linear-main/webhook", headers: { "linear-signature": signature, "content-type": "application/json" }, payload: webhookBody });
+    const duplicate = await second.app.inject({ method: "POST", url: "/api/connectors/linear-main/webhook", headers: { ...OWNER,  "linear-signature": signature, "content-type": "application/json" }, payload: webhookBody });
     expect(duplicate.statusCode).toBe(202);
     expect(duplicate.json().duplicate).toBe(true);
     linearFails = false;
     expect(await second.projections.drain(new Date(Date.now() + 24 * 60 * 60_000))).toMatchObject({ delivered: 1 });
 
-    const taskId = (await second.app.inject({ method: "GET", url: "/api/tasks" })).json().tasks[0].document.id as string;
-    const dispatched = await second.app.inject({ method: "POST", url: `/api/tasks/${taskId}/dispatch`, payload: { profileId: "orion" } });
+    const taskId = (await second.app.inject({ headers: OWNER,  method: "GET", url: "/api/tasks" })).json().tasks[0].document.id as string;
+    const dispatched = await second.app.inject({ headers: OWNER,  method: "POST", url: `/api/tasks/${taskId}/dispatch`, payload: { profileId: "orion" } });
     expect(dispatched.statusCode).toBe(201);
     const runId = dispatched.json().run.id as string;
-    expect((await second.app.inject({ method: "POST", url: `/api/runs/${runId}/advance` })).statusCode).toBe(503);
-    expect((await second.app.inject({ method: "GET", url: `/api/runs/${runId}` })).json().run).toMatchObject({ state: "DELIVERING", verification: { state: "PASSED" } });
+    expect((await second.app.inject({ headers: OWNER,  method: "POST", url: `/api/runs/${runId}/advance` })).statusCode).toBe(503);
+    expect((await second.app.inject({ headers: OWNER,  method: "GET", url: `/api/runs/${runId}` })).json().run).toMatchObject({ state: "DELIVERING", verification: { state: "PASSED" } });
     githubFails = false;
-    const advanced = await second.app.inject({ method: "POST", url: `/api/runs/${runId}/advance` });
+    await second.runBackgroundCycle();
+    expect((await second.app.inject({ headers: OWNER, method: "GET", url: `/api/runs/${runId}` })).json().run.state).toBe("COMPLETE");
+    const advanced = await second.app.inject({ headers: OWNER,  method: "POST", url: `/api/runs/${runId}/advance` });
     expect(advanced.statusCode).toBe(200);
     expect(advanced.json()).toMatchObject({ run: { state: "COMPLETE", prUrl: "https://github.invalid/acme/repo/pull/7" }, task: { state: "REVIEW" } });
     expect(advanced.json().deliveries.map((item: { kind: string }) => item.kind)).toEqual(["commit", "pull-request", "ci"]);
-    expect((await second.app.inject({ method: "POST", url: `/api/runs/${runId}/advance` })).json().run.state).toBe("COMPLETE");
+    expect((await second.app.inject({ headers: OWNER,  method: "POST", url: `/api/runs/${runId}/advance` })).json().run.state).toBe("COMPLETE");
 
     const review = second.database.getCanonicalTask(taskId)!;
     second.tasks.execute({ id: "done", taskId, baseRevision: review.revision, actor: "gate", command: { type: "task.transition", state: "DONE" } });

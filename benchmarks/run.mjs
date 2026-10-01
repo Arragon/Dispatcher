@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync }
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { get } from "node:http";
 import Ajv2020Module from "ajv/dist/2020.js";
 
@@ -24,6 +25,8 @@ const port = 18_000 + Math.floor(Math.random() * 1_000);
 const temporary = mkdtempSync(join(tmpdir(), "dispatcher-benchmark-"));
 const dataDirectory = join(temporary, "data");
 const controller = resolve("apps/controller/dist/cli.js");
+const ownerToken = randomBytes(32).toString("base64url");
+const authorization = { authorization: `Bearer ${ownerToken}` };
 const startedAt = new Date().toISOString();
 const limitations = [];
 let assessment = "informational";
@@ -47,7 +50,7 @@ async function waitForHealth() {
 
 async function openDashboardEventStream() {
   await new Promise((resolveOpen, rejectOpen) => {
-    eventRequest = get(`http://127.0.0.1:${port}/api/events`, (response) => {
+    eventRequest = get(`http://127.0.0.1:${port}/api/events`, { headers: authorization }, (response) => {
       eventResponse = response;
       if (response.statusCode !== 200) {
         response.resume();
@@ -69,6 +72,7 @@ function sampleProcess(pid) {
 
 try {
   child = spawn(process.execPath, [controller, "serve", "--with-runner", "--port", String(port), "--data-dir", dataDirectory], {
+    env: { ...process.env, DISPATCHER_OWNER_TOKEN: ownerToken },
     stdio: ["ignore", "ignore", "pipe"],
   });
   let startupError = "";
@@ -86,7 +90,7 @@ try {
     for (let index = 0; index < 100; index += 1) await fetch(`http://127.0.0.1:${port}/health`);
   }
   if (scenario === "db-growth") {
-    for (let index = 0; index < 20; index += 1) await fetch(`http://127.0.0.1:${port}/api/runners`);
+    for (let index = 0; index < 20; index += 1) await fetch(`http://127.0.0.1:${port}/api/runners`, { headers: authorization });
     limitations.push("M0/M1 database-growth measures stable metadata reads; representative Run history begins with M4.");
   }
 
@@ -96,7 +100,9 @@ try {
     samples.push(sampleProcess(child.pid));
     await delay(Math.min(1_000, Math.max(10, deadline - Date.now())));
   } while (Date.now() < deadline);
-  const impact = await (await fetch(`http://127.0.0.1:${port}/api/system-impact`)).json();
+  const impactResponse = await fetch(`http://127.0.0.1:${port}/api/system-impact`, { headers: authorization });
+  if (!impactResponse.ok) throw new Error(`System impact endpoint returned ${impactResponse.status}`);
+  const impact = await impactResponse.json();
   const cpuAverage = samples.reduce((sum, value) => sum + value.cpuPercent, 0) / samples.length;
   const rssMaximum = Math.max(...samples.map((value) => value.rssBytes));
   if (assessment !== "not-runnable" && scenario !== "smoke") {

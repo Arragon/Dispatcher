@@ -23,6 +23,8 @@ import {
   type TaskFieldMapping,
 } from "../src/index.js";
 
+const fixtureClock = () => new Date("2026-09-22T00:00:00.000Z");
+
 function draft(overrides: Partial<TaskDraft> = {}): TaskDraft {
   return {
     externalId: "external-1",
@@ -111,7 +113,7 @@ describe("canonical task transaction and projection", () => {
     const connector = new FakeTaskConnector();
     const registry = new ConnectorRegistry();
     registry.register(connector);
-    const service = new CanonicalTaskService(db);
+    const service = new CanonicalTaskService(db, fixtureClock);
     const created = service.execute({ id: "create-1", taskId: "task-1", baseRevision: 0, actor: "test", command: { type: "task.create", task: task() } });
     expect(created.revision).toBe(1);
     const duplicate = service.execute({ id: "create-1", taskId: "task-1", baseRevision: 0, actor: "test", command: { type: "task.create", task: task() } });
@@ -134,7 +136,7 @@ describe("canonical task transaction and projection", () => {
     const registry = new ConnectorRegistry();
     registry.register(first);
     registry.register(second);
-    const service = new CanonicalTaskService(db);
+    const service = new CanonicalTaskService(db, fixtureClock);
     const bindings = [binding(first.instance.id), binding(second.instance.id)];
     service.execute({ id: "dual-create", taskId: "task-1", baseRevision: 0, actor: "test", command: { type: "task.create", task: task(bindings) } });
     await new ProjectionWorker(db, registry).drain(new Date("2026-09-23T00:00:00.000Z"));
@@ -151,7 +153,7 @@ describe("canonical task transaction and projection", () => {
     const registry = new ConnectorRegistry();
     registry.register(linear);
     registry.register(secondary);
-    const service = new CanonicalTaskService(db);
+    const service = new CanonicalTaskService(db, fixtureClock);
     const initial = task([binding(linear.instance.id), binding(secondary.instance.id)]);
     initial.currentRunId = "run-1";
     initial.dueAt = "2026-09-30T00:00:00.000Z";
@@ -212,7 +214,7 @@ describe("canonical task transaction and projection", () => {
     connector.healthFailure = new ConnectorError("PERMANENT", "invalid remote state", { retryable: false });
     const registry = new ConnectorRegistry();
     registry.register(connector);
-    new CanonicalTaskService(db).execute({ id: "dead-create", taskId: "task-1", baseRevision: 0, actor: "test", command: { type: "task.create", task: task() } });
+    new CanonicalTaskService(db, fixtureClock).execute({ id: "dead-create", taskId: "task-1", baseRevision: 0, actor: "test", command: { type: "task.create", task: task() } });
     const worker = new ProjectionWorker(db, registry);
     expect(await worker.drain(new Date("2026-09-23T00:00:00.000Z"))).toMatchObject({ dead: 1 });
     const [letter] = db.listDeadLetters();
