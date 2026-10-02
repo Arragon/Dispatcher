@@ -50,6 +50,7 @@ export const codexManifest: AdapterManifest = {
       alias: { type: "string", minLength: 1 },
       codexHome: { type: "string", minLength: 1 },
       runnerId: { type: "string", minLength: 1, default: "local" },
+      enabled: { type: "boolean", default: true, title: "Enable task dispatch" },
       executable: { type: "string", minLength: 1, default: "codex" },
       model: { type: "string", minLength: 1 },
     },
@@ -92,7 +93,7 @@ export class CodexCliBackend implements CodexBackend {
       cwd: input.workspacePath,
       shell: false,
       stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, CODEX_HOME: input.codexHome },
+      env: { ...process.env, PWD: input.workspacePath, CODEX_HOME: input.codexHome },
     }));
   }
 }
@@ -158,6 +159,10 @@ class SpawnedCodexTurn implements CodexTurn {
 export class CodexAdapter implements AgentAdapter {
   readonly manifest = validateManifest(codexManifest);
   private readonly turns = new Map<string, CodexTurn>();
+  private pending = 0;
+  private readonly sending = new Set<string>();
+
+  hasActiveOperations(): boolean { return this.pending > 0 || this.sending.size > 0 || [...this.turns.values()].some((turn) => turn.status() === "running"); }
 
   constructor(
     readonly profile: CodexProfileConfig,
@@ -190,6 +195,9 @@ export class CodexAdapter implements AgentAdapter {
   }
 
   async send(sessionId: string, message: string): Promise<AdapterEvent> {
+    if (this.sending.has(sessionId) || (this.require(sessionId).state === "RUNNING" && this.turns.get(sessionId)?.status() === "running")) throw new AdapterContractError("SESSION_BUSY", "Wait for the active Codex turn before sending another message");
+    this.sending.add(sessionId);
+    try {
     const session = await this.finishCurrentTurn(sessionId);
     if (!session.providerSessionId) throw new AdapterContractError("SESSION_NOT_RESUMABLE", "Codex did not return a provider session id");
     const turn = this.backend.start({
@@ -203,6 +211,7 @@ export class CodexAdapter implements AgentAdapter {
     this.turns.set(sessionId, turn);
     this.store.save({ ...session, state: "RUNNING", updatedAt: new Date().toISOString() });
     return { type: "session.message", sessionId, occurredAt: new Date().toISOString(), data: { acceptedCharacters: message.length } };
+    } finally { this.sending.delete(sessionId); }
   }
   async pause(): Promise<AdapterSession> { throw new AdapterContractError("UNSUPPORTED_CAPABILITY", "Codex exec does not support pausing a live turn"); }
   async resume(sessionId: string): Promise<AdapterSession> {
@@ -210,9 +219,12 @@ export class CodexAdapter implements AgentAdapter {
     return this.status(sessionId);
   }
   async cancel(sessionId: string): Promise<AdapterSession> {
-    const turn = this.turns.get(sessionId);
-    if (turn) await turn.cancel();
-    return this.update(sessionId, { state: "CANCELLED" });
+    this.pending++;
+    try {
+      const turn = this.turns.get(sessionId);
+      if (turn) await turn.cancel();
+      return this.update(sessionId, { state: "CANCELLED" });
+    } finally { this.pending--; }
   }
   async status(sessionId: string): Promise<AdapterSession> {
     const session = this.require(sessionId);
@@ -226,6 +238,7 @@ export class CodexAdapter implements AgentAdapter {
     return { sessionId, state: session.state, summary: result?.summary ?? `Codex session ${session.state.toLowerCase()}`, artifacts: [] };
   }
   async usage(sessionId: string): Promise<Record<string, unknown>> {
+    this.require(sessionId);
     const result = await this.turns.get(sessionId)?.result();
     const resource = result?.events.filter((event) => event.type === "resource").at(-1);
     return resource ?? { state: "UNKNOWN", source: "event", confidence: "low" };
@@ -247,7 +260,7 @@ export class CodexAdapter implements AgentAdapter {
   }
   private require(id: string): AdapterSession {
     const session = this.store.load(id);
-    if (!session) throw new AdapterContractError("SESSION_NOT_FOUND", `Unknown session ${id}`);
+    if (!session || session.profileId !== this.profile.id) throw new AdapterContractError("SESSION_NOT_FOUND", `Unknown session ${id}`);
     return session;
   }
   private update(id: string, changes: Partial<AdapterSession>): AdapterSession {

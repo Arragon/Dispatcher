@@ -5,7 +5,119 @@ verification and delivery flow. Select an adapter in **Agents & Profiles**,
 scan it, save an alias through ConfigPlan, then select that alias for dispatch.
 Installation and login readiness are separate evidence.
 
-## Installed on this Mac (2026-10-01)
+## Current personal configuration (2026-10-02)
+
+Local dashboard: <http://127.0.0.1:8347/agents>. Profiles were saved through
+Controller ConfigPlan. This running instance uses the existing data directory
+`/Users/wangdongxin/projects/dispatcher/apps/controller/.dispatcher`. Start it
+with an explicit directory to avoid creating another empty instance:
+
+```sh
+cd /Users/wangdongxin/projects/dispatcher
+pnpm dispatcher -- serve --with-runner --data-dir /Users/wangdongxin/projects/dispatcher/apps/controller/.dispatcher
+```
+
+Stop with Ctrl-C in its service terminal. Disabled profiles stay visible and are excluded from
+routing; use **Enable dispatch** after native login and health/model testing.
+
+| Alias | Native entry / account | Current evidence |
+| --- | --- | --- |
+| `ronna` | Codex 0.159.0-alpha.12.1, existing `~/.codex` | Logged in; real managed-worktree file creation and exact-session edit passed |
+| `kite` | Same Codex binary, separate `~/.codex-kite` | Reserved, disabled, no credentials copied; login deferred by user |
+| `cursor` | Cursor Agent 2026.10.01-e373342 | User completed CLI login; real file creation and exact-session edit passed; `trustWorkspace: true`, blanket `approveTools` remains false |
+| `antigravity` | `~/.local/bin/agy` 1.2.14 | Model reply passed; native accept-edits mode denied file creation; disabled pending usable native file permissions |
+| `zcode` | ZCode bundled CLI 0.16.9 via local wrapper | JSON/session flags and runtime verified; no CLI default model selected; bundled TUI missing; disabled pending native model setup |
+| `workbuddy` | WorkBuddy bundled CodeBuddy CLI 2.147.0 via local wrapper | Native JSON/session flags verified; full same-version official CLI installed for login; user completed browser login; first file creation passed but same-session continuation returned AUTH_ERROR; disabled |
+| `qoder` | Qoder CN `qoderclicn` 1.1.65, native `~/.qoder-cn` | Native login and model listing passed; real file creation and exact-session edit passed; enabled |
+| `opencode` | OpenCode app-bundled v2, `openrouter/openai/gpt-4o-mini` | Current real file creation and exact-session edit passed; explicit native tool approval |
+| `pi` | pi 0.99.2 via pinned Node wrapper | Protocol verified; no selected OpenAI credentials; disabled pending native login/model choice |
+| `grok` | Existing `~/.grok/bin/grok` | Current real file creation and exact-session edit passed; existing `agent` alias preserved |
+
+Wrappers under `~/.local/bin` pin a compatible Node runtime for the app-bundled
+JavaScript entries. They reference native configurations rather than copying
+credentials. ZCode's current builtin provider path includes the desktop version
+and endpoint identity; re-check it after a desktop update.
+
+### Native login actions still needed
+
+Use the same native clients as Dispatcher. No password or API key needs to be
+pasted into a chat. These are operator commands for this Mac:
+
+```sh
+# Optional later, per the user's explicit reservation:
+CODEX_HOME="$HOME/.codex-kite" /Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex login --device-auth
+
+# Qoder CN opens its own login flow:
+"$HOME/.local/bin/qoderclicn" login
+
+# Antigravity starts its native Google sign-in flow when unauthenticated:
+"$HOME/.local/bin/agy"
+
+# WorkBuddy login: use the full same-version official CLI, then enter /login:
+cd "$HOME/.local/share/dispatcher-codebuddy-cli/login-workspace"
+"$HOME/.local/bin/workbuddy-login" --permission-mode plan
+
+# pi: select the desired provider/model and authenticate through /login:
+"$HOME/.local/bin/pi"
+
+# ZCode: the bundled CLI's Z.AI login can save a native default model:
+"$HOME/.local/bin/zcode" login
+```
+
+After each native login, use **Test health**, then **Enable dispatch**. Generic
+native discovery proves the executable/protocol and intentionally reports auth
+as unknown until model execution. Do not mistake a desktop login for CLI login.
+Antigravity's `accept-edits` invocation replied to a model-only probe, but its
+real file-creation test returned `denied_actions: [{action: "write_file"}]`.
+The native envelope still said `SUCCESS`; Dispatcher now treats non-empty
+`denied_actions` as failure. Native file permission setup remains required before
+dispatch can be enabled; no blanket permission bypass was configured.
+The Antigravity profile now offers **Unattended native tool approval**, default
+off. Explicit `approveTools: true` adds `--dangerously-skip-permissions` to both
+initial and resumed turns. This approves all native tools, including commands
+and file operations, and does not create a filesystem sandbox. The local
+Antigravity profile has not opted in; real file/resume acceptance with this
+setting remains pending the user's decision.
+WorkBuddy's desktop bundle omits `dist/codebuddy.js` and its Web UI. Its
+headless native entry works, but cannot provide the interactive `/login` flow.
+The complete official `@tencent-ai/codebuddy-code@2.147.0` package was installed
+under `~/.local/share/dispatcher-codebuddy-cli`; `workbuddy-login` pins Node
+and invokes that package with the existing WorkBuddy product descriptor through
+`ACC_PRODUCT_CONFIG_PATH`. Both use native `~/.codebuddy` settings, but
+WorkBuddy and CodeBuddy declare different authentication IDs; shared settings
+do not prove compatible login. After the user completed browser login, file
+creation passed, but exact-session continuation still returned AUTH_ERROR.
+The full CLI comparison also did not establish stable authentication. Keep this
+profile disabled until both turns pass. No credentials are copied into Dispatcher. The login
+workspace is a separate empty directory; neither `/tmp` nor its parent was
+trusted. The temporary diagnostic HTTP server was stopped.
+The full CLI's native log later reported `AtRestEncryption` unavailable with
+`category=missing-key` when reading `auth/workbuddy-desktop.info`, followed by
+account refresh HTTP 401 and `account list is empty`. This identifies a native
+credential-read/refresh gate, rather than a Dispatcher resume parser failure;
+it does not prove that a particular browser authorization completed. In this
+version, authentication files use the separate macOS
+`~/Library/Application Support/CodeBuddyExtension/Data/Public/auth` store.
+`CODEBUDDY_CONFIG_DIR` redirects settings but does not isolate that auth store.
+Do not copy desktop credentials, retrieve encryption keys, or change the shared
+store to work around this gate; require a working native login and both turns.
+See the [official installation guide](https://www.codebuddy.cn/docs/cli/installation).
+ZCode's CLI log resolves `Model creation failed` to `CONFIGURATION_ERROR:
+Select a model before continuing`; the shared personal provider config has no
+`defaultModelSelection`. Existing provider credentials alone do not select a
+headless model. The bundled interactive entry also fails because `@zcode/tui`
+is absent. Do not use that TUI as a recovery instruction. Its native Z.AI login
+can save a default model; using an existing OpenRouter model instead still needs
+a verified native configuration path and the user's model choice. No native
+credentials or provider configuration were modified during diagnosis.
+The desktop currently showed an active GLM-5.3 task; that task was not changed
+or used as evidence of CLI readiness.
+
+Current regression coverage also checks cross-profile session rejection,
+reserved account exclusion, ConfigPlan activation, unchanged Codex/Cursor/native
+handle retention, and rejection of active profile replacement/disable.
+
+## Earlier installation inventory (2026-10-01)
 
 | Harness | Observed installation | Dispatcher interface / evidence |
 | --- | --- | --- |
@@ -43,13 +155,14 @@ OpenCode and pi profiles use native provider accounts and do not accept
 is resolved into `XAI_API_KEY` only when starting the child. Login probes never
 export credentials or return account IDs.
 
-OpenCode/Grok profiles default `approveTools` to false. This retains native
+OpenCode/Grok/Antigravity profiles default `approveTools` to false. This retains native
 permission policy; headless calls requiring an unanswered permission may end
 without making the requested change. For a trusted unattended development
 worktree, explicitly select **Unattended native tool approval** before saving.
 Grok then receives `--always-approve`, approving all native tools. OpenCode
-receives `--auto`, which retains explicitly denied native permissions. These
-options expand tool authority and are profile configuration choices, not a
+receives `--auto`, which retains explicitly denied native permissions.
+Antigravity receives `--dangerously-skip-permissions`, approving all native tools.
+These options expand tool authority and are profile configuration choices, not a
 Dispatcher sandbox. pi retains its own native tool policy. Never assume that a
 managed worktree is itself a filesystem sandbox.
 

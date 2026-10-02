@@ -20,6 +20,8 @@ import {
   OpenCodeAdapter,
   GrokAdapter,
   PiAdapter,
+  AntigravityAdapter, ZCodeAdapter, WorkBuddyCliAdapter, QoderCnAdapter,
+  antigravityManifest, zcodeManifest, workbuddyCliManifest, qoderCnManifest,
   opencodeManifest,
   grokManifest,
   piManifest,
@@ -295,6 +297,7 @@ interface SecretTestState {
 }
 
 interface CodexProfileBody {
+  enabled?: boolean;
   id?: string;
   alias?: string;
   runnerId?: string;
@@ -313,6 +316,9 @@ interface QoderProfileBody {
 }
 
 interface EcosystemProfileBody {
+  trustWorkspace?: boolean;
+  enabled?: boolean;
+  configDir?: string;
   id?: string;
   alias?: string;
   runnerId?: string;
@@ -388,7 +394,7 @@ function llmConfiguration(config: DispatcherConfig["internalLlm"]): LlmConfigura
   };
 }
 
-const adapterManifests = [genericMockManifest, genericCliManifest, codexManifest, qoderManifest, cursorManifest, devinManifest, kiroManifest, localServiceManifest, opencodeManifest, grokManifest, piManifest] as const;
+const adapterManifests = [genericMockManifest, genericCliManifest, codexManifest, qoderManifest, cursorManifest, devinManifest, kiroManifest, localServiceManifest, opencodeManifest, grokManifest, piManifest, antigravityManifest, zcodeManifest, workbuddyCliManifest, qoderCnManifest] as const;
 
 function manifestForProvider(provider: string) {
   if (provider === "workbuddy" || provider === "codebuddy") return localServiceManifest;
@@ -725,9 +731,9 @@ export class ControllerService {
     const retainedNativeAdapters = new Map<string, AgentAdapter>();
     for (const [id, previous] of this.nativeProfileConfigurations) {
       const adapter = this.agentAdapters.get(id);
-      const next = config.agentProfiles.find((profile) => profile.id === id);
+      const next = config.agentProfiles.find((profile) => profile.id === id && profile.enabled !== false);
       if (adapter && isDeepStrictEqual(previous, next)) retainedNativeAdapters.set(id, adapter);
-      else if (adapter instanceof StructuredCliAdapter && adapter.hasActiveOperations()) {
+      else if ((adapter instanceof StructuredCliAdapter || adapter instanceof CodexAdapter) && adapter.hasActiveOperations()) {
         throw new ConfigPlanError("ACTIVE_AGENT_PROFILE", `Finish or cancel active harness operations before changing or removing profile ${id}`);
       }
     }
@@ -811,7 +817,9 @@ export class ControllerService {
       if (!retainedNativeAdapters.has(id)) this.nativeProfileConfigurations.delete(id);
     }
     const store = new DatabaseSessionStore(this.database);
-    for (const profile of config.agentProfiles.filter((entry) => entry.provider === "codex")) {
+    const enabledProfiles = config.agentProfiles.filter((profile) => profile.enabled !== false);
+    for (const profile of enabledProfiles.filter((entry) => entry.provider === "codex")) {
+      if (retainedNativeAdapters.has(profile.id)) continue;
       const codexHome = stringSetting(profile.settings?.codexHome);
       if (!codexHome) continue;
       const adapterProfile: CodexProfileConfig = {
@@ -822,8 +830,9 @@ export class ControllerService {
         ...(stringSetting(profile.settings?.model) ? { model: stringSetting(profile.settings?.model)! } : {}),
       };
       this.agentAdapters.set(profile.id, new CodexAdapter(adapterProfile, this.options.codexBackendFactory?.(adapterProfile), store));
+      this.nativeProfileConfigurations.set(profile.id, structuredClone(profile));
     }
-    for (const profile of config.agentProfiles.filter((entry) => entry.provider === "qoder")) {
+    for (const profile of enabledProfiles.filter((entry) => entry.provider === "qoder")) {
       const adapterProfile: QoderProfileConfig = {
         id: profile.id,
         alias: profile.alias,
@@ -834,10 +843,13 @@ export class ControllerService {
       this.agentAdapters.set(profile.id, new QoderAdapter(adapterProfile, this.options.qoderBackendFactory?.(adapterProfile), store));
     }
     const resolveProviderCredential = (reference: string): Promise<string> => this.secrets.resolve(reference, { principal: "controller", purpose: "provider" });
-    for (const profile of config.agentProfiles.filter((entry) => entry.provider === "cursor" || entry.provider === "kiro")) {
+    for (const profile of enabledProfiles.filter((entry) => entry.provider === "cursor" || entry.provider === "kiro")) {
+      if (retainedNativeAdapters.has(profile.id)) continue;
       const adapterProfile: CliAgentProfile = {
         id: profile.id,
         alias: profile.alias,
+        ...(typeof profile.settings?.approveTools === "boolean" ? { approveTools: profile.settings.approveTools } : {}),
+        ...(typeof profile.settings?.trustWorkspace === "boolean" ? { trustWorkspace: profile.settings.trustWorkspace } : {}),
         ...(stringSetting(profile.settings?.executable) ? { executable: stringSetting(profile.settings?.executable)! } : {}),
         ...(profile.credentialRef ? { credentialRef: profile.credentialRef } : {}),
         ...(stringSetting(profile.settings?.model) ? { model: stringSetting(profile.settings?.model)! } : {}),
@@ -846,11 +858,13 @@ export class ControllerService {
       this.agentAdapters.set(profile.id, profile.provider === "cursor"
         ? new CursorAdapter(adapterProfile, backend, store, resolveProviderCredential)
         : new KiroAdapter(adapterProfile, backend, store, resolveProviderCredential));
+      this.nativeProfileConfigurations.set(profile.id, structuredClone(profile));
     }
-    for (const profile of config.agentProfiles) {
+    for (const profile of enabledProfiles) {
       if (!isNativeCliProvider(profile.provider)) continue;
       if (retainedNativeAdapters.has(profile.id)) continue;
       const adapterProfile: CliAgentProfile = { id: profile.id, alias: profile.alias,
+        ...(stringSetting(profile.settings?.configDir) ? { configDir: stringSetting(profile.settings?.configDir)! } : {}),
         ...(typeof profile.settings?.approveTools === "boolean" ? { approveTools: profile.settings.approveTools } : {}),
         ...(stringSetting(profile.settings?.executable) ? { executable: stringSetting(profile.settings?.executable)! } : {}),
         ...(stringSetting(profile.settings?.model) ? { model: stringSetting(profile.settings?.model)! } : {}),
@@ -859,10 +873,14 @@ export class ControllerService {
       const backend = this.options.cliBackendFactory?.(profile.provider, adapterProfile);
       this.agentAdapters.set(profile.id, profile.provider === "opencode" ? new OpenCodeAdapter(adapterProfile, backend, store)
         : profile.provider === "grok" ? new GrokAdapter(adapterProfile, backend, store, resolveProviderCredential)
+        : profile.provider === "antigravity" ? new AntigravityAdapter(adapterProfile, backend, store)
+        : profile.provider === "zcode" ? new ZCodeAdapter(adapterProfile, backend, store)
+        : profile.provider === "workbuddy-cli" ? new WorkBuddyCliAdapter(adapterProfile, backend, store)
+        : profile.provider === "qoder-cn" ? new QoderCnAdapter(adapterProfile, backend, store)
         : new PiAdapter(adapterProfile, backend, store));
       this.nativeProfileConfigurations.set(profile.id, structuredClone(profile));
     }
-    for (const profile of config.agentProfiles.filter((entry) => entry.provider === "devin")) {
+    for (const profile of enabledProfiles.filter((entry) => entry.provider === "devin")) {
       const organizationId = stringSetting(profile.settings?.organizationId);
       if (!organizationId || !profile.credentialRef) continue;
       const adapterProfile: DevinProfileConfig = {
@@ -875,7 +893,7 @@ export class ControllerService {
       };
       this.agentAdapters.set(profile.id, new DevinAdapter(adapterProfile, this.options.devinBackendFactory?.(adapterProfile), store, resolveProviderCredential, this.options.integrationFetch as typeof fetch | undefined));
     }
-    for (const profile of config.agentProfiles.filter((entry) => entry.provider === "workbuddy" || entry.provider === "codebuddy")) {
+    for (const profile of enabledProfiles.filter((entry) => entry.provider === "workbuddy" || entry.provider === "codebuddy")) {
       const settings = profile.settings;
       const required = ["baseUrl", "healthPath", "startPath", "statusPath", "inputPath", "cancelPath"] as const;
       if (required.some((key) => !stringSetting(settings?.[key]))) continue;
@@ -894,7 +912,7 @@ export class ControllerService {
       };
       this.agentAdapters.set(profile.id, new LocalServiceAdapter(adapterProfile, resolveProviderCredential, this.options.integrationFetch as typeof fetch | undefined, store));
     }
-    for (const profile of config.agentProfiles.filter((entry) => entry.provider === "generic-cli")) {
+    for (const profile of enabledProfiles.filter((entry) => entry.provider === "generic-cli")) {
       const executable = stringSetting(profile.settings?.executable);
       const args = stringArraySetting(profile.settings?.args);
       if (!executable || !args) continue;
@@ -1071,7 +1089,7 @@ export class ControllerService {
         id: profile.id,
         alias: profile.alias,
         provider: profile.provider,
-        state: this.agentAdapters.has(profile.id) ? "CONFIGURED" : "UNAVAILABLE",
+        state: profile.enabled === false ? "DISABLED" : this.agentAdapters.has(profile.id) ? "CONFIGURED" : "UNAVAILABLE",
         resourceState: resource.evidence.length ? resource.state : this.profileResourceState(profile.id),
         ...(resource.evidence.length ? {
           resourceReason: resource.reason,
@@ -2365,7 +2383,7 @@ export class ControllerService {
           provider: profile.provider,
           alias: profile.alias,
           runnerId: profile.runnerId,
-          state: this.agentAdapters.has(profile.id) ? "CONFIGURED" : "UNAVAILABLE",
+          state: profile.enabled === false ? "DISABLED" : this.agentAdapters.has(profile.id) ? "CONFIGURED" : "UNAVAILABLE",
           resourceState: this.profileResourceState(profile.id),
           capabilities: manifest ? manifestCapabilities(manifest) : [],
         };
@@ -2414,6 +2432,7 @@ export class ControllerService {
       next.agentProfiles.push({
         id: body.id,
         provider: "codex",
+        ...(body.enabled !== undefined ? { enabled: body.enabled } : {}),
         alias: body.alias,
         runnerId: body.runnerId ?? "local",
         settings: {
@@ -2424,7 +2443,7 @@ export class ControllerService {
       });
       const plan = this.configuration.buildPlan(next, "local-web", "web");
       const applied = this.configuration.applyPlan(plan.id, { confirmed: true });
-      return reply.code(201).send({ profile: { id: body.id, provider: "codex", alias: body.alias, runnerId: body.runnerId ?? "local", state: "CONFIGURED" }, revision: applied.revision });
+      return reply.code(201).send({ profile: { id: body.id, provider: "codex", alias: body.alias, runnerId: body.runnerId ?? "local", state: body.enabled === false ? "DISABLED" : "CONFIGURED" }, revision: applied.revision });
     });
     this.app.post<{ Body: QoderProfileBody }>("/api/agents/qoder/discover", async (request, reply) => {
       if (!request.body?.alias) return reply.code(400).send({ code: "QODER_PROFILE_REQUIRED" });
@@ -2489,13 +2508,14 @@ export class ControllerService {
       let settings: Record<string, JsonValue>;
       let credentialRef = body.credentialRef;
       if (isNativeCliProvider(provider)) {
-        if (body.approveTools !== undefined && (provider === "pi" || typeof body.approveTools !== "boolean")) return reply.code(400).send({ code: "INVALID_TOOL_APPROVAL" });
+        if (provider === "zcode" && body.model) return reply.code(400).send({ code: "NATIVE_MODEL_SETTINGS_REQUIRED", message: "Select ZCode models in its native client." });
+        if (body.approveTools !== undefined && (!["opencode", "grok", "antigravity"].includes(provider) || typeof body.approveTools !== "boolean")) return reply.code(400).send({ code: "INVALID_TOOL_APPROVAL" });
         if (credentialRef && provider !== "grok") return reply.code(400).send({ code: "NATIVE_LOGIN_REQUIRED", message: "Use the harness's native provider login for this profile." });
         const discovery = await probeNativeCliProfile(provider, { id: body.id, alias: body.alias, ...(body.executable ? { executable: body.executable } : {}), ...(body.model ? { model: body.model } : {}) });
         if (!discovery.installed || !discovery.compatible) return reply.code(409).send({ code: "CLI_INCOMPATIBLE", discovery });
-        settings = { executable: discovery.executable, ...(body.model ? { model: body.model } : {}), ...(body.approveTools !== undefined ? { approveTools: body.approveTools } : {}) };
+        settings = { executable: discovery.executable, ...(provider === "qoder-cn" && body.configDir ? { configDir: body.configDir } : {}), ...(body.model ? { model: body.model } : {}), ...(body.approveTools !== undefined ? { approveTools: body.approveTools } : {}) };
       } else if (provider === "cursor" || provider === "kiro") {
-        settings = { ...(body.executable ? { executable: body.executable } : {}), ...(body.model ? { model: body.model } : {}) };
+        settings = { ...(body.executable ? { executable: body.executable } : {}), ...(body.model ? { model: body.model } : {}), ...(provider === "cursor" && body.approveTools !== undefined ? { approveTools: body.approveTools } : {}), ...(provider === "cursor" && body.trustWorkspace !== undefined ? { trustWorkspace: body.trustWorkspace } : {}) };
       } else if (provider === "devin") {
         if (!body.organizationId || !credentialRef) return reply.code(400).send({ code: "DEVIN_PROFILE_REQUIRED" });
         settings = { organizationId: body.organizationId, ...(body.apiBase ? { apiBase: body.apiBase } : {}), ...(body.maxSessionAcu ? { maxSessionAcu: body.maxSessionAcu } : {}) };
@@ -2513,10 +2533,20 @@ export class ControllerService {
       const latest = this.configuration.current();
       if (latest.config.agentProfiles.some((profile) => profile.id === body.id)) return reply.code(409).send({ code: "PROFILE_EXISTS" });
       const next = structuredClone(latest.config);
-      next.agentProfiles.push({ id: body.id, provider, alias: body.alias, runnerId: body.runnerId ?? "local", ...(credentialRef ? { credentialRef } : {}), settings });
+      next.agentProfiles.push({ id: body.id, provider, ...(body.enabled !== undefined ? { enabled: body.enabled } : {}), alias: body.alias, runnerId: body.runnerId ?? "local", ...(credentialRef ? { credentialRef } : {}), settings });
       const plan = this.configuration.buildPlan(next, "local-web", "web");
       const applied = this.configuration.applyPlan(plan.id, { confirmed: true });
-      return reply.code(201).send({ profile: { id: body.id, provider, alias: body.alias, runnerId: body.runnerId ?? "local", state: this.agentAdapters.has(body.id) ? "CONFIGURED" : "UNAVAILABLE" }, revision: applied.revision });
+      return reply.code(201).send({ profile: { id: body.id, provider, alias: body.alias, runnerId: body.runnerId ?? "local", state: body.enabled === false ? "DISABLED" : this.agentAdapters.has(body.id) ? "CONFIGURED" : "UNAVAILABLE" }, revision: applied.revision });
+    });
+    this.app.post<{ Params: { id: string }; Body: { enabled: boolean } }>("/api/agents/profiles/:id/enabled", async (request, reply) => {
+      if (typeof request.body?.enabled !== "boolean") return reply.code(400).send({ code: "INVALID_PROFILE_ACTIVATION" });
+      const next = structuredClone(this.configuration.current().config);
+      const profile = next.agentProfiles.find((entry) => entry.id === request.params.id);
+      if (!profile) return reply.code(404).send({ code: "PROFILE_NOT_FOUND" });
+      profile.enabled = request.body.enabled;
+      const plan = this.configuration.buildPlan(next, "local-web", "web");
+      const applied = this.configuration.applyPlan(plan.id, { confirmed: true });
+      return { revision: applied.revision, profile: { id: profile.id, alias: profile.alias, enabled: profile.enabled } };
     });
     this.app.post<{ Params: { id: string } }>("/api/agents/profiles/:id/test", async (request, reply) => {
       const profile = this.configuration.current().config.agentProfiles.find((entry) => entry.id === request.params.id);
@@ -2564,12 +2594,16 @@ export class ControllerService {
       return reply.code(201).send({ session: this.sessionView(session) });
     });
     this.app.get<{ Params: { profileId: string; sessionId: string } }>("/api/agents/profiles/:profileId/sessions/:sessionId", async (request, reply) => {
+      const storedSession = this.database.getEntity<JsonValue>("adapter-session", request.params.sessionId) as unknown as AdapterSession | undefined;
+      if (storedSession?.profileId !== request.params.profileId) return reply.code(404).send({ code: "SESSION_NOT_FOUND" });
       const adapter = this.agentAdapters.get(request.params.profileId);
       if (!adapter) return reply.code(404).send({ code: "PROFILE_NOT_FOUND" });
       return { session: this.sessionView(await adapter.status(request.params.sessionId)) };
     });
     this.app.post<{ Params: { profileId: string; sessionId: string }; Body: { message?: string } }>("/api/agents/profiles/:profileId/sessions/:sessionId/input", async (request, reply) => {
       if (!request.body?.message) return reply.code(400).send({ code: "MESSAGE_REQUIRED" });
+      const storedSession = this.database.getEntity<JsonValue>("adapter-session", request.params.sessionId) as unknown as AdapterSession | undefined;
+      if (storedSession?.profileId !== request.params.profileId) return reply.code(404).send({ code: "SESSION_NOT_FOUND" });
       const adapter = this.agentAdapters.get(request.params.profileId);
       if (!adapter) return reply.code(404).send({ code: "PROFILE_NOT_FOUND" });
       const event = await adapter.send(request.params.sessionId, request.body.message);

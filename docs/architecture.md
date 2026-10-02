@@ -326,6 +326,24 @@ snapshots do not wait for an active process to finish, and structured errors
 can fail a turn even when the CLI exits zero. Native token usage does not imply
 quota remaining. Process groups are cancelled on Unix, with bounded escalation.
 
+Antigravity, bundled ZCode, bundled WorkBuddy CLI and Qoder CN use that same
+bounded native process backend. Antigravity resumes `--conversation`; ZCode
+resumes `--resume` with its native settings and an explicit `edit` mode (its
+prompt-mode default is otherwise `yolo`). WorkBuddy CLI is a distinct provider
+from the configured HTTP WorkBuddy/CodeBuddy contract. Qoder CN has its own
+native account/config directory and retains its regional executable identity.
+All four require native execution evidence; a structured failure overrides
+exit zero. No profile copies credentials from a desktop application.
+
+Agent profiles may set `enabled: false` through ConfigPlan. Omitted means
+enabled for existing configurations. Disabled profiles remain visible but
+have no runtime adapter and cannot enter dispatch/reroute. Enabling/disabling
+uses the same ConfigPlan checks as other configuration changes. Unchanged
+Codex, Cursor/Kiro and native adapters retain live handles across profile
+additions; replacing, disabling or removing an active profile is rejected.
+Cursor workspace trust requires an explicit `trustWorkspace` choice; blanket
+tool approval independently requires an explicit `approveTools` choice.
+
 Installation/capability probes remain separate from authentication. pi can
 check a selected model's readiness without refreshing or exporting credentials;
 OpenCode/Grok discovery reports authentication as unknown until invocation.
