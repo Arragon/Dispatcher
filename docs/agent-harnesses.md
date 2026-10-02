@@ -27,7 +27,7 @@ routing; use **Enable dispatch** after native login and health/model testing.
 | `cursor` | Cursor Agent 2026.10.01-e373342 | User completed CLI login; real file creation and exact-session edit passed; `trustWorkspace: true`, blanket `approveTools` remains false |
 | `antigravity` | `~/.local/bin/agy` 1.2.14 | Model reply passed; native accept-edits mode denied file creation; disabled pending usable native file permissions |
 | `zcode` | ZCode bundled CLI 0.16.9 via local wrapper | JSON/session flags and runtime verified; no CLI default model selected; bundled TUI missing; disabled pending native model setup |
-| `workbuddy` | WorkBuddy bundled CodeBuddy CLI 2.147.0 via local wrapper | Native JSON/session flags verified; actual model invocation requires `/login`; disabled |
+| `workbuddy` | WorkBuddy bundled CodeBuddy CLI 2.147.0 via local wrapper | Native JSON/session flags verified; full same-version official CLI installed for login; browser authorization pending; disabled |
 | `qoder` | Qoder CN `qoderclicn` 1.1.65, native `~/.qoder-cn` | Native login and model listing passed; real file creation and exact-session edit passed; enabled |
 | `opencode` | OpenCode app-bundled v2, `openrouter/openai/gpt-4o-mini` | Current real file creation and exact-session edit passed; explicit native tool approval |
 | `pi` | pi 0.99.2 via pinned Node wrapper | Protocol verified; no selected OpenAI credentials; disabled pending native login/model choice |
@@ -53,8 +53,9 @@ CODEX_HOME="$HOME/.codex-kite" /Applications/ChatGPT.app/Contents/Resources/code
 # Antigravity starts its native Google sign-in flow when unauthenticated:
 "$HOME/.local/bin/agy"
 
-# WorkBuddy bundled CLI: enter /login in its interactive client:
-"$HOME/.local/bin/workbuddy-cli"
+# WorkBuddy login: use the full same-version official CLI, then enter /login:
+cd "$HOME/.local/share/dispatcher-codebuddy-cli/login-workspace"
+"$HOME/.local/bin/workbuddy-login" --permission-mode plan
 
 # pi: select the desired provider/model and authenticate through /login:
 "$HOME/.local/bin/pi"
@@ -71,6 +72,15 @@ real file-creation test returned `denied_actions: [{action: "write_file"}]`.
 The native envelope still said `SUCCESS`; Dispatcher now treats non-empty
 `denied_actions` as failure. Native file permission setup remains required before
 dispatch can be enabled; no blanket permission bypass was configured.
+WorkBuddy's desktop bundle omits `dist/codebuddy.js` and its Web UI. Its
+headless native entry works, but cannot provide the interactive `/login` flow.
+The complete official `@tencent-ai/codebuddy-code@2.147.0` package was installed
+under `~/.local/share/dispatcher-codebuddy-cli`; `workbuddy-login` pins Node
+and invokes that package, sharing the native `~/.codebuddy` account directory
+with the bundled CLI. No credentials are copied into Dispatcher. The login
+workspace is a separate empty directory; neither `/tmp` nor its parent was
+trusted. The temporary diagnostic HTTP server was stopped.
+See the [official installation guide](https://www.codebuddy.cn/docs/cli/installation).
 ZCode's CLI log resolves `Model creation failed` to `CONFIGURATION_ERROR:
 Select a model before continuing`; the shared personal provider config has no
 `defaultModelSelection`. Existing provider credentials alone do not select a
@@ -79,6 +89,8 @@ is absent. Do not use that TUI as a recovery instruction. Its native Z.AI login
 can save a default model; using an existing OpenRouter model instead still needs
 a verified native configuration path and the user's model choice. No native
 credentials or provider configuration were modified during diagnosis.
+The desktop currently showed an active GLM-5.3 task; that task was not changed
+or used as evidence of CLI readiness.
 
 Current regression coverage also checks cross-profile session rejection,
 reserved account exclusion, ConfigPlan activation, unchanged Codex/Cursor/native

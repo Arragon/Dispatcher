@@ -248,6 +248,11 @@
 - WorkBuddy bundles a Node CLI at `app.asar.unpacked/cli/bin/codebuddy`.
   Its auth failure was a structured `result.is_error` with process exit zero;
   desktop installation/login does not prove bundled CLI readiness.
+  The desktop package lacks `dist/codebuddy.js` and the native Web UI, so its
+  interactive `/login` entry is unavailable. A complete same-version official
+  CodeBuddy CLI can provide native login into the shared `~/.codebuddy` account
+  directory; keep its installation separate and preserve the bundled headless
+  entry rather than editing app files or copying account credentials.
 - ZCode's bundled CLI needs both `ZCODE_BUILTIN_PROVIDER_CONFIG_FILE` and
   `ZCODE_PERSONAL_PROVIDER_CONFIG_FILE` to reuse its native runtime config.
   Setting only the bundled-provider fallback variable did not fix packaging
