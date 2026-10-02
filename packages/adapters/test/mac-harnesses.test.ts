@@ -72,6 +72,20 @@ describe("Mac priority native harnesses", () => {
     }
   });
 
+  it("keeps Antigravity blanket tool approval off unless explicitly selected for initial and resumed turns", async () => {
+    for (const approveTools of [undefined, false, true]) {
+      const backend: CliAgentBackend = { start: vi.fn(() => ({ status: () => "completed", cancel: async () => undefined, result: async () => ({ state: "completed", summary: "done", events: [], providerSessionId: "ag-exact" }) })) };
+      const adapter = new AntigravityAdapter({ id: "ag", alias: "Antigravity", ...(approveTools === undefined ? {} : { approveTools }) }, backend);
+      const session = await adapter.start({ runId: "run", workspacePath: "/worktree", prompt: "create a file" });
+      await adapter.result(session.id);
+      await adapter.send(session.id, "edit the file");
+      for (const [input] of vi.mocked(backend.start).mock.calls) {
+        expect(input.args.includes("--dangerously-skip-permissions")).toBe(approveTools === true);
+        expect(input.args).toEqual(expect.arrayContaining(["--mode", "accept-edits"]));
+      }
+    }
+  });
+
   it("separates Cursor workspace trust from blanket tool approval", async () => {
     const backend: CliAgentBackend = { start: vi.fn(() => ({ status: () => "completed", cancel: async () => undefined, result: async () => ({ state: "completed", summary: "done", events: [] }) })) };
     for (const trustWorkspace of [false, true]) {

@@ -30,7 +30,7 @@ function manifest(id: NativeCliProvider, displayName: string, credential = false
         ...(id === "qoder-cn" ? { configDir: { type: "string", minLength: 1, description: "Native Qoder CN account configuration directory" } } : {}),
         ...(id !== "zcode" ? { model: { type: "string", minLength: 1, description: id === "grok" ? "Grok model ID" : "provider/model; omit to use the CLI default" } } : {}),
         ...(credential ? { credentialRef: { type: "string", pattern: "^secret://grok/" } } : {}),
-        ...(id === "opencode" || id === "grok" ? { approveTools: { type: "boolean", default: false, title: "Unattended native tool approval", description: "Explicitly approve native tools for this trusted worktree. Grok approves all tools; OpenCode retains explicitly denied permissions." } } : {}),
+        ...(id === "opencode" || id === "grok" || id === "antigravity" ? { approveTools: { type: "boolean", default: false, title: "Unattended native tool approval", description: id === "antigravity" ? "Permit all native tools, including commands and file operations. This does not restrict access to the worktree." : "Explicitly approve native tools for this trusted worktree. Grok approves all tools; OpenCode retains explicitly denied permissions." } } : {}),
       },
     },
     uiSchema: credential ? { credentialRef: { "ui:widget": "hidden" } } : {},
@@ -69,7 +69,7 @@ const definitions: Record<NativeCliProvider, CliProviderDefinition> = {
   antigravity: {
     manifest: antigravityManifest, defaultExecutable: "agy", versionArgs: ["--version"], authArgs: [],
     supportsResume: true, strictLifecycle: true, requireExecutionEvidence: true, resolveExecutable: (profile) => executable("antigravity", profile), normalizeLine: normalizeAntigravityLine,
-    startArgs: ({ prompt, model, providerSessionId }) => ["--output-format", "stream-json", "--mode", "accept-edits", ...(model ? ["--model", model] : []), ...(providerSessionId ? ["--conversation", providerSessionId] : []), "--print", prompt],
+    startArgs: ({ prompt, model, providerSessionId, approveTools }) => ["--output-format", "stream-json", "--mode", "accept-edits", ...(approveTools ? ["--dangerously-skip-permissions"] : []), ...(model ? ["--model", model] : []), ...(providerSessionId ? ["--conversation", providerSessionId] : []), "--print", prompt],
   },
   zcode: {
     manifest: zcodeManifest, defaultExecutable: "zcode", versionArgs: ["--version"], authArgs: [],

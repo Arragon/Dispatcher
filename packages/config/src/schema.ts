@@ -435,8 +435,8 @@ export function validateConfig(input: unknown): DispatcherConfig {
     }
     if (profile.settings?.trustWorkspace !== undefined && (profile.provider !== "cursor" || typeof profile.settings.trustWorkspace !== "boolean")) throw new ConfigValidationError([`/agentProfiles/${profile.id}/settings/trustWorkspace must be a Cursor boolean`]);
     if (["cursor", "opencode", "grok", "pi", "antigravity", "zcode", "workbuddy-cli", "qoder-cn"].includes(profile.provider) && profile.settings?.approveTools !== undefined
-      && (!["cursor", "opencode", "grok"].includes(profile.provider) || typeof profile.settings.approveTools !== "boolean")) {
-      throw new ConfigValidationError([`/agentProfiles/${profile.id}/settings/approveTools must be boolean and is supported only by Cursor, OpenCode or Grok`]);
+      && (!["cursor", "opencode", "grok", "antigravity"].includes(profile.provider) || typeof profile.settings.approveTools !== "boolean")) {
+      throw new ConfigValidationError([`/agentProfiles/${profile.id}/settings/approveTools must be boolean and is supported only by Cursor, OpenCode, Grok or Antigravity`]);
     }
     if (["opencode", "pi", "antigravity", "zcode", "workbuddy-cli", "qoder-cn"].includes(profile.provider) && profile.credentialRef) {
       throw new ConfigValidationError([`/agentProfiles/${profile.id} uses native login; credentialRef is not supported`]);

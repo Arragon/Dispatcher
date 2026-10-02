@@ -275,6 +275,9 @@
   `denied_actions` after declining native file creation in `accept-edits` mode.
   Reject that envelope as a failed turn; model text or exit zero does not prove
   the requested tool action ran. Do not enable dispatch from a text-only probe.
+  Its `approveTools` profile setting is an explicit opt-in for
+  `--dangerously-skip-permissions` on both initial and resumed calls. Keep it
+  false by default; native tool approval does not impose a worktree sandbox.
 - `pnpm dispatcher` runs in `apps/controller`, so its default relative data
   directory differs from invoking the built CLI directly at repository root.
   Pass an explicit `--data-dir` when restarting an existing instance; otherwise

@@ -52,7 +52,7 @@ describe("native harness Controller composition", () => {
         const discovery = await service.app.inject({ method: "POST", url: `/api/agents/${provider}/discover`, headers: OWNER, payload: { id: provider, alias: provider, executable } });
         expect(discovery.statusCode).toBe(200);
         expect(discovery.json()).toMatchObject({ installed: true, compatible: true, authenticated: false, authentication: "unknown" });
-        const saved = await service.app.inject({ method: "POST", url: `/api/agents/${provider}/profiles`, headers: OWNER, payload: { id: provider, alias: provider, executable, ...(provider === "grok" ? { approveTools: true } : {}) } });
+        const saved = await service.app.inject({ method: "POST", url: `/api/agents/${provider}/profiles`, headers: OWNER, payload: { id: provider, alias: provider, executable, ...(["grok", "antigravity"].includes(provider) ? { approveTools: true } : {}) } });
         expect(saved.statusCode).toBe(201);
         expect(saved.json().profile.state).toBe("CONFIGURED");
         expect((await service.app.inject({ method: "POST", url: `/api/agents/profiles/${provider}/runs`, headers: OWNER, payload: { workspacePath: directory, prompt: "hello" } })).statusCode).toBe(400);
@@ -75,6 +75,8 @@ describe("native harness Controller composition", () => {
       expect(calls.mock.calls.map(([provider]) => provider)).toEqual(expect.arrayContaining(["opencode", "grok", "pi", "antigravity", "zcode", "workbuddy-cli", "qoder-cn"]));
       const config = (await service.app.inject({ method: "GET", url: "/api/config", headers: OWNER })).json().config;
       expect(config.agentProfiles.find((profile: { id: string }) => profile.id === "grok").settings.approveTools).toBe(true);
+      expect(config.agentProfiles.find((profile: { id: string }) => profile.id === "antigravity").settings.approveTools).toBe(true);
+      expect((await service.app.inject({ method: "POST", url: "/api/agents/antigravity/profiles", headers: OWNER, payload: { id: "invalid-ag", alias: "Invalid Antigravity", approveTools: "yes" } })).statusCode).toBe(400);
       expect((await service.app.inject({ method: "POST", url: "/api/agents/pi/profiles", headers: OWNER, payload: { id: "invalid-pi", alias: "Invalid pi", approveTools: true } })).statusCode).toBe(400);
       const reserved = await service.app.inject({ method: "POST", url: "/api/agents/codex/profiles", headers: OWNER, payload: { id: "kite", alias: "kite", codexHome: join(directory, "kite-home"), enabled: false } });
       expect(reserved.statusCode, reserved.body).toBe(201);

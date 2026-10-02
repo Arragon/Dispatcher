@@ -72,6 +72,12 @@ real file-creation test returned `denied_actions: [{action: "write_file"}]`.
 The native envelope still said `SUCCESS`; Dispatcher now treats non-empty
 `denied_actions` as failure. Native file permission setup remains required before
 dispatch can be enabled; no blanket permission bypass was configured.
+The Antigravity profile now offers **Unattended native tool approval**, default
+off. Explicit `approveTools: true` adds `--dangerously-skip-permissions` to both
+initial and resumed turns. This approves all native tools, including commands
+and file operations, and does not create a filesystem sandbox. The local
+Antigravity profile has not opted in; real file/resume acceptance with this
+setting remains pending the user's decision.
 WorkBuddy's desktop bundle omits `dist/codebuddy.js` and its Web UI. Its
 headless native entry works, but cannot provide the interactive `/login` flow.
 The complete official `@tencent-ai/codebuddy-code@2.147.0` package was installed
@@ -139,13 +145,14 @@ OpenCode and pi profiles use native provider accounts and do not accept
 is resolved into `XAI_API_KEY` only when starting the child. Login probes never
 export credentials or return account IDs.
 
-OpenCode/Grok profiles default `approveTools` to false. This retains native
+OpenCode/Grok/Antigravity profiles default `approveTools` to false. This retains native
 permission policy; headless calls requiring an unanswered permission may end
 without making the requested change. For a trusted unattended development
 worktree, explicitly select **Unattended native tool approval** before saving.
 Grok then receives `--always-approve`, approving all native tools. OpenCode
-receives `--auto`, which retains explicitly denied native permissions. These
-options expand tool authority and are profile configuration choices, not a
+receives `--auto`, which retains explicitly denied native permissions.
+Antigravity receives `--dangerously-skip-permissions`, approving all native tools.
+These options expand tool authority and are profile configuration choices, not a
 Dispatcher sandbox. pi retains its own native tool policy. Never assume that a
 managed worktree is itself a filesystem sandbox.
 

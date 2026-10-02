@@ -2509,7 +2509,7 @@ export class ControllerService {
       let credentialRef = body.credentialRef;
       if (isNativeCliProvider(provider)) {
         if (provider === "zcode" && body.model) return reply.code(400).send({ code: "NATIVE_MODEL_SETTINGS_REQUIRED", message: "Select ZCode models in its native client." });
-        if (body.approveTools !== undefined && (!["opencode", "grok"].includes(provider) || typeof body.approveTools !== "boolean")) return reply.code(400).send({ code: "INVALID_TOOL_APPROVAL" });
+        if (body.approveTools !== undefined && (!["opencode", "grok", "antigravity"].includes(provider) || typeof body.approveTools !== "boolean")) return reply.code(400).send({ code: "INVALID_TOOL_APPROVAL" });
         if (credentialRef && provider !== "grok") return reply.code(400).send({ code: "NATIVE_LOGIN_REQUIRED", message: "Use the harness's native provider login for this profile." });
         const discovery = await probeNativeCliProfile(provider, { id: body.id, alias: body.alias, ...(body.executable ? { executable: body.executable } : {}), ...(body.model ? { model: body.model } : {}) });
         if (!discovery.installed || !discovery.compatible) return reply.code(409).send({ code: "CLI_INCOMPATIBLE", discovery });
