@@ -250,8 +250,9 @@
   desktop installation/login does not prove bundled CLI readiness.
   The desktop package lacks `dist/codebuddy.js` and the native Web UI, so its
   interactive `/login` entry is unavailable. A complete same-version official
-  CodeBuddy CLI can provide native login into the shared `~/.codebuddy` account
-  directory; keep its installation separate and preserve the bundled headless
+  CodeBuddy CLI can provide the native login UI, but WorkBuddy and CodeBuddy
+  declare different authentication IDs even under `~/.codebuddy`. Verify both
+  initial and resumed runs before assuming credentials work across entries; keep its installation separate and preserve the bundled headless
   entry rather than editing app files or copying account credentials.
 - ZCode's bundled CLI needs both `ZCODE_BUILTIN_PROVIDER_CONFIG_FILE` and
   `ZCODE_PERSONAL_PROVIDER_CONFIG_FILE` to reuse its native runtime config.

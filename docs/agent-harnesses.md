@@ -27,7 +27,7 @@ routing; use **Enable dispatch** after native login and health/model testing.
 | `cursor` | Cursor Agent 2026.10.01-e373342 | User completed CLI login; real file creation and exact-session edit passed; `trustWorkspace: true`, blanket `approveTools` remains false |
 | `antigravity` | `~/.local/bin/agy` 1.2.14 | Model reply passed; native accept-edits mode denied file creation; disabled pending usable native file permissions |
 | `zcode` | ZCode bundled CLI 0.16.9 via local wrapper | JSON/session flags and runtime verified; no CLI default model selected; bundled TUI missing; disabled pending native model setup |
-| `workbuddy` | WorkBuddy bundled CodeBuddy CLI 2.147.0 via local wrapper | Native JSON/session flags verified; full same-version official CLI installed for login; browser authorization pending; disabled |
+| `workbuddy` | WorkBuddy bundled CodeBuddy CLI 2.147.0 via local wrapper | Native JSON/session flags verified; full same-version official CLI installed for login; user completed browser login; first file creation passed but same-session continuation returned AUTH_ERROR; disabled |
 | `qoder` | Qoder CN `qoderclicn` 1.1.65, native `~/.qoder-cn` | Native login and model listing passed; real file creation and exact-session edit passed; enabled |
 | `opencode` | OpenCode app-bundled v2, `openrouter/openai/gpt-4o-mini` | Current real file creation and exact-session edit passed; explicit native tool approval |
 | `pi` | pi 0.99.2 via pinned Node wrapper | Protocol verified; no selected OpenAI credentials; disabled pending native login/model choice |
@@ -76,8 +76,13 @@ WorkBuddy's desktop bundle omits `dist/codebuddy.js` and its Web UI. Its
 headless native entry works, but cannot provide the interactive `/login` flow.
 The complete official `@tencent-ai/codebuddy-code@2.147.0` package was installed
 under `~/.local/share/dispatcher-codebuddy-cli`; `workbuddy-login` pins Node
-and invokes that package, sharing the native `~/.codebuddy` account directory
-with the bundled CLI. No credentials are copied into Dispatcher. The login
+and invokes that package with the existing WorkBuddy product descriptor through
+`ACC_PRODUCT_CONFIG_PATH`. Both use the native `~/.codebuddy` directory, but
+WorkBuddy and CodeBuddy declare different authentication IDs; a shared directory
+does not prove compatible login. After the user completed browser login, file
+creation passed, but exact-session continuation still returned AUTH_ERROR.
+The full CLI comparison also did not establish stable authentication. Keep this
+profile disabled until both turns pass. No credentials are copied into Dispatcher. The login
 workspace is a separate empty directory; neither `/tmp` nor its parent was
 trusted. The temporary diagnostic HTTP server was stopped.
 See the [official installation guide](https://www.codebuddy.cn/docs/cli/installation).
