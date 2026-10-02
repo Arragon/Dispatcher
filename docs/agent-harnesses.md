@@ -5,7 +5,75 @@ verification and delivery flow. Select an adapter in **Agents & Profiles**,
 scan it, save an alias through ConfigPlan, then select that alias for dispatch.
 Installation and login readiness are separate evidence.
 
-## Installed on this Mac (2026-10-01)
+## Current personal configuration (2026-10-02)
+
+Local dashboard: <http://127.0.0.1:8347/agents>. Profiles were saved through
+Controller ConfigPlan. This running instance uses the existing data directory
+`/Users/wangdongxin/projects/dispatcher/apps/controller/.dispatcher`. Start it
+with an explicit directory to avoid creating another empty instance:
+
+```sh
+cd /Users/wangdongxin/projects/dispatcher
+pnpm dispatcher -- serve --with-runner --data-dir /Users/wangdongxin/projects/dispatcher/apps/controller/.dispatcher
+```
+
+Stop with Ctrl-C in its service terminal. Disabled profiles stay visible and are excluded from
+routing; use **Enable dispatch** after native login and health/model testing.
+
+| Alias | Native entry / account | Current evidence |
+| --- | --- | --- |
+| `ronna` | Codex 0.159.0-alpha.12.1, existing `~/.codex` | Logged in; real managed-worktree file creation and exact-session edit passed |
+| `kite` | Same Codex binary, separate `~/.codex-kite` | Reserved, disabled, no credentials copied; login deferred by user |
+| `cursor` | Cursor Agent 2026.10.01-e373342 | User completed CLI login; real file creation and exact-session edit passed; `trustWorkspace: true`, blanket `approveTools` remains false |
+| `antigravity` | `~/.local/bin/agy` 1.2.14 | Official SHA512-verified CLI installed; native OAuth requested; disabled pending login |
+| `zcode` | ZCode bundled CLI 0.16.9 via local wrapper | JSON/session flags verified; native configuration found; model creation fails; disabled pending native model repair |
+| `workbuddy` | WorkBuddy bundled CodeBuddy CLI 2.147.0 via local wrapper | Native JSON/session flags verified; actual model invocation requires `/login`; disabled |
+| `qoder` | Qoder CN `qoderclicn` 1.1.65, native `~/.qoder-cn` | Official CLI installed; model listing requires login; disabled |
+| `opencode` | OpenCode app-bundled v2, `openrouter/openai/gpt-4o-mini` | Current real file creation and exact-session edit passed; explicit native tool approval |
+| `pi` | pi 0.99.2 via pinned Node wrapper | Protocol verified; no selected OpenAI credentials; disabled pending native login/model choice |
+| `grok` | Existing `~/.grok/bin/grok` | Current real file creation and exact-session edit passed; existing `agent` alias preserved |
+
+Wrappers under `~/.local/bin` pin a compatible Node runtime for the app-bundled
+JavaScript entries. They reference native configurations rather than copying
+credentials. ZCode's current builtin provider path includes the desktop version
+and endpoint identity; re-check it after a desktop update.
+
+### Native login actions still needed
+
+Use the same native clients as Dispatcher. No password or API key needs to be
+pasted into a chat. These are operator commands for this Mac:
+
+```sh
+# Optional later, per the user's explicit reservation:
+CODEX_HOME="$HOME/.codex-kite" /Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex login --device-auth
+
+# Qoder CN opens its own login flow:
+"$HOME/.local/bin/qoderclicn" login
+
+# Antigravity starts its native Google sign-in flow when unauthenticated:
+"$HOME/.local/bin/agy"
+
+# WorkBuddy bundled CLI: enter /login in its interactive client:
+"$HOME/.local/bin/workbuddy-cli"
+
+# pi: select the desired provider/model and authenticate through /login:
+"$HOME/.local/bin/pi"
+
+# ZCode: confirm a usable native provider/model, then test the CLI:
+"$HOME/.local/bin/zcode"
+```
+
+After each native login, use **Test health**, then **Enable dispatch**. Generic
+native discovery proves the executable/protocol and intentionally reports auth
+as unknown until model execution. Do not mistake a desktop login for CLI login.
+The ZCode native desktop's ability to send messages and its selected model still
+need user confirmation; its local CLI smoke reported `Model creation failed`.
+
+Current regression coverage also checks cross-profile session rejection,
+reserved account exclusion, ConfigPlan activation, unchanged Codex/Cursor/native
+handle retention, and rejection of active profile replacement/disable.
+
+## Earlier installation inventory (2026-10-01)
 
 | Harness | Observed installation | Dispatcher interface / evidence |
 | --- | --- | --- |

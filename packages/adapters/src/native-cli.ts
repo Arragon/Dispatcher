@@ -13,9 +13,9 @@ import {
 } from "./ecosystem-cli.js";
 
 const execFileAsync = promisify(execFile);
-export type NativeCliProvider = "opencode" | "grok" | "pi";
+export type NativeCliProvider = "opencode" | "grok" | "pi" | "antigravity" | "zcode" | "workbuddy-cli" | "qoder-cn";
 export function isNativeCliProvider(provider: string): provider is NativeCliProvider {
-  return provider === "opencode" || provider === "grok" || provider === "pi";
+  return ["opencode", "grok", "pi", "antigravity", "zcode", "workbuddy-cli", "qoder-cn"].includes(provider);
 }
 
 function manifest(id: NativeCliProvider, displayName: string, credential = false): AdapterManifest {
@@ -27,9 +27,10 @@ function manifest(id: NativeCliProvider, displayName: string, credential = false
         id: { type: "string", minLength: 1, pattern: "^[a-z0-9][a-z0-9._-]*$" },
         alias: { type: "string", minLength: 1 }, runnerId: { type: "string", default: "local" },
         executable: { type: "string", minLength: 1, description: "Optional explicit CLI path; otherwise use the known local installation or PATH." },
-        model: { type: "string", minLength: 1, description: id === "grok" ? "Grok model ID" : "provider/model; omit to use the CLI default" },
+        ...(id === "qoder-cn" ? { configDir: { type: "string", minLength: 1, description: "Native Qoder CN account configuration directory" } } : {}),
+        ...(id !== "zcode" ? { model: { type: "string", minLength: 1, description: id === "grok" ? "Grok model ID" : "provider/model; omit to use the CLI default" } } : {}),
         ...(credential ? { credentialRef: { type: "string", pattern: "^secret://grok/" } } : {}),
-        ...(id !== "pi" ? { approveTools: { type: "boolean", default: false, title: "Unattended native tool approval", description: "Explicitly approve native tools for this trusted worktree. Grok approves all tools; OpenCode retains explicitly denied permissions." } } : {}),
+        ...(id === "opencode" || id === "grok" ? { approveTools: { type: "boolean", default: false, title: "Unattended native tool approval", description: "Explicitly approve native tools for this trusted worktree. Grok approves all tools; OpenCode retains explicitly denied permissions." } } : {}),
       },
     },
     uiSchema: credential ? { credentialRef: { "ui:widget": "hidden" } } : {},
@@ -47,12 +48,17 @@ function manifest(id: NativeCliProvider, displayName: string, credential = false
 export const opencodeManifest = manifest("opencode", "OpenCode v2");
 export const grokManifest = manifest("grok", "Grok Build", true);
 export const piManifest = manifest("pi", "pi coding agent");
+export const antigravityManifest = manifest("antigravity", "Antigravity CLI");
+export const zcodeManifest = manifest("zcode", "ZCode CLI");
+export const workbuddyCliManifest = manifest("workbuddy-cli", "WorkBuddy bundled CLI");
+export const qoderCnManifest = manifest("qoder-cn", "Qoder CN CLI");
 
 async function executable(provider: NativeCliProvider, profile: CliAgentProfile): Promise<string> {
   if (profile.executable) return profile.executable;
   const paths = provider === "opencode" && process.platform === "darwin"
     ? ["/Applications/OpenCode.app/Contents/Resources/opencode-cli"]
-    : provider === "grok" ? [join(homedir(), ".grok", "bin", "grok")] : [];
+    : provider === "grok" ? [join(homedir(), ".grok", "bin", "grok")]
+    : ["antigravity", "zcode", "workbuddy-cli", "qoder-cn"].includes(provider) ? [join(homedir(), ".local", "bin", provider === "antigravity" ? "agy" : provider === "qoder-cn" ? "qoderclicn" : provider)] : [];
   for (const path of paths) {
     try { await access(path); return path; } catch { /* Try the next declared location. */ }
   }
@@ -60,6 +66,26 @@ async function executable(provider: NativeCliProvider, profile: CliAgentProfile)
 }
 
 const definitions: Record<NativeCliProvider, CliProviderDefinition> = {
+  antigravity: {
+    manifest: antigravityManifest, defaultExecutable: "agy", versionArgs: ["--version"], authArgs: [],
+    supportsResume: true, strictLifecycle: true, requireExecutionEvidence: true, resolveExecutable: (profile) => executable("antigravity", profile), normalizeLine: normalizeAntigravityLine,
+    startArgs: ({ prompt, model, providerSessionId }) => ["--output-format", "stream-json", "--mode", "accept-edits", ...(model ? ["--model", model] : []), ...(providerSessionId ? ["--conversation", providerSessionId] : []), "--print", prompt],
+  },
+  zcode: {
+    manifest: zcodeManifest, defaultExecutable: "zcode", versionArgs: ["--version"], authArgs: [],
+    supportsResume: true, strictLifecycle: true, requireExecutionEvidence: true, resolveExecutable: (profile) => executable("zcode", profile), normalizeLine: normalizeZCodeLine,
+    startArgs: ({ prompt, providerSessionId }) => ["--json", "--mode", "edit", ...(providerSessionId ? ["--resume", providerSessionId] : []), "--prompt", prompt],
+  },
+  "workbuddy-cli": {
+    manifest: workbuddyCliManifest, defaultExecutable: "workbuddy-cli", versionArgs: ["--version"], authArgs: [],
+    supportsResume: true, strictLifecycle: true, requireExecutionEvidence: true, newSessionId: randomUUID, resolveExecutable: (profile) => executable("workbuddy-cli", profile), normalizeLine: normalizeWorkBuddyLine,
+    startArgs: ({ prompt, model, providerSessionId, newSession }) => ["--print", "--output-format", "stream-json", "--permission-mode", "acceptEdits", ...(model ? ["--model", model] : []), ...(providerSessionId ? [newSession ? "--session-id" : "--resume", providerSessionId] : []), "--", prompt],
+  },
+  "qoder-cn": {
+    manifest: qoderCnManifest, defaultExecutable: "qoderclicn", versionArgs: ["--version"], authArgs: [],
+    supportsResume: true, strictLifecycle: true, requireExecutionEvidence: true, newSessionId: randomUUID, resolveExecutable: (profile) => executable("qoder-cn", profile), normalizeLine: normalizeWorkBuddyLine,
+    startArgs: ({ prompt, model, providerSessionId, newSession, configDir }) => ["--print", "--output-format", "stream-json", "--permission-mode", "accept_edits", ...(configDir ? ["--config-dir", configDir] : []), ...(model ? ["--model", model] : []), ...(providerSessionId ? [newSession ? "--session-id" : "--resume", providerSessionId] : []), "--", prompt],
+  },
   opencode: {
     manifest: opencodeManifest, defaultExecutable: "opencode", versionArgs: ["--version"], authArgs: [],
     supportsResume: true, strictLifecycle: true, requireExecutionEvidence: true, resolveExecutable: (profile) => executable("opencode", profile), normalizeLine: normalizeOpenCodeLine,
@@ -88,6 +114,19 @@ export class PiAdapter extends StructuredCliAdapter {
   constructor(profile: CliAgentProfile, backend?: CliAgentBackend, store?: SessionStore) { super(definitions.pi, profile, backend, store); }
 }
 
+export class AntigravityAdapter extends StructuredCliAdapter {
+  constructor(profile: CliAgentProfile, backend?: CliAgentBackend, store?: SessionStore) { super(definitions.antigravity, profile, backend, store); }
+}
+export class ZCodeAdapter extends StructuredCliAdapter {
+  constructor(profile: CliAgentProfile, backend?: CliAgentBackend, store?: SessionStore) { super(definitions.zcode, profile, backend, store); }
+}
+export class WorkBuddyCliAdapter extends StructuredCliAdapter {
+  constructor(profile: CliAgentProfile, backend?: CliAgentBackend, store?: SessionStore) { super(definitions["workbuddy-cli"], profile, backend, store); }
+}
+export class QoderCnAdapter extends StructuredCliAdapter {
+  constructor(profile: CliAgentProfile, backend?: CliAgentBackend, store?: SessionStore) { super(definitions["qoder-cn"], profile, backend, store); }
+}
+
 export interface NativeCliDiscoveryResult extends CliDiscoveryResult {
   compatible: boolean;
   authentication: "unknown" | "ready" | "missing";
@@ -106,7 +145,10 @@ export async function probeNativeCliProfile(provider: NativeCliProvider, profile
     const output = help.stdout + help.stderr;
     base.compatible = provider === "opencode" ? /--standalone/.test(output) && /--format/.test(output) && /--session/.test(output)
       : provider === "grok" ? /streaming-messages-json/.test(output) && /--session-id/.test(output) && /--resume/.test(output)
-      : /--session-id/.test(output) && /--mode/.test(output) && /json/.test(output);
+       : provider === "pi" ? /--session-id/.test(output) && /--mode/.test(output) && /json/.test(output)
+      : provider === "antigravity" ? /--conversation/.test(output) && /stream-json/.test(output) && /--print/.test(output)
+      : provider === "zcode" ? /--resume/.test(output) && /--json/.test(output) && /--prompt/.test(output) && /--mode/.test(output)
+      : /--session-id/.test(output) && /--resume/.test(output) && /--output-format/.test(output) && /--permission-mode/.test(output);
     if (!base.compatible) return { ...base, diagnostic: "Installed CLI lacks the required native JSON/session flags. OpenCode requires v2." };
   } catch { return { ...base, diagnostic: "CLI capability probe failed." }; }
   if (provider === "pi" && profile.model) {
@@ -187,5 +229,41 @@ export function normalizePiLine(line: string): NormalizedCliEvent | undefined {
     const summary = content(message.content);
     if (summary || message.stopReason === "stop") return activity(summary ?? "pi turn completed", undefined, true);
   }
+  return undefined;
+}
+
+
+export function normalizeWorkBuddyLine(line: string): NormalizedCliEvent | undefined {
+  const event = normalizeGrokLine(line);
+  return event?.type === "activity" && event.summary === "Grok turn started" ? { ...event, summary: "Native CLI turn started" } : event;
+}
+
+export function normalizeAntigravityLine(line: string): NormalizedCliEvent | undefined {
+  const value = parse(line);
+  if (!value) return undefined;
+  if (value.event === "init" && text(value.conversation_id)) return activity("Antigravity turn started", String(value.conversation_id));
+  if (value.event === "result") {
+    const result = object(value.result);
+    const response = text(result?.response);
+    if (result?.status !== "SUCCESS") {
+      const detail = object(result?.error);
+      return error(text(result?.error) ?? text(detail?.message) ?? response ?? `Antigravity result ${String(result?.status ?? "missing")}`);
+    }
+    return activity(response ?? "Antigravity turn completed", text(result.conversation_id), true);
+  }
+  if (value.event === "error") return error(text(value.error) ?? text(value.message) ?? "Antigravity failed");
+  return undefined;
+}
+
+export function normalizeZCodeLine(line: string): NormalizedCliEvent | undefined {
+  const value = parse(line);
+  if (!value) return undefined;
+  if (value.type === "result") {
+    const status = text(object(value.projection)?.status)?.toLowerCase();
+    if (status === "failed" || status === "error" || status === "cancelled") return error(text(value.response) ?? `ZCode ${status}`);
+    const response = text(value.response);
+    if (response && text(value.sessionId)) return activity(response, String(value.sessionId), true);
+  }
+  if (value.type === "error") return error(text(value.message) ?? "ZCode failed");
   return undefined;
 }

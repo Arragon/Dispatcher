@@ -21,6 +21,8 @@ export interface CliAgentProfile {
   credentialRef?: string;
   model?: string;
   approveTools?: boolean;
+  configDir?: string;
+  trustWorkspace?: boolean;
 }
 
 export interface CliDiscoveryResult {
@@ -187,7 +189,7 @@ export interface CliProviderDefinition {
   newSessionId?: () => string;
   resolveExecutable?: (profile: CliAgentProfile) => Promise<string>;
   normalizeLine?: (line: string) => NormalizedCliEvent | undefined;
-  startArgs(input: { prompt: string; model?: string; providerSessionId?: string; newSession?: boolean; approveTools?: boolean }): string[];
+  startArgs(input: { prompt: string; model?: string; providerSessionId?: string; newSession?: boolean; configDir?: string; trustWorkspace?: boolean; approveTools?: boolean }): string[];
 }
 
 export const cursorManifest: AdapterManifest = {
@@ -233,12 +235,12 @@ const cursorDefinition: CliProviderDefinition = {
   versionArgs: ["--version"],
   authArgs: ["status"],
   environmentKey: "CURSOR_API_KEY",
-  supportsResume: true,
-  startArgs: ({ prompt, model, providerSessionId }) => [
-    "--print", "--force", "--output-format", "stream-json",
+  supportsResume: true, strictLifecycle: true, requireExecutionEvidence: true, normalizeLine: normalizeCursorLine,
+  startArgs: ({ prompt, model, providerSessionId, approveTools, trustWorkspace }) => [
+    "--print", ...(trustWorkspace ? ["--trust"] : []), ...(approveTools ? ["--force"] : []), "--output-format", "stream-json",
     ...(providerSessionId ? ["--resume", providerSessionId] : []),
     ...(model ? ["--model", model] : []),
-    prompt,
+    "--", prompt,
   ],
 };
 
@@ -296,7 +298,7 @@ export class StructuredCliAdapter implements AgentAdapter {
       const environment = await this.environment();
       this.turns.set(session.id, this.backend.start({
         executable: await this.executable(),
-        args: this.definition.startArgs({ prompt: input.prompt ?? "Inspect the task and report readiness.", newSession: true, approveTools: this.profile.approveTools === true, ...(session.providerSessionId ? { providerSessionId: session.providerSessionId } : {}), ...(this.profile.model ? { model: this.profile.model } : {}) }),
+        args: this.definition.startArgs({ prompt: input.prompt ?? "Inspect the task and report readiness.", newSession: true, approveTools: this.profile.approveTools === true, trustWorkspace: this.profile.trustWorkspace === true, ...(this.profile.configDir ? { configDir: this.profile.configDir } : {}), ...(session.providerSessionId ? { providerSessionId: session.providerSessionId } : {}), ...(this.profile.model ? { model: this.profile.model } : {}) }),
         workspacePath: input.workspacePath,
         ...(this.definition.normalizeLine ? { normalizeLine: this.definition.normalizeLine } : {}),
         ...(this.definition.requireExecutionEvidence ? { requireExecutionEvidence: true } : {}),
@@ -325,7 +327,7 @@ export class StructuredCliAdapter implements AgentAdapter {
       if (this.require(sessionId).state === "CANCELLED") throw new AdapterContractError("SESSION_CANCELLED", "Session was cancelled before the next turn started");
       this.turns.set(sessionId, this.backend.start({
         executable,
-        args: this.definition.startArgs({ prompt: message, providerSessionId: session.providerSessionId, approveTools: this.profile.approveTools === true, ...(this.profile.model ? { model: this.profile.model } : {}) }),
+        args: this.definition.startArgs({ prompt: message, providerSessionId: session.providerSessionId, approveTools: this.profile.approveTools === true, trustWorkspace: this.profile.trustWorkspace === true, ...(this.profile.configDir ? { configDir: this.profile.configDir } : {}), ...(this.profile.model ? { model: this.profile.model } : {}) }),
         workspacePath: session.workspacePath,
         ...(this.definition.normalizeLine ? { normalizeLine: this.definition.normalizeLine } : {}),
         ...(this.definition.requireExecutionEvidence ? { requireExecutionEvidence: true } : {}),
@@ -393,7 +395,7 @@ export class StructuredCliAdapter implements AgentAdapter {
   }
   private require(id: string): AdapterSession {
     const session = this.store.load(id);
-    if (!session) throw new AdapterContractError("SESSION_NOT_FOUND", `Unknown session ${id}`);
+    if (!session || session.profileId !== this.profile.id) throw new AdapterContractError("SESSION_NOT_FOUND", `Unknown session ${id}`);
     return session;
   }
   private update(id: string, changes: Partial<AdapterSession>): AdapterSession {
@@ -475,7 +477,7 @@ export function normalizeCliError(message: string): CliErrorEvent | undefined {
   if (/model unavailable|model not found|unknown model/.test(lower)) return { type: "failure", reason };
   if (/quota|credit.*exhaust|insufficient credit|requires more credits|can only afford/.test(lower)) return { type: "resource", state: "QUOTA_EXHAUSTED", reason, source: "error", confidence: "high" };
   if (/rate.?limit|too many requests/.test(lower)) return { type: "resource", state: "RATE_LIMITED", reason, source: "error", confidence: "high" };
-  if (/unauth|not logged in|login required|forbidden|no api key|invalid api.?key/.test(lower)) return { type: "resource", state: "AUTH_ERROR", reason, source: "error", confidence: "high" };
+  if (/unauth|authentication required|not authenticated|not logged in|login required|forbidden|no api key|invalid api.?key/.test(lower)) return { type: "resource", state: "AUTH_ERROR", reason, source: "error", confidence: "high" };
   if (/unavailable|econn|network|timeout/.test(lower)) return { type: "resource", state: "PROVIDER_DOWN", reason, source: "error", confidence: "medium" };
   return { type: "failure", reason };
 }
@@ -488,6 +490,7 @@ function profileSchema(defaultExecutable: string, includeCredential: boolean): R
     properties: {
       id: { type: "string", minLength: 1, pattern: "^[a-z0-9][a-z0-9._-]*$" },
       alias: { type: "string", minLength: 1 },
+      ...(defaultExecutable === "cursor-agent" ? { trustWorkspace: { type: "boolean", default: false, title: "Trust Dispatcher worktrees", description: "Trust this profile's managed repository worktrees without a native prompt; tool approval remains separate." }, approveTools: { type: "boolean", default: false, title: "Approve native tools unattended" } } : {}),
       runnerId: { type: "string", minLength: 1, default: "local" },
       executable: { type: "string", minLength: 1, default: defaultExecutable },
       model: { type: "string", minLength: 1 },
@@ -500,4 +503,21 @@ function stringValue(value: unknown): string | undefined { return typeof value =
 function numberValue(value: unknown): number | undefined { return typeof value === "number" && Number.isFinite(value) ? value : undefined; }
 function extractArtifacts(summary: string): Array<{ path: string; kind: string }> {
   return [...new Set(summary.match(/https?:\/\/[^\s)]+\/pull\/\d+/g) ?? [])].map((path) => ({ path, kind: "pull-request" }));
+}
+
+
+export function normalizeCursorLine(line: string): NormalizedCliEvent | undefined {
+  let value: Record<string, unknown>;
+  try { const parsed: unknown = JSON.parse(line); if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined; value = parsed as Record<string, unknown>; } catch { return undefined; }
+  if (value.type === "result" && value.is_error === true) return normalizeCliError(typeof value.result === "string" ? value.result : Array.isArray(value.errors) ? value.errors.map(String).join("; ") : "Cursor failed");
+  if (value.type === "error") return normalizeCliError(typeof value.message === "string" ? value.message : "Cursor failed");
+  const providerSessionId = stringValue(value.session_id) ?? stringValue(value.chat_id);
+  if (value.type === "system" && value.subtype === "init") return { type: "activity", summary: "Cursor turn started", ...(providerSessionId ? { providerSessionId } : {}) };
+  let summary = stringValue(value.result);
+  if (value.type === "assistant") {
+    const message = value.message && typeof value.message === "object" ? value.message as Record<string, unknown> : undefined;
+    if (Array.isArray(message?.content)) summary = message.content.filter((part) => part?.type === "text" && typeof part.text === "string").map((part) => part.text as string).join("\n");
+  }
+  if ((value.type === "assistant" && summary) || (value.type === "result" && (summary || value.subtype === "success" || value.is_error === false))) return { type: "activity", summary: (summary ?? "Cursor turn completed").slice(0, 2_000), executionEvidence: true, ...(providerSessionId ? { providerSessionId } : {}) };
+  return undefined;
 }

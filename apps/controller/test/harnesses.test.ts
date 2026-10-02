@@ -16,7 +16,7 @@ const secrets: SecretStore = {
 };
 
 describe("native harness Controller composition", () => {
-  it("registers ConfigPlan profiles, probes, sessions and exact same-session input for all three harnesses", async () => {
+  it("registers ConfigPlan profiles, probes, sessions and exact same-session input for all native harnesses", async () => {
     const directory = mkdtempSync(join(tmpdir(), "dispatcher-harnesses-"));
     const executable = join(directory, "harness");
     const repository = join(directory, "repo");
@@ -26,7 +26,7 @@ describe("native harness Controller composition", () => {
     writeFileSync(join(repository, "README.md"), "fixture\n");
     execFileSync("git", ["-C", repository, "add", "README.md"]);
     execFileSync("git", ["-C", repository, "commit", "-m", "fixture"]);
-    writeFileSync(executable, `#!${process.execPath}\nif(process.argv.includes('--help')) console.log('--standalone --format json --session --session-id --resume --mode streaming-messages-json'); else console.log('2.0.21');`);
+    writeFileSync(executable, `#!${process.execPath}\nif(process.argv.includes('--help')) console.log('--standalone --format json --session --session-id --resume --mode streaming-messages-json --conversation --print --prompt --json --output-format stream-json --permission-mode'); else console.log('2.0.21');`);
     chmodSync(executable, 0o700);
     let blockedProvider: string | undefined;
     let runningProvider: string | undefined;
@@ -37,7 +37,8 @@ describe("native harness Controller composition", () => {
       const backend: CliAgentBackend = { start: vi.fn(() => ({ status: () => provider === runningProvider ? "running" : "completed", result: async () => result(), cancel: async () => undefined })) };
       return backend;
     });
-    const service = new ControllerService({ dataDirectory: directory, ownerToken: "test-owner", withRunner: true, secretStore: secrets, cliBackendFactory: calls });
+    const codexCalls = vi.fn(() => ({ start: vi.fn(() => ({ status: () => "running" as const, result: async () => ({ state: "completed" as const, summary: "done", events: [], providerSessionId: "codex-exact" }), cancel: async () => undefined })) }));
+    const service = new ControllerService({ codexBackendFactory: codexCalls, dataDirectory: directory, ownerToken: "test-owner", withRunner: true, secretStore: secrets, cliBackendFactory: calls });
     try {
       await service.start({ listen: false });
       const current = (await service.app.inject({ method: "GET", url: "/api/config", headers: OWNER })).json().config;
@@ -46,8 +47,8 @@ describe("native harness Controller composition", () => {
       expect((await service.app.inject({ method: "POST", url: `/api/config/plans/${plan.id}/apply`, headers: OWNER, payload: { confirmed: true } })).statusCode).toBe(200);
       const workspace = await service.workspaces.create({ repositoryId: "fixture", taskId: "harness", runId: "test", attempt: 1, baseRef: "main", scopePaths: [] });
       const manifests = (await service.app.inject({ method: "GET", url: "/api/adapters/manifests", headers: OWNER })).json().manifests;
-      expect(manifests.map((value: { id: string }) => value.id)).toEqual(expect.arrayContaining(["opencode", "grok", "pi"]));
-      for (const provider of ["opencode", "grok", "pi"]) {
+      expect(manifests.map((value: { id: string }) => value.id)).toEqual(expect.arrayContaining(["opencode", "grok", "pi", "antigravity", "zcode", "workbuddy-cli", "qoder-cn"]));
+      for (const provider of ["opencode", "grok", "pi", "antigravity", "zcode", "workbuddy-cli", "qoder-cn"]) {
         const discovery = await service.app.inject({ method: "POST", url: `/api/agents/${provider}/discover`, headers: OWNER, payload: { id: provider, alias: provider, executable } });
         expect(discovery.statusCode).toBe(200);
         expect(discovery.json()).toMatchObject({ installed: true, compatible: true, authenticated: false, authentication: "unknown" });
@@ -64,10 +65,42 @@ describe("native harness Controller composition", () => {
         const tested = await service.app.inject({ method: "POST", url: `/api/agents/profiles/${provider}/test`, headers: OWNER });
         expect(tested.json()).toMatchObject({ compatible: true, authentication: "unknown" });
       }
-      expect(calls.mock.calls.map(([provider]) => provider)).toEqual(expect.arrayContaining(["opencode", "grok", "pi"]));
+      const sourceSession = (await service.app.inject({ method: "GET", url: "/api/agents/profiles", headers: OWNER })).json().sessions.find((session: { profileId: string }) => session.profileId === "qoder-cn").id;
+      expect((await service.app.inject({ method: "POST", url: "/api/agents/profiles/qoder-cn/enabled", headers: OWNER, payload: { enabled: false } })).statusCode).toBe(200);
+      for (const [method, suffix, payload] of [["GET", "", undefined], ["POST", "/input", { message: "wrong account" }]] as const) {
+        const wrong = await service.app.inject({ method, url: `/api/agents/profiles/pi/sessions/${sourceSession}${suffix}`, headers: OWNER, ...(payload ? { payload } : {}) });
+        expect(wrong.json()).toMatchObject({ code: "SESSION_NOT_FOUND" });
+      }
+      expect((await service.app.inject({ method: "POST", url: "/api/agents/profiles/qoder-cn/enabled", headers: OWNER, payload: { enabled: true } })).statusCode).toBe(200);
+      expect(calls.mock.calls.map(([provider]) => provider)).toEqual(expect.arrayContaining(["opencode", "grok", "pi", "antigravity", "zcode", "workbuddy-cli", "qoder-cn"]));
       const config = (await service.app.inject({ method: "GET", url: "/api/config", headers: OWNER })).json().config;
       expect(config.agentProfiles.find((profile: { id: string }) => profile.id === "grok").settings.approveTools).toBe(true);
       expect((await service.app.inject({ method: "POST", url: "/api/agents/pi/profiles", headers: OWNER, payload: { id: "invalid-pi", alias: "Invalid pi", approveTools: true } })).statusCode).toBe(400);
+      const reserved = await service.app.inject({ method: "POST", url: "/api/agents/codex/profiles", headers: OWNER, payload: { id: "kite", alias: "kite", codexHome: join(directory, "kite-home"), enabled: false } });
+      expect(reserved.statusCode, reserved.body).toBe(201);
+      expect(reserved.json().profile.state).toBe("DISABLED");
+      expect(codexCalls).not.toHaveBeenCalled();
+      expect((await service.app.inject({ method: "POST", url: "/api/agents/profiles/kite/runs", headers: OWNER, payload: { workspacePath: workspace.path, prompt: "must not start" } })).statusCode).toBe(404);
+      const enableReserved = await service.app.inject({ method: "POST", url: "/api/agents/profiles/kite/enabled", headers: OWNER, payload: { enabled: true } });
+      expect(enableReserved.statusCode).toBe(200);
+      expect(codexCalls).toHaveBeenCalledTimes(1);
+      const disableReserved = await service.app.inject({ method: "POST", url: "/api/agents/profiles/kite/enabled", headers: OWNER, payload: { enabled: false } });
+      expect(disableReserved.statusCode).toBe(200);
+      codexCalls.mockClear();
+      const primary = await service.app.inject({ method: "POST", url: "/api/agents/codex/profiles", headers: OWNER, payload: { id: "ronna", alias: "ronna", codexHome: join(directory, "ronna-home") } });
+      expect(primary.statusCode).toBe(201);
+      const codexRun = await service.app.inject({ method: "POST", url: "/api/agents/profiles/ronna/runs", headers: OWNER, payload: { workspacePath: workspace.path, prompt: "long task" } });
+      expect(codexRun.statusCode).toBe(201);
+      const codexSession = codexRun.json().session.id;
+      const addAlias = await service.app.inject({ method: "POST", url: "/api/agents/pi/profiles", headers: OWNER, payload: { id: "pi-extra", alias: "Pi extra", executable } });
+      expect(addAlias.statusCode).toBe(201);
+      expect(codexCalls).toHaveBeenCalledTimes(1);
+      expect((await service.app.inject({ method: "GET", url: `/api/agents/profiles/ronna/sessions/${codexSession}`, headers: OWNER })).json().session.state).toBe("RUNNING");
+      const disabling = (await service.app.inject({ method: "GET", url: "/api/config", headers: OWNER })).json().config;
+      disabling.agentProfiles.find((profile: { id: string }) => profile.id === "ronna").enabled = false;
+      const disabledPlan = (await service.app.inject({ method: "POST", url: "/api/config/plans", headers: OWNER, payload: { config: disabling } })).json().plan;
+      const disableRejected = await service.app.inject({ method: "POST", url: `/api/config/plans/${disabledPlan.id}/apply`, headers: OWNER, payload: { confirmed: true } });
+      expect(disableRejected.json()).toMatchObject({ code: "ACTIVE_AGENT_PROFILE" });
       const views = (await service.app.inject({ method: "GET", url: "/api/agents/profiles", headers: OWNER })).body;
       expect(views).not.toContain(executable);
       const matrix = (await service.app.inject({ method: "GET", url: "/api/adapters/compatibility", headers: OWNER })).json().matrix;
@@ -98,14 +131,14 @@ describe("native harness Controller composition", () => {
       completed.agentProfiles.find((profile: { id: string }) => profile.id === "grok").settings.model = "different-model";
       const replacement = (await service.app.inject({ method: "POST", url: "/api/config/plans", headers: OWNER, payload: { config: completed } })).json().plan;
       expect((await service.app.inject({ method: "POST", url: `/api/config/plans/${replacement.id}/apply`, headers: OWNER, payload: { confirmed: true } })).statusCode).toBe(200);
-      for (const provider of ["opencode", "grok", "pi"]) {
+      for (const provider of ["opencode", "grok", "pi", "antigravity", "zcode", "workbuddy-cli", "qoder-cn"]) {
         const taskId = `${provider}-canonical`;
         const now = new Date().toISOString();
         service.tasks.execute({ id: `create:${taskId}`, taskId, baseRevision: 0, actor: "test", command: { type: "task.create", task: { id: taskId, projectId: "fixture", title: "Harness task", state: "READY", labels: [], createdAt: now, updatedAt: now }, bindings: [] } });
         service.database.saveTaskContract(taskId, { version: 1, revision: 1, goal: "Harness task", scope: ["README.md"], acceptanceCriteria: ["done"], verification: ["check"], constraints: [], delivery: { type: "none", repository: "fixture", baseBranch: "main" } });
         blockedProvider = provider;
-        // Embedded capacity is fixed at boot; simulate an online four-slot Runner for this fixture.
-        service.runners.register({ ...service.runners.list()[0]!, capacity: 4 });
+        // Embedded capacity is fixed at boot; simulate an online eight-slot Runner for this fixture.
+        service.runners.register({ ...service.runners.list()[0]!, capacity: 8 });
         const dispatched = await service.app.inject({ method: "POST", url: `/api/tasks/${taskId}/dispatch`, headers: OWNER, payload: { profileId: provider } });
         expect(dispatched.statusCode, dispatched.body).toBe(201);
         expect(dispatched.json().run.providerId).toBe(provider);

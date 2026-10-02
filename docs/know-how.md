@@ -239,3 +239,28 @@
 - Build order is represented by workspace dependencies. Controller consumes the
   built Web directory at runtime but does not use a TypeScript project reference
   to Web because Web is a no-emit application project.
+
+- This Mac's Qoder installation is Qoder CN. Use the actual `qoderclicn`
+  bootstrap binary, not an IDE launcher, and isolate accounts with its native
+  `--config-dir`. Desktop login did not authenticate the newly installed CLI.
+- The Cursor installer also overwrites `~/.local/bin/agent`. Preserve an
+  existing Grok `agent` alias by installing only the `cursor-agent` entry.
+- WorkBuddy bundles a Node CLI at `app.asar.unpacked/cli/bin/codebuddy`.
+  Its auth failure was a structured `result.is_error` with process exit zero;
+  desktop installation/login does not prove bundled CLI readiness.
+- ZCode's bundled CLI needs both `ZCODE_BUILTIN_PROVIDER_CONFIG_FILE` and
+  `ZCODE_PERSONAL_PROVIDER_CONFIG_FILE` to reuse its native runtime config.
+  Setting only the bundled-provider fallback variable did not fix packaging
+  lookup. Use a wrapper and existing native paths; do not modify app binaries
+  or copy credentials. Explicit `--mode edit` avoids its headless `yolo`
+  default. Model selection stays in the native client, not an unsupported CLI
+  `--model` flag. Runtime provider paths can change after a desktop upgrade.
+- Shared session persistence must validate profile ownership before status,
+  input, usage or cancellation. Codex and structured native adapters enforce
+  this in their session lookup; Controller session routes reject mismatches
+  before calling any provider. A disabled account must not be continued through
+  another enabled account with a different native credential directory.
+- `pnpm dispatcher` runs in `apps/controller`, so its default relative data
+  directory differs from invoking the built CLI directly at repository root.
+  Pass an explicit `--data-dir` when restarting an existing instance; otherwise
+  it opens a separate empty configuration, rather than losing saved profiles.

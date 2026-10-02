@@ -27,6 +27,19 @@ describe("Dashboard shell", () => {
     expect(await screen.findByText(/Authentication remains unverified/)).toBeTruthy();
     expect(screen.queryByText(/health check passed/)).toBeNull();
   });
+  it("shows a reserved account but excludes it from dispatch and enables it through the profile API", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      if (input === "/api/adapters/manifests") return new Response(JSON.stringify({ manifests: [{ id: "codex", displayName: "Codex", platforms: ["darwin"], configSchema: { type: "object", properties: {} }, uiSchema: {}, secretFields: [], backends: [], capabilities: {} }] }));
+      if (input === "/api/agents/profiles") return new Response(JSON.stringify({ profiles: [{ id: "kite", alias: "kite", provider: "codex", runnerId: "local", state: "DISABLED" }], sessions: [] }));
+      return new Response(JSON.stringify({ matrix: [] }));
+    });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={client}><AgentsPage /></QueryClientProvider>);
+    expect(await screen.findByText("kite")).toBeTruthy();
+    expect(screen.queryByRole("option", { name: "kite (codex)" })).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Enable dispatch for kite" }));
+    expect(fetchMock.mock.calls).toContainEqual(["/api/agents/profiles/kite/enabled", expect.objectContaining({ method: "POST", body: JSON.stringify({ enabled: true }) })]);
+  });
   it("exposes every M1 navigation surface", () => {
     render(<MemoryRouter><Navigation /></MemoryRouter>);
     expect(screen.getByRole("navigation", { name: "Main navigation" })).toBeTruthy();
