@@ -255,6 +255,11 @@
   or copy credentials. Explicit `--mode edit` avoids its headless `yolo`
   default. Model selection stays in the native client, not an unsupported CLI
   `--model` flag. Runtime provider paths can change after a desktop upgrade.
+  Provider credentials do not imply a headless model selection: a missing
+  personal `defaultModelSelection` caused `Model creation failed`, whose nested
+  CLI log error was `CONFIGURATION_ERROR: Select a model before continuing`.
+  The desktop-bundled 0.16.9 CLI also lacked `@zcode/tui`; do not recommend its
+  interactive `/model` menu without verifying that package is present.
 - Shared session persistence must validate profile ownership before status,
   input, usage or cancellation. Codex and structured native adapters enforce
   this in their session lookup; Controller session routes reject mismatches

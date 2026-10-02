@@ -26,7 +26,7 @@ routing; use **Enable dispatch** after native login and health/model testing.
 | `kite` | Same Codex binary, separate `~/.codex-kite` | Reserved, disabled, no credentials copied; login deferred by user |
 | `cursor` | Cursor Agent 2026.10.01-e373342 | User completed CLI login; real file creation and exact-session edit passed; `trustWorkspace: true`, blanket `approveTools` remains false |
 | `antigravity` | `~/.local/bin/agy` 1.2.14 | Official SHA512-verified CLI installed; native OAuth requested; disabled pending login |
-| `zcode` | ZCode bundled CLI 0.16.9 via local wrapper | JSON/session flags verified; native configuration found; model creation fails; disabled pending native model repair |
+| `zcode` | ZCode bundled CLI 0.16.9 via local wrapper | JSON/session flags and runtime verified; no CLI default model selected; bundled TUI missing; disabled pending native model setup |
 | `workbuddy` | WorkBuddy bundled CodeBuddy CLI 2.147.0 via local wrapper | Native JSON/session flags verified; actual model invocation requires `/login`; disabled |
 | `qoder` | Qoder CN `qoderclicn` 1.1.65, native `~/.qoder-cn` | Official CLI installed; model listing requires login; disabled |
 | `opencode` | OpenCode app-bundled v2, `openrouter/openai/gpt-4o-mini` | Current real file creation and exact-session edit passed; explicit native tool approval |
@@ -59,15 +59,21 @@ CODEX_HOME="$HOME/.codex-kite" /Applications/ChatGPT.app/Contents/Resources/code
 # pi: select the desired provider/model and authenticate through /login:
 "$HOME/.local/bin/pi"
 
-# ZCode: confirm a usable native provider/model, then test the CLI:
-"$HOME/.local/bin/zcode"
+# ZCode: the bundled CLI's Z.AI login can save a native default model:
+"$HOME/.local/bin/zcode" login
 ```
 
 After each native login, use **Test health**, then **Enable dispatch**. Generic
 native discovery proves the executable/protocol and intentionally reports auth
 as unknown until model execution. Do not mistake a desktop login for CLI login.
-The ZCode native desktop's ability to send messages and its selected model still
-need user confirmation; its local CLI smoke reported `Model creation failed`.
+ZCode's CLI log resolves `Model creation failed` to `CONFIGURATION_ERROR:
+Select a model before continuing`; the shared personal provider config has no
+`defaultModelSelection`. Existing provider credentials alone do not select a
+headless model. The bundled interactive entry also fails because `@zcode/tui`
+is absent. Do not use that TUI as a recovery instruction. Its native Z.AI login
+can save a default model; using an existing OpenRouter model instead still needs
+a verified native configuration path and the user's model choice. No native
+credentials or provider configuration were modified during diagnosis.
 
 Current regression coverage also checks cross-profile session rejection,
 reserved account exclusion, ConfigPlan activation, unchanged Codex/Cursor/native
