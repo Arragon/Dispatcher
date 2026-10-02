@@ -93,6 +93,13 @@ describe("Mac priority native harnesses", () => {
     expect(normalizeZCodeLine("null")).toBeUndefined();
   });
 
+  it("rejects Antigravity SUCCESS envelopes when native file permissions denied the requested action", async () => {
+    const payload = { event: "result", result: { conversation_id: "ag-id", status: "SUCCESS", response: "", num_turns: 1, denied_actions: [{ action: "write_file", display_name: "WriteToFile" }] } };
+    const turn = new SpawnCliAgentBackend().start({ executable: process.execPath, args: ["-e", `console.log(${JSON.stringify(JSON.stringify(payload))})`], workspacePath: process.cwd(), requireExecutionEvidence: true, normalizeLine: normalizeAntigravityLine });
+    expect(await turn.result()).toMatchObject({ state: "failed", summary: expect.stringContaining("permission denied") });
+    expect(normalizeAntigravityLine(JSON.stringify({ ...payload, result: { ...payload.result, response: "Other work completed" } }))).toMatchObject({ type: "failure" });
+  });
+
   it("treats the actual WorkBuddy zero-exit auth envelope as a failure", async () => {
     const payload = { type: "result", subtype: "error_during_execution", is_error: true, errors: ["Authentication required. Please use /login command to sign in"] };
     const turn = new SpawnCliAgentBackend().start({ executable: process.execPath, args: ["-e", `console.log(${JSON.stringify(JSON.stringify(payload))})`], workspacePath: process.cwd(), requireExecutionEvidence: true, normalizeLine: normalizeWorkBuddyLine });

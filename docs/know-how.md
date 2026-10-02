@@ -265,6 +265,10 @@
   this in their session lookup; Controller session routes reject mismatches
   before calling any provider. A disabled account must not be continued through
   another enabled account with a different native credential directory.
+- Antigravity CLI 1.2.14 can return `status: SUCCESS` with non-empty
+  `denied_actions` after declining native file creation in `accept-edits` mode.
+  Reject that envelope as a failed turn; model text or exit zero does not prove
+  the requested tool action ran. Do not enable dispatch from a text-only probe.
 - `pnpm dispatcher` runs in `apps/controller`, so its default relative data
   directory differs from invoking the built CLI directly at repository root.
   Pass an explicit `--data-dir` when restarting an existing instance; otherwise

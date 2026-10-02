@@ -245,6 +245,9 @@ export function normalizeAntigravityLine(line: string): NormalizedCliEvent | und
   if (value.event === "result") {
     const result = object(value.result);
     const response = text(result?.response);
+    if (Array.isArray(result?.denied_actions) && result.denied_actions.length > 0) {
+      return error("Antigravity native permission denied one or more requested actions");
+    }
     if (result?.status !== "SUCCESS") {
       const detail = object(result?.error);
       return error(text(result?.error) ?? text(detail?.message) ?? response ?? `Antigravity result ${String(result?.status ?? "missing")}`);

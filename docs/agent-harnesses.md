@@ -25,7 +25,7 @@ routing; use **Enable dispatch** after native login and health/model testing.
 | `ronna` | Codex 0.159.0-alpha.12.1, existing `~/.codex` | Logged in; real managed-worktree file creation and exact-session edit passed |
 | `kite` | Same Codex binary, separate `~/.codex-kite` | Reserved, disabled, no credentials copied; login deferred by user |
 | `cursor` | Cursor Agent 2026.10.01-e373342 | User completed CLI login; real file creation and exact-session edit passed; `trustWorkspace: true`, blanket `approveTools` remains false |
-| `antigravity` | `~/.local/bin/agy` 1.2.14 | Official SHA512-verified CLI installed; native OAuth requested; disabled pending login |
+| `antigravity` | `~/.local/bin/agy` 1.2.14 | Model reply passed; native accept-edits mode denied file creation; disabled pending usable native file permissions |
 | `zcode` | ZCode bundled CLI 0.16.9 via local wrapper | JSON/session flags and runtime verified; no CLI default model selected; bundled TUI missing; disabled pending native model setup |
 | `workbuddy` | WorkBuddy bundled CodeBuddy CLI 2.147.0 via local wrapper | Native JSON/session flags verified; actual model invocation requires `/login`; disabled |
 | `qoder` | Qoder CN `qoderclicn` 1.1.65, native `~/.qoder-cn` | Native login and model listing passed; real file creation and exact-session edit passed; enabled |
@@ -66,6 +66,11 @@ CODEX_HOME="$HOME/.codex-kite" /Applications/ChatGPT.app/Contents/Resources/code
 After each native login, use **Test health**, then **Enable dispatch**. Generic
 native discovery proves the executable/protocol and intentionally reports auth
 as unknown until model execution. Do not mistake a desktop login for CLI login.
+Antigravity's `accept-edits` invocation replied to a model-only probe, but its
+real file-creation test returned `denied_actions: [{action: "write_file"}]`.
+The native envelope still said `SUCCESS`; Dispatcher now treats non-empty
+`denied_actions` as failure. Native file permission setup remains required before
+dispatch can be enabled; no blanket permission bypass was configured.
 ZCode's CLI log resolves `Model creation failed` to `CONFIGURATION_ERROR:
 Select a model before continuing`; the shared personal provider config has no
 `defaultModelSelection`. Existing provider credentials alone do not select a
