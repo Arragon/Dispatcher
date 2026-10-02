@@ -254,6 +254,13 @@
   declare different authentication IDs even under `~/.codebuddy`. Verify both
   initial and resumed runs before assuming credentials work across entries; keep its installation separate and preserve the bundled headless
   entry rather than editing app files or copying account credentials.
+  CLI 2.147.0's macOS auth storage is separate from settings: it uses
+  `~/Library/Application Support/CodeBuddyExtension/Data/Public/auth`, so
+  `CODEBUDDY_CONFIG_DIR` does not isolate accounts. A native
+  `AtRestEncryption category=missing-key` read warning followed by refresh
+  HTTP 401 is a credential-read/refresh gate, not evidence that a Dispatcher
+  resume parser failed. Do not recover by copying credentials or extracting
+  desktop encryption keys.
 - ZCode's bundled CLI needs both `ZCODE_BUILTIN_PROVIDER_CONFIG_FILE` and
   `ZCODE_PERSONAL_PROVIDER_CONFIG_FILE` to reuse its native runtime config.
   Setting only the bundled-provider fallback variable did not fix packaging

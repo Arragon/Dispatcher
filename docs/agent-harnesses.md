@@ -83,14 +83,24 @@ headless native entry works, but cannot provide the interactive `/login` flow.
 The complete official `@tencent-ai/codebuddy-code@2.147.0` package was installed
 under `~/.local/share/dispatcher-codebuddy-cli`; `workbuddy-login` pins Node
 and invokes that package with the existing WorkBuddy product descriptor through
-`ACC_PRODUCT_CONFIG_PATH`. Both use the native `~/.codebuddy` directory, but
-WorkBuddy and CodeBuddy declare different authentication IDs; a shared directory
-does not prove compatible login. After the user completed browser login, file
+`ACC_PRODUCT_CONFIG_PATH`. Both use native `~/.codebuddy` settings, but
+WorkBuddy and CodeBuddy declare different authentication IDs; shared settings
+do not prove compatible login. After the user completed browser login, file
 creation passed, but exact-session continuation still returned AUTH_ERROR.
 The full CLI comparison also did not establish stable authentication. Keep this
 profile disabled until both turns pass. No credentials are copied into Dispatcher. The login
 workspace is a separate empty directory; neither `/tmp` nor its parent was
 trusted. The temporary diagnostic HTTP server was stopped.
+The full CLI's native log later reported `AtRestEncryption` unavailable with
+`category=missing-key` when reading `auth/workbuddy-desktop.info`, followed by
+account refresh HTTP 401 and `account list is empty`. This identifies a native
+credential-read/refresh gate, rather than a Dispatcher resume parser failure;
+it does not prove that a particular browser authorization completed. In this
+version, authentication files use the separate macOS
+`~/Library/Application Support/CodeBuddyExtension/Data/Public/auth` store.
+`CODEBUDDY_CONFIG_DIR` redirects settings but does not isolate that auth store.
+Do not copy desktop credentials, retrieve encryption keys, or change the shared
+store to work around this gate; require a working native login and both turns.
 See the [official installation guide](https://www.codebuddy.cn/docs/cli/installation).
 ZCode's CLI log resolves `Model creation failed` to `CONFIGURATION_ERROR:
 Select a model before continuing`; the shared personal provider config has no
