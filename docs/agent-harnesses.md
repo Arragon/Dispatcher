@@ -28,7 +28,7 @@ routing; use **Enable dispatch** after native login and health/model testing.
 | `antigravity` | `~/.local/bin/agy` 1.2.14 | Official SHA512-verified CLI installed; native OAuth requested; disabled pending login |
 | `zcode` | ZCode bundled CLI 0.16.9 via local wrapper | JSON/session flags and runtime verified; no CLI default model selected; bundled TUI missing; disabled pending native model setup |
 | `workbuddy` | WorkBuddy bundled CodeBuddy CLI 2.147.0 via local wrapper | Native JSON/session flags verified; actual model invocation requires `/login`; disabled |
-| `qoder` | Qoder CN `qoderclicn` 1.1.65, native `~/.qoder-cn` | Official CLI installed; model listing requires login; disabled |
+| `qoder` | Qoder CN `qoderclicn` 1.1.65, native `~/.qoder-cn` | Native login and model listing passed; real file creation and exact-session edit passed; enabled |
 | `opencode` | OpenCode app-bundled v2, `openrouter/openai/gpt-4o-mini` | Current real file creation and exact-session edit passed; explicit native tool approval |
 | `pi` | pi 0.99.2 via pinned Node wrapper | Protocol verified; no selected OpenAI credentials; disabled pending native login/model choice |
 | `grok` | Existing `~/.grok/bin/grok` | Current real file creation and exact-session edit passed; existing `agent` alias preserved |
