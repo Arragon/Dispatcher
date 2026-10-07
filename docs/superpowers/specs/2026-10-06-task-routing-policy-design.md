@@ -535,7 +535,16 @@ CLI 费率和真实执行用量足够时才计算估算；不能把内部分类 
 `pnpm check`（typecheck/build、lint、boundaries、test）。实现后按真实架构
 更新 docs/architecture.md，非显然的稳定约束记录 docs/know-how.md。
 
-Linear 规划上，基础选择/费用仍属于 M17.1；本功能宜作为独立的任务模型
-路由工作包，关联文档 06 和基础依赖，不把关键词/语义分类等同于 M19 的
-历史表现学习、shadow routing 或自动 policy 优化。此次只产出设计，未新增
-Linear 里程碑、修改其任务状态或标记实现完成。
+Linear 归属：基础选择/费用仍属于 M17.1；本功能作为 M17.1-W7 独立工作包，
+关联文档 06 和基础依赖，不把关键词/语义分类等同于 M19 的历史表现学习、
+shadow routing 或自动 policy 优化。
+
+2026-10-07 已同步 Linear 规划（任务保持 Backlog，尚未实现或验收）：
+
+- [INH-1837 · M17.1-W7 两种任务创建模式与可解释 Policy 模型路由](https://linear.app/inhandy/issue/INH-1837/m171-w7-两种任务创建模式与可解释-policy-模型路由)。
+- [INH-1838 · W7-T01 类型/规则与确定性关键词匹配](https://linear.app/inhandy/issue/INH-1838/m171-w7-t01-tasktype-policy-配置与确定性关键词匹配)。
+- [INH-1839 · W7-T02 内部语义分类、联合裁决与分析用量](https://linear.app/inhandy/issue/INH-1839/m171-w7-t02-内部语义分类联合裁决与分析用量)。
+- [INH-1840 · W7-T03 不可变决策、确认与幂等派发](https://linear.app/inhandy/issue/INH-1840/m171-w7-t03-不可变决策确认开关与幂等派发集成)。
+
+发布页、执行绑定、原生能力及验收工作继续复用既有 M17.1-W0/W1/W2/W4/W5/W6
+和 NS-032 的职责；该同步不代表对应实现已完成。
