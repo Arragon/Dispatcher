@@ -20,6 +20,11 @@ describe("TaskContractCompiler", () => {
     });
   });
 
+  it("preserves full instructions independently of the short goal", () => {
+    const description = "\n第一段 😀\r\n完整正文\n";
+    expect(new TaskContractCompiler().compile(draft({ description }), 1, { workspace: { repositoryId: "local-repo", baseRef: "main" }, referenceLinks: ["https://example.invalid/spec"] }).contract).toMatchObject({ goal: "Implement the task", instructions: description, workspace: { repositoryId: "local-repo" }, referenceLinks: ["https://example.invalid/spec"] });
+  });
+
   it("routes incomplete drafts to NEEDS_SPEC instead of execution", () => {
     expect(new TaskContractCompiler().compile(draft({ repository: undefined, scope: [], acceptanceCriteria: [], verification: [] }))).toEqual({
       state: "NEEDS_SPEC",

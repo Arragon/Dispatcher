@@ -71,6 +71,30 @@ export class WorkspaceManager {
     return workspace ? structuredClone(workspace) : undefined;
   }
 
+  async inspect(plan: Pick<WorkspacePlan, "repositoryId" | "baseRef" | "scopePaths"> & { targetBranch?: string }): Promise<{ baseCommit: string; root: string }> {
+    const repository = this.registry.get(plan.repositoryId);
+    const root = await realpath(repository.root);
+    const top = (await execute("git", ["-C", root, "rev-parse", "--show-toplevel"])).stdout.trim();
+    if (await realpath(top) !== root) throw new WorkspacePolicyError("INVALID_REPOSITORY_ROOT", "Registered root must be the physical Git root");
+    if (!plan.baseRef || plan.baseRef.startsWith("-") || /[\x00-\x20]/.test(plan.baseRef)) throw new WorkspacePolicyError("INVALID_BASE_REF", "Invalid base reference");
+    const baseCommit = (await execute("git", ["-C", root, "rev-parse", "--verify", "--end-of-options", `${plan.baseRef}^{commit}`])).stdout.trim();
+    for (const scope of plan.scopePaths) {
+      if (!scope || isAbsolute(scope) || scope.split(/[\\/]/).includes("..") || scope.split(/[\\/]/).includes(".git")) throw new WorkspacePolicyError("INVALID_SCOPE", "Scope must stay inside the repository");
+      let candidate = resolve(root, scope);
+      while (candidate !== root) {
+        try { if (!within(root, await realpath(candidate))) throw new WorkspacePolicyError("SYMLINK_ESCAPE", "Scope resolves outside repository"); break; }
+        catch (error) { if (error instanceof WorkspacePolicyError) throw error; candidate = dirname(candidate); }
+      }
+    }
+    if (plan.targetBranch) {
+      try { await execute("git", ["check-ref-format", "--branch", plan.targetBranch]); }
+      catch { throw new WorkspacePolicyError("INVALID_TARGET_BRANCH", "Invalid target branch"); }
+      const refs = (await execute("git", ["-C", root, "for-each-ref", "--format=%(refname)", `refs/heads/${plan.targetBranch}`])).stdout.trim();
+      if (refs) throw new WorkspacePolicyError("BRANCH_EXISTS", "Target branch already exists");
+    }
+    return { baseCommit, root };
+  }
+
   async create(plan: WorkspacePlan): Promise<WorkspaceHandle> {
     const repository = this.registry.get(plan.repositoryId);
     const root = resolve(this.worktreeRoot);

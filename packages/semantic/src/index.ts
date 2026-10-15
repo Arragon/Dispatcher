@@ -8,7 +8,7 @@ export interface CompileResult {
 }
 
 export class TaskContractCompiler {
-  compile(draft: TaskDraft, revision = 1): CompileResult {
+  compile(draft: TaskDraft, revision = 1, context?: { workspace: NonNullable<TaskContract["workspace"]>; referenceLinks?: string[] }): CompileResult {
     const missing: CompileResult["missing"] = [];
     if (!draft.repository?.trim()) missing.push("repository");
     if (draft.scope.length === 0) missing.push("scope");
@@ -23,13 +23,15 @@ export class TaskContractCompiler {
         version: 1,
         revision,
         goal: draft.title.trim(),
+        ...(draft.description !== undefined ? { instructions: draft.description } : {}),
+        ...(context ? { workspace: context.workspace, referenceLinks: context.referenceLinks ?? [] } : {}),
         scope: [...draft.scope],
         acceptanceCriteria: [...draft.acceptanceCriteria],
         verification: [...draft.verification],
         constraints: [...draft.constraints],
         delivery: {
           ...delivery,
-          repository: draft.repository!,
+          ...(!context || delivery.type !== "none" ? { repository: draft.repository! } : {}),
         },
       },
     };

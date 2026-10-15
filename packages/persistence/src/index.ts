@@ -347,6 +347,10 @@ export class DispatcherDatabase {
     return Number(row?.version ?? 0);
   }
 
+  createEntityIfAbsent(kind: string, id: string, document: JsonValue, updatedAt = new Date().toISOString()): boolean {
+    return this.handle.prepare("INSERT INTO entities(kind, id, document_json, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(kind, id) DO NOTHING").run(kind, id, encode(document), updatedAt).changes === 1;
+  }
+
   saveEntity(kind: string, id: string, document: JsonValue, updatedAt = new Date().toISOString()): void {
     this.handle
       .prepare(`

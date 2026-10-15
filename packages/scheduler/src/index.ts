@@ -116,9 +116,11 @@ export class CanonicalScheduler {
 export function renderTaskContract(contract: TaskContract): string {
   return [
     `Goal: ${contract.goal}`,
+    ...(contract.instructions !== undefined ? [`Instructions:\n${contract.instructions}`] : []),
     `Scope:\n${contract.scope.map((item) => `- ${item}`).join("\n")}`,
     `Acceptance criteria:\n${contract.acceptanceCriteria.map((item) => `- ${item}`).join("\n")}`,
     `Verification:\n${contract.verification.map((item) => `- ${item}`).join("\n")}`,
     `Constraints:\n${contract.constraints.map((item) => `- ${item}`).join("\n")}`,
+    ...(contract.referenceLinks?.length ? [`References:\n${contract.referenceLinks.join("\n")}`] : []),
   ].join("\n\n");
 }

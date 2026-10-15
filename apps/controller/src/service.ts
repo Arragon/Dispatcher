@@ -1,3 +1,5 @@
+import { PublicationService, PublicationError } from "./task-publications.js";
+import { publishDraftSchema, type PublishDraftV1 } from "@dispatcher/domain";
 import { projectViews, publicWebUrl } from "./console-projection.js";
 import { existsSync, statSync } from "node:fs";
 import { PassThrough } from "node:stream";
@@ -595,6 +597,7 @@ export class ControllerService {
     });
     if (worker.enabled) modules.push({ name: "background-worker", start: () => this.background.start(), stop: () => this.background.stop() });
     this.lifecycle = new LifecycleManager(modules);
+    this.publications = new PublicationService(this.database, this.configuration, this.tasks, this.workspaces, () => this.now());
     this.registerRoutes();
   }
 
@@ -2300,6 +2303,8 @@ export class ControllerService {
     this.database.saveEntity("runner-identity", runnerId, json({ runnerId, ...(credentialRef ? { credentialRef } : {}), revokedAt: this.now().toISOString() }));
   }
 
+  private readonly publications: PublicationService;
+
   private registerRoutes(): void {
     this.app.addHook("onRequest", async (request, reply) => {
       const decision = await this.controlAuth.evaluate({ method: request.method, url: request.url, headers: request.headers, ip: request.ip });
@@ -2828,6 +2833,19 @@ export class ControllerService {
       return { connectors: snapshot.connectors, cursor: snapshot.cursor };
     });
 
+    this.app.get("/api/task-publications/capabilities", async () => ({ schemaVersion: 1, startModes: ["create-only"], deliveryTypes: ["none"], projects: this.configuration.current().config.repositories.map(r => ({ id: `local:${r.id}`, repositoryId: r.id })) }));
+    this.app.post<{ Body: PublishDraftV1 }>("/api/task-publications/preview", { schema: { body: publishDraftSchema } }, async request => {
+      const principal = this.principalFor(request);
+      if (!principal.roles.includes("operator")) throw new PublicationError("FORBIDDEN", 403, "Operator role required");
+      return this.publications.preview(principal.id, request.body);
+    });
+    this.app.get<{ Params: { id: string } }>("/api/task-publications/:id", async request => this.publications.get(this.principalFor(request).id, request.params.id));
+    this.app.post<{ Params: { id: string }; Body: unknown }>("/api/task-publications/:id/commit", async request => {
+      const principal = this.principalFor(request);
+      if (!principal.roles.includes("operator")) throw new PublicationError("FORBIDDEN", 403, "Operator role required");
+      return this.publications.commit(principal.id, request.params.id, typeof request.headers["idempotency-key"] === "string" ? request.headers["idempotency-key"] : undefined, request.body);
+    });
+
     this.app.get("/api/tasks", async () => ({ tasks: this.database.listCanonicalTasks<JsonValue>() }));
     this.app.post<{ Params: { id: string }; Body: { archived: boolean; revision: number; archiveRevision: number } }>("/api/tasks/:id/archive", async (request, reply) => {
       const body = request.body;
@@ -3058,14 +3076,14 @@ export class ControllerService {
       const semanticStatus = error instanceof SemanticPolicyError
         ? error.code === "FORBIDDEN" ? 403 : error.code === "STALE_WORKFLOW" ? 409 : 400
         : undefined;
-      const status = error instanceof TaskDispatchError ? error.statusCode : error instanceof RevisionConflictError
+      const status = error instanceof PublicationError ? error.statusCode : error instanceof TaskDispatchError ? error.statusCode : error instanceof RevisionConflictError
         ? 409
         : error instanceof LlmRuntimeError
           ? error.code === "NO_AVAILABLE_PROFILE" ? 503 : 400
         : error instanceof ConfigPlanError || error instanceof ConfigValidationError
           ? 400
-          : semanticStatus ?? workspaceStatus ?? connectorStatus ?? secretStatus ?? 500;
-      const code = error instanceof TaskDispatchError || error instanceof RevisionConflictError || error instanceof ConfigPlanError || error instanceof SecretStoreError || error instanceof LlmRuntimeError || error instanceof ConnectorError || error instanceof WorkspacePolicyError || error instanceof SemanticPolicyError
+          : semanticStatus ?? workspaceStatus ?? connectorStatus ?? secretStatus ?? (error && typeof error === "object" && "validation" in error ? 400 : 500);
+      const code = error instanceof PublicationError || error instanceof TaskDispatchError || error instanceof RevisionConflictError || error instanceof ConfigPlanError || error instanceof SecretStoreError || error instanceof LlmRuntimeError || error instanceof ConnectorError || error instanceof WorkspacePolicyError || error instanceof SemanticPolicyError
         ? error.code
         : error instanceof ConfigValidationError
           ? error.code

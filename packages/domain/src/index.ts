@@ -1,3 +1,4 @@
+export * from "./publication.js";
 export const TASK_STATES = [
   "BACKLOG",
   "NEEDS_SPEC",
@@ -137,6 +138,9 @@ export interface TaskContract {
   version: 1;
   revision: number;
   goal: string;
+  instructions?: string;
+  referenceLinks?: string[];
+  workspace?: { repositoryId: string; baseRef: string; baseCommit?: string; targetBranch?: string };
   scope: string[];
   acceptanceCriteria: string[];
   verification: string[];
@@ -238,6 +242,7 @@ export interface VerificationEvidence {
 }
 
 export interface Run {
+  executionSelection?: import("./publication.js").ExecutionSelection;
   id: EntityId;
   taskId: EntityId;
   runnerId: EntityId;
