@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { posix } from "node:path";
 import type { ConfigurationEngine, RepositoryConfig } from "@dispatcher/config";
-import type { PublishDraftV1, PublicationPreview, PublicationReceipt, Task, TaskContract } from "@dispatcher/domain";
+import type { PublishDraftV1, PublicationPreview, PublicationReceipt, Task, TaskContract, ExecutionSelection, Run } from "@dispatcher/domain";
 import type { CanonicalTaskService } from "@dispatcher/integrations";
 import type { DispatcherDatabase, JsonValue } from "@dispatcher/persistence";
 import { TaskContractCompiler } from "@dispatcher/semantic";
@@ -16,11 +16,28 @@ export class PublicationError extends Error {
 }
 export interface PublicationRecord {
   owner: string; draft: PublishDraftV1; preview: PublicationPreview; configRevision: number;
-  contract?: TaskContract; baseCommit?: string; repository?: RepositoryConfig; receipt?: PublicationReceipt;
+  selection?: ExecutionSelection; contract?: TaskContract; baseCommit?: string; repository?: RepositoryConfig; receipt?: PublicationReceipt;
 }
 export class PublicationService {
   private readonly pending = new Map<string, Promise<PublicationReceipt>>();
-  constructor(private readonly db: DispatcherDatabase, private readonly config: ConfigurationEngine, private readonly tasks: CanonicalTaskService, private readonly workspaces: WorkspaceManager, private readonly now: () => Date) {}
+  constructor(private readonly db: DispatcherDatabase, private readonly config: ConfigurationEngine, private readonly tasks: CanonicalTaskService, private readonly workspaces: WorkspaceManager, private readonly now: () => Date, private readonly runtime: {
+    prepare(draft: PublishDraftV1, repository: RepositoryConfig, workspacePath?: string): Promise<ExecutionSelection>;
+    dispatch(record: PublicationRecord, taskId: string): Promise<Run>;
+  }) {}
+  reconcile(): void {
+    for (const value of this.db.listEntities<JsonValue>("task-publication")) {
+      const r=value as unknown as PublicationRecord;
+      if(r.receipt?.state!=="STARTING" && !(r.receipt?.state==="TASK_CREATED" && r.draft.startMode==="dispatch"))continue;
+      const run=r.receipt.runId ? this.db.getEntity<JsonValue>("run",r.receipt.runId) as unknown as Run|undefined : undefined;
+      r.receipt.state=run && !run.sessionId.startsWith("unstarted:") ? run.state==="FAILED"?"START_FAILED":"STARTED" : "OUTCOME_UNKNOWN";
+      r.receipt.message="Recovered after interruption; execution is never automatically retried";
+      this.db.saveEntity("task-publication",r.preview.publicationId,json(r));
+    }
+  }
+  markStarting(owner:string,id:string,run:Run):void {
+    const r=this.record(owner,id);if(!r.receipt || r.receipt.state!=="TASK_CREATED")throw new PublicationError("PUBLICATION_CHANGED",409,"Publication startup already reserved");
+    r.receipt={...r.receipt,state:"STARTING",runId:run.id};this.db.saveEntity("task-publication",id,json(r));
+  }
   get(owner: string, id: string): PublicationPreview | PublicationReceipt {
     const record = this.record(owner,id); return record.receipt ?? record.preview;
   }
@@ -51,12 +68,16 @@ export class PublicationService {
     if (draft.delivery.type!=="none") checks.push({id:"delivery",status:"blocked",code:"DELIVERY_UNSUPPORTED",message:"Publication currently supports local results only"});
     if (draft.execution.selectionMode!=="manual") checks.push({id:"selection",status:"blocked",code:"POLICY_UNSUPPORTED",message:"Policy selection is not implemented"});
     if(draft.execution.selectionType==="explicit-model") checks.push({id:"catalog",status:"blocked",code:"CATALOG_UNAVAILABLE",message:"Explicit models require a fresh native catalog"});
-    if(draft.startMode==="dispatch") checks.push({id:"dispatch",status:"blocked",code:"DISPATCH_NOT_AVAILABLE",message:"Publication dispatch is not yet available"});
+    let selection:ExecutionSelection|undefined;
+    if(draft.startMode==="dispatch") {
+      if(compiled.state!=="READY"||!repository)checks.push({id:"contract",status:"blocked",code:"NEEDS_SPEC",message:"Complete the task contract before dispatch"});
+      else try {selection=await this.runtime.prepare(draft,repository);checks.push({id:"dispatch",status:"passed",message:"Local routing and native selection passed"});} catch(error){checks.push({id:"dispatch",status:"blocked",code:error instanceof PublicationError?error.code:"DISPATCH_UNAVAILABLE",message:error instanceof Error?error.message:"Dispatch unavailable"});}
+    }
     const publicationId=randomUUID(); const inputHash=contentHash(draft); const expiresAt=new Date(this.now().getTime()+600000).toISOString();
-    const reviewHash=contentHash({draft,configRevision:snapshot.revision,baseCommit,contract:compiled.contract,checks});
+    const reviewHash=contentHash({draft,configRevision:snapshot.revision,baseCommit,contract:compiled.contract,checks,selection:selection?{...selection,selectedAt:undefined}:undefined});
     const canCommit=!checks.some(c=>c.status==="blocked");
-    const preview:PublicationPreview={publicationId,revision:1,state:canCommit?"PREVIEW":"NEEDS_INPUT",expiresAt,inputHash,effectiveTask:{title,description:draft.description,contractState:compiled.state,missing:compiled.missing},checks,confirmation:{required:true,reviewHash,reasons:[draft.startMode==="dispatch"?"Start a native agent in a managed worktree":"Create a canonical task"]},canCommit};
-    const record:PublicationRecord={owner,draft:structuredClone(draft),preview,configRevision:snapshot.revision,...(compiled.contract?{contract:compiled.contract}:{}),...(repository?{repository}:{}),...(baseCommit?{baseCommit}:{})};
+    const preview:PublicationPreview={publicationId,revision:1,state:canCommit?"PREVIEW":"NEEDS_INPUT",expiresAt,inputHash,effectiveTask:{title,description:draft.description,contractState:compiled.state,missing:compiled.missing},...(selection&&baseCommit?{effectiveExecution:{profileId:selection.profileId,runnerId:selection.runnerId,providerId:selection.providerId,backendId:selection.backendId,selectionType:selection.selectionType,nativeParameters:selection.nativeParameters,selectionSource:selection.source,configRevision:selection.configRevision,contextFingerprint:selection.contextFingerprint,repositoryBaseCommit:baseCommit,...(selection.requestedModel?{nativeModelId:selection.requestedModel}:{}),...(selection.catalogRevision?{catalogRevision:selection.catalogRevision}:{})}}:{}),checks,confirmation:{required:true,reviewHash,reasons:[draft.startMode==="dispatch"?"Start a native agent in a managed worktree":"Create a canonical task"]},canCommit};
+    const record:PublicationRecord={owner,draft:structuredClone(draft),preview,configRevision:snapshot.revision,...(selection?{selection}:{}),...(compiled.contract?{contract:compiled.contract}:{}),...(repository?{repository}:{}),...(baseCommit?{baseCommit}:{})};
     if(!this.db.createEntityIfAbsent("task-publication",publicationId,json(record))) throw new PublicationError("PUBLICATION_CONFLICT",409,"Publication already exists");
     return preview;
   }
@@ -79,7 +100,11 @@ export class PublicationService {
     if(!r.preview.canCommit)throw new PublicationError("PRECHECK_BLOCKED",409,"Resolve blocked preflight checks");
     if(this.config.current().revision!==r.configRevision)throw new PublicationError("SELECTION_CHANGED",409,"Configuration changed; review again");
     if(r.repository){const current=await this.workspaces.inspect({repositoryId:r.repository.id,baseRef:r.contract?.workspace?.baseRef??r.draft.baseRef??r.repository.defaultBaseRef,scopePaths:r.draft.scopePaths??r.repository.scopePaths,...(r.draft.targetBranch?{targetBranch:r.draft.targetBranch}:{})});if(current.baseCommit!==r.baseCommit)throw new PublicationError("SELECTION_CHANGED",409,"Repository baseline changed; review again");}
-    return this.db.transaction(()=>{
+    if(r.selection&&r.repository) {
+      const selection=await this.runtime.prepare(r.draft,r.repository);
+      if(contentHash({...selection,selectedAt:undefined})!==contentHash({...r.selection,selectedAt:undefined}))throw new PublicationError("SELECTION_CHANGED",409,"Execution selection changed; review again");
+    }
+    const receipt=this.db.transaction(()=>{
       r=this.record(owner,id);if(r.receipt)return r.receipt;
       if(this.config.current().revision!==r.configRevision)throw new PublicationError("SELECTION_CHANGED",409,"Configuration changed during preflight");
       if(!this.db.createEntityIfAbsent("operation-receipt",receiptId,json({requestHash,publicationId:id})))throw new PublicationError("IDEMPOTENCY_CONFLICT",409,"Commit already reserved");
@@ -88,5 +113,12 @@ export class PublicationService {
       if(r.contract)this.db.saveTaskContract(taskId,json(r.contract));
       r.receipt={publicationId:id,revision:r.preview.revision,state:"TASK_CREATED",taskId};this.db.saveEntity("task-publication",id,json(r));return r.receipt;
     });
+    if(r.draft.startMode!=="dispatch")return receipt;
+    try {
+      const run=await this.runtime.dispatch(r,receipt.taskId);
+      const latest=this.record(owner,id);latest.receipt={...receipt,runId:run.id,state:run.state==="FAILED"?"START_FAILED":"STARTED",...(run.failureReason?{message:run.failureReason}:{})};this.db.saveEntity("task-publication",id,json(latest));return latest.receipt;
+    } catch(error) {
+      const latest=this.record(owner,id);latest.receipt={...latest.receipt!,state:latest.receipt?.runId?"OUTCOME_UNKNOWN":"START_FAILED",message:error instanceof PublicationError?error.message:"Startup could not be confirmed; inspect the retained task before any further action"};this.db.saveEntity("task-publication",id,json(latest));return latest.receipt;
+    }
   }
 }

@@ -1,3 +1,4 @@
+import type { ExecutionSelection } from "@dispatcher/domain";
 export type AdapterPlatform = "darwin" | "linux" | "win32";
 export type BackendKind = "sdk" | "api" | "daemon" | "headless-cli" | "pty";
 
@@ -31,6 +32,7 @@ export interface AdapterManifest {
 export type AdapterSessionState = "STARTING" | "RUNNING" | "PAUSED" | "CANCELLED" | "COMPLETED" | "FAILED";
 
 export interface AdapterSession {
+  executionSelection?: ExecutionSelection;
   id: string;
   runId: string;
   backendId: string;
@@ -58,7 +60,7 @@ export interface AdapterResult {
 
 export interface AgentAdapter {
   readonly manifest: AdapterManifest;
-  start(input: { runId: string; workspacePath: string; backendId?: string; prompt?: string }): Promise<AdapterSession>;
+  start(input: { runId: string; workspacePath: string; backendId?: string; prompt?: string; executionSelection?: ExecutionSelection }): Promise<AdapterSession>;
   send(sessionId: string, message: string): Promise<AdapterEvent>;
   pause(sessionId: string): Promise<AdapterSession>;
   resume(sessionId: string): Promise<AdapterSession>;

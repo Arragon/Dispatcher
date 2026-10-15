@@ -1,3 +1,4 @@
+import type { ExecutionSelection } from "@dispatcher/domain";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { promisify } from "node:util";
@@ -108,6 +109,8 @@ class SpawnedCodexTurn implements CodexTurn {
     let stdout = "";
     let stderr = "";
     let providerSessionId: string | undefined;
+    let completedTurn=false;
+    let failedTurn=false;
     const events: NormalizedCodexEvent[] = [];
     child.stdout?.on("data", (chunk: Buffer) => {
       stdout = (stdout + chunk.toString("utf8")).slice(-131_072);
@@ -119,6 +122,8 @@ class SpawnedCodexTurn implements CodexTurn {
         try {
           const event = JSON.parse(line) as Record<string, unknown>;
           if (event.type === "thread.started" && typeof event.thread_id === "string") providerSessionId = event.thread_id;
+          if(event.type==="turn.completed")completedTurn=true;
+          if(event.type==="turn.failed"||event.type==="error")failedTurn=true;
           const normalized = normalizeCodexEvent(event);
           if (normalized) events.push(normalized);
         } catch {
@@ -133,12 +138,12 @@ class SpawnedCodexTurn implements CodexTurn {
       });
       child.on("close", (code) => {
         this.completed = true;
-        const normalized = normalizeCodexError(stderr);
+        const normalized = code===0 ? undefined : normalizeCodexError(stderr);
         if (normalized) events.push(normalized);
-        const last = events.at(-1);
+        const last = events.findLast(e=>e.type==="failure"||e.type==="activity");
         const waiting = events.findLast((event) => event.type === "waiting");
         resolve({
-          state: this.cancelled ? "cancelled" : waiting ? "waiting" : code === 0 ? "completed" : "failed",
+          state: this.cancelled ? "cancelled" : waiting ? "waiting" : code === 0 && completedTurn && !failedTurn && providerSessionId ? "completed" : "failed",
           summary: last?.type === "failure" ? last.reason : last?.type === "activity" ? last.summary : waiting?.reason ?? (code === 0 ? "Codex completed" : stderr.slice(0, 500) || "Codex failed"),
           ...(providerSessionId ? { providerSessionId } : {}),
           events,
@@ -171,7 +176,7 @@ export class CodexAdapter implements AgentAdapter {
     private readonly store: SessionStore = new MemorySessionStore(),
   ) {}
 
-  async start(input: { runId: string; workspacePath: string; backendId?: string; prompt?: string }): Promise<AdapterSession> {
+  async start(input: { runId: string; workspacePath: string; backendId?: string; prompt?: string; executionSelection?: ExecutionSelection }): Promise<AdapterSession> {
     const now = new Date().toISOString();
     const session: AdapterSession = {
       id: randomUUID(),
@@ -180,6 +185,7 @@ export class CodexAdapter implements AgentAdapter {
       workspacePath: input.workspacePath,
       state: "RUNNING",
       profileId: this.profile.id,
+      ...(input.executionSelection ? { executionSelection: structuredClone(input.executionSelection) } : {}),
       createdAt: now,
       updatedAt: now,
     };
@@ -188,7 +194,7 @@ export class CodexAdapter implements AgentAdapter {
       codexHome: this.profile.codexHome,
       workspacePath: input.workspacePath,
       prompt: input.prompt ?? "Inspect the task context and report readiness.",
-      ...(this.profile.model ? { model: this.profile.model } : {}),
+      ...(input.executionSelection ? input.executionSelection.requestedModel ? {model:input.executionSelection.requestedModel} : {} : this.profile.model ? {model:this.profile.model} : {}),
     });
     this.turns.set(session.id, turn);
     this.store.save(session);
@@ -209,7 +215,7 @@ export class CodexAdapter implements AgentAdapter {
       workspacePath: session.workspacePath,
       prompt: message,
       providerSessionId: session.providerSessionId,
-      ...(this.profile.model ? { model: this.profile.model } : {}),
+      ...(session.executionSelection ? session.executionSelection.requestedModel ? {model:session.executionSelection.requestedModel} : {} : this.profile.model ? {model:this.profile.model} : {}),
     });
     this.turns.set(sessionId, turn);
     this.store.save({ ...session, state: "RUNNING", updatedAt: new Date().toISOString() });

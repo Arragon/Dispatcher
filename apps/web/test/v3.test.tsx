@@ -30,7 +30,7 @@ it("keeps publication drafts across reloads without creating tasks or invoking a
   expect((await screen.findByLabelText("任务标题") as HTMLInputElement).value).toBe("A real task");
   expect((screen.getByLabelText("任务说明") as HTMLTextAreaElement).value).toBe("Keep the complete task body.");
   expect(fetchMock.mock.calls.every(([,init]) => !init?.method || init.method === "GET")).toBe(true);
-  expect(screen.getByText(/发布服务尚未开放/)).toBeTruthy();
+  expect(screen.getByText(/服务端预检/)).toBeTruthy();
 });
 it("validates references and does not manufacture a successful publication", async () => {
   vi.spyOn(globalThis,"fetch").mockResolvedValue(new Response(JSON.stringify(config)));
@@ -88,4 +88,19 @@ it("opens the attention target when navigating from the global attention link", 
   mount(<FleetPage/>,"/overview#attention");
   await screen.findByText("需要你处理");
   expect(scroll).toHaveBeenCalledOnce();
+});
+
+it("commits the reviewed publication and recovers the same receipt after a lost response", async()=>{
+  const posts:Array<{path:string;body:unknown;key:unknown}>=[];
+  const preview={publicationId:"pub-1",revision:1,state:"PREVIEW",canCommit:true,effectiveTask:{title:"Task",description:"Complete original body",contractState:"READY",missing:[]},checks:[],confirmation:{required:true,reviewHash:"review-hash",reasons:[]}};
+  const receipt={publicationId:"pub-1",revision:1,state:"TASK_CREATED",taskId:"task-1"};
+  vi.spyOn(globalThis,"fetch").mockImplementation(async(input,init)=>{
+    const path=String(input);
+    if(init?.method==="POST"){posts.push({path,body:JSON.parse(String(init.body)),key:(init.headers as Record<string,string>)["Idempotency-Key"]});if(path.endsWith("/commit"))throw new Error("Response lost");return new Response(JSON.stringify(preview));}
+    return new Response(JSON.stringify(path.includes("task-publications/pub-1")?receipt:config));
+  });
+  mount(<PublishPage/>);await screen.findByRole("option",{name:/repo/});await userEvent.type(screen.getByLabelText("任务说明"),"Complete original body");await userEvent.click(screen.getByRole("button",{name:"检查并审阅"}));
+  await userEvent.click(await screen.findByRole("button",{name:"确认并创建任务"}));
+  expect(await screen.findByRole("link",{name:"查看已创建任务"})).toHaveProperty("href",expect.stringContaining("task-1"));
+  expect(posts).toHaveLength(2);expect(posts[1]).toMatchObject({body:{revision:1,reviewHash:"review-hash",confirmation:{accepted:true}},key:expect.any(String)});
 });

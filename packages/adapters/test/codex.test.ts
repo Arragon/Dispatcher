@@ -107,3 +107,14 @@ it("does not restart a cancelled session even when the old turn completed", asyn
   expect((await adapter.status(session.id)).state).toBe("CANCELLED");
   expect(starts).toBe(1);
 });
+
+it("requires a completed native JSON turn and ignores benign stderr on success",async()=>{
+  const {mkdtempSync,writeFileSync,chmodSync,rmSync}=await import("node:fs");const {tmpdir}=await import("node:os");const {join}=await import("node:path");const {CodexCliBackend}=await import("../src/index.js");
+  const directory=mkdtempSync(join(tmpdir(),"codex-native-turn-"));const executable=join(directory,"codex-fixture");
+  try{
+    writeFileSync(executable,`#!${process.execPath}\nconsole.error('benign warning');console.log(JSON.stringify({type:'thread.started',thread_id:'native-thread'}));console.log(JSON.stringify({type:'turn.completed',usage:{input_tokens:1,output_tokens:1}}));`);chmodSync(executable,0o755);
+    const backend=new CodexCliBackend();expect(await backend.start({executable,codexHome:directory,workspacePath:directory,prompt:"test"}).result()).toMatchObject({state:"completed",providerSessionId:"native-thread",summary:"Codex completed"});
+    writeFileSync(executable,`#!${process.execPath}\nconsole.log('no native execution evidence');`);
+    expect(await backend.start({executable,codexHome:directory,workspacePath:directory,prompt:"test"}).result()).toMatchObject({state:"failed"});
+  }finally{rmSync(directory,{recursive:true,force:true});}
+});

@@ -3,6 +3,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { CodexBackend } from "@dispatcher/adapters";
+import type { JsonValue } from "@dispatcher/persistence";
 import type { DispatcherConfig, SecretStore } from "@dispatcher/config";
 import { ControllerService } from "../src/service.js";
 const OWNER = { authorization: "Bearer publication-test-owner" };
@@ -17,16 +19,20 @@ async function setup() {
   writeFileSync(join(root, "README.md"), "fixture\n");
   execFileSync("git", ["-C", root, "add", "."]); execFileSync("git", ["-C", root, "commit", "-m", "fixture"]);
   const f = { directory, services: [] as ControllerService[] }; fixtures.push(f);
+  const starts: Array<Parameters<CodexBackend["start"]>[0]> = [];
+  const control = { failStart: false, completed: false };
+  const backend: CodexBackend = { start(input) { if(control.failStart) throw new Error("spawn fixture ENOENT"); starts.push(input); writeFileSync(join(input.workspacePath,"result.txt"),"completed locally\n"); return {status:()=>control.completed?"completed":"running",cancel:async()=>undefined,result:async()=>({state:"completed",summary:"implemented",providerSessionId:"native-fixture-thread",events:[]})}; } };
   const clock = { now: new Date() };
-  const make = async () => { const s = new ControllerService({ dataDirectory: join(directory,"data"), ownerToken: "publication-test-owner", withRunner: true, clock: () => clock.now, secretStore: { test: async () => false } as unknown as SecretStore }); f.services.push(s); await s.start({listen:false}); return s; };
+  const make = async () => { const s = new ControllerService({ dataDirectory: join(directory,"data"), ownerToken: "publication-test-owner", withRunner: true, codexBackendFactory: () => backend, clock: () => clock.now, secretStore: { test: async () => false } as unknown as SecretStore }); f.services.push(s); await s.start({listen:false}); return s; };
   const service = await make();
   const config = service.configuration.current().config as DispatcherConfig;
+  config.agentProfiles = [{id:"codex-local",alias:"Local",provider:"codex",runnerId:"local",settings:{codexHome:join(directory,"native"),model:"profile-default"}}];
   config.repositories = [{ id:"repo", root, defaultBaseRef:"main", scopePaths:[], verificationCommands:[{id:"check",file:process.execPath,args:["-e","process.exit(0)"],required:true,timeoutMs:5000,outputLimitBytes:1024}] }];
   const plan = service.configuration.buildPlan(config,"owner","web"); await service.configuration.applyPlan(plan.id,{confirmed:true});
   const draft = { schemaVersion:1, clientDraftId:"draft-1", description:"\n完整正文  😀\r\n保持原样\n",projectId:"local:repo",repositoryId:"repo",acceptanceCriteria:["works"],scopePaths:["."],verificationCommandIds:["check"],startMode:"create-only",execution:{selectionMode:"manual",selectionType:"native-default"},delivery:{type:"none"} };
   const preview = async (payload: unknown = draft, s = service) => s.app.inject({method:"POST",url:"/api/task-publications/preview",headers:OWNER,payload});
   const commit = (p: {publicationId:string;revision:number;confirmation:{reviewHash:string}}, key="key-1", s=service, extra={}) => s.app.inject({method:"POST",url:`/api/task-publications/${p.publicationId}/commit`,headers:{...OWNER,"idempotency-key":key},payload:{revision:p.revision,reviewHash:p.confirmation.reviewHash,confirmation:{accepted:true},...extra}});
-  return {service,root,clock,make,draft,preview,commit};
+  return {service,root,clock,make,draft,preview,commit,starts,control};
 }
 describe("task publication receipts", () => {
   it("previews without task/worktree effects, preserves text and atomically creates once across retries and restart", async () => {
@@ -63,6 +69,23 @@ describe("task publication receipts", () => {
     const config=f.service.configuration.current().config;config.repositories[0]!.verificationCommands[0]!.args=["-e","process.exit(1)"];
     const plan=f.service.configuration.buildPlan(config,"owner","web");await f.service.configuration.applyPlan(plan.id,{confirmed:true});
     expect((await f.commit(p)).json().code).toBe("SELECTION_CHANGED");expect(f.service.database.listCanonicalTasks()).toHaveLength(0);
+  });
+  it("dispatches once with full instructions, frozen verification and a retained local result",async()=>{
+    const f=await setup();const p=(await f.preview({...f.draft,startMode:"dispatch",execution:{selectionMode:"manual",selectionType:"native-default",profileId:"codex-local"}})).json();expect(p.canCommit).toBe(true);
+    const a=(await f.commit(p)).json();expect(a).toMatchObject({state:"STARTED",taskId:expect.any(String),runId:expect.any(String)});expect(f.starts).toHaveLength(1);expect(f.starts[0]!.prompt).toContain(f.draft.description);expect(f.starts[0]!.model).toBeUndefined();
+    expect((await f.commit(p)).json().runId).toBe(a.runId);expect(f.starts).toHaveLength(1);
+    const config=f.service.configuration.current().config;config.repositories[0]!.verificationCommands[0]!.args=["-e","process.exit(1)"];const plan=f.service.configuration.buildPlan(config,"owner","web");await f.service.configuration.applyPlan(plan.id,{confirmed:true});
+    f.control.completed=true;const completed=await f.service.app.inject({headers:OWNER,method:"POST",url:`/api/runs/${a.runId}/advance`});expect(completed.json()).toMatchObject({run:{state:"COMPLETE",providerSessionId:"native-fixture-thread",verification:{state:"PASSED"}},task:{state:"REVIEW"}});
+    const result=(await f.service.app.inject({headers:OWNER,url:`/api/runs/${a.runId}/result`})).json();expect(result.result).toMatchObject({deliveryType:"none",files:["result.txt"],worktree:expect.any(String)});expect(f.service.database.listDeliveryEvidence(a.taskId)).toHaveLength(0);
+    await f.service.stop();const restored=await f.make();expect((await f.commit(p,"key-1",restored)).json().runId).toBe(a.runId);expect(restored.workspaces.get(result.result.worktree)).toBeDefined();expect(f.starts).toHaveLength(1);
+  });
+  it("retains the task after startup failure and never retries startup on receipt replay",async()=>{
+    const f=await setup();f.control.failStart=true;const p=(await f.preview({...f.draft,startMode:"dispatch",execution:{selectionMode:"manual",selectionType:"native-default",profileId:"codex-local"}})).json();
+    const a=(await f.commit(p)).json();expect(a).toMatchObject({state:"START_FAILED",taskId:expect.any(String),runId:expect.any(String)});f.control.failStart=false;expect((await f.commit(p,"another-key")).json().runId).toBe(a.runId);expect(f.starts).toHaveLength(0);
+  });
+  it("reconciles an interrupted STARTING receipt as unknown without spawning",async()=>{
+    const f=await setup();const p=(await f.preview()).json();const a=(await f.commit(p)).json();const record=f.service.database.getEntity<JsonValue>("task-publication",p.publicationId) as unknown as {receipt:object};record.receipt={...a,state:"STARTING",runId:"unknown-run"};f.service.database.saveEntity("task-publication",p.publicationId,record as unknown as JsonValue);
+    await f.service.stop();const restored=await f.make();expect((await f.commit(p,"key-1",restored)).json().state).toBe("OUTCOME_UNKNOWN");expect(f.starts).toHaveLength(0);
   });
   it("rolls back the whole task/receipt reservation on storage failure",async()=>{
     const f=await setup();const p=(await f.preview()).json();const original=f.service.database.saveTaskContract.bind(f.service.database);

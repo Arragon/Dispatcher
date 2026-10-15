@@ -18,6 +18,8 @@ export interface WorkspacePlan {
   attempt: number;
   baseRef: string;
   scopePaths: string[];
+  baseCommit?: string;
+  targetBranch?: string;
 }
 
 export interface WorkspaceHandle extends WorkspacePlan {
@@ -76,7 +78,7 @@ export class WorkspaceManager {
     const root = await realpath(repository.root);
     const top = (await execute("git", ["-C", root, "rev-parse", "--show-toplevel"])).stdout.trim();
     if (await realpath(top) !== root) throw new WorkspacePolicyError("INVALID_REPOSITORY_ROOT", "Registered root must be the physical Git root");
-    if (!plan.baseRef || plan.baseRef.startsWith("-") || /[\x00-\x20]/.test(plan.baseRef)) throw new WorkspacePolicyError("INVALID_BASE_REF", "Invalid base reference");
+    if (!plan.baseRef || plan.baseRef.startsWith("-") || Array.from(plan.baseRef).some(c=>c.codePointAt(0)!<=32)) throw new WorkspacePolicyError("INVALID_BASE_REF", "Invalid base reference");
     const baseCommit = (await execute("git", ["-C", root, "rev-parse", "--verify", "--end-of-options", `${plan.baseRef}^{commit}`])).stdout.trim();
     for (const scope of plan.scopePaths) {
       if (!scope || isAbsolute(scope) || scope.split(/[\\/]/).includes("..") || scope.split(/[\\/]/).includes(".git")) throw new WorkspacePolicyError("INVALID_SCOPE", "Scope must stay inside the repository");
@@ -97,15 +99,15 @@ export class WorkspaceManager {
 
   async create(plan: WorkspacePlan): Promise<WorkspaceHandle> {
     const repository = this.registry.get(plan.repositoryId);
-    const root = resolve(this.worktreeRoot);
-    await mkdir(root, { recursive: true });
+    await mkdir(this.worktreeRoot, { recursive: true });
+    const root = await realpath(this.worktreeRoot);
     const name = `${safeSegment(plan.taskId)}-${safeSegment(plan.runId)}-a${plan.attempt}`;
     const path = resolve(root, name);
     if (!within(root, path)) throw new WorkspacePolicyError("WORKSPACE_PATH_ESCAPE", "Worktree path escapes managed root");
-    const branch = `dispatcher/${safeSegment(plan.taskId)}-${safeSegment(plan.runId)}-a${plan.attempt}`;
+    const branch = plan.targetBranch ?? `dispatcher/${safeSegment(plan.taskId)}-${safeSegment(plan.runId)}-a${plan.attempt}`;
     let baseRevision: string;
     try {
-      baseRevision = (await execute("git", ["-C", repository.root, "rev-parse", "--verify", `${plan.baseRef}^{commit}`])).stdout.trim();
+      baseRevision = (await execute("git", ["-C", repository.root, "rev-parse", "--verify", `${plan.baseCommit ?? plan.baseRef}^{commit}`])).stdout.trim();
       await execute("git", ["-C", repository.root, "worktree", "add", "-b", branch, path, baseRevision]);
     } catch (error) {
       throw new WorkspacePolicyError("WORKTREE_CREATE_FAILED", error instanceof Error ? error.message : "Worktree creation failed");
@@ -113,6 +115,28 @@ export class WorkspaceManager {
     const handle = { ...structuredClone(plan), path, branch, baseRevision, createdAt: new Date().toISOString() };
     this.managed.set(path, structuredClone(handle));
     return handle;
+  }
+
+  async restore(handle: WorkspaceHandle): Promise<void> {
+    const managedRoot = await realpath(this.worktreeRoot);
+    const path = await realpath(handle.path);
+    if (!within(managedRoot, path) || path !== resolve(handle.path)) throw new WorkspacePolicyError("WORKSPACE_PATH_ESCAPE", "Restored worktree must be physically inside managed root");
+    const repository = this.registry.get(handle.repositoryId);
+    const git = async (cwd: string, args: string[]) => (await execute("git", ["-C", cwd, ...args])).stdout.trim();
+    const common = await realpath(resolve(path, await git(path, ["rev-parse", "--git-common-dir"])));
+    const expected = await realpath(resolve(repository.root, await git(repository.root, ["rev-parse", "--git-common-dir"])));
+    if (common !== expected || await git(path, ["symbolic-ref", "--short", "HEAD"]) !== handle.branch) throw new WorkspacePolicyError("WORKSPACE_IDENTITY_CHANGED", "Worktree identity changed");
+    await git(path, ["merge-base", "--is-ancestor", handle.baseRevision, "HEAD"]);
+    this.managed.set(path, structuredClone(handle));
+  }
+
+  async resultFiles(workspace: WorkspaceHandle): Promise<string[]> {
+    if (!this.get(workspace.path)) throw new WorkspacePolicyError("WORKSPACE_NOT_MANAGED", "Worktree is not restored or registered");
+    const git = async (args: string[]) => (await execute("git", ["-C", workspace.path, ...args], { maxBuffer: 1024 * 1024 })).stdout.split("\0").filter(Boolean);
+    const files = [...new Set([...(await git(["diff", "--name-only", "-z", workspace.baseRevision, "--"])), ...(await git(["ls-files", "--others", "--exclude-standard", "-z"]))])].sort();
+    if (files.length > 5000) throw new WorkspacePolicyError("RESULT_TOO_LARGE", "Change manifest exceeds 5000 files");
+    for (const file of files) await this.assertPathAllowed(workspace, file);
+    return files;
   }
 
   async fetch(repositoryId: string): Promise<void> {
@@ -128,8 +152,12 @@ export class WorkspaceManager {
     let canonical: string;
     try { canonical = await realpath(absolute); }
     catch {
-      const parent = await realpath(dirname(absolute));
-      canonical = resolve(parent, absolute.slice(dirname(absolute).length + 1));
+      let parent = dirname(absolute);
+      while (parent !== workspaceRoot) {
+        try { const resolved = await realpath(parent); canonical = resolve(resolved, relative(parent, absolute)); break; }
+        catch { parent = dirname(parent); }
+      }
+      canonical ??= absolute;
     }
     if (!within(workspaceRoot, canonical)) throw new WorkspacePolicyError("SYMLINK_ESCAPE", "Path resolves outside worktree");
     if (workspace.scopePaths.length > 0) {
@@ -145,7 +173,7 @@ export class WorkspaceManager {
 
   async cleanupPlan(workspace: WorkspaceHandle): Promise<CleanupPlan> {
     const reasons: string[] = [];
-    const root = resolve(this.worktreeRoot);
+    const root = await realpath(this.worktreeRoot);
     const path = resolve(workspace.path);
     if (!within(root, path)) reasons.push("workspace is outside managed root");
     const registered = this.managed.get(path);

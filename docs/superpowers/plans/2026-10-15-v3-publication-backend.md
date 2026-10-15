@@ -36,10 +36,10 @@
 
 **Interfaces:** `PublicationService.preview(principalId, unknown)`, `commit(principalId,id,key,unknown)`, `get(principalId,id)`; POST `/api/task-publications/preview`, POST `/:id/commit`, GET `/:id`, GET `/capabilities`.
 
-- [ ] Add failing HTTP tests for non-effectful preview, full-text preservation, NEEDS_SPEC/READY, invalid fields/links/scope, role isolation, missing confirmation, idempotency conflict, parallel commits and reopen/replay.
-- [ ] Add pure draft/preview/receipt schemas and versioned contract text/workspace extension. Render original instructions and references into the actual scheduler prompt.
-- [ ] Implement registered-repository Git read/preflight and stable input/review hashes; bind configuration and base commit. Create task/contract/receipt/publication atomically using existing CanonicalTaskService.
-- [ ] Verify rollback under injected persistence failure and changed config/base ref; run targeted package/Controller tests, commit and check quota.
+- [x] Add failing HTTP tests for non-effectful preview, full-text preservation, NEEDS_SPEC/READY, invalid fields/links/scope, role isolation, missing confirmation, idempotency conflict, parallel commits and reopen/replay.
+- [x] Add pure draft/preview/receipt schemas and versioned contract text/workspace extension. Render original instructions and references into the actual scheduler prompt.
+- [x] Implement registered-repository Git read/preflight and stable input/review hashes; bind configuration and base commit. Create task/contract/receipt/publication atomically using existing CanonicalTaskService.
+- [x] Verify rollback under injected persistence failure and changed config/base ref; run targeted package/Controller tests, commit and check quota.
 
 ## Stage 2 — local execution and Web integration
 
@@ -47,12 +47,12 @@
 
 **Interfaces:** publication dispatch uses `dispatchTask` with a server-owned frozen context, not a second spawn path. Read results at GET `/api/runs/:id/result`.
 
-- [ ] Write failing tests asserting the backend receives the complete prompt, only one startup occurs, remote profiles do not run on Controller, failures preserve taskId, and verification/config snapshots remain frozen.
-- [ ] Persist workspace intent/handle, use the reviewed commit, reject invalid/existing branches and scope escapes. Restore verified handles conservatively without cleanup or relaunch.
-- [ ] Reserve Run, task currentRunId, frozen contract/verification and publication STARTING in the existing startup transaction. Reconcile interrupted receipts to a known result or OUTCOME_UNKNOWN without spawning.
-- [ ] Complete local `none` delivery after passed verification, retaining worktree/file manifest and moving Task to REVIEW; never require GitHub, commit, push or PR. Add explicit unsupported errors for unimplemented delivery types.
-- [ ] Connect Web preview/commit/persistent receipt recovery; preserve draft through errors/401, reuse the same commit key, query after uncertain outcomes, and expose existing task/run/result.
-- [ ] Verify Controller and frontend regression, then perform a minimal authorized native run in an isolated repository/data directory. Record actual provider/version evidence separately from fakes; commit and check quota.
+- [x] Write failing tests asserting the backend receives the complete prompt, only one startup occurs, remote profiles do not run on Controller, failures preserve taskId, and verification/config snapshots remain frozen.
+- [x] Persist workspace intent/handle, use the reviewed commit, reject invalid/existing branches and scope escapes. Restore verified handles conservatively without cleanup or relaunch.
+- [x] Reserve Run, task currentRunId, frozen contract/verification and publication STARTING in the existing startup transaction. Reconcile interrupted receipts to a known result or OUTCOME_UNKNOWN without spawning.
+- [x] Complete local `none` delivery after passed verification, retaining worktree/file manifest and moving Task to REVIEW; never require GitHub, commit, push or PR. Add explicit unsupported errors for unimplemented delivery types.
+- [x] Connect Web preview/commit/persistent receipt recovery; preserve draft through errors/401, reuse the same commit key, query after uncertain outcomes, and expose existing task/run/result.
+- [x] Verify Controller and frontend regression, then perform a minimal authorized native run in an isolated repository/data directory. Record actual provider/version evidence separately from fakes; commit and check quota.
 
 ## Stage 3 — native account/project model catalogs
 
@@ -70,3 +70,7 @@
 
 - [ ] `pnpm check`, `git diff --check`, browser publish/reload/replay/result verification.
 - [ ] Update architecture/know-how and a scoped evidence report with exact tests and native limitations; preserve any incomplete stage if quota stops work.
+
+Ruling: local publication projects use `local:<repositoryId>` and `local:inbox` until independent project registration exists; external project bindings are not inferred from user input.
+
+Ruling: Codex is the first supported native selection backend; unsupported providers, remote execution, policy routing and publication delivery types other than none fail closed.

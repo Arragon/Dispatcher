@@ -1,3 +1,4 @@
+import type { ExecutionSelection } from "./publication.js";
 export * from "./publication.js";
 export const TASK_STATES = [
   "BACKLOG",
@@ -242,7 +243,7 @@ export interface VerificationEvidence {
 }
 
 export interface Run {
-  executionSelection?: import("./publication.js").ExecutionSelection;
+  executionSelection?: ExecutionSelection;
   id: EntityId;
   taskId: EntityId;
   runnerId: EntityId;

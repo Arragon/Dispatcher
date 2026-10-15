@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { ResourceState, Run, Task, TaskContract } from "@dispatcher/domain";
+import type { ResourceState, Run, Task, TaskContract, ExecutionSelection } from "@dispatcher/domain";
 import type { AgentAdapter } from "@dispatcher/adapters";
 
 export interface DispatchRequirements {
@@ -70,6 +70,8 @@ export class CanonicalScheduler {
     workspacePath: string;
     generation?: number;
     runId?: string;
+    executionSelection?: ExecutionSelection;
+    beforeStart?: () => Promise<void>;
     onRunStarting?: (run: Run, decision: RoutingDecision) => void;
   }): Promise<{ run: Run; decision: RoutingDecision }> {
     if (input.task.state !== "READY" && input.task.state !== "QUEUED") throw new Error(`Task ${input.task.id} is not dispatchable from ${input.task.state}`);
@@ -78,6 +80,7 @@ export class CanonicalScheduler {
     const runId = input.runId ?? randomUUID();
     const now = new Date().toISOString();
     const run: Run = {
+      ...(input.executionSelection ? {executionSelection:input.executionSelection} : {}),
       id: runId,
       taskId: input.task.id,
       runnerId: decision.selected.runnerId,
@@ -99,7 +102,8 @@ export class CanonicalScheduler {
     };
     input.onRunStarting?.(run, decision);
     try {
-      const session = await decision.selected.adapter.start({ runId, workspacePath: input.workspacePath, prompt: renderTaskContract(input.contract) });
+      await input.beforeStart?.();
+      const session = await decision.selected.adapter.start({ runId, workspacePath: input.workspacePath, prompt: renderTaskContract(input.contract), ...(input.executionSelection ? {executionSelection:input.executionSelection} : {}) });
       run.sessionId = session.id;
       if (session.providerSessionId) run.providerSessionId = session.providerSessionId;
       run.resumePolicy = session.providerSessionId || decision.selected.adapter.manifest.capabilities.resume ? "same-session" : "controlled-reroute";

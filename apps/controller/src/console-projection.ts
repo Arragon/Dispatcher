@@ -31,7 +31,7 @@ export function projectViews(tasks: readonly Task[], projects: readonly Project[
     const canonical = projects.find((project) => project.id === id);
     const members = tasks.filter((task) => task.projectId === id);
     const extensions = members.map((task) => task.platformExtensions?.linear).filter((value): value is Record<string, unknown> => Boolean(value && typeof value === "object"));
-    const repositoryIds = new Set(members.map((task) => contract(task.id)?.delivery.repository).filter((value): value is string => Boolean(value)));
+    const repositoryIds = new Set(members.map((task) => (contract(task.id)?.workspace?.repositoryId ?? contract(task.id)?.delivery.repository)).filter((value): value is string => Boolean(value)));
     if (canonical?.repository) repositoryIds.add(canonical.repository);
     const registered = repositories.filter((repository) => repositoryIds.has(repository.id));
     const refs = (canonical?.bindings ?? []).flatMap((binding) => {

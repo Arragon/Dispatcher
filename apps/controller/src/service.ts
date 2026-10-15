@@ -1,5 +1,6 @@
-import { PublicationService, PublicationError } from "./task-publications.js";
-import { publishDraftSchema, type PublishDraftV1 } from "@dispatcher/domain";
+import type { WorkspaceHandle } from "@dispatcher/workspace";
+import { PublicationService, PublicationError, contentHash, type PublicationRecord } from "./task-publications.js";
+import { publishDraftSchema, type PublishDraftV1, type ExecutionSelection } from "@dispatcher/domain";
 import { projectViews, publicWebUrl } from "./console-projection.js";
 import { existsSync, statSync } from "node:fs";
 import { PassThrough } from "node:stream";
@@ -76,6 +77,7 @@ import {
   type SecretStore,
   type DispatcherConfig,
   type AgentProfileConfig,
+  type RepositoryConfig,
 } from "@dispatcher/config";
 import {
   RESOURCE_STATES,
@@ -143,7 +145,7 @@ import {
   type TypedIntentV2,
   TaskContractCompiler,
 } from "@dispatcher/semantic";
-import { CanonicalScheduler } from "@dispatcher/scheduler";
+import { CanonicalScheduler, routeDeterministically, type DispatchCandidate } from "@dispatcher/scheduler";
 import { RepositoryRegistry, WorkspaceManager, WorkspacePolicyError } from "@dispatcher/workspace";
 import { BackgroundLoop, backoffDelayMs, runBounded } from "./background.js";
 import { ControlPlaneAuth, OWNER_PASSWORD_REFERENCE, OWNER_PRINCIPAL_ID, OWNER_ROLES, OWNER_TOKEN_REFERENCE, type ControlPrincipal } from "./control-auth.js";
@@ -597,7 +599,11 @@ export class ControllerService {
     });
     if (worker.enabled) modules.push({ name: "background-worker", start: () => this.background.start(), stop: () => this.background.stop() });
     this.lifecycle = new LifecycleManager(modules);
-    this.publications = new PublicationService(this.database, this.configuration, this.tasks, this.workspaces, () => this.now());
+    this.publications = new PublicationService(this.database, this.configuration, this.tasks, this.workspaces, () => this.now(), {
+      prepare: (draft,repository,workspacePath) => this.preparePublication(draft,repository,workspacePath),
+      dispatch: async (record,taskId) => (await this.dispatchTask(taskId,{profileId:record.selection!.profileId,repositoryId:record.repository!.id},`publication:${record.preview.publicationId}`,record)).run,
+    });
+    this.publications.reconcile();
     this.registerRoutes();
   }
 
@@ -612,6 +618,10 @@ export class ControllerService {
   }
 
   async start(input: { listen?: boolean } = {}): Promise<void> {
+    for (const value of this.database.listEntities<JsonValue>("workspace-handle")) {
+      try { await this.workspaces.restore(value as unknown as WorkspaceHandle); }
+      catch (error) { this.app.log.warn({error:redactValue(error)},"worktree restoration requires operator inspection"); }
+    }
     await this.lifecycle.start();
     try {
       await this.app.ready();
@@ -1305,7 +1315,7 @@ export class ControllerService {
     if (!storedRun) throw new ConnectorError("PERMANENT", `Unknown run ${runId}`);
     const run = storedRun as unknown as Run;
     const storedTask = this.database.getCanonicalTask<JsonValue>(run.taskId);
-    const contract = this.database.getTaskContract<JsonValue>(run.taskId) as unknown as TaskContract | undefined;
+    const contract = (this.database.getEntity<JsonValue>("run-contract",run.id) ?? this.database.getTaskContract<JsonValue>(run.taskId)) as unknown as TaskContract | undefined;
     if (!storedTask || !contract) throw new ConnectorError("PERMANENT", `Run ${runId} has no canonical task contract`);
     if (run.state === "COMPLETE") {
       return { waiting: false, run, task: storedTask.document as unknown as Task, deliveries: this.database.listDeliveryEvidence<JsonValue>(run.taskId) };
@@ -1315,6 +1325,7 @@ export class ControllerService {
       const adapter = this.agentAdapters.get(run.profileId);
       if (!adapter) throw new ConnectorError("PERMANENT", `Profile ${run.profileId} is unavailable`);
       const session = await adapter.status(run.sessionId);
+      if(session.providerSessionId)run.providerSessionId=session.providerSessionId;
       if (session.state === "RUNNING" || session.state === "STARTING") {
         return { waiting: true, run, task: storedTask.document as unknown as Task, deliveries: [] };
       }
@@ -1376,11 +1387,12 @@ export class ControllerService {
     }
 
     if (run.state === "VERIFYING") {
-      const repositoryId = contract.delivery.repository;
+      const repositoryId = contract.workspace?.repositoryId ?? contract.delivery.repository;
       const repository = this.configuration.current().config.repositories.find((entry) => entry.id === repositoryId);
       if (!repository || !run.worktree) throw new ConnectorError("PERMANENT", "Run repository or worktree is unavailable");
       const verification = new VerificationRegistry();
-      for (const command of repository.verificationCommands) verification.register(command);
+      const frozen=this.database.getEntity<JsonValue>("run-verification-config",run.id) as unknown as RepositoryConfig["verificationCommands"]|undefined;
+      for (const command of frozen ?? repository.verificationCommands) verification.register(command);
       const summaries: string[] = [];
       let blocked = false;
       for (const commandId of contract.verification) {
@@ -1412,6 +1424,23 @@ export class ControllerService {
     }
 
     if (run.state !== "DELIVERING" || !run.worktree || !run.branch) throw new ConnectorError("CONFLICT", `Run ${run.id} is not ready for delivery`);
+    if(contract.delivery.type==="none") {
+      const workspace=this.workspaces.get(run.worktree);
+      if(!workspace)throw new WorkspacePolicyError("WORKSPACE_UNAVAILABLE","Managed worktree requires restoration or inspection");
+      const files=await this.workspaces.resultFiles(workspace);
+      const result={version:1,runId:run.id,taskId:run.taskId,deliveryType:"none",worktree:run.worktree,branch:run.branch,baseCommit:workspace.baseRevision,files,verification:run.verification,summary:run.activitySummary??"",createdAt:this.now().toISOString()};
+      this.database.transaction(()=>{
+        this.fenceDelivery(run,"complete");
+        const current=this.database.getCanonicalTask<JsonValue>(run.taskId)!;
+        const task=current.document as unknown as Task;
+        if(task.currentRunId!==run.id||task.state!=="VERIFYING")throw new ConnectorError("CONFLICT","Task authority changed before local completion");
+        assertRunTransition(run.state,"COMPLETE");run.state="COMPLETE";run.endedAt=this.now().toISOString();
+        this.saveAdvancedRun(run,"DELIVERING");this.database.saveEntity("run-result",run.id,json(result));
+        this.tasks.execute({id:`run:${run.id}:review`,taskId:run.taskId,baseRevision:current.revision,actor:"run-worker",command:{type:"task.transition",state:"REVIEW"}});
+      });
+      this.fleetEvents.publish("run.changed",run.id,{id:run.id,state:run.state});
+      return {waiting:false,run,task:this.database.getCanonicalTask<JsonValue>(run.taskId)!.document as unknown as Task,deliveries:[]};
+    }
     const repositoryId = contract.delivery.repository;
     const repositoryParts = repositoryId?.split("/") ?? [];
     if (repositoryParts.length !== 2) throw new ConnectorError("PERMANENT", "GitHub delivery repository must use owner/name");
@@ -1454,13 +1483,36 @@ export class ControllerService {
     };
   }
 
-  private dispatchTask(taskId: string, body: TaskDispatchBody, idempotencyKey?: string): Promise<TaskDispatchResult> {
-    const dispatch = this.dispatchQueue.then(() => this.performDispatchTask(taskId, body, idempotencyKey));
+  private dispatchCandidates(profileId?:string):DispatchCandidate[] {
+    const active=this.database.listEntities<JsonValue>("run").map(v=>v as unknown as Run).filter(r=>!isTerminalRunState(r.state));
+    return this.configuration.current().config.agentProfiles.filter(p=>!profileId||p.id===profileId).flatMap(profile=>{
+      const runner=this.runners.list().find(r=>r.id===profile.runnerId),adapter=this.agentAdapters.get(profile.id);
+      if(!runner||!adapter)return [];
+      return [{runnerId:runner.id,runnerTags:runner.capabilities,capacity:runner.id===this.embeddedRunner?.runner.id && ["ONLINE","DEGRADED"].includes(runner.state)?runner.capacity:0,activeRuns:active.filter(r=>r.runnerId===runner.id).length,providerId:profile.provider,profileId:profile.id,resourceState:this.profileResourceState(profile.id),capabilities:[...new Set([...manifestCapabilities(adapter.manifest),...runner.capabilities])],adapter}];
+    });
+  }
+  private async preparePublication(draft:PublishDraftV1,repository:RepositoryConfig,_workspacePath?:string):Promise<ExecutionSelection> {
+    const snapshot=this.configuration.current();const profile=snapshot.config.agentProfiles.find(p=>p.id===draft.execution.profileId);
+    if(!profile)throw new PublicationError("PROFILE_REQUIRED",409,"Choose a configured native account");
+    if(profile.runnerId!==this.embeddedRunner?.runner.id)throw new PublicationError("REMOTE_EXECUTION_UNSUPPORTED",409,"This publication path requires the local embedded runner");
+    if(profile.provider!=="codex")throw new PublicationError("NATIVE_SELECTION_UNSUPPORTED",409,"Publication model selection currently supports Codex only");
+    if(draft.execution.selectionType==="explicit-model")throw new PublicationError("CATALOG_UNAVAILABLE",409,"Explicit models need a native catalog");
+    if(Object.keys(draft.execution.nativeParameters??{}).length)throw new PublicationError("INVALID_NATIVE_PARAMETERS",400,"Native defaults do not accept model parameters");
+    const candidates=this.dispatchCandidates(profile.id);
+    if(_workspacePath)for(const candidate of candidates) candidate.activeRuns-=this.database.listEntities<JsonValue>("run").filter(v=>{const r=v as unknown as Run;return r.worktree===_workspacePath&&r.state==="STARTING"&&r.profileId===candidate.profileId;}).length;
+    const decision=routeDeterministically({capabilities:["code","git"]},candidates);
+    if(!decision.selected)throw new PublicationError("EXECUTION_UNAVAILABLE",409,decision.explanation);
+    const backendId=decision.selected.adapter.manifest.backends[0]!.id;
+    return {version:1,mode:"manual",source:"native-default",selectionType:"native-default",profileId:profile.id,runnerId:profile.runnerId,providerId:profile.provider,backendId,nativeParameters:{},contextFingerprint:contentHash({profile,repositoryId:repository.id,root:repository.root}),configRevision:snapshot.revision,selectedAt:this.now().toISOString()};
+  }
+
+  private dispatchTask(taskId: string, body: TaskDispatchBody, idempotencyKey?: string, publication?: PublicationRecord): Promise<TaskDispatchResult> {
+    const dispatch = this.dispatchQueue.then(() => this.performDispatchTask(taskId, body, idempotencyKey, publication));
     this.dispatchQueue = dispatch.then(() => undefined, () => undefined);
     return dispatch;
   }
 
-  private async performDispatchTask(taskId: string, body: TaskDispatchBody, idempotencyKey?: string): Promise<TaskDispatchResult> {
+  private async performDispatchTask(taskId: string, body: TaskDispatchBody, idempotencyKey?: string, publication?: PublicationRecord): Promise<TaskDispatchResult> {
     const existing = idempotencyKey ? this.database.getEntity<JsonValue>("task-dispatch", idempotencyKey) : undefined;
     if (existing) {
       const result = existing as unknown as TaskDispatchResult;
@@ -1472,38 +1524,26 @@ export class ControllerService {
     if (!stored || !contract) throw new TaskDispatchError("TASK_NOT_FOUND", 404, `Unknown task or contract ${taskId}`);
     if ((stored.document as unknown as Task).state !== "READY") throw new TaskDispatchError("TASK_NOT_READY", 409, `Task ${taskId} is not dispatchable from ${(stored.document as unknown as Task).state}; READY is required`);
     if (body?.profileId && !this.agentAdapters.has(body.profileId)) throw new TaskDispatchError("PROFILE_NOT_FOUND", 404, `Unknown profile ${body.profileId}`);
-    const runners = new Map(this.runners.list().map((runner) => [runner.id, runner]));
-    const profiles = this.configuration.current().config.agentProfiles.filter((profile) => !body?.profileId || profile.id === body.profileId);
     if ((this.database.getEntity<JsonValue>("task-archive", taskId) as { archivedAt?: string } | undefined)?.archivedAt) throw new TaskDispatchError("TASK_ARCHIVED", 409, "Restore the task before dispatch");
-    const repositoryId = body?.repositoryId ?? contract.delivery.repository;
-    const repositoryConfig = this.configuration.current().config.repositories.find((entry) => entry.id === repositoryId);
-    if (!repositoryId || !repositoryConfig) throw new TaskDispatchError("REPOSITORY_UNAVAILABLE", 409, "The task repository is not registered");
-    const activeRuns = this.database.listEntities<JsonValue>("run").map((value) => value as unknown as Run).filter((run) => !isTerminalRunState(run.state));
-    const scheduler = new CanonicalScheduler(() => profiles.flatMap((profile) => {
-      const runner = runners.get(profile.runnerId);
-      const adapter = this.agentAdapters.get(profile.id);
-      if (!runner || !adapter) return [];
-      return [{
-        runnerId: runner.id,
-        runnerTags: runner.capabilities,
-        capacity: runner.state === "ONLINE" || runner.state === "DEGRADED" ? runner.capacity : 0,
-        activeRuns: activeRuns.filter((run) => run.runnerId === runner.id).length,
-        providerId: profile.provider,
-        profileId: profile.id,
-        resourceState: this.profileResourceState(profile.id),
-        capabilities: [...new Set([...manifestCapabilities(adapter.manifest), ...runner.capabilities])],
-        adapter,
-      }];
-    }));
+    const repositoryId = body?.repositoryId ?? contract.workspace?.repositoryId ?? contract.delivery.repository;
+    const repositoryConfig = this.configuration.current().config.repositories.find(entry=>entry.id===repositoryId);
+    if (!repositoryId || !repositoryConfig) throw new TaskDispatchError("REPOSITORY_UNAVAILABLE",409,"Task repository is not registered");
+    if(publication && this.configuration.current().revision!==publication.configRevision)throw new PublicationError("SELECTION_CHANGED",409,"Configuration changed before dispatch");
+    const scheduler = new CanonicalScheduler(() => this.dispatchCandidates(body?.profileId));
     const runId = randomUUID();
-    const workspace = await this.workspaces.create({
+    const workspacePlan = {
       repositoryId,
       taskId: taskId,
       runId,
       attempt: 1,
-      baseRef: body?.baseRef ?? contract.delivery.baseBranch ?? repositoryConfig.defaultBaseRef,
-      scopePaths: repositoryConfig.scopePaths,
-    });
+      baseRef: contract.workspace?.baseRef ?? body?.baseRef ?? contract.delivery.baseBranch ?? repositoryConfig.defaultBaseRef,
+      scopePaths: contract.workspace ? contract.scope : repositoryConfig.scopePaths,
+      ...(contract.workspace?.baseCommit ? {baseCommit:contract.workspace.baseCommit}:{}),
+      ...(contract.workspace?.targetBranch ? {targetBranch:contract.workspace.targetBranch}:{}),
+    };
+    this.database.saveEntity("workspace-intent",runId,json({...workspacePlan,state:"CREATING"}));
+    const workspace=await this.workspaces.create(workspacePlan);
+    this.database.transaction(()=>{this.database.saveEntity("workspace-handle",runId,json(workspace));this.database.saveEntity("workspace-intent",runId,json({...workspacePlan,state:"CREATED",path:workspace.path}));});
     let dispatched: Awaited<ReturnType<CanonicalScheduler["dispatch"]>>;
     try {
       dispatched = await scheduler.dispatch({
@@ -1516,10 +1556,15 @@ export class ControllerService {
           ...(body?.providerIds?.length ? { providerIds: body.providerIds } : {}),
         },
         workspacePath: workspace.path,
+        ...(publication?.selection ? {executionSelection:publication.selection,beforeStart:async()=>{
+          const selection=await this.preparePublication(publication.draft,repositoryConfig,workspace.path);
+          if(contentHash({...selection,selectedAt:undefined})!==contentHash({...publication.selection,selectedAt:undefined}))throw new PublicationError("SELECTION_CHANGED",409,"Selection changed before native startup");
+          if(this.configuration.current().revision!==publication.configRevision)throw new PublicationError("SELECTION_CHANGED",409,"Configuration changed before native startup");
+        }}:{}),
         runId,
         onRunStarting: (run, decision) => {
           const selectedModel = this.configuration.current().config.agentProfiles.find((profile) => profile.id === run.profileId)?.settings?.model;
-          if (typeof selectedModel === "string") run.model = { id: selectedModel, source: "configuration" };
+          if (!publication?.selection && typeof selectedModel === "string") run.model = { id: selectedModel, source: "configuration" };
           run.branch = workspace.branch;
           run.leaseExpiresAt = new Date(this.now().getTime() + 15 * 60_000).toISOString();
           this.database.transaction(() => {
@@ -1527,7 +1572,11 @@ export class ControllerService {
             const current = this.database.getCanonicalTask<JsonValue>(taskId);
             const currentContract = this.database.getTaskContract<JsonValue>(taskId) as unknown as TaskContract | undefined;
             if (!current || (current.document as unknown as Task).state !== "READY" || currentContract?.revision !== contract.revision) throw new TaskDispatchError("TASK_CHANGED", 409, "Task changed before dispatch reservation");
+            if(publication && this.configuration.current().revision!==publication.configRevision)throw new PublicationError("SELECTION_CHANGED",409,"Configuration changed during workspace creation");
+            this.database.saveEntity("run-contract",run.id,json(contract));
+            this.database.saveEntity("run-verification-config",run.id,json(repositoryConfig.verificationCommands));
             this.database.saveEntity("run", run.id, json(run));
+            if(publication)this.publications.markStarting(publication.owner,publication.preview.publicationId,run);
             const bound = this.tasks.execute({ id: `dispatch:${run.id}:bound`, taskId, baseRevision: current.revision, actor: "scheduler", command: { type: "task.set-current-run", runId: run.id } });
             this.tasks.execute({ id: `dispatch:${run.id}:queued`, taskId, baseRevision: bound.revision, actor: "scheduler", command: { type: "task.transition", state: "QUEUED" } });
             if (idempotencyKey) this.database.saveEntity("task-dispatch", idempotencyKey, json({ run, routing: { explanation: decision.explanation, eligible: decision.eligible, rejected: decision.rejected } }));
@@ -2833,7 +2882,7 @@ export class ControllerService {
       return { connectors: snapshot.connectors, cursor: snapshot.cursor };
     });
 
-    this.app.get("/api/task-publications/capabilities", async () => ({ schemaVersion: 1, startModes: ["create-only"], deliveryTypes: ["none"], projects: this.configuration.current().config.repositories.map(r => ({ id: `local:${r.id}`, repositoryId: r.id })) }));
+    this.app.get("/api/task-publications/capabilities", async () => ({ schemaVersion: 1, startModes: ["create-only","dispatch"], deliveryTypes: ["none"], projects: this.configuration.current().config.repositories.map(r => ({ id: `local:${r.id}`, repositoryId: r.id })) }));
     this.app.post<{ Body: PublishDraftV1 }>("/api/task-publications/preview", { schema: { body: publishDraftSchema } }, async request => {
       const principal = this.principalFor(request);
       if (!principal.roles.includes("operator")) throw new PublicationError("FORBIDDEN", 403, "Operator role required");
@@ -2879,6 +2928,10 @@ export class ControllerService {
       const run = this.database.getEntity<JsonValue>("run", request.params.id);
       if (!run) return reply.code(404).send({ code: "RUN_NOT_FOUND" });
       return { run };
+    });
+    this.app.get<{Params:{id:string}}>("/api/runs/:id/result",async(request,reply)=>{
+      const result=this.database.getEntity<JsonValue>("run-result",request.params.id);
+      return result?{result}:reply.code(404).send({code:"RUN_RESULT_UNAVAILABLE"});
     });
     this.app.post<{ Params: { id: string } }>("/api/runs/:id/advance", async (request, reply) => {
       const run = this.database.getEntity<JsonValue>("run", request.params.id);
