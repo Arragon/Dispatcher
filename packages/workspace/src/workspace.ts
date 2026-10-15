@@ -23,6 +23,7 @@ export interface WorkspacePlan {
 }
 
 export interface WorkspaceHandle extends WorkspacePlan {
+  repositoryRoot?: string;
   path: string;
   branch: string;
   baseRevision: string;
@@ -112,7 +113,7 @@ export class WorkspaceManager {
     } catch (error) {
       throw new WorkspacePolicyError("WORKTREE_CREATE_FAILED", error instanceof Error ? error.message : "Worktree creation failed");
     }
-    const handle = { ...structuredClone(plan), path, branch, baseRevision, createdAt: new Date().toISOString() };
+    const handle = { ...structuredClone(plan), repositoryRoot:await realpath(repository.root), path, branch, baseRevision, createdAt: new Date().toISOString() };
     this.managed.set(path, structuredClone(handle));
     return handle;
   }
@@ -121,10 +122,10 @@ export class WorkspaceManager {
     const managedRoot = await realpath(this.worktreeRoot);
     const path = await realpath(handle.path);
     if (!within(managedRoot, path) || path !== resolve(handle.path)) throw new WorkspacePolicyError("WORKSPACE_PATH_ESCAPE", "Restored worktree must be physically inside managed root");
-    const repository = this.registry.get(handle.repositoryId);
+    const repositoryRoot = handle.repositoryRoot ?? this.registry.get(handle.repositoryId).root;
     const git = async (cwd: string, args: string[]) => (await execute("git", ["-C", cwd, ...args])).stdout.trim();
     const common = await realpath(resolve(path, await git(path, ["rev-parse", "--git-common-dir"])));
-    const expected = await realpath(resolve(repository.root, await git(repository.root, ["rev-parse", "--git-common-dir"])));
+    const expected = await realpath(resolve(repositoryRoot, await git(repositoryRoot, ["rev-parse", "--git-common-dir"])));
     if (common !== expected || await git(path, ["symbolic-ref", "--short", "HEAD"]) !== handle.branch) throw new WorkspacePolicyError("WORKSPACE_IDENTITY_CHANGED", "Worktree identity changed");
     await git(path, ["merge-base", "--is-ancestor", handle.baseRevision, "HEAD"]);
     this.managed.set(path, structuredClone(handle));
@@ -189,9 +190,9 @@ export class WorkspaceManager {
 
   async cleanup(plan: CleanupPlan): Promise<void> {
     if (!plan.safe) throw new WorkspacePolicyError("UNSAFE_CLEANUP", plan.reasons.join("; "));
-    const repository = this.registry.get(plan.workspace.repositoryId);
+    const repositoryRoot = plan.workspace.repositoryRoot ?? this.registry.get(plan.workspace.repositoryId).root;
     try {
-      await execute("git", ["-C", repository.root, "worktree", "remove", plan.workspace.path]);
+      await execute("git", ["-C", repositoryRoot, "worktree", "remove", plan.workspace.path]);
       this.managed.delete(resolve(plan.workspace.path));
     }
     catch (error) { throw new WorkspacePolicyError("WORKTREE_REMOVE_FAILED", error instanceof Error ? error.message : "Worktree removal failed"); }

@@ -104,3 +104,12 @@ it("commits the reviewed publication and recovers the same receipt after a lost 
   expect(await screen.findByRole("link",{name:"查看已创建任务"})).toHaveProperty("href",expect.stringContaining("task-1"));
   expect(posts).toHaveLength(2);expect(posts[1]).toMatchObject({body:{revision:1,reviewHash:"review-hash",confirmation:{accepted:true}},key:expect.any(String)});
 });
+it("does not replace an uncertain commit with another publication preview",async()=>{
+  let previews=0;
+  const preview={publicationId:"uncertain",revision:1,state:"PREVIEW",canCommit:true,effectiveTask:{title:"Task",description:"body",contractState:"READY",missing:[]},checks:[],confirmation:{required:true,reviewHash:"hash",reasons:[]}};
+  vi.spyOn(globalThis,"fetch").mockImplementation(async(input)=>{
+    const path=String(input);if(path.endsWith("/preview")){previews++;return new Response(JSON.stringify(preview));}if(path.includes("/task-publications/"))throw new Error("Network unavailable");return new Response(JSON.stringify(config));
+  });
+  mount(<PublishPage/>);await screen.findByRole("option",{name:/repo/});await userEvent.type(screen.getByLabelText("任务说明"),"body");await userEvent.click(screen.getByRole("button",{name:"检查并审阅"}));await userEvent.click(await screen.findByRole("button",{name:"确认并创建任务"}));await screen.findByText(/提交结果未知/);
+  await userEvent.click(screen.getByRole("button",{name:"关闭"}));await userEvent.click(screen.getByRole("button",{name:"检查并审阅"}));expect(previews).toBe(1);
+});

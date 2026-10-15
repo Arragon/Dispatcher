@@ -1,4 +1,5 @@
-import type { ExecutionSelection } from "@dispatcher/domain";
+import { readCodexCatalog, type CodexReadRequest } from "./codex-catalog.js";
+import type { ExecutionSelection, ModelCatalogContext, AccountModelCatalog } from "@dispatcher/domain";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { promisify } from "node:util";
@@ -81,16 +82,17 @@ interface CodexTurn {
 }
 
 export interface CodexBackend {
-  start(input: { executable: string; codexHome: string; workspacePath: string; prompt: string; model?: string; providerSessionId?: string }): CodexTurn;
+  start(input: { executable: string; codexHome: string; workspacePath: string; prompt: string; model?: string; reasoningEffort?: string; providerSessionId?: string }): CodexTurn;
 }
 
 export class CodexCliBackend implements CodexBackend {
-  start(input: { executable: string; codexHome: string; workspacePath: string; prompt: string; model?: string; providerSessionId?: string }): CodexTurn {
+  start(input: { executable: string; codexHome: string; workspacePath: string; prompt: string; model?: string; reasoningEffort?: string; providerSessionId?: string }): CodexTurn {
     const common = ["--json", "--skip-git-repo-check"];
     const model = input.model ? ["--model", input.model] : [];
+    const effort = input.reasoningEffort ? ["-c",`model_reasoning_effort=${JSON.stringify(input.reasoningEffort)}`] : [];
     const args = input.providerSessionId
-      ? ["exec", "resume", ...common, ...model, input.providerSessionId, input.prompt]
-      : ["exec", ...common, "--sandbox", "workspace-write", ...model, "--cd", input.workspacePath, input.prompt];
+      ? ["exec", "resume", ...common, ...model, ...effort, input.providerSessionId, input.prompt]
+      : ["exec", ...common, "--sandbox", "workspace-write", ...model, ...effort, "--cd", input.workspacePath, input.prompt];
     return new SpawnedCodexTurn(spawn(input.executable, args, {
       cwd: input.workspacePath,
       shell: false,
@@ -174,8 +176,12 @@ export class CodexAdapter implements AgentAdapter {
     readonly profile: CodexProfileConfig,
     private readonly backend: CodexBackend = new CodexCliBackend(),
     private readonly store: SessionStore = new MemorySessionStore(),
+    private readonly catalogRequest?: (input:CodexReadRequest)=>Promise<unknown>,
   ) {}
 
+  modelCatalog(context:ModelCatalogContext & {workspacePath:string}):Promise<AccountModelCatalog> {
+    return readCodexCatalog({profile:this.profile,context,workspacePath:context.workspacePath,...(this.catalogRequest?{request:this.catalogRequest}:{})});
+  }
   async start(input: { runId: string; workspacePath: string; backendId?: string; prompt?: string; executionSelection?: ExecutionSelection }): Promise<AdapterSession> {
     const now = new Date().toISOString();
     const session: AdapterSession = {
@@ -193,6 +199,7 @@ export class CodexAdapter implements AgentAdapter {
       executable: this.profile.executable ?? "codex",
       codexHome: this.profile.codexHome,
       workspacePath: input.workspacePath,
+      ...(typeof input.executionSelection?.nativeParameters.reasoningEffort==="string" ? {reasoningEffort:input.executionSelection.nativeParameters.reasoningEffort}:{}),
       prompt: input.prompt ?? "Inspect the task context and report readiness.",
       ...(input.executionSelection ? input.executionSelection.requestedModel ? {model:input.executionSelection.requestedModel} : {} : this.profile.model ? {model:this.profile.model} : {}),
     });
@@ -213,6 +220,7 @@ export class CodexAdapter implements AgentAdapter {
       executable: this.profile.executable ?? "codex",
       codexHome: this.profile.codexHome,
       workspacePath: session.workspacePath,
+      ...(typeof session.executionSelection?.nativeParameters.reasoningEffort==="string" ? {reasoningEffort:session.executionSelection.nativeParameters.reasoningEffort}:{}),
       prompt: message,
       providerSessionId: session.providerSessionId,
       ...(session.executionSelection ? session.executionSelection.requestedModel ? {model:session.executionSelection.requestedModel} : {} : this.profile.model ? {model:this.profile.model} : {}),
@@ -251,7 +259,7 @@ export class CodexAdapter implements AgentAdapter {
     const result = await this.turns.get(sessionId)?.result();
     const resource = result?.events.filter((event) => event.type === "resource").at(-1);
     const tokens = result?.events.findLast((event) => event.type === "usage")?.tokens;
-    return { ...(resource ?? { state: "UNKNOWN", source: "event", confidence: "low" }), ...(tokens ? { tokens, tokenScope: "latest-turn" } : {}) };
+    return { ...(resource ?? (result?.state==="completed" ? {state:"AVAILABLE",source:"event",confidence:"medium",reason:"Native turn completed; remaining quota was not reported"} : { state: "UNKNOWN", source: "event", confidence: "low" })), ...(tokens ? { tokens, tokenScope: "latest-turn" } : {}) };
   }
   async diagnostics(sessionId: string): Promise<Record<string, unknown>> {
     const session = this.require(sessionId);

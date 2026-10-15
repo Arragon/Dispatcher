@@ -340,3 +340,30 @@
   non-windowed LLM counters. Do not display these as measured process counts or
   hourly usage. Diagnostics exports must exclude config, free text, paths and
   credentials rather than serializing raw API responses.
+
+- Publication preview and commit hashes bind raw instructions, applied config,
+  repository base commit and native selection. A successful receipt replay must
+  bypass preview expiry while a changed payload on the same key conflicts.
+  Reserve receipt/task/contract/intent atomically; native I/O stays outside SQLite
+  transactions. Preserve taskId after startup failure or uncertainty.
+- A source-checkout scope check is insufficient when executing another commit.
+  Recheck physical scope roots in the created worktree before native queries or
+  execution. Workspace-bound contracts cannot accept another repository through
+  a dispatch override; current configured scope may only narrow execution.
+- Freeze verification descriptions and repository identity per Run. Removing a
+  repository registration must not replace or erase the commands and physical
+  origin used by an already approved execution. Restore only worktrees whose
+  managed path, Git common directory, branch and base ancestry still agree.
+- Preserve create-only execution intent for fresh validation at later dispatch.
+  A per-run model/effort override belongs to its adapter session and must survive
+  continuation independently of current profile defaults. Revalidate native
+  account/project context before continuing a managed session.
+- Codex model/list is a native candidate catalog, not an entitlement or price
+  source. Keep access unconfirmed and require acknowledgment for explicit
+  selection. Known missing authentication blocks native defaults too. A
+  completed native turn supplies recent availability evidence, without implying
+  a remaining quota value. Exit zero alone is insufficient: require native
+  thread identity and a completed JSON turn.
+- A persisted RUNNING adapter session with no attached process cannot establish
+  liveness after Controller restart. Mark affected publication execution unknown
+  and retain the worktree for inspection; do not automatically resume or reroute.

@@ -28,7 +28,7 @@ describe("Codex adapter", () => {
     expect(normalizeCodexEvent({ type: "turn.completed", usage: { input_tokens: -2, output_tokens: "10" } })).toEqual({ type: "activity", summary: "turn.completed" });
     const adapter = new CodexAdapter({id: "ronna", alias: "ronna", codexHome: "/private/home"}, { start: () => ({ cancel: async () => undefined, status: () => "completed", result: async () => ({ state: "completed", summary: "done", events: [event!] }) }) });
     const session = await adapter.start({runId: "r", workspacePath: "/worktree"});
-    expect(await adapter.usage(session.id)).toMatchObject({ state: "UNKNOWN", tokens: {input: 100, output: 10, cachedInput: 70}, tokenScope: "latest-turn" });
+    expect(await adapter.usage(session.id)).toMatchObject({ state: "AVAILABLE", reason:"Native turn completed; remaining quota was not reported", tokens: {input: 100, output: 10, cachedInput: 70}, tokenScope: "latest-turn" });
   });
 
   it("normalizes quota as a recoverable resource condition", () => {
@@ -117,4 +117,17 @@ it("requires a completed native JSON turn and ignores benign stderr on success",
     writeFileSync(executable,`#!${process.execPath}\nconsole.log('no native execution evidence');`);
     expect(await backend.start({executable,codexHome:directory,workspacePath:directory,prompt:"test"}).result()).toMatchObject({state:"failed"});
   }finally{rmSync(directory,{recursive:true,force:true});}
+});
+
+it("keeps concurrent per-session models and effort frozen on resume without changing the profile",async()=>{
+  const calls:Array<Parameters<CodexBackend["start"]>[0]>=[];
+  const profile={id:"p",alias:"P",codexHome:"/profiles/p",model:"profile-default"};
+  const backend:CodexBackend={start:input=>{calls.push(input);return{cancel:async()=>undefined,status:()=>"completed",result:async()=>({state:"completed",summary:"done",providerSessionId:input.providerSessionId??input.model??"native",events:[]})};}};
+  const adapter=new CodexAdapter(profile,backend);
+  const selection={version:1 as const,mode:"manual" as const,source:"explicit" as const,selectionType:"explicit-model" as const,profileId:"p",runnerId:"local",providerId:"codex",backendId:"codex-exec-json",contextFingerprint:"context",configRevision:1,selectedAt:"now"};
+  const a=await adapter.start({runId:"a",workspacePath:"/work/a",executionSelection:{...selection,requestedModel:"model-a",nativeParameters:{reasoningEffort:"low"}}});
+  const b=await adapter.start({runId:"b",workspacePath:"/work/b",executionSelection:{...selection,requestedModel:"model-b",nativeParameters:{reasoningEffort:"medium"}}});
+  expect(profile.model).toBe("profile-default");profile.model="later-default";
+  await adapter.send(a.id,"continue a");await adapter.send(b.id,"continue b");
+  expect(calls.map(c=>[c.model,c.reasoningEffort])).toEqual([["model-a","low"],["model-b","medium"],["model-a","low"],["model-b","medium"]]);
 });

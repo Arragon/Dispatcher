@@ -271,7 +271,7 @@ export interface Run {
   recoveryReason?: string;
   requiredCapabilities?: string[];
   /** Selection captured at dispatch, independent of later profile edits. */
-  model?: { id: string; source: "configuration" | "runtime" };
+  model?: { id: string; source: "configuration" | "selection" | "runtime" };
   tokens?: { input: number; output: number; cachedInput?: number };
   tokenScope?: "latest-turn";
   telemetryAt?: IsoDateTime;

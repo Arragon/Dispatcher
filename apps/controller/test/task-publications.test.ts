@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -20,10 +20,10 @@ async function setup() {
   execFileSync("git", ["-C", root, "add", "."]); execFileSync("git", ["-C", root, "commit", "-m", "fixture"]);
   const f = { directory, services: [] as ControllerService[] }; fixtures.push(f);
   const starts: Array<Parameters<CodexBackend["start"]>[0]> = [];
-  const control = { failStart: false, completed: false };
+  const control = { failStart: false, completed: false, modelId: "catalog-model", authenticated:true };
   const backend: CodexBackend = { start(input) { if(control.failStart) throw new Error("spawn fixture ENOENT"); starts.push(input); writeFileSync(join(input.workspacePath,"result.txt"),"completed locally\n"); return {status:()=>control.completed?"completed":"running",cancel:async()=>undefined,result:async()=>({state:"completed",summary:"implemented",providerSessionId:"native-fixture-thread",events:[]})}; } };
   const clock = { now: new Date() };
-  const make = async () => { const s = new ControllerService({ dataDirectory: join(directory,"data"), ownerToken: "publication-test-owner", withRunner: true, codexBackendFactory: () => backend, clock: () => clock.now, secretStore: { test: async () => false } as unknown as SecretStore }); f.services.push(s); await s.start({listen:false}); return s; };
+  const make = async () => { const s = new ControllerService({ dataDirectory: join(directory,"data"), ownerToken: "publication-test-owner", withRunner: true, codexBackendFactory: () => backend, codexNativeReader: async input => input.method==="account/read"?{account:control.authenticated?{type:"chatgpt",email:"fixture@example.invalid"}:null,requiresOpenaiAuth:true}:{data:[{model:control.modelId,displayName:"Catalog model",hidden:false,isDefault:true,defaultReasoningEffort:"medium",supportedReasoningEfforts:[{reasoningEffort:"low"},{reasoningEffort:"medium"}]}],nextCursor:null}, clock: () => clock.now, secretStore: { test: async () => false } as unknown as SecretStore }); f.services.push(s); await s.start({listen:false}); return s; };
   const service = await make();
   const config = service.configuration.current().config as DispatcherConfig;
   config.agentProfiles = [{id:"codex-local",alias:"Local",provider:"codex",runnerId:"local",settings:{codexHome:join(directory,"native"),model:"profile-default"}}];
@@ -37,7 +37,7 @@ async function setup() {
 describe("task publication receipts", () => {
   it("previews without task/worktree effects, preserves text and atomically creates once across retries and restart", async () => {
     const f=await setup(); const create=vi.spyOn(f.service.workspaces,"create");
-    const response=await f.preview(); expect(response.statusCode).toBe(200); const p=response.json();
+    const [response,parallel]=await Promise.all([f.preview(),f.preview()]);expect(parallel.json().publicationId).toBe(response.json().publicationId); expect(response.statusCode).toBe(200); const p=response.json();
     expect(p).toMatchObject({state:"PREVIEW",canCommit:true,effectiveTask:{description:f.draft.description,contractState:"READY"}});
     expect(create).not.toHaveBeenCalled(); expect(f.service.database.listCanonicalTasks()).toHaveLength(0);
     const [a,b]=await Promise.all([f.commit(p),f.commit(p)]); expect(a.statusCode).toBe(200); expect(b.json().taskId).toBe(a.json().taskId);
@@ -52,7 +52,7 @@ describe("task publication receipts", () => {
   it("requires confirmation and rejects stale reviews, invalid links, unknown commands and expanded scope", async () => {
     const f=await setup(); const p=(await f.preview()).json();
     expect((await f.commit(p,"missing",f.service,{confirmation:{accepted:false}})).statusCode).toBe(400);
-    for(const patch of [{referenceLinks:["javascript:alert(1)"]},{scopePaths:["../escape"]},{verificationCommandIds:["arbitrary shell"]},{execution:{selectionMode:"manual",selectionType:"explicit-model"}}]) expect((await f.preview({...f.draft,...patch})).statusCode).toBe(400);
+    for(const patch of [{description:123},{schemaVersion:"1"},{arbitraryShell:"touch unsafe"},{referenceLinks:["javascript:alert(1)"]},{scopePaths:["../escape"]},{verificationCommandIds:["arbitrary shell"]},{execution:{selectionMode:"manual",selectionType:"explicit-model"}}]) expect((await f.preview({...f.draft,...patch})).statusCode).toBe(400);
     writeFileSync(join(f.root,"change"),"new"); execFileSync("git",["-C",f.root,"add","."]);execFileSync("git",["-C",f.root,"commit","-m","move base"]);
     expect((await f.commit(p)).json()).toMatchObject({code:"SELECTION_CHANGED"});
     expect(f.service.database.listCanonicalTasks()).toHaveLength(0);
@@ -86,6 +86,46 @@ describe("task publication receipts", () => {
   it("reconciles an interrupted STARTING receipt as unknown without spawning",async()=>{
     const f=await setup();const p=(await f.preview()).json();const a=(await f.commit(p)).json();const record=f.service.database.getEntity<JsonValue>("task-publication",p.publicationId) as unknown as {receipt:object};record.receipt={...a,state:"STARTING",runId:"unknown-run"};f.service.database.saveEntity("task-publication",p.publicationId,record as unknown as JsonValue);
     await f.service.stop();const restored=await f.make();expect((await f.commit(p,"key-1",restored)).json().state).toBe("OUTCOME_UNKNOWN");expect(f.starts).toHaveLength(0);
+  });
+  it("binds explicit models to fresh account/project catalogs and rejects a changed selection before commit",async()=>{
+    const f=await setup();const catalog=(await f.service.app.inject({headers:OWNER,url:"/api/agents/profiles/codex-local/models?repositoryId=repo"})).json();expect(catalog).toMatchObject({freshness:"native-fresh",selectionSupport:"explicit"});
+    const draft={...f.draft,startMode:"dispatch",execution:{profileId:"codex-local",selectionMode:"manual",selectionType:"explicit-model",nativeModelId:"catalog-model",catalogRevision:catalog.revision,contextFingerprint:catalog.contextFingerprint,nativeParameters:{reasoningEffort:"low"},allowUnconfirmedModelAccess:true}};
+    const p=(await f.preview(draft)).json();expect(p.canCommit).toBe(true);const receipt=(await f.commit(p)).json();expect(receipt.state).toBe("STARTED");expect(f.starts[0]).toMatchObject({model:"catalog-model",reasoningEffort:"low"});expect(f.service.configuration.current().config.agentProfiles[0]!.settings!.model).toBe("profile-default");
+    f.control.completed=true;await f.service.app.inject({headers:OWNER,method:"POST",url:`/api/runs/${receipt.runId}/advance`});
+    const invalid=(await f.preview({...draft,execution:{...draft.execution,nativeParameters:{arbitraryFlag:"yes"}}})).json();expect(invalid.canCommit).toBe(false);
+    const unconfirmed=(await f.preview({...draft,execution:{...draft.execution,allowUnconfirmedModelAccess:false}})).json();expect(unconfirmed.canCommit).toBe(false);
+    const review=(await f.preview({...draft,clientDraftId:"new-drift-draft"})).json();f.control.modelId="changed-model";expect((await f.commit(review,"changed-catalog")).json().code).toBe("SELECTION_CHANGED");expect(f.starts).toHaveLength(1);
+  });
+  it("blocks known missing native authentication even for native defaults",async()=>{
+    const f=await setup();f.control.authenticated=false;const p=(await f.preview({...f.draft,startMode:"dispatch",execution:{profileId:"codex-local",selectionMode:"manual",selectionType:"native-default"}})).json();
+    expect(p.canCommit).toBe(false);expect(p.checks).toContainEqual(expect.objectContaining({code:"NATIVE_AUTH_REQUIRED"}));expect(f.starts).toHaveLength(0);
+  });
+  it("marks detached active native execution unknown after restart instead of presenting it as live",async()=>{
+    const f=await setup();const p=(await f.preview({...f.draft,startMode:"dispatch",execution:{profileId:"codex-local",selectionMode:"manual",selectionType:"native-default"}})).json();const a=(await f.commit(p)).json();
+    await f.service.stop();const restored=await f.make();expect((await f.commit(p,"key-1",restored)).json().state).toBe("OUTCOME_UNKNOWN");expect(restored.database.getEntity("run",a.runId)).toMatchObject({state:"RUNNER_UNAVAILABLE",recoveryReason:"NATIVE_OUTCOME_UNKNOWN",resumePolicy:"manual"});expect(f.starts).toHaveLength(1);
+    await restored.runBackgroundCycle();expect(f.starts).toHaveLength(1);
+  });
+  it("checks scope symlinks in the selected baseline worktree before native startup",async()=>{
+    const f=await setup();execFileSync("git",["-C",f.root,"checkout","-b","other-baseline"]);symlinkSync(tmpdir(),join(f.root,"src"));execFileSync("git",["-C",f.root,"add","src"]);execFileSync("git",["-C",f.root,"commit","-m","symlink baseline"]);execFileSync("git",["-C",f.root,"checkout","main"]);
+    const p=(await f.preview({...f.draft,baseRef:"other-baseline",scopePaths:["src"],startMode:"dispatch",execution:{profileId:"codex-local",selectionMode:"manual",selectionType:"native-default"}})).json();expect(p.canCommit).toBe(true);const a=(await f.commit(p)).json();expect(a.state).toBe("START_FAILED");expect(f.starts).toHaveLength(0);
+  });
+  it("preserves create-only model intent for fresh validation at later dispatch",async()=>{
+    const f=await setup();const catalog=(await f.service.app.inject({headers:OWNER,url:"/api/agents/profiles/codex-local/models?repositoryId=repo"})).json();
+    const p=(await f.preview({...f.draft,execution:{selectionMode:"manual",selectionType:"explicit-model",profileId:"codex-local",nativeModelId:"catalog-model",catalogRevision:catalog.revision,contextFingerprint:catalog.contextFingerprint,nativeParameters:{reasoningEffort:"low"},allowUnconfirmedModelAccess:true}})).json();const a=(await f.commit(p)).json();expect(f.starts).toHaveLength(0);
+    const dispatched=await f.service.app.inject({headers:OWNER,method:"POST",url:`/api/tasks/${a.taskId}/dispatch`,payload:{profileId:"codex-local"}});expect(dispatched.statusCode).toBe(201);expect(f.starts[0]).toMatchObject({model:"catalog-model",reasoningEffort:"low"});
+    expect((await f.service.app.inject({headers:OWNER,url:`/api/task-publications/${p.publicationId}`})).json().state).toBe("STARTED");
+  });
+  it("rejects repository overrides and newly restricted scope on a workspace-bound task",async()=>{
+    const f=await setup();const p=(await f.preview()).json(),a=(await f.commit(p)).json();
+    const override=await f.service.app.inject({headers:OWNER,method:"POST",url:`/api/tasks/${a.taskId}/dispatch`,payload:{profileId:"codex-local",repositoryId:"another-repository"}});expect(override.json().code).toBe("REPOSITORY_MISMATCH");expect(f.starts).toHaveLength(0);
+    const config=f.service.configuration.current().config;config.repositories[0]!.scopePaths=["src"];const plan=f.service.configuration.buildPlan(config,"owner","web");await f.service.configuration.applyPlan(plan.id,{confirmed:true});
+    const restricted=await f.service.app.inject({headers:OWNER,method:"POST",url:`/api/tasks/${a.taskId}/dispatch`,payload:{profileId:"codex-local"}});expect(restricted.json().code).toBe("INVALID_SCOPE");expect(f.starts).toHaveLength(0);
+  });
+  it("finishes from frozen repository/command metadata after configuration removes the repository",async()=>{
+    const f=await setup();const p=(await f.preview({...f.draft,startMode:"dispatch",execution:{profileId:"codex-local",selectionMode:"manual",selectionType:"native-default"}})).json();const a=(await f.commit(p)).json();
+    const config=f.service.configuration.current().config;config.repositories=[];const plan=f.service.configuration.buildPlan(config,"owner","web");await f.service.configuration.applyPlan(plan.id,{confirmed:true});
+    f.control.completed=true;const result=(await f.service.app.inject({headers:OWNER,method:"POST",url:`/api/runs/${a.runId}/advance`})).json();expect(result.run?.state).toBe("COMPLETE");
+    await f.service.stop();const restored=await f.make();expect(restored.workspaces.get(result.run.worktree)).toBeDefined();
   });
   it("rolls back the whole task/receipt reservation on storage failure",async()=>{
     const f=await setup();const p=(await f.preview()).json();const original=f.service.database.saveTaskContract.bind(f.service.database);

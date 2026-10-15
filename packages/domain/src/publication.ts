@@ -37,7 +37,21 @@ export const publishDraftSchema = {
     schemaVersion: { const: 1 }, clientDraftId: { type: "string", minLength: 1, maxLength: 200 }, title: {type:"string",maxLength:160}, description: {type:"string",minLength:1,maxLength:20000}, projectId: short, repositoryId: short,
     baseRef: short, targetBranch: short, scopePaths: strings, acceptanceCriteria: strings, referenceLinks: strings, verificationCommandIds: strings,
     startMode: { enum: ["create-only","dispatch"] },
-    execution: {type:"object",additionalProperties:false,required:["selectionMode"],properties:{profileId:short,selectionMode:{enum:["manual","policy-auto"]},selectionType:{enum:["explicit-model","native-default"]},selectionSource:{enum:["explicit","account-default","policy","native-default"]},nativeModelId:short,nativeParameters:{type:"object",maxProperties:20,additionalProperties:{type:["string","number","boolean"]}},catalogRevision:short,contextFingerprint:short,allowUnconfirmedModelAccess:{type:"boolean"}},allOf:[{if:{required:["selectionType"],properties:{selectionType:{const:"explicit-model"}}},then:{required:["nativeModelId","catalogRevision","contextFingerprint"]}}]},
+    execution: {type:"object",additionalProperties:false,required:["selectionMode"],properties:{profileId:short,selectionMode:{enum:["manual","policy-auto"]},selectionType:{enum:["explicit-model","native-default"]},selectionSource:{enum:["explicit","account-default","policy","native-default"]},nativeModelId:short,nativeParameters:{type:"object",maxProperties:20,additionalProperties:{anyOf:[{type:"string"},{type:"number"},{type:"boolean"}]}},catalogRevision:short,contextFingerprint:short,allowUnconfirmedModelAccess:{type:"boolean"}},allOf:[{if:{required:["selectionType"],properties:{selectionType:{const:"explicit-model"}}},then:{required:["nativeModelId","catalogRevision","contextFingerprint"]}}]},
     delivery: {type:"object",additionalProperties:false,required:["type"],properties:{type:{enum:["none","commit","pull-request"]},scmConnectorId:short,targetRepository:short,baseBranch:short}},
   },
 } as const;
+
+export interface ModelCatalogContext {
+  profileId: string; runnerId: string; repositoryId: string; executionContextRef: string;
+  reason: "open" | "selection-change" | "preflight" | "before-start" | "manual-refresh";
+}
+export interface AccountModelCatalog {
+  profileId: string; runnerId: string; providerId: string; backendId: string;
+  contextFingerprint: string; revision: string; fetchedAt: string;
+  freshness: "native-fresh" | "native-cache" | "unverified";
+  source: "cli-query" | "native-rpc" | "account-api";
+  selectionSupport: "explicit" | "native-default-only" | "unsupported";
+  entries: Array<{id:string;displayName:string;kind:"model"|"tier"|"native-auto";selectable:boolean;unsupportedReason?:string;access:"account-listed"|"unconfirmed"|"denied";parameterOptions:Record<string,NativeParameter[]>;parameterDefaults?:Record<string,NativeParameter>;billing?:{mode:"unknown"|"subscription"|"metered"}}>;
+  failure?: {code:string;message:string};
+}

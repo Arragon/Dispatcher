@@ -1,6 +1,6 @@
 import type { WorkspaceHandle } from "@dispatcher/workspace";
-import { PublicationService, PublicationError, contentHash, type PublicationRecord } from "./task-publications.js";
-import { publishDraftSchema, type PublishDraftV1, type ExecutionSelection } from "@dispatcher/domain";
+import { PublicationService, PublicationError, contentHash, assertPublicationScope, type PublicationRecord } from "./task-publications.js";
+import { publishDraftSchema, type PublishDraftV1, type ExecutionSelection, type AccountModelCatalog, type ModelCatalogContext } from "@dispatcher/domain";
 import { projectViews, publicWebUrl } from "./console-projection.js";
 import { existsSync, statSync } from "node:fs";
 import { PassThrough } from "node:stream";
@@ -52,6 +52,7 @@ import {
   type AdapterSession,
   type SessionStore,
   type CodexBackend,
+  type CodexReadRequest,
   type CodexProfileConfig,
   type QoderBackend,
   type QoderProfileConfig,
@@ -163,6 +164,7 @@ export interface ControllerOptions {
   llmFetch?: FetchLike;
   integrationFetch?: (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
   gitTransport?: GitTransport;
+  codexNativeReader?: (input:CodexReadRequest)=>Promise<unknown>;
   codexBackendFactory?: (profile: CodexProfileConfig) => CodexBackend;
   qoderBackendFactory?: (profile: QoderProfileConfig) => QoderBackend;
   cliBackendFactory?: (provider: "cursor" | "kiro" | NativeCliProvider, profile: CliAgentProfile) => CliAgentBackend;
@@ -355,6 +357,7 @@ interface CodexRunBody {
 
 interface TaskDispatchBody {
   profileId?: string;
+  execution?: PublishDraftV1["execution"];
   repositoryId?: string;
   baseRef?: string;
   capabilities?: string[];
@@ -479,7 +482,7 @@ export class ControllerService {
 
   constructor(readonly options: ControllerOptions) {
     const logger = createLogger({ level: process.env.LOG_LEVEL ?? "info" });
-    this.app = fastify({ loggerInstance: logger as unknown as FastifyBaseLogger });
+    this.app = fastify({ loggerInstance: logger as unknown as FastifyBaseLogger, ajv: {customOptions:{coerceTypes:false,removeAdditional:false}} });
     this.database = new DispatcherDatabase(join(options.dataDirectory, "dispatcher.sqlite"));
     this.agentProcesses = new ProcessManager(join(options.dataDirectory, "agent-logs"));
     this.enrollments = new RunnerEnrollmentAuthority(
@@ -849,7 +852,7 @@ export class ControllerService {
         ...(stringSetting(profile.settings?.executable) ? { executable: stringSetting(profile.settings?.executable)! } : {}),
         ...(stringSetting(profile.settings?.model) ? { model: stringSetting(profile.settings?.model)! } : {}),
       };
-      this.agentAdapters.set(profile.id, new CodexAdapter(adapterProfile, this.options.codexBackendFactory?.(adapterProfile), store));
+      this.agentAdapters.set(profile.id, new CodexAdapter(adapterProfile, this.options.codexBackendFactory?.(adapterProfile), store, this.options.codexNativeReader));
       this.nativeProfileConfigurations.set(profile.id, structuredClone(profile));
     }
     for (const profile of enabledProfiles.filter((entry) => entry.provider === "qoder")) {
@@ -1085,7 +1088,7 @@ export class ControllerService {
         createdAt,
         updatedAt: run.lastActivityAt ?? run.endedAt ?? createdAt,
         ...(run.lastActivityAt ? { lastActivityAt: run.lastActivityAt } : {}),
-        ...(run.model ? { model: run.model } : {}),
+        ...(run.model ? { model: run.model } : run.executionSelection?.requestedModel ? {model:{id:run.executionSelection.requestedModel,source:"selection" as const}} : {}),
         ...(run.tokens ? { tokens: run.tokens } : {}),
         ...(run.tokenScope ? { tokenScope: run.tokenScope } : {}),
         ...(run.telemetryAt ? { telemetryAt: run.telemetryAt } : {}),
@@ -1263,6 +1266,7 @@ export class ControllerService {
         continue;
       }
       try {
+        await this.validateRunSelection(run);
         await adapter.resume(run.sessionId);
       } catch (error) {
         const reason = `Same-session resume failed: ${error instanceof Error ? error.message : "unknown error"}; controlled reroute requires operator approval`;
@@ -1389,10 +1393,10 @@ export class ControllerService {
     if (run.state === "VERIFYING") {
       const repositoryId = contract.workspace?.repositoryId ?? contract.delivery.repository;
       const repository = this.configuration.current().config.repositories.find((entry) => entry.id === repositoryId);
-      if (!repository || !run.worktree) throw new ConnectorError("PERMANENT", "Run repository or worktree is unavailable");
-      const verification = new VerificationRegistry();
       const frozen=this.database.getEntity<JsonValue>("run-verification-config",run.id) as unknown as RepositoryConfig["verificationCommands"]|undefined;
-      for (const command of frozen ?? repository.verificationCommands) verification.register(command);
+      if ((!repository && !frozen) || !run.worktree) throw new ConnectorError("PERMANENT", "Frozen verification or worktree is unavailable");
+      const verification = new VerificationRegistry();
+      for (const command of frozen ?? repository!.verificationCommands) verification.register(command);
       const summaries: string[] = [];
       let blocked = false;
       for (const commandId of contract.verification) {
@@ -1491,19 +1495,61 @@ export class ControllerService {
       return [{runnerId:runner.id,runnerTags:runner.capabilities,capacity:runner.id===this.embeddedRunner?.runner.id && ["ONLINE","DEGRADED"].includes(runner.state)?runner.capacity:0,activeRuns:active.filter(r=>r.runnerId===runner.id).length,providerId:profile.provider,profileId:profile.id,resourceState:this.profileResourceState(profile.id),capabilities:[...new Set([...manifestCapabilities(adapter.manifest),...runner.capabilities])],adapter}];
     });
   }
+  private readonly catalogGenerations=new Map<string,number>();
+  private async modelCatalog(profileId:string,repositoryId:string,reason:ModelCatalogContext["reason"]="open",workspacePath?:string):Promise<AccountModelCatalog> {
+    const snapshot=this.configuration.current();const profile=snapshot.config.agentProfiles.find(p=>p.id===profileId),repository=snapshot.config.repositories.find(r=>r.id===repositoryId);
+    if(!profile||!repository)throw new PublicationError("CATALOG_CONTEXT_REQUIRED",400,"Choose a registered account and repository");
+    const context:ModelCatalogContext={profileId,runnerId:profile.runnerId,repositoryId,executionContextRef:contentHash({repositoryId,root:repository.root}),reason};
+    const fallback=(code:string,message:string):AccountModelCatalog=>({profileId,runnerId:profile.runnerId,providerId:profile.provider,backendId:this.agentAdapters.get(profileId)?.manifest.backends[0]?.id??"unsupported",contextFingerprint:contentHash({profile,repositoryId,root:repository.root}),revision:"unverified",fetchedAt:this.now().toISOString(),freshness:"unverified",source:"native-rpc",selectionSupport:profile.provider==="codex"?"native-default-only":"unsupported",entries:[],failure:{code,message}});
+    if(profile.enabled===false)return fallback("PROFILE_DISABLED","Account is disabled");
+    if(profile.runnerId!==this.embeddedRunner?.runner.id)return fallback("REMOTE_CATALOG_UNSUPPORTED","Native catalogs must be queried on the owning local runner");
+    const adapter=this.agentAdapters.get(profileId);
+    if(!adapter?.modelCatalog)return fallback("MODEL_CATALOG_UNSUPPORTED","This native adapter does not expose a model catalog");
+    const key=contentHash({profileId,repositoryId});const generation=(this.catalogGenerations.get(key)??0)+1;this.catalogGenerations.set(key,generation);
+    let catalog:AccountModelCatalog;
+    try {catalog=await adapter.modelCatalog({...context,workspacePath:workspacePath??repository.root});}
+    catch {catalog=fallback("NATIVE_CATALOG_UNAVAILABLE","Native catalog could not be read; explicit selection is unavailable");}
+    if(this.configuration.current().revision!==snapshot.revision)throw new PublicationError("SELECTION_CHANGED",409,"Configuration changed during native catalog query");
+    if(this.catalogGenerations.get(key)!==generation)throw new PublicationError("CATALOG_SUPERSEDED",409,"A newer catalog request superseded this response");
+    this.database.saveEntity("model-catalog",key,json(catalog));return catalog;
+  }
   private async preparePublication(draft:PublishDraftV1,repository:RepositoryConfig,_workspacePath?:string):Promise<ExecutionSelection> {
     const snapshot=this.configuration.current();const profile=snapshot.config.agentProfiles.find(p=>p.id===draft.execution.profileId);
     if(!profile)throw new PublicationError("PROFILE_REQUIRED",409,"Choose a configured native account");
     if(profile.runnerId!==this.embeddedRunner?.runner.id)throw new PublicationError("REMOTE_EXECUTION_UNSUPPORTED",409,"This publication path requires the local embedded runner");
     if(profile.provider!=="codex")throw new PublicationError("NATIVE_SELECTION_UNSUPPORTED",409,"Publication model selection currently supports Codex only");
-    if(draft.execution.selectionType==="explicit-model")throw new PublicationError("CATALOG_UNAVAILABLE",409,"Explicit models need a native catalog");
-    if(Object.keys(draft.execution.nativeParameters??{}).length)throw new PublicationError("INVALID_NATIVE_PARAMETERS",400,"Native defaults do not accept model parameters");
+    const catalog=await this.modelCatalog(profile.id,repository.id,_workspacePath?"before-start":"preflight",_workspacePath);
+    if(catalog.failure?.code==="NATIVE_AUTH_REQUIRED"||catalog.failure?.code==="PROFILE_DISABLED")throw new PublicationError(catalog.failure.code,409,catalog.failure.message);
+    const explicit=draft.execution.selectionType==="explicit-model";
+    let nativeParameters:ExecutionSelection["nativeParameters"]={};
+    if(explicit){
+      if(catalog.freshness!=="native-fresh"||catalog.selectionSupport!=="explicit")throw new PublicationError("CATALOG_UNAVAILABLE",409,"A fresh native catalog is required for explicit selection");
+      if(catalog.revision!==draft.execution.catalogRevision||catalog.contextFingerprint!==draft.execution.contextFingerprint)throw new PublicationError("SELECTION_CHANGED",409,"Model catalog or account/project context changed; review again");
+      const entry=catalog.entries.find(e=>e.id===draft.execution.nativeModelId);
+      if(!entry?.selectable||entry.access==="denied")throw new PublicationError("MODEL_UNAVAILABLE",409,"Selected native model is not selectable");
+      if(entry.access==="unconfirmed"&&!draft.execution.allowUnconfirmedModelAccess)throw new PublicationError("MODEL_ACCESS_UNCONFIRMED",409,"Acknowledge that native catalog listing does not prove account access");
+      for(const [key,value] of Object.entries(draft.execution.nativeParameters??{}))if(!entry.parameterOptions[key]?.includes(value))throw new PublicationError("INVALID_NATIVE_PARAMETERS",400,"Native parameter is not supported by the selected model");
+      nativeParameters={...entry.parameterDefaults,...draft.execution.nativeParameters};
+    }else if(Object.keys(draft.execution.nativeParameters??{}).length)throw new PublicationError("INVALID_NATIVE_PARAMETERS",400,"Native defaults do not accept model parameters");
     const candidates=this.dispatchCandidates(profile.id);
     if(_workspacePath)for(const candidate of candidates) candidate.activeRuns-=this.database.listEntities<JsonValue>("run").filter(v=>{const r=v as unknown as Run;return r.worktree===_workspacePath&&r.state==="STARTING"&&r.profileId===candidate.profileId;}).length;
     const decision=routeDeterministically({capabilities:["code","git"]},candidates);
     if(!decision.selected)throw new PublicationError("EXECUTION_UNAVAILABLE",409,decision.explanation);
     const backendId=decision.selected.adapter.manifest.backends[0]!.id;
-    return {version:1,mode:"manual",source:"native-default",selectionType:"native-default",profileId:profile.id,runnerId:profile.runnerId,providerId:profile.provider,backendId,nativeParameters:{},contextFingerprint:contentHash({profile,repositoryId:repository.id,root:repository.root}),configRevision:snapshot.revision,selectedAt:this.now().toISOString()};
+    return {version:1,mode:"manual",source:explicit?"explicit":"native-default",selectionType:explicit?"explicit-model":"native-default",...(explicit?{requestedModel:draft.execution.nativeModelId!,catalogRevision:catalog.revision}:{}),profileId:profile.id,runnerId:profile.runnerId,providerId:profile.provider,backendId,nativeParameters,contextFingerprint:catalog.contextFingerprint,configRevision:snapshot.revision,selectedAt:this.now().toISOString()};
+  }
+
+  private async validateRunSelection(run:Run):Promise<void> {
+    if(!run.executionSelection)return;
+    if(run.recoveryReason==="NATIVE_OUTCOME_UNKNOWN")throw new PublicationError("NATIVE_OUTCOME_UNKNOWN",409,"Inspect the original native process before continuing");
+    const selection=run.executionSelection;
+    const contract=this.database.getEntity<JsonValue>("run-contract",run.id) as unknown as TaskContract|undefined;
+    if(!contract?.workspace||!run.worktree)throw new PublicationError("RUN_CONTEXT_UNAVAILABLE",409,"Frozen run context is unavailable");
+    const catalog=await this.modelCatalog(run.profileId,contract.workspace.repositoryId,"before-start",run.worktree);
+    if(catalog.failure?.code==="NATIVE_AUTH_REQUIRED"||catalog.runnerId!==selection.runnerId||catalog.contextFingerprint!==selection.contextFingerprint)throw new PublicationError("SELECTION_CHANGED",409,"Native account or project context changed before continuation");
+    if(selection.selectionType==="explicit-model"&&(catalog.freshness!=="native-fresh"||catalog.revision!==selection.catalogRevision))throw new PublicationError("SELECTION_CHANGED",409,"Native model catalog changed before continuation");
+    const current=this.database.getEntity<JsonValue>("run",run.id) as unknown as Run|undefined;
+    if(!current||current.state!==run.state||current.generation!==run.generation||current.leaseId!==run.leaseId||current.sessionId!==run.sessionId)throw new PublicationError("RUN_CHANGED",409,"Run authority changed before continuation");
   }
 
   private dispatchTask(taskId: string, body: TaskDispatchBody, idempotencyKey?: string, publication?: PublicationRecord): Promise<TaskDispatchResult> {
@@ -1525,9 +1571,26 @@ export class ControllerService {
     if ((stored.document as unknown as Task).state !== "READY") throw new TaskDispatchError("TASK_NOT_READY", 409, `Task ${taskId} is not dispatchable from ${(stored.document as unknown as Task).state}; READY is required`);
     if (body?.profileId && !this.agentAdapters.has(body.profileId)) throw new TaskDispatchError("PROFILE_NOT_FOUND", 404, `Unknown profile ${body.profileId}`);
     if ((this.database.getEntity<JsonValue>("task-archive", taskId) as { archivedAt?: string } | undefined)?.archivedAt) throw new TaskDispatchError("TASK_ARCHIVED", 409, "Restore the task before dispatch");
-    const repositoryId = body?.repositoryId ?? contract.workspace?.repositoryId ?? contract.delivery.repository;
+    if(contract.workspace && body.repositoryId && body.repositoryId!==contract.workspace.repositoryId)throw new PublicationError("REPOSITORY_MISMATCH",409,"Task workspace is bound to another repository");
+    const repositoryId = contract.workspace?.repositoryId ?? body?.repositoryId ?? contract.delivery.repository;
     const repositoryConfig = this.configuration.current().config.repositories.find(entry=>entry.id===repositoryId);
     if (!repositoryId || !repositoryConfig) throw new TaskDispatchError("REPOSITORY_UNAVAILABLE",409,"Task repository is not registered");
+    if(contract.workspace)assertPublicationScope(contract.scope,repositoryConfig.scopePaths);
+    if(!publication&&contract.workspace){
+      const intent=this.database.getEntity<JsonValue>("task-execution-intent",taskId) as unknown as {publicationId:string;execution:PublishDraftV1["execution"]}|undefined;
+      if(intent){
+        const original=this.database.getEntity<JsonValue>("task-publication",intent.publicationId) as unknown as PublicationRecord|undefined;
+        if(!original)throw new PublicationError("PUBLICATION_NOT_FOUND",409,"Task publication context is unavailable");
+        const execution=body.execution??intent.execution;
+        if(execution.selectionMode!=="manual")throw new PublicationError("POLICY_UNSUPPORTED",409,"Policy selection is not implemented");
+        if(!body.execution&&execution.selectionType==="explicit-model"&&body.profileId&&body.profileId!==execution.profileId)throw new PublicationError("SELECTION_CHANGED",409,"Changing the account requires a fresh explicit model selection");
+        const profileId=body.profileId??execution.profileId;
+        const draft:PublishDraftV1={...original.draft,startMode:"dispatch",execution:{...execution,...(profileId?{profileId}:{})}};
+        const selection=await this.preparePublication(draft,repositoryConfig);
+        publication={...original,draft,selection,repository:repositoryConfig,configRevision:this.configuration.current().revision};
+        body={...body,profileId:selection.profileId};
+      }
+    }
     if(publication && this.configuration.current().revision!==publication.configRevision)throw new PublicationError("SELECTION_CHANGED",409,"Configuration changed before dispatch");
     const scheduler = new CanonicalScheduler(() => this.dispatchCandidates(body?.profileId));
     const runId = randomUUID();
@@ -1556,14 +1619,22 @@ export class ControllerService {
           ...(body?.providerIds?.length ? { providerIds: body.providerIds } : {}),
         },
         workspacePath: workspace.path,
-        ...(publication?.selection ? {executionSelection:publication.selection,beforeStart:async()=>{
-          const selection=await this.preparePublication(publication.draft,repositoryConfig,workspace.path);
-          if(contentHash({...selection,selectedAt:undefined})!==contentHash({...publication.selection,selectedAt:undefined}))throw new PublicationError("SELECTION_CHANGED",409,"Selection changed before native startup");
-          if(this.configuration.current().revision!==publication.configRevision)throw new PublicationError("SELECTION_CHANGED",409,"Configuration changed before native startup");
-        }}:{}),
+        ...(publication?.selection ? {executionSelection:publication.selection}:{}),
+        beforeStart:async()=>{
+          for(const scope of workspace.scopePaths)await this.workspaces.assertPathAllowed(workspace,scope);
+          if(publication?.selection){
+            const selection=await this.preparePublication(publication.draft,repositoryConfig,workspace.path);
+            if(contentHash({...selection,selectedAt:undefined})!==contentHash({...publication.selection,selectedAt:undefined}))throw new PublicationError("SELECTION_CHANGED",409,"Selection changed before native startup");
+            if(this.configuration.current().revision!==publication.configRevision)throw new PublicationError("SELECTION_CHANGED",409,"Configuration changed before native startup");
+          }
+          const reserved=this.database.getEntity<JsonValue>("run",runId) as unknown as Run|undefined;
+          const currentTask=this.database.getCanonicalTask<JsonValue>(taskId)?.document as unknown as Task|undefined;
+          if(reserved?.state!=="STARTING"||currentTask?.state!=="QUEUED"||currentTask.currentRunId!==runId)throw new PublicationError("RUN_CHANGED",409,"Task or run changed during preflight");
+        },
         runId,
         onRunStarting: (run, decision) => {
           const selectedModel = this.configuration.current().config.agentProfiles.find((profile) => profile.id === run.profileId)?.settings?.model;
+          if(publication?.selection?.requestedModel)run.model={id:publication.selection.requestedModel,source:"selection"};
           if (!publication?.selection && typeof selectedModel === "string") run.model = { id: selectedModel, source: "configuration" };
           run.branch = workspace.branch;
           run.leaseExpiresAt = new Date(this.now().getTime() + 15 * 60_000).toISOString();
@@ -1603,6 +1674,7 @@ export class ControllerService {
         this.saveAdvancedRun(dispatched.run, "STARTING");
         const state = dispatched.run.state === "FAILED" ? "FAILED" : "RUNNING";
         this.tasks.execute({ id: `dispatch:${dispatched.run.id}:${state}`, taskId, baseRevision: current.revision, actor: "scheduler", command: { type: "task.transition", state } });
+        if(publication)this.publications.markOutcome(publication.owner,publication.preview.publicationId,dispatched.run);
         if (idempotencyKey) this.database.saveEntity("task-dispatch", idempotencyKey, json(result));
       });
     } catch (error) {
@@ -1746,8 +1818,10 @@ export class ControllerService {
         const runId = String(target);
         const run = this.database.getEntity<JsonValue>("run", runId) as unknown as Run | undefined;
         if (!run || !["WAITING_USER", "RESOURCE_BLOCKED", "RUNNER_UNAVAILABLE", "SUSPECTED_STALL"].includes(run.state)) throw new SemanticPolicyError("INVALID_INPUT", `Run ${runId} is not resumable`);
+        if(run.recoveryReason==="NATIVE_OUTCOME_UNKNOWN")throw new SemanticPolicyError("INVALID_INPUT","Native execution outcome is unknown; inspect the original session before resuming");
         const adapter = this.agentAdapters.get(run.profileId);
         if (!adapter) throw new SemanticPolicyError("INVALID_INPUT", `Profile ${run.profileId} is unavailable`);
+        await this.validateRunSelection(run);
         await adapter.resume(run.sessionId);
         assertRunTransition(run.state, "ACTIVE");
         run.state = "ACTIVE";
@@ -1771,6 +1845,7 @@ export class ControllerService {
         const previousAdapter = run ? this.agentAdapters.get(run.profileId) : undefined;
         const contract = run ? this.database.getTaskContract<JsonValue>(run.taskId) as unknown as TaskContract | undefined : undefined;
         if (!run || isTerminalRunState(run.state) || !run.worktree || !profile || !nextAdapter || !previousAdapter || !contract) throw new SemanticPolicyError("INVALID_INPUT", `Run ${runId} cannot be rerouted to ${nextProfileId}`);
+        if(run.executionSelection)throw new SemanticPolicyError("INVALID_INPUT","Publication reroute requires a fresh account/model/workspace review and is not supported by the legacy reroute command");
         const capabilityAssessment = assessManifestCapabilities(nextAdapter.manifest, run.requiredCapabilities ?? ["code", "git"]);
         if (!capabilityAssessment.supported) throw new SemanticPolicyError("INVALID_INPUT", capabilityAssessment.explanation);
         const session = await nextAdapter.start({ runId: randomUUID(), workspacePath: run.worktree, prompt: contract.goal });
@@ -2084,6 +2159,8 @@ export class ControllerService {
       const agent = this.agentAdapters.get(run.profileId);
       if (!agent) throw new ConnectorError("PERMANENT", "The run profile is unavailable", { retryable: false, operation: "write" });
       this.assertMessagingInputAuthority(run, binding, expectedRevision);
+      await this.validateRunSelection(run);
+      this.assertMessagingInputAuthority(run,binding,expectedRevision);
       await agent.send(binding.sessionId, message.text || "Continue with the approved action.");
       try {
         this.assertMessagingInputAuthority(run, binding, expectedRevision);
@@ -2727,6 +2804,8 @@ export class ControllerService {
       assertAuthority();
       this.pendingConsoleInputs.add(request.params.sessionId);
       try {
+        if(run)await this.validateRunSelection(run);
+        assertAuthority();
         const event = await adapter.send(request.params.sessionId, request.body.message);
         try { assertAuthority(); }
         catch (error) {
@@ -2882,6 +2961,10 @@ export class ControllerService {
       return { connectors: snapshot.connectors, cursor: snapshot.cursor };
     });
 
+    this.app.get<{Params:{id:string};Querystring:{repositoryId?:string}}>("/api/agents/profiles/:id/models",async request=>{
+      if(!request.query.repositoryId)throw new PublicationError("CATALOG_CONTEXT_REQUIRED",400,"repositoryId is required");
+      return this.modelCatalog(request.params.id,request.query.repositoryId,"open");
+    });
     this.app.get("/api/task-publications/capabilities", async () => ({ schemaVersion: 1, startModes: ["create-only","dispatch"], deliveryTypes: ["none"], projects: this.configuration.current().config.repositories.map(r => ({ id: `local:${r.id}`, repositoryId: r.id })) }));
     this.app.post<{ Body: PublishDraftV1 }>("/api/task-publications/preview", { schema: { body: publishDraftSchema } }, async request => {
       const principal = this.principalFor(request);

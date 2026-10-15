@@ -194,10 +194,32 @@ archived tasks. Devices combine configured registrations with independent
 Runner heartbeat evidence. Repository and policy editors embed the same
 sectioned settings/ConfigPlan workflow rather than adding configuration writers.
 Global search, appearance preferences, and publication drafts are browser-local.
-The publication composer can validate, review, and export a draft; it cannot
-submit until the publication service described by the v3 design exists.
-Native model catalogs, policy routing, and pricing are not inferred from UI
-fixtures. Diagnostics export allowlisted measurements and counts only.
+The publication composer uses durable Controller preview/commit/read APIs. A
+confirmed publication atomically reserves its canonical task, contract,
+execution intent and idempotency receipt. The existing dispatch path reserves
+Run/task/publication STARTING before native startup; replay returns the same
+identity. Local `delivery=none` retains the worktree and a bounded file manifest,
+completes the Run and moves the Task to REVIEW. Frozen Run contracts,
+verification command descriptions and physical repository roots survive later
+configuration edits. Local workspace repository IDs are separate from remote
+SCM owner/name values.
+
+Codex native catalogs use isolated read-only app-server RPCs in the selected
+account and repository context. Catalog revisions hash content and account,
+native configuration and project fingerprints, excluding retrieval time.
+Publication validates again at commit and in the actual worktree before startup.
+Per-session model/effort selection is frozen and reused on continuation without
+changing account defaults. Native listing is unconfirmed access; missing prices
+and numeric quota remain unknown. Definitive authentication failures block both
+explicit models and native defaults. Other catalog providers, publication policy
+routing and remote publication execution are explicitly unsupported.
+
+Persisted ACTIVE native sessions are not physical process evidence after a
+Controller restart. Interrupted publication starts and detached active executions
+become OUTCOME_UNKNOWN with manual recovery; resume/reroute cannot blindly start
+another process. Scope paths are rechecked against the physical execution
+worktree, including a reviewed commit different from the source checkout.
+Diagnostics export allowlisted measurements and counts only.
 
 The Internal LLM page manages endpoints, profiles, ordered fallback pools and
 role switches. Configuration commits through `ConfigPlan`; credential values

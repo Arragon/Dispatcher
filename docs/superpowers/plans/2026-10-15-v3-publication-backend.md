@@ -60,17 +60,32 @@
 
 **Interfaces:** optional `AgentAdapter.modelCatalog(context)`; normalized GET `/api/agents/profiles/:id/models?repositoryId=...`; explicit start selection passed through scheduler into the owning adapter/session.
 
-- [ ] Read the installed Codex protocol/version before implementation; inspect the same-repository catalog reader for reuse and harden its process cleanup, bounds and malformed-data handling.
-- [ ] Test native pagination, account/project isolation, stable content revisions, missing prices, unsupported providers, denied/unknown access and stale responses.
-- [ ] Implement normalized safe catalogs and explicit model/native parameter validation. Requery at review/commit/actual-worktree startup; changed conditions require review, never fallback.
-- [ ] Persist selection per Run/session, use it on resume, and verify concurrent per-account models cannot cross-contaminate or alter applied profile defaults.
-- [ ] Wire UI catalog refresh/model/effort and acknowledgement of unconfirmed access. Run full gate, real read-only native catalog probe and one explicit-selection execution in isolation; commit and check quota.
+- [x] Read the installed Codex protocol/version before implementation; inspect the same-repository catalog reader for reuse and harden its process cleanup, bounds and malformed-data handling.
+- [x] Test native pagination, account/project isolation, stable content revisions, missing prices, unsupported providers, denied/unknown access and stale responses.
+- [x] Implement normalized safe catalogs and explicit model/native parameter validation. Requery at review/commit/actual-worktree startup; changed conditions require review, never fallback.
+- [x] Persist selection per Run/session, use it on resume, and verify concurrent per-account models cannot cross-contaminate or alter applied profile defaults.
+- [x] Wire UI catalog refresh/model/effort and acknowledgement of unconfirmed access. Run full gate, real read-only native catalog probe and one explicit-selection execution in isolation; commit and check quota.
 
 ## Final verification
 
-- [ ] `pnpm check`, `git diff --check`, browser publish/reload/replay/result verification.
-- [ ] Update architecture/know-how and a scoped evidence report with exact tests and native limitations; preserve any incomplete stage if quota stops work.
+- [x] `pnpm check`, `git diff --check`, browser publish/reload/replay/result verification.
+- [x] Update architecture/know-how and a scoped evidence report with exact tests and native limitations; preserve any incomplete stage if quota stops work.
 
 Ruling: local publication projects use `local:<repositoryId>` and `local:inbox` until independent project registration exists; external project bindings are not inferred from user input.
 
 Ruling: Codex is the first supported native selection backend; unsupported providers, remote execution, policy routing and publication delivery types other than none fail closed.
+
+Ruling: a successfully completed native JSON turn is recent availability evidence,
+while numeric account quota remains unknown; this prevents successful sessions
+with absent quota telemetry from permanently blocking the next publication.
+
+Final review: fixed all five independent findings with failing-then-passing
+regressions. Detached active executions require manual native inspection; legacy
+reroute cannot bypass a publication selection review. Native provider coverage
+remains Codex only; generic remote/catalog and pricing support are not inferred.
+
+Final evidence: `pnpm check` 46 files / 333 tests; strict schemas reject coercion
+and unknown fields. Real explicit native execution was repeated after review
+fixes. Stable draft identity coalesces cross-tab previews and uncertain commits
+cannot be replaced by new previews. Final-browser restart/reload recovered the
+same canonical task. Details: `docs/publication-backend-verification-2026-10-15.md`.

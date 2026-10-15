@@ -60,9 +60,12 @@
 - 截图：本机 Codex visualizations 目录内的 `dispatcher-v3-desktop.jpg`、
   `dispatcher-v3-mobile.jpg`、`dispatcher-v3-overview.jpg` 和 `dispatcher-v3-login.jpg`。
 
-## 明确保留的后端缺口
+## 初次界面提交时的后端缺口（d718ead）
 
-- 当前分支没有任务发布预检/提交/持久回执 API。因此发布页只处理本地草稿，最终提交禁用；
+后续后端实现与真实执行证据见 `publication-backend-verification-2026-10-15.md`；
+本节保留初次界面验收时的范围，不代表后续分支当前能力。
+
+- 初次界面提交没有任务发布预检/提交/持久回执 API。因此发布页只处理本地草稿，最终提交禁用；
   本地审阅不会伪造成功、taskId、runId 或启动事实。
 - 原生模型目录、单次模型/effort 选择冻结、价格证据与 Policy 自动路由尚未接入。
   配置模型只作为候选；缺失额度与费用不显示为零或免费。

@@ -35,7 +35,7 @@ export interface FleetRunInput {
   waitingReason?: string;
   resourceState?: string;
   summary?: string;
-  model?: { id: string; source: "configuration" | "runtime" };
+  model?: { id: string; source: "configuration" | "selection" | "runtime" };
   tokens?: { input: number; output: number; cachedInput?: number };
   tokenScope?: "latest-turn";
   worktree?: string;

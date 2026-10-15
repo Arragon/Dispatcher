@@ -9,7 +9,7 @@ import "./styles.css";
 
 const SettingsPage = lazy(() => import("./SettingsPage.js"));
 const SetupWizard = lazy(() => import("./SetupWizard.js"));
-const LlmPage = lazy(() => import("./LlmPage.js"));
+const LlmPage = lazy(() => import("./ModelsPage.js"));
 const AgentsPage = lazy(() => import("./AgentsPage.js"));
 const FleetPage = lazy(() => import("./FleetPage.js"));
 const PublishPage = lazy(() => import("./PublishPage.js"));

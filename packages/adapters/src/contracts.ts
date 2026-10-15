@@ -1,4 +1,4 @@
-import type { ExecutionSelection } from "@dispatcher/domain";
+import type { ExecutionSelection, AccountModelCatalog, ModelCatalogContext } from "@dispatcher/domain";
 export type AdapterPlatform = "darwin" | "linux" | "win32";
 export type BackendKind = "sdk" | "api" | "daemon" | "headless-cli" | "pty";
 
@@ -60,6 +60,7 @@ export interface AdapterResult {
 
 export interface AgentAdapter {
   readonly manifest: AdapterManifest;
+  modelCatalog?(context: ModelCatalogContext & {workspacePath:string}): Promise<AccountModelCatalog>;
   start(input: { runId: string; workspacePath: string; backendId?: string; prompt?: string; executionSelection?: ExecutionSelection }): Promise<AdapterSession>;
   send(sessionId: string, message: string): Promise<AdapterEvent>;
   pause(sessionId: string): Promise<AdapterSession>;
