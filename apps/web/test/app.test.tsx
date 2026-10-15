@@ -63,7 +63,7 @@ describe("Dashboard shell", () => {
   it("exposes every M1 navigation surface", () => {
     render(<MemoryRouter><Navigation /></MemoryRouter>);
     expect(screen.getByRole("navigation", { name: "Main navigation" })).toBeTruthy();
-    for (const label of ["总览", "任务与运行", "运行设备", "Agent 账号", "内部模型", "集成", "策略", "诊断", "设置"]) {
+    for (const label of ["总览", "任务与运行", "发布任务", "Harness", "模型管理", "设备管理", "项目仓库", "平台集成", "执行策略", "诊断", "设置"]) {
       expect(screen.getByRole("link", { name: label })).toBeTruthy();
     }
   });

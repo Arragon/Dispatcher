@@ -1,0 +1,92 @@
+import { useEffect, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { Link, useSearchParams } from "react-router-dom";
+import { api, type ConfigResponse } from "./api.js";
+import { Drawer } from "./Drawer.js";
+import { Icon, Notice, ProviderMark } from "./ui.js";
+import { safeLink } from "./task-view.js";
+
+interface Repository { id: string; root: string; defaultBaseRef: string; scopePaths: string[]; verificationCommands: Array<{id:string;required:boolean}> }
+interface Profile { id: string; alias: string; provider: string; runnerId: string; enabled?: boolean; settings?: Record<string, unknown> }
+interface Config { repositories: Repository[]; agentProfiles: Profile[] }
+interface Draft { title: string; description: string; repositoryId: string; profileId: string; startMode: "create-only" | "dispatch"; acceptance: string; references: string; targetBranch: string }
+const emptyDraft: Draft = {title:"",description:"",repositoryId:"",profileId:"",startMode:"create-only",acceptance:"",references:"",targetBranch:""};
+const draftKey = "dispatcher.publication-draft.v1";
+function readDraft(source: Record<string,unknown>): Draft {
+  return Object.fromEntries(Object.entries(emptyDraft).map(([key,value]) => [key, key === "startMode" ? source[key] === "dispatch" ? "dispatch" : "create-only" : typeof source[key] === "string" ? source[key] : value])) as unknown as Draft;
+}
+function restoreDraft(): Draft {
+  try {
+    const data: unknown = JSON.parse(localStorage.getItem(draftKey) ?? "null");
+    if (!data || typeof data !== "object") return {...emptyDraft};
+    const source = data as Record<string,unknown>;
+    return readDraft(source);
+  } catch { return {...emptyDraft}; }
+}
+function lines(value: string): string[] { return value.split("\n").map((line) => line.trim()).filter(Boolean); }
+export default function PublishPage(): React.JSX.Element {
+  const query = useQuery({queryKey:["config"],queryFn:()=>api<ConfigResponse<Config>>("/api/config")});
+  const [params] = useSearchParams();
+  const [draft, setDraft] = useState(() => ({...restoreDraft(), ...(params.get("repository") ? {repositoryId:params.get("repository")!} : {})}));
+  const [error, setError] = useState("");
+  const [saved, setSaved] = useState("");
+  const [review, setReview] = useState(false);
+  const saving = useRef(false);
+  const importInput = useRef<HTMLInputElement>(null);
+  const [importing,setImporting] = useState(false);
+  useEffect(() => {
+    try { localStorage.setItem(draftKey,JSON.stringify(draft)); }
+    catch { setSaved("浏览器无法保存草稿，请使用备份下载。"); }
+  },[draft]);
+  const repositories = query.data?.config.repositories ?? [];
+  const profiles = query.data?.config.agentProfiles ?? [];
+  const repository = repositories.find((entry) => entry.id === draft.repositoryId);
+  const profile = profiles.find((entry) => entry.id === draft.profileId);
+  const generatedTitle = draft.description.split("\n").map((line) => line.replace(/^#+\s*/, "").trim()).find(Boolean) ?? "未命名任务";
+  const title = draft.title.trim() || (Array.from(generatedTitle).length > 80 ? `${Array.from(generatedTitle).slice(0,80).join("")}…` : generatedTitle);
+  function edit(changes: Partial<Draft>): void { setDraft((current) => ({...current,...changes})); setError(""); setSaved(""); setReview(false); }
+  async function importDraft(file?:File):Promise<void> {
+    if (!file || importing) return;
+    setImporting(true); setError("");
+    try {
+      if(file.size > 256_000) throw new Error("草稿文件过大，请选择小于 256 KB 的备份。");
+      const text = await new Promise<string>((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(String(reader.result));reader.onerror=()=>reject(new Error("草稿读取失败"));reader.readAsText(file);});
+      const data:unknown=JSON.parse(text);
+      if(!data || typeof data !== "object" || !("schemaVersion" in data) || data.schemaVersion !== 1) throw new Error("不支持的草稿格式，请选择版本 1 的 JSON 备份。");
+      const source=data as Record<string,unknown>;
+      if(typeof source.description !== "string" || Object.keys(emptyDraft).some((key)=>source[key] !== undefined && typeof source[key] !== "string") || (source.startMode !== undefined && !["dispatch","create-only"].includes(String(source.startMode)))) throw new Error("草稿字段格式无效。");
+      if ((draft.title || draft.description) && !window.confirm("导入会替换当前浏览器草稿，继续吗？建议先下载备份。")) return;
+      setDraft(readDraft(source));setReview(false);setSaved("草稿已导入并保存在当前浏览器，尚未创建任务。");
+    } catch(error) {setError(error instanceof SyntaxError ? "草稿不是有效的 JSON 文件。" : error instanceof Error ? error.message : "导入失败，当前草稿保留。");}
+    finally {setImporting(false);if(importInput.current)importInput.current.value="";}
+  }
+  function backup(): void {
+    if (saving.current) return;
+    saving.current = true;
+    const url = URL.createObjectURL(new Blob([JSON.stringify({schemaVersion:1,...draft},null,2)],{type:"application/json"}));
+    const link = document.createElement("a"); link.href=url; link.download="dispatcher-task-draft.json"; link.click();
+    setTimeout(() => URL.revokeObjectURL(url),1000); saving.current=false; setSaved("任务草稿已导出，未创建任务。");
+  }
+  function check(): void {
+    if (!draft.description.trim()) { setError("请填写任务说明。"); return; }
+    if (Array.from(draft.title).length > 160 || Array.from(draft.description).length > 20_000) { setError("标题最多 160 字，任务说明最多 20,000 字；请调整后重试。"); return; }
+    if (lines(draft.references).some((value) => !safeLink(value))) { setError("参考链接只支持不含账号密码的 http / https 地址。"); return; }
+    if (Array.from(draft.acceptance).length > 8_000 || Array.from(draft.references).length > 2_000 || Array.from(draft.targetBranch).length > 200) { setError("验收条件、参考链接或分支名称超出长度限制。"); return; }
+    if (draft.startMode === "dispatch" && (!repository || !profile || profile.enabled === false || !draft.acceptance.trim())) { setError("立即派发需要已登记仓库、已启用账号和明确的验收条件。"); return; }
+    setError(""); setReview(true);
+  }
+  return <section className="publish-page">
+    <header className="page-header"><div><h1>发布任务</h1><p>描述你想完成的工作，选择项目与执行方式。</p></div><div className="page-actions"><input ref={importInput} aria-label="导入任务草稿" type="file" hidden accept="application/json,.json" onChange={(event)=>void importDraft(event.target.files?.[0])}/><button disabled={importing} onClick={()=>importInput.current?.click()}><Icon name="folder"/>{importing ? "导入中…" : "导入草稿"}</button><button onClick={backup}><Icon name="download"/>备份草稿</button><Link className="button-link" to="/tasks">查看任务</Link></div></header>
+    <Notice tone="warning">发布服务尚未开放。你可以编写、备份和审阅草稿；当前不会创建任务、启动模型或修改仓库。</Notice>
+    {query.error && <Notice tone="error">项目与账号读取失败。<button onClick={() => void query.refetch()}>重新读取</button>草稿可继续编辑。</Notice>}
+    {error && <Notice tone="error">{error}</Notice>}
+    <div className="publish-layout"><div className="publish-left">
+      <article className="panel publish-project"><header className="composer-heading"><span className="step-number">1</span><h2>选择项目</h2><Link to="/repositories">管理仓库</Link></header><label>项目仓库<select value={draft.repositoryId} onChange={(event) => edit({repositoryId:event.target.value})} disabled={query.isLoading}><option value="">{query.isLoading ? "正在读取仓库…" : "选择已登记的项目仓库"}</option>{repositories.map((entry) => <option value={entry.id} key={entry.id}>{entry.id}</option>)}</select></label><div className="project-context"><span><Icon name="folder" size={14}/>{repository?.root ?? "尚未选择项目"}</span><span><Icon name="branch" size={14}/>{repository?.defaultBaseRef ?? "基准分支未确定"}</span></div><p className="composer-hint"><Icon name="shield" size={14}/>实际执行将使用受管工作目录，项目路径不会作为账号配置目录。</p></article>
+      <article className="panel flush-panel"><header className="composer-editor-heading"><span className="step-number">2</span><h2>描述任务</h2><span className="pill">Markdown</span></header><div className="composer-editor"><input className="composer-title" aria-label="任务标题" placeholder="任务标题（可选，可从正文生成）" value={draft.title} onChange={(event) => edit({title:event.target.value})}/><textarea className="composer-description" aria-label="任务说明" placeholder={'你想完成什么？\n\n补充背景、目标、需要注意的约束，以及你期望的结果。'} value={draft.description} onChange={(event) => edit({description:event.target.value})}/><div className="composer-templates"><span>从模板开始</span>{[["修复问题","## 问题现象\n\n## 复现步骤\n\n## 预期行为\n"],["开发功能","## 功能目标\n\n## 使用场景\n\n## 约束与边界\n"],["代码审查","## 审查范围\n\n## 重点关注\n\n## 输出要求\n"]].map(([name,text]) => <button key={name} onClick={() => edit({description:`${draft.description}${draft.description ? "\n\n" : ""}${text}`})}>{name}</button>)}</div></div><footer className="composer-footer"><span><Icon name="shield" size={12}/>草稿仅保存在当前浏览器</span><span>{Array.from(draft.description).length.toLocaleString()} / 20,000 字</span></footer></article>
+      <details className="composer-details"><summary><Icon name="check"/><strong>验收与参考</strong><small>明确完成条件</small><Icon name="chevron" size={14}/></summary><div><label>验收条件（每行一条）<textarea value={draft.acceptance} onChange={(event) => edit({acceptance:event.target.value})} placeholder="例如：保留现有接口行为，相关回归测试通过"/></label><label>参考链接（每行一条）<textarea value={draft.references} onChange={(event) => edit({references:event.target.value})} placeholder="https://…"/></label><p className="muted">链接作为引用保存，不会自动访问或下载。</p></div></details>
+      <details className="composer-details"><summary><Icon name="branch"/><strong>执行范围与交付</strong><small>继承项目设置</small><Icon name="chevron" size={14}/></summary><div><label>目标分支（可选）<input value={draft.targetBranch} onChange={(event) => edit({targetBranch:event.target.value})} placeholder="由服务端创建受管分支"/></label><dl className="details-grid"><div><dt>允许修改的范围</dt><dd>{repository?.scopePaths.join("、") || "项目尚未登记执行范围"}</dd></div><div><dt>已登记验证命令</dt><dd>{repository?.verificationCommands.map((entry) => `${entry.id}${entry.required ? "（必需）" : ""}`).join("、") || "未登记"}</dd></div><div><dt>交付方式</dt><dd>本地结果 · 服务端能力待接入</dd></div><div><dt>模型选择方式</dt><dd>手动选择 · Policy 自动路由未开放</dd></div></dl></div></details>
+    </div><aside className="publish-side"><article className="panel flush-panel"><header className="panel-heading"><h2>执行设置</h2><Icon name="settings" size={16}/></header><div className="publish-setting"><label>执行方式<select value={draft.startMode} onChange={(event) => edit({startMode:event.target.value as Draft["startMode"]})}><option value="create-only">仅创建，稍后派发</option><option value="dispatch">立即派发</option></select></label><p>{draft.startMode === "create-only" ? "保存为待派发或待完善任务，不启动 Agent。" : "通过预检并确认后，才会开始执行。"}</p></div><div className="publish-setting"><label>Harness 账号<select value={draft.profileId} onChange={(event) => edit({profileId:event.target.value})}><option value="">选择执行账号</option>{profiles.map((entry) => <option key={entry.id} value={entry.id} disabled={entry.enabled === false}>{entry.alias}{entry.enabled === false ? "（已停用）" : ""}</option>)}</select></label>{profile && <div className="selected-profile"><ProviderMark provider={profile.provider}/><div><strong>{profile.alias}</strong><small>{profile.provider} · {profile.runnerId === "local" ? "本机" : profile.runnerId}</small></div></div>}<p>账号启用、登录验证和设备在线分别检查。</p></div><div className="publish-setting"><div className="label-row"><span>本次执行模型</span><span className="pill">目录待接入</span></div><strong className="model-candidate">{typeof profile?.settings?.model === "string" && profile.settings.model ? profile.settings.model : "原生默认 · 尚未确认"}</strong><p>这里仅展示已应用配置的候选；模型可用性、思考强度与计费均需原生目录证据。</p><div className="billing-summary"><span>账户额度</span><strong>数值未提供</strong><span>本次费用</span><strong>无法估算</strong></div></div><footer className="table-footer">实际选模仍需发布服务预检确认。</footer></article><div className="publish-checks"><h3>正式发布所需条件</h3><p><Icon name="check" size={14}/>项目与执行范围</p><p><Icon name="check" size={14}/>账号、设备与模型证据</p><p><Icon name="check" size={14}/>验收条件与验证命令</p><p><Icon name="check" size={14}/>完整任务正文与交付方式</p></div></aside></div>
+    <footer className="publish-bar"><div><Icon name="shield"/><span>{draft.startMode === "create-only" ? "仅创建，稍后派发" : "立即派发前需要确认"}<small>{saved || "草稿自动保存在当前浏览器，尚未提交到服务端。"}</small></span></div><div className="page-actions"><button onClick={backup}>备份草稿</button><button className="primary" onClick={check}><Icon name="check"/>检查并审阅</button></div></footer>
+    {review && <Drawer variant="modal" title="审阅任务草稿" onClose={() => setReview(false)}><Notice tone="warning">这只是本地输入检查。发布接口尚未实现，尚无服务端预检回执或任务 ID。</Notice><dl className="details-grid"><div><dt>任务标题</dt><dd>{title}</dd></div><div><dt>执行方式</dt><dd>{draft.startMode === "create-only" ? "仅创建" : "立即派发"}</dd></div><div><dt>项目仓库</dt><dd>{repository?.id ?? "未选择 · 待完善"}</dd></div><div><dt>执行账号</dt><dd>{profile?.alias ?? "未选择"}</dd></div></dl><h3>完整任务说明</h3><pre>{draft.description}</pre><h3>验收条件</h3><p>{draft.acceptance || "未填写 · 待完善"}</p><button disabled className="primary">提交不可用 · 发布服务待接入</button><button onClick={backup}>下载草稿备份</button></Drawer>}
+  </section>;
+}

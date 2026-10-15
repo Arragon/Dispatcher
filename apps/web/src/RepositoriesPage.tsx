@@ -1,0 +1,18 @@
+import { lazy, Suspense, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
+import { api, type ConfigResponse } from "./api.js";
+import { Drawer } from "./Drawer.js";
+import { EmptyState, Icon, Notice } from "./ui.js";
+import { safeLink } from "./task-view.js";
+const SettingsPage=lazy(()=>import("./SettingsPage.js"));
+interface Repository {id:string;root:string;remote?:string;defaultBaseRef:string;scopePaths:string[];verificationCommands:Array<{id:string;file:string;args:string[];required:boolean}>}
+export default function RepositoriesPage():React.JSX.Element {
+  const query=useQuery({queryKey:["config"],queryFn:()=>api<ConfigResponse<{repositories:Repository[]}>>("/api/config")});
+  const [search,setSearch]=useState("");const [editor,setEditor]=useState(false);
+  if(query.isLoading)return <div className="page-state" role="status">正在读取项目仓库…</div>;
+  if(query.error || !query.data)return <div className="page-state error" role="alert">项目仓库读取失败。<button onClick={()=>void query.refetch()}>重试</button></div>;
+  const repositories=query.data.config.repositories ?? [];
+  const filtered=repositories.filter((entry)=>`${entry.id} ${entry.root} ${entry.remote ?? ""}`.toLocaleLowerCase().includes(search.toLocaleLowerCase()));
+  return <section><header className="page-header"><div><h1>项目仓库</h1><p>登记本地项目，明确执行范围、基准分支与验证要求。</p></div><button className="primary" onClick={()=>setEditor(true)}><Icon name="plus"/>登记仓库</button></header><Notice>执行使用受管 Git worktree。登记和编辑不会执行验证命令、切换分支或自动拉取远端。</Notice><div className="toolbar"><input aria-label="搜索项目仓库" placeholder="搜索项目、路径或远端…" value={search} onChange={(event)=>setSearch(event.target.value)}/><span>{filtered.length} 个仓库</span><button onClick={()=>setEditor(true)}>编辑仓库配置</button></div><div className="repository-list">{filtered.map((entry)=><article className="panel repository-card" key={entry.id}><header className="panel-heading"><div className="catalog-title"><span className="device-symbol"><Icon name="branch" size={23}/></span><div><h2>{entry.id}</h2><p>{entry.root}</p></div></div><Link className="button-link" to={`/publish?repository=${encodeURIComponent(entry.id)}`}><Icon name="plus"/>编写任务</Link></header><dl className="repository-details"><div><dt>Git 远端</dt><dd>{safeLink(entry.remote) ? <a href={safeLink(entry.remote)} target="_blank" rel="noreferrer">{entry.remote}</a> : entry.remote ?? "未关联"}</dd></div><div><dt>基准分支</dt><dd><Icon name="branch" size={13}/> {entry.defaultBaseRef}</dd></div><div><dt>执行范围</dt><dd><div className="tag-list">{entry.scopePaths.map((path)=><code key={path}>{path}</code>)}</div></dd></div><div><dt>目录与 Git 状态</dt><dd>待执行预检确认</dd></div></dl><div className="verification-list"><h3>已登记验证命令</h3>{entry.verificationCommands.length ? entry.verificationCommands.map((command)=><div key={command.id}><code>{command.id}</code><span>{command.file} {command.args.join(" ")}</span><span className="pill">{command.required ? "必需" : "可选"}</span></div>) : <p className="muted">尚未登记验证命令，执行前需要完善。</p>}</div></article>)}</div>{!filtered.length && <EmptyState title={repositories.length ? "没有匹配的仓库" : "让项目拥有明确的执行边界"} icon="branch"><p>{repositories.length ? "尝试其他关键词。" : "登记 Git 仓库后，为任务选择允许修改的目录和验证命令。"}</p><button onClick={()=>repositories.length ? setSearch("") : setEditor(true)}>{repositories.length ? "清除筛选" : "登记第一个仓库"}</button></EmptyState>}{editor && <Drawer title="项目仓库配置" onClose={()=>setEditor(false)}><Suspense fallback={<p>正在准备编辑器…</p>}><SettingsPage sectionId="repositories" embedded/></Suspense></Drawer>}</section>;
+}

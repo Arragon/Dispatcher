@@ -326,3 +326,17 @@
 - Serve the HTML entry with no-cache; only hashed assets may be immutable.
   Missing asset paths must return 404 rather than the SPA HTML fallback.
   After rebuilding production assets, restart the static-file registration.
+
+- The v3 HTML is a visual reference, not runtime capability evidence. Keep its
+  sample tasks, model catalogs, authentication claims, prices, and quota values
+  out of production. A local draft review is not a server publication preview
+  or receipt. Missing publication/catalog APIs must leave submission unavailable.
+- Before building a configuration plan from an edited form, re-read the applied
+  revision and reject a changed base while preserving the draft. This client
+  check is not an atomic server-side editing-base CAS; ConfigPlan's existing
+  apply revision fence remains required. Device/repository/policy editors share
+  the complete-draft settings path and must not discard hidden fields.
+- `/api/system-impact` currently returns a placeholder local-process count and
+  non-windowed LLM counters. Do not display these as measured process counts or
+  hourly usage. Diagnostics exports must exclude config, free text, paths and
+  credentials rather than serializing raw API responses.

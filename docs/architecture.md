@@ -187,6 +187,18 @@ Settings exposes plan preview, apply, verification state, and immediate rollback
 setup wizard persists its step and expected configuration revision so refresh
 and restart are recoverable.
 
+The console uses a shared navigation/topbar with route-level lazy pages. Public
+page names `/harnesses`, `/models`, and `/devices` retain `/agents`, `/llm`, and
+`/runners` as redirects. Task detail links carry the canonical task ID, including
+archived tasks. Devices combine configured registrations with independent
+Runner heartbeat evidence. Repository and policy editors embed the same
+sectioned settings/ConfigPlan workflow rather than adding configuration writers.
+Global search, appearance preferences, and publication drafts are browser-local.
+The publication composer can validate, review, and export a draft; it cannot
+submit until the publication service described by the v3 design exists.
+Native model catalogs, policy routing, and pricing are not inferred from UI
+fixtures. Diagnostics export allowlisted measurements and counts only.
+
 The Internal LLM page manages endpoints, profiles, ordered fallback pools and
 role switches. Configuration commits through `ConfigPlan`; credential values
 still bypass form state and enter SecretStore directly. Connection tests are
