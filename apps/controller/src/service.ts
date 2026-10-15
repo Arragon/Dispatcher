@@ -1,3 +1,4 @@
+import { projectViews, publicWebUrl } from "./console-projection.js";
 import { existsSync, statSync } from "node:fs";
 import { PassThrough } from "node:stream";
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
@@ -20,6 +21,8 @@ import {
   OpenCodeAdapter,
   GrokAdapter,
   PiAdapter,
+  AntigravityAdapter, ZCodeAdapter, WorkBuddyCliAdapter, QoderCnAdapter,
+  antigravityManifest, zcodeManifest, workbuddyCliManifest, qoderCnManifest,
   opencodeManifest,
   grokManifest,
   piManifest,
@@ -83,6 +86,7 @@ import {
   type Runner,
   type Task,
   type TaskContract,
+  type Project,
 } from "@dispatcher/domain";
 import {
   CoalescingEventStream,
@@ -140,7 +144,8 @@ import {
 import { CanonicalScheduler } from "@dispatcher/scheduler";
 import { RepositoryRegistry, WorkspaceManager, WorkspacePolicyError } from "@dispatcher/workspace";
 import { BackgroundLoop, backoffDelayMs, runBounded } from "./background.js";
-import { ControlPlaneAuth, OWNER_PRINCIPAL_ID, OWNER_ROLES, OWNER_TOKEN_REFERENCE, type ControlPrincipal } from "./control-auth.js";
+import { ControlPlaneAuth, OWNER_PASSWORD_REFERENCE, OWNER_PRINCIPAL_ID, OWNER_ROLES, OWNER_TOKEN_REFERENCE, type ControlPrincipal } from "./control-auth.js";
+import { hashOwnerPassword, validOwnerPassword } from "./owner-password.js";
 import { LifecycleManager, type ServiceModule } from "./lifecycle.js";
 import { MESSAGING_INBOX_KIND, MessagingInbox, type MessagingInboxRecord } from "./messaging-inbox.js";
 
@@ -295,6 +300,7 @@ interface SecretTestState {
 }
 
 interface CodexProfileBody {
+  enabled?: boolean;
   id?: string;
   alias?: string;
   runnerId?: string;
@@ -313,6 +319,9 @@ interface QoderProfileBody {
 }
 
 interface EcosystemProfileBody {
+  trustWorkspace?: boolean;
+  enabled?: boolean;
+  configDir?: string;
   id?: string;
   alias?: string;
   runnerId?: string;
@@ -388,7 +397,7 @@ function llmConfiguration(config: DispatcherConfig["internalLlm"]): LlmConfigura
   };
 }
 
-const adapterManifests = [genericMockManifest, genericCliManifest, codexManifest, qoderManifest, cursorManifest, devinManifest, kiroManifest, localServiceManifest, opencodeManifest, grokManifest, piManifest] as const;
+const adapterManifests = [genericMockManifest, genericCliManifest, codexManifest, qoderManifest, cursorManifest, devinManifest, kiroManifest, localServiceManifest, opencodeManifest, grokManifest, piManifest, antigravityManifest, zcodeManifest, workbuddyCliManifest, qoderCnManifest] as const;
 
 function manifestForProvider(provider: string) {
   if (provider === "workbuddy" || provider === "codebuddy") return localServiceManifest;
@@ -437,6 +446,7 @@ export class ControllerService {
   private readonly resourceProbes = new ResetAwareProbeScheduler();
   private readonly attentionNotifications = new AttentionNotificationPolicy();
   private readonly leaseAuthority = new RunnerLeaseAuthority();
+  private readonly pendingConsoleInputs = new Set<string>();
   private readonly secureLinks: SecureDashboardLinkIssuer;
   private readonly messagingChannels = new Map<string, string>();
   private readonly agentAdapters = new Map<string, AgentAdapter>();
@@ -493,6 +503,9 @@ export class ControllerService {
     });
     this.controlAuth = new ControlPlaneAuth({
       resolveOwnerToken: () => this.resolveOwnerToken(),
+      resolveOwnerPasswordHash: async () => (await this.secrets.metadata(OWNER_PASSWORD_REFERENCE)).exists
+        ? this.secrets.resolve(OWNER_PASSWORD_REFERENCE, { principal: "controller", purpose: "provider" })
+        : undefined,
       allowedHosts: [...new Set(["localhost", "127.0.0.1", "::1", ...(options.host && !["0.0.0.0", "::"].includes(options.host) ? [options.host] : []), ...(options.allowedHosts ?? [])])],
       clock: () => this.now(),
     });
@@ -725,9 +738,9 @@ export class ControllerService {
     const retainedNativeAdapters = new Map<string, AgentAdapter>();
     for (const [id, previous] of this.nativeProfileConfigurations) {
       const adapter = this.agentAdapters.get(id);
-      const next = config.agentProfiles.find((profile) => profile.id === id);
+      const next = config.agentProfiles.find((profile) => profile.id === id && profile.enabled !== false);
       if (adapter && isDeepStrictEqual(previous, next)) retainedNativeAdapters.set(id, adapter);
-      else if (adapter instanceof StructuredCliAdapter && adapter.hasActiveOperations()) {
+      else if ((adapter instanceof StructuredCliAdapter || adapter instanceof CodexAdapter) && adapter.hasActiveOperations()) {
         throw new ConfigPlanError("ACTIVE_AGENT_PROFILE", `Finish or cancel active harness operations before changing or removing profile ${id}`);
       }
     }
@@ -811,7 +824,9 @@ export class ControllerService {
       if (!retainedNativeAdapters.has(id)) this.nativeProfileConfigurations.delete(id);
     }
     const store = new DatabaseSessionStore(this.database);
-    for (const profile of config.agentProfiles.filter((entry) => entry.provider === "codex")) {
+    const enabledProfiles = config.agentProfiles.filter((profile) => profile.enabled !== false);
+    for (const profile of enabledProfiles.filter((entry) => entry.provider === "codex")) {
+      if (retainedNativeAdapters.has(profile.id)) continue;
       const codexHome = stringSetting(profile.settings?.codexHome);
       if (!codexHome) continue;
       const adapterProfile: CodexProfileConfig = {
@@ -822,8 +837,9 @@ export class ControllerService {
         ...(stringSetting(profile.settings?.model) ? { model: stringSetting(profile.settings?.model)! } : {}),
       };
       this.agentAdapters.set(profile.id, new CodexAdapter(adapterProfile, this.options.codexBackendFactory?.(adapterProfile), store));
+      this.nativeProfileConfigurations.set(profile.id, structuredClone(profile));
     }
-    for (const profile of config.agentProfiles.filter((entry) => entry.provider === "qoder")) {
+    for (const profile of enabledProfiles.filter((entry) => entry.provider === "qoder")) {
       const adapterProfile: QoderProfileConfig = {
         id: profile.id,
         alias: profile.alias,
@@ -834,10 +850,13 @@ export class ControllerService {
       this.agentAdapters.set(profile.id, new QoderAdapter(adapterProfile, this.options.qoderBackendFactory?.(adapterProfile), store));
     }
     const resolveProviderCredential = (reference: string): Promise<string> => this.secrets.resolve(reference, { principal: "controller", purpose: "provider" });
-    for (const profile of config.agentProfiles.filter((entry) => entry.provider === "cursor" || entry.provider === "kiro")) {
+    for (const profile of enabledProfiles.filter((entry) => entry.provider === "cursor" || entry.provider === "kiro")) {
+      if (retainedNativeAdapters.has(profile.id)) continue;
       const adapterProfile: CliAgentProfile = {
         id: profile.id,
         alias: profile.alias,
+        ...(typeof profile.settings?.approveTools === "boolean" ? { approveTools: profile.settings.approveTools } : {}),
+        ...(typeof profile.settings?.trustWorkspace === "boolean" ? { trustWorkspace: profile.settings.trustWorkspace } : {}),
         ...(stringSetting(profile.settings?.executable) ? { executable: stringSetting(profile.settings?.executable)! } : {}),
         ...(profile.credentialRef ? { credentialRef: profile.credentialRef } : {}),
         ...(stringSetting(profile.settings?.model) ? { model: stringSetting(profile.settings?.model)! } : {}),
@@ -846,11 +865,13 @@ export class ControllerService {
       this.agentAdapters.set(profile.id, profile.provider === "cursor"
         ? new CursorAdapter(adapterProfile, backend, store, resolveProviderCredential)
         : new KiroAdapter(adapterProfile, backend, store, resolveProviderCredential));
+      this.nativeProfileConfigurations.set(profile.id, structuredClone(profile));
     }
-    for (const profile of config.agentProfiles) {
+    for (const profile of enabledProfiles) {
       if (!isNativeCliProvider(profile.provider)) continue;
       if (retainedNativeAdapters.has(profile.id)) continue;
       const adapterProfile: CliAgentProfile = { id: profile.id, alias: profile.alias,
+        ...(stringSetting(profile.settings?.configDir) ? { configDir: stringSetting(profile.settings?.configDir)! } : {}),
         ...(typeof profile.settings?.approveTools === "boolean" ? { approveTools: profile.settings.approveTools } : {}),
         ...(stringSetting(profile.settings?.executable) ? { executable: stringSetting(profile.settings?.executable)! } : {}),
         ...(stringSetting(profile.settings?.model) ? { model: stringSetting(profile.settings?.model)! } : {}),
@@ -859,10 +880,14 @@ export class ControllerService {
       const backend = this.options.cliBackendFactory?.(profile.provider, adapterProfile);
       this.agentAdapters.set(profile.id, profile.provider === "opencode" ? new OpenCodeAdapter(adapterProfile, backend, store)
         : profile.provider === "grok" ? new GrokAdapter(adapterProfile, backend, store, resolveProviderCredential)
+        : profile.provider === "antigravity" ? new AntigravityAdapter(adapterProfile, backend, store)
+        : profile.provider === "zcode" ? new ZCodeAdapter(adapterProfile, backend, store)
+        : profile.provider === "workbuddy-cli" ? new WorkBuddyCliAdapter(adapterProfile, backend, store)
+        : profile.provider === "qoder-cn" ? new QoderCnAdapter(adapterProfile, backend, store)
         : new PiAdapter(adapterProfile, backend, store));
       this.nativeProfileConfigurations.set(profile.id, structuredClone(profile));
     }
-    for (const profile of config.agentProfiles.filter((entry) => entry.provider === "devin")) {
+    for (const profile of enabledProfiles.filter((entry) => entry.provider === "devin")) {
       const organizationId = stringSetting(profile.settings?.organizationId);
       if (!organizationId || !profile.credentialRef) continue;
       const adapterProfile: DevinProfileConfig = {
@@ -875,7 +900,7 @@ export class ControllerService {
       };
       this.agentAdapters.set(profile.id, new DevinAdapter(adapterProfile, this.options.devinBackendFactory?.(adapterProfile), store, resolveProviderCredential, this.options.integrationFetch as typeof fetch | undefined));
     }
-    for (const profile of config.agentProfiles.filter((entry) => entry.provider === "workbuddy" || entry.provider === "codebuddy")) {
+    for (const profile of enabledProfiles.filter((entry) => entry.provider === "workbuddy" || entry.provider === "codebuddy")) {
       const settings = profile.settings;
       const required = ["baseUrl", "healthPath", "startPath", "statusPath", "inputPath", "cancelPath"] as const;
       if (required.some((key) => !stringSetting(settings?.[key]))) continue;
@@ -894,7 +919,7 @@ export class ControllerService {
       };
       this.agentAdapters.set(profile.id, new LocalServiceAdapter(adapterProfile, resolveProviderCredential, this.options.integrationFetch as typeof fetch | undefined, store));
     }
-    for (const profile of config.agentProfiles.filter((entry) => entry.provider === "generic-cli")) {
+    for (const profile of enabledProfiles.filter((entry) => entry.provider === "generic-cli")) {
       const executable = stringSetting(profile.settings?.executable);
       const args = stringArraySetting(profile.settings?.args);
       if (!executable || !args) continue;
@@ -1018,7 +1043,8 @@ export class ControllerService {
       const currentTime = current?.lastActivityAt ?? current?.endedAt ?? current?.startedAt ?? "";
       if (!current || runTime > currentTime) latestRunByTask.set(run.taskId, run);
     }
-    const tasks = this.database.listCanonicalTasks<JsonValue>().map(({ document }) => {
+    const canonicalTasks = this.database.listCanonicalTasks<JsonValue>();
+    const tasks = canonicalTasks.map(({ document, revision }) => {
       const task = document as unknown as Task;
       const run = task.currentRunId ? runsById.get(task.currentRunId) : latestRunByTask.get(task.id);
       return {
@@ -1027,8 +1053,12 @@ export class ControllerService {
         title: task.title,
         state: task.state,
         updatedAt: task.updatedAt,
+        revision,
+        archiveRevision: (this.database.getEntity<JsonValue>("task-archive", task.id) as { revision?: number } | undefined)?.revision ?? 0,
+        ...((this.database.getEntity<JsonValue>("task-archive", task.id) as { archivedAt?: string } | undefined)?.archivedAt ? { archivedAt: (this.database.getEntity<JsonValue>("task-archive", task.id) as { archivedAt: string }).archivedAt } : {}),
+        ...(task.currentRunId ? { currentRunId: task.currentRunId } : run ? { currentRunId: run.id } : {}),
         ...(run ? { profileId: run.profileId } : {}),
-        ...(task.bindings?.length ? { externalRefs: task.bindings.map((binding) => ({ connectorInstanceId: binding.connectorInstanceId, externalId: binding.externalId })) } : {}),
+        ...(task.bindings?.length ? { externalRefs: task.bindings.map((binding) => ({ connectorInstanceId: binding.connectorInstanceId, externalId: binding.externalId, ...(publicWebUrl(binding.externalUrl) ? { externalUrl: publicWebUrl(binding.externalUrl)! } : {}) })) } : {}),
       };
     });
     const runs = storedRuns.map((run) => {
@@ -1042,6 +1072,13 @@ export class ControllerService {
         createdAt,
         updatedAt: run.lastActivityAt ?? run.endedAt ?? createdAt,
         ...(run.lastActivityAt ? { lastActivityAt: run.lastActivityAt } : {}),
+        ...(run.model ? { model: run.model } : {}),
+        ...(run.tokens ? { tokens: run.tokens } : {}),
+        ...(run.tokenScope ? { tokenScope: run.tokenScope } : {}),
+        ...(run.telemetryAt ? { telemetryAt: run.telemetryAt } : {}),
+        ...(run.worktree ? { worktree: run.worktree } : {}),
+        ...(run.branch ? { branch: run.branch } : {}),
+        ...(run.endedAt ? { endedAt: run.endedAt } : {}),
         ...(run.state === "WAITING_USER" ? { waitingReason: run.activitySummary ?? "User input required" } : {}),
         ...(resource?.state ? { resourceState: resource.state } : {}),
         ...(run.activitySummary || run.failureReason || run.resourceBlockReason ? { summary: run.activitySummary ?? run.failureReason ?? run.resourceBlockReason } : {}),
@@ -1071,7 +1108,7 @@ export class ControllerService {
         id: profile.id,
         alias: profile.alias,
         provider: profile.provider,
-        state: this.agentAdapters.has(profile.id) ? "CONFIGURED" : "UNAVAILABLE",
+        state: profile.enabled === false ? "DISABLED" : this.agentAdapters.has(profile.id) ? "CONFIGURED" : "UNAVAILABLE",
         resourceState: resource.evidence.length ? resource.state : this.profileResourceState(profile.id),
         ...(resource.evidence.length ? {
           resourceReason: resource.reason,
@@ -1083,12 +1120,19 @@ export class ControllerService {
         runnerId: profile.runnerId,
       };
     });
-    return this.fleet.rebuild({ tasks, runs, connectors, profiles }, now);
+    const projects = projectViews(canonicalTasks.map(({ document }) => document as unknown as Task), this.database.listEntities<JsonValue>("project") as unknown as Project[], this.configuration.current().config.repositories, (id) => this.database.getTaskContract<JsonValue>(id) as unknown as TaskContract | undefined);
+    return this.fleet.rebuild({ projects, tasks, runs, connectors, profiles }, now);
   }
 
   private async captureProfileResource(profileId: string, adapter: AgentAdapter, sessionId: string): Promise<ResourceSnapshot | undefined> {
     if (!adapter.usage) return undefined;
     const usage = await adapter.usage(sessionId);
+    const reportedTokens = usage.tokens as { input?: unknown; output?: unknown; cachedInput?: unknown } | undefined;
+    if (reportedTokens && Number.isSafeInteger(reportedTokens.input) && Number.isSafeInteger(reportedTokens.output) && Number(reportedTokens.input) >= 0 && Number(reportedTokens.output) >= 0) {
+      const tokens = { input: Number(reportedTokens.input), output: Number(reportedTokens.output), ...(Number.isSafeInteger(reportedTokens.cachedInput) && Number(reportedTokens.cachedInput) >= 0 && Number(reportedTokens.cachedInput) <= Number(reportedTokens.input) ? { cachedInput: Number(reportedTokens.cachedInput) } : {}) };
+      const run = this.database.listEntities<JsonValue>("run").map((value) => value as unknown as Run).find((value) => value.profileId === profileId && value.sessionId === sessionId);
+      if (run) this.database.saveEntity("run-telemetry", run.id, json({ tokens, tokenScope: "latest-turn", telemetryAt: this.now().toISOString() }));
+    }
     const state = typeof usage.state === "string" && RESOURCE_STATES.includes(usage.state as ResourceState)
       ? usage.state as ResourceState
       : undefined;
@@ -1284,6 +1328,8 @@ export class ControllerService {
         return { waiting: true, run, task: this.database.getCanonicalTask<JsonValue>(run.taskId)!.document as unknown as Task, deliveries: [] };
       }
       const resource = await this.captureProfileResource(run.profileId, adapter, run.sessionId);
+      const telemetry = this.database.getEntity<JsonValue>("run-telemetry", run.id) as unknown as Pick<Run, "tokens" | "tokenScope" | "telemetryAt"> | undefined;
+      if (telemetry) Object.assign(run, telemetry);
       if (resource && !["AVAILABLE", "LOW", "UNKNOWN"].includes(resource.state)) {
         const pausedSession = await adapter.status(run.sessionId);
         assertRunTransition(run.state, "RESOURCE_BLOCKED");
@@ -1425,6 +1471,7 @@ export class ControllerService {
     if (body?.profileId && !this.agentAdapters.has(body.profileId)) throw new TaskDispatchError("PROFILE_NOT_FOUND", 404, `Unknown profile ${body.profileId}`);
     const runners = new Map(this.runners.list().map((runner) => [runner.id, runner]));
     const profiles = this.configuration.current().config.agentProfiles.filter((profile) => !body?.profileId || profile.id === body.profileId);
+    if ((this.database.getEntity<JsonValue>("task-archive", taskId) as { archivedAt?: string } | undefined)?.archivedAt) throw new TaskDispatchError("TASK_ARCHIVED", 409, "Restore the task before dispatch");
     const repositoryId = body?.repositoryId ?? contract.delivery.repository;
     const repositoryConfig = this.configuration.current().config.repositories.find((entry) => entry.id === repositoryId);
     if (!repositoryId || !repositoryConfig) throw new TaskDispatchError("REPOSITORY_UNAVAILABLE", 409, "The task repository is not registered");
@@ -1468,9 +1515,12 @@ export class ControllerService {
         workspacePath: workspace.path,
         runId,
         onRunStarting: (run, decision) => {
+          const selectedModel = this.configuration.current().config.agentProfiles.find((profile) => profile.id === run.profileId)?.settings?.model;
+          if (typeof selectedModel === "string") run.model = { id: selectedModel, source: "configuration" };
           run.branch = workspace.branch;
           run.leaseExpiresAt = new Date(this.now().getTime() + 15 * 60_000).toISOString();
           this.database.transaction(() => {
+            if ((this.database.getEntity<JsonValue>("task-archive", taskId) as { archivedAt?: string } | undefined)?.archivedAt) throw new TaskDispatchError("TASK_ARCHIVED", 409, "Restore the task before dispatch");
             const current = this.database.getCanonicalTask<JsonValue>(taskId);
             const currentContract = this.database.getTaskContract<JsonValue>(taskId) as unknown as TaskContract | undefined;
             if (!current || (current.document as unknown as Task).state !== "READY" || currentContract?.revision !== contract.revision) throw new TaskDispatchError("TASK_CHANGED", 409, "Task changed before dispatch reservation");
@@ -1488,6 +1538,8 @@ export class ControllerService {
       if (error instanceof TaskDispatchError || error instanceof ConnectorError) throw error;
       throw new TaskDispatchError("DISPATCH_UNAVAILABLE", 409, error instanceof Error ? error.message : "Dispatch is unavailable");
     }
+    const reserved = this.database.getEntity<JsonValue>("run", dispatched.run.id) as unknown as Run | undefined;
+    if (reserved?.model) dispatched.run.model = reserved.model;
     dispatched.run.branch = workspace.branch;
     if (dispatched.run.failureReason) dispatched.run.failureReason = String(redactValue(dispatched.run.failureReason));
     const result = { run: dispatched.run, routing: { explanation: dispatched.decision.explanation, eligible: dispatched.decision.eligible, rejected: dispatched.decision.rejected } };
@@ -1682,6 +1734,11 @@ export class ControllerService {
         this.leaseAuthority.revoke(run.id, run.leaseId, run.generation, `controlled reroute to ${nextProfileId}`, now);
         this.persistLatestLeaseAudit(run.id);
         const rerouted: Run = { ...run, id: session.runId, runnerId: profile.runnerId, providerId: profile.provider, profileId: nextProfileId, sessionId: session.id, ...(session.providerSessionId ? { providerSessionId: session.providerSessionId } : {}), resumePolicy: session.providerSessionId || nextAdapter.manifest.capabilities.resume ? "same-session" : "controlled-reroute", state: "ACTIVE", attempt: run.attempt + 1, generation: run.generation + 1, leaseId: randomUUID(), leaseExpiresAt: new Date(Date.parse(now) + 15 * 60_000).toISOString(), revokedLeaseIds: [...(run.revokedLeaseIds ?? []), run.leaseId], startedAt: now, lastActivityAt: now, verification: { state: "PENDING", commands: [...contract.verification] } };
+        delete rerouted.model;
+        delete rerouted.tokens;
+        delete rerouted.tokenScope;
+        delete rerouted.telemetryAt;
+        if (typeof profile.settings?.model === "string") rerouted.model = { id: profile.settings.model, source: "configuration" };
         delete rerouted.endedAt;
         delete rerouted.failureReason;
         delete rerouted.resourceBlockReason;
@@ -2293,10 +2350,12 @@ export class ControllerService {
       return reply.redirect(`/config?secureInput=1&principal=${encodeURIComponent(verified.principalId)}`);
     });
 
-    this.app.post<{ Body: { token?: string; code?: string } }>("/auth/session", async (request, reply) => {
+    this.app.post<{ Body: { token?: string; code?: string; username?: string; password?: string } }>("/auth/session", async (request, reply) => {
       const token = typeof request.body?.token === "string" ? request.body.token : undefined;
       const code = typeof request.body?.code === "string" ? request.body.code : undefined;
-      const session = await this.controlAuth.createSession({ ...(token ? { token } : {}), ...(code ? { code } : {}) }, request.ip);
+      const username = typeof request.body?.username === "string" ? request.body.username : undefined;
+      const password = typeof request.body?.password === "string" ? request.body.password : undefined;
+      const session = await this.controlAuth.createSession({ ...(token ? { token } : {}), ...(code ? { code } : {}), ...(username ? { username } : {}), ...(password ? { password } : {}) }, request.ip);
       if (!session) return reply.code(401).send({ code: "AUTH_REJECTED", message: "Login credential is invalid or expired" });
       reply.header("set-cookie", this.controlAuth.sessionCookies(session, request.protocol === "https"));
       return reply.code(201).send({ principal: { id: OWNER_PRINCIPAL_ID, roles: [...OWNER_ROLES] }, csrfToken: session.csrfToken, expiresAt: session.expiresAt });
@@ -2309,6 +2368,12 @@ export class ControllerService {
     this.app.delete("/auth/session", async (request, reply) => {
       this.controlAuth.revokeSession(request.headers.cookie);
       reply.header("set-cookie", this.controlAuth.clearedCookies());
+      return reply.code(204).send();
+    });
+    this.app.post<{ Body: { password?: string } }>("/auth/owner-password", async (request, reply) => {
+      if (!validOwnerPassword(request.body?.password)) return reply.code(400).send({ code: "INVALID_OWNER_PASSWORD", message: "Password must contain 1 to 1024 characters" });
+      await this.secrets.put(OWNER_PASSWORD_REFERENCE, await hashOwnerPassword(request.body.password));
+      this.controlAuth.revokeAllSessions();
       return reply.code(204).send();
     });
     this.app.post("/auth/login-codes", async (_request, reply) => reply.code(201).send(this.issueDashboardLogin()));
@@ -2365,7 +2430,7 @@ export class ControllerService {
           provider: profile.provider,
           alias: profile.alias,
           runnerId: profile.runnerId,
-          state: this.agentAdapters.has(profile.id) ? "CONFIGURED" : "UNAVAILABLE",
+          state: profile.enabled === false ? "DISABLED" : this.agentAdapters.has(profile.id) ? "CONFIGURED" : "UNAVAILABLE",
           resourceState: this.profileResourceState(profile.id),
           capabilities: manifest ? manifestCapabilities(manifest) : [],
         };
@@ -2414,6 +2479,7 @@ export class ControllerService {
       next.agentProfiles.push({
         id: body.id,
         provider: "codex",
+        ...(body.enabled !== undefined ? { enabled: body.enabled } : {}),
         alias: body.alias,
         runnerId: body.runnerId ?? "local",
         settings: {
@@ -2424,7 +2490,7 @@ export class ControllerService {
       });
       const plan = this.configuration.buildPlan(next, "local-web", "web");
       const applied = this.configuration.applyPlan(plan.id, { confirmed: true });
-      return reply.code(201).send({ profile: { id: body.id, provider: "codex", alias: body.alias, runnerId: body.runnerId ?? "local", state: "CONFIGURED" }, revision: applied.revision });
+      return reply.code(201).send({ profile: { id: body.id, provider: "codex", alias: body.alias, runnerId: body.runnerId ?? "local", state: body.enabled === false ? "DISABLED" : "CONFIGURED" }, revision: applied.revision });
     });
     this.app.post<{ Body: QoderProfileBody }>("/api/agents/qoder/discover", async (request, reply) => {
       if (!request.body?.alias) return reply.code(400).send({ code: "QODER_PROFILE_REQUIRED" });
@@ -2489,13 +2555,14 @@ export class ControllerService {
       let settings: Record<string, JsonValue>;
       let credentialRef = body.credentialRef;
       if (isNativeCliProvider(provider)) {
-        if (body.approveTools !== undefined && (provider === "pi" || typeof body.approveTools !== "boolean")) return reply.code(400).send({ code: "INVALID_TOOL_APPROVAL" });
+        if (provider === "zcode" && body.model) return reply.code(400).send({ code: "NATIVE_MODEL_SETTINGS_REQUIRED", message: "Select ZCode models in its native client." });
+        if (body.approveTools !== undefined && (!["opencode", "grok", "antigravity"].includes(provider) || typeof body.approveTools !== "boolean")) return reply.code(400).send({ code: "INVALID_TOOL_APPROVAL" });
         if (credentialRef && provider !== "grok") return reply.code(400).send({ code: "NATIVE_LOGIN_REQUIRED", message: "Use the harness's native provider login for this profile." });
         const discovery = await probeNativeCliProfile(provider, { id: body.id, alias: body.alias, ...(body.executable ? { executable: body.executable } : {}), ...(body.model ? { model: body.model } : {}) });
         if (!discovery.installed || !discovery.compatible) return reply.code(409).send({ code: "CLI_INCOMPATIBLE", discovery });
-        settings = { executable: discovery.executable, ...(body.model ? { model: body.model } : {}), ...(body.approveTools !== undefined ? { approveTools: body.approveTools } : {}) };
+        settings = { executable: discovery.executable, ...(provider === "qoder-cn" && body.configDir ? { configDir: body.configDir } : {}), ...(body.model ? { model: body.model } : {}), ...(body.approveTools !== undefined ? { approveTools: body.approveTools } : {}) };
       } else if (provider === "cursor" || provider === "kiro") {
-        settings = { ...(body.executable ? { executable: body.executable } : {}), ...(body.model ? { model: body.model } : {}) };
+        settings = { ...(body.executable ? { executable: body.executable } : {}), ...(body.model ? { model: body.model } : {}), ...(provider === "cursor" && body.approveTools !== undefined ? { approveTools: body.approveTools } : {}), ...(provider === "cursor" && body.trustWorkspace !== undefined ? { trustWorkspace: body.trustWorkspace } : {}) };
       } else if (provider === "devin") {
         if (!body.organizationId || !credentialRef) return reply.code(400).send({ code: "DEVIN_PROFILE_REQUIRED" });
         settings = { organizationId: body.organizationId, ...(body.apiBase ? { apiBase: body.apiBase } : {}), ...(body.maxSessionAcu ? { maxSessionAcu: body.maxSessionAcu } : {}) };
@@ -2513,10 +2580,20 @@ export class ControllerService {
       const latest = this.configuration.current();
       if (latest.config.agentProfiles.some((profile) => profile.id === body.id)) return reply.code(409).send({ code: "PROFILE_EXISTS" });
       const next = structuredClone(latest.config);
-      next.agentProfiles.push({ id: body.id, provider, alias: body.alias, runnerId: body.runnerId ?? "local", ...(credentialRef ? { credentialRef } : {}), settings });
+      next.agentProfiles.push({ id: body.id, provider, ...(body.enabled !== undefined ? { enabled: body.enabled } : {}), alias: body.alias, runnerId: body.runnerId ?? "local", ...(credentialRef ? { credentialRef } : {}), settings });
       const plan = this.configuration.buildPlan(next, "local-web", "web");
       const applied = this.configuration.applyPlan(plan.id, { confirmed: true });
-      return reply.code(201).send({ profile: { id: body.id, provider, alias: body.alias, runnerId: body.runnerId ?? "local", state: this.agentAdapters.has(body.id) ? "CONFIGURED" : "UNAVAILABLE" }, revision: applied.revision });
+      return reply.code(201).send({ profile: { id: body.id, provider, alias: body.alias, runnerId: body.runnerId ?? "local", state: body.enabled === false ? "DISABLED" : this.agentAdapters.has(body.id) ? "CONFIGURED" : "UNAVAILABLE" }, revision: applied.revision });
+    });
+    this.app.post<{ Params: { id: string }; Body: { enabled: boolean } }>("/api/agents/profiles/:id/enabled", async (request, reply) => {
+      if (typeof request.body?.enabled !== "boolean") return reply.code(400).send({ code: "INVALID_PROFILE_ACTIVATION" });
+      const next = structuredClone(this.configuration.current().config);
+      const profile = next.agentProfiles.find((entry) => entry.id === request.params.id);
+      if (!profile) return reply.code(404).send({ code: "PROFILE_NOT_FOUND" });
+      profile.enabled = request.body.enabled;
+      const plan = this.configuration.buildPlan(next, "local-web", "web");
+      const applied = this.configuration.applyPlan(plan.id, { confirmed: true });
+      return { revision: applied.revision, profile: { id: profile.id, alias: profile.alias, enabled: profile.enabled } };
     });
     this.app.post<{ Params: { id: string } }>("/api/agents/profiles/:id/test", async (request, reply) => {
       const profile = this.configuration.current().config.agentProfiles.find((entry) => entry.id === request.params.id);
@@ -2564,30 +2641,61 @@ export class ControllerService {
       return reply.code(201).send({ session: this.sessionView(session) });
     });
     this.app.get<{ Params: { profileId: string; sessionId: string } }>("/api/agents/profiles/:profileId/sessions/:sessionId", async (request, reply) => {
+      const storedSession = this.database.getEntity<JsonValue>("adapter-session", request.params.sessionId) as unknown as AdapterSession | undefined;
+      if (storedSession?.profileId !== request.params.profileId) return reply.code(404).send({ code: "SESSION_NOT_FOUND" });
       const adapter = this.agentAdapters.get(request.params.profileId);
       if (!adapter) return reply.code(404).send({ code: "PROFILE_NOT_FOUND" });
       return { session: this.sessionView(await adapter.status(request.params.sessionId)) };
     });
-    this.app.post<{ Params: { profileId: string; sessionId: string }; Body: { message?: string } }>("/api/agents/profiles/:profileId/sessions/:sessionId/input", async (request, reply) => {
+    this.app.post<{ Params: { profileId: string; sessionId: string }; Body: { message?: string; authority?: { runId: string; generation: number; leaseId: string; taskRevision: number; lastActivityAt?: string } } }>("/api/agents/profiles/:profileId/sessions/:sessionId/input", async (request, reply) => {
       if (!request.body?.message) return reply.code(400).send({ code: "MESSAGE_REQUIRED" });
+      const storedSession = this.database.getEntity<JsonValue>("adapter-session", request.params.sessionId) as unknown as AdapterSession | undefined;
+      if (storedSession?.profileId !== request.params.profileId) return reply.code(404).send({ code: "SESSION_NOT_FOUND" });
       const adapter = this.agentAdapters.get(request.params.profileId);
       if (!adapter) return reply.code(404).send({ code: "PROFILE_NOT_FOUND" });
-      const event = await adapter.send(request.params.sessionId, request.body.message);
-      const run = this.database.listEntities<JsonValue>("run")
-        .map((value) => value as unknown as Run)
-        .find((entry) => entry.sessionId === request.params.sessionId);
-      if (run?.state === "WAITING_USER") {
-        assertRunTransition(run.state, "ACTIVE");
-        run.state = "ACTIVE";
-        run.lastActivityAt = new Date().toISOString();
-        this.database.saveEntity("run", run.id, json(run));
-        this.fleetEvents.publish("run.changed", run.id, { id: run.id, state: run.state, lastActivityAt: run.lastActivityAt });
-        const current = this.database.getCanonicalTask<JsonValue>(run.taskId);
-        if (current && (current.document as unknown as Task).state === "WAITING_USER") {
-          this.tasks.execute({ id: `run:${run.id}:user-input`, taskId: run.taskId, baseRevision: current.revision, actor: "user", command: { type: "task.transition", state: "RUNNING" } });
+      const run = this.database.listEntities<JsonValue>("run").map((value) => value as unknown as Run).find((entry) => entry.sessionId === request.params.sessionId);
+      const binding = run ? this.runConversation(run) : undefined;
+      const assertAuthority = (): void => {
+        if (!run) return; // Standalone trial sessions have no canonical task authority.
+        const expected = request.body.authority;
+        const current = this.database.getEntity<JsonValue>("run", run.id) as unknown as Run | undefined;
+        const task = this.database.getCanonicalTask<JsonValue>(run.taskId);
+        if (!expected || expected.runId !== run.id || expected.generation !== current?.generation || expected.leaseId !== current?.leaseId || expected.lastActivityAt !== current?.lastActivityAt || expected.taskRevision !== task?.revision || current?.state !== "WAITING_USER" || current.profileId !== request.params.profileId || current.sessionId !== request.params.sessionId || (task?.document as unknown as Task)?.currentRunId !== run.id) throw new ConnectorError("CONFLICT", "Run or intervention authority changed; refresh before replying", { retryable: false, operation: "write" });
+        if (binding) this.assertMessagingInputAuthority(run, binding, binding.revision);
+        else {
+          this.restoreLeaseAuthority(current);
+          try { this.leaseAuthority.fence(current.id, current.leaseId, current.generation, "user-input", this.now().toISOString()); }
+          catch (error) { if (error instanceof LeaseFenceError) throw new ConnectorError("CONFLICT", error.message, { retryable: false, operation: "write" }); throw error; }
+          finally { this.persistLatestLeaseAudit(current.id); }
         }
-      }
-      return { event };
+      };
+      if (this.pendingConsoleInputs.has(request.params.sessionId)) return reply.code(409).send({ code: "INPUT_PENDING" });
+      assertAuthority();
+      this.pendingConsoleInputs.add(request.params.sessionId);
+      try {
+        const event = await adapter.send(request.params.sessionId, request.body.message);
+        try { assertAuthority(); }
+        catch (error) {
+          try { await adapter.cancel(request.params.sessionId); }
+          catch (cleanupError) { this.app.log.warn({ error: redactValue(cleanupError), runId: run?.id }, "stale console input cleanup failed"); }
+          throw error;
+        }
+        if (run) {
+          this.database.transaction(() => {
+            assertAuthority();
+            assertRunTransition(run.state, "ACTIVE");
+            run.state = "ACTIVE";
+            run.lastActivityAt = this.now().toISOString();
+            this.saveAdvancedRun(run, "WAITING_USER");
+            if (binding) this.conversations.resume(binding.id, { expectedRevision: binding.revision, generation: run.generation });
+            const current = this.database.getCanonicalTask<JsonValue>(run.taskId)!;
+            if ((current.document as unknown as Task).state === "WAITING_USER") this.tasks.execute({ id: `run:${run.id}:user-input:${current.revision}`, taskId: run.taskId, baseRevision: current.revision, actor: "user", command: { type: "task.transition", state: "RUNNING" } });
+          });
+          this.attentionNotifications.recover(run.taskId);
+          this.fleetEvents.publish("run.changed", run.id, { id: run.id, state: run.state, lastActivityAt: run.lastActivityAt });
+        }
+        return { event };
+      } finally { this.pendingConsoleInputs.delete(request.params.sessionId); }
     });
 
     this.app.get("/api/connectors", async () => ({ connectors: this.connectors.list().map((adapter) => ({ definition: adapter.definition, instance: adapter.instance })) }));
@@ -2721,6 +2829,26 @@ export class ControllerService {
     });
 
     this.app.get("/api/tasks", async () => ({ tasks: this.database.listCanonicalTasks<JsonValue>() }));
+    this.app.post<{ Params: { id: string }; Body: { archived: boolean; revision: number; archiveRevision: number } }>("/api/tasks/:id/archive", async (request, reply) => {
+      const body = request.body;
+      if (typeof body?.archived !== "boolean" || !Number.isInteger(body.revision) || !Number.isInteger(body.archiveRevision)) return reply.code(400).send({ code: "ARCHIVE_INPUT_REQUIRED" });
+      const outcome = this.database.transaction(() => {
+        const stored = this.database.getCanonicalTask<JsonValue>(request.params.id);
+        if (!stored) return { status: 404, code: "TASK_NOT_FOUND" };
+        const existing = this.database.getEntity<JsonValue>("task-archive", request.params.id) as { revision: number } | undefined;
+        if (stored.revision !== body.revision || (existing?.revision ?? 0) !== body.archiveRevision) return { status: 409, code: "TASK_CHANGED" };
+        const active = this.database.listEntities<JsonValue>("run").some((value) => {
+          const run = value as unknown as Run;
+          return run.taskId === request.params.id && !["COMPLETE", "FAILED", "CANCELLED", "SUPERSEDED"].includes(run.state);
+        });
+        if (body.archived && active) return { status: 409, code: "ACTIVE_RUN_CANNOT_ARCHIVE" };
+        const archive = { taskId: request.params.id, revision: body.archiveRevision + 1, actor: this.principalFor(request).id, updatedAt: this.now().toISOString(), ...(body.archived ? { archivedAt: this.now().toISOString() } : {}) };
+        this.database.saveEntity("task-archive", request.params.id, json(archive));
+        return { status: 200, archive };
+      });
+      if (outcome.status === 200) this.fleetEvents.publish("task.changed", request.params.id, { id: request.params.id });
+      return reply.code(outcome.status).send(outcome);
+    });
     this.app.get<{ Params: { id: string } }>("/api/tasks/:id", async (request, reply) => {
       const task = this.database.getCanonicalTask<JsonValue>(request.params.id);
       if (!task) return reply.code(404).send({ code: "TASK_NOT_FOUND" });
@@ -2949,9 +3077,9 @@ export class ControllerService {
 
     const webRoot = this.options.webRoot ?? resolve(fileURLToPath(new URL("../../web/dist", import.meta.url)));
     if (existsSync(webRoot)) {
-      void this.app.register(fastifyStatic, { root: webRoot, wildcard: false, maxAge: "1h", immutable: true });
+      void this.app.register(fastifyStatic, { root: webRoot, wildcard: false, maxAge: "1h", immutable: true, setHeaders: (response, path) => { if (path.endsWith("index.html")) response.header("Cache-Control", "no-cache"); } });
       this.app.setNotFoundHandler((request, reply) => {
-        if (request.url.startsWith("/api/") || request.url === "/health" || request.url === "/ready") {
+        if (request.url.startsWith("/api/") || request.url.startsWith("/assets/") || request.url === "/health" || request.url === "/ready") {
           return reply.code(404).send({ code: "NOT_FOUND" });
         }
         return reply.header("Cache-Control", "no-cache").sendFile("index.html", { maxAge: 0, immutable: false });

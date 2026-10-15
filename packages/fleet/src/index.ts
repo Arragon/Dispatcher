@@ -3,6 +3,13 @@ export * from "./resource.js";
 export type FleetScope = "fleet" | "profile" | "project" | "task";
 export type AttentionKind = "WAITING_USER" | "WAITING_RESOURCE" | "STALLED" | "FAILED" | "CONNECTOR";
 
+export interface FleetProjectInput {
+  id: string;
+  name: string;
+  repositories: Array<{ id: string; root: string; remote?: string }>;
+  externalRefs: Array<{ connectorInstanceId: string; externalId: string; externalUrl?: string }>;
+}
+
 export interface FleetTaskInput {
   id: string;
   projectId: string;
@@ -10,7 +17,11 @@ export interface FleetTaskInput {
   state: string;
   updatedAt: string;
   profileId?: string;
-  externalRefs?: Array<{ connectorInstanceId: string; externalId: string }>;
+  currentRunId?: string;
+  revision?: number;
+  archivedAt?: string;
+  archiveRevision?: number;
+  externalRefs?: Array<{ connectorInstanceId: string; externalId: string; externalUrl?: string }>;
 }
 
 export interface FleetRunInput {
@@ -24,6 +35,13 @@ export interface FleetRunInput {
   waitingReason?: string;
   resourceState?: string;
   summary?: string;
+  model?: { id: string; source: "configuration" | "runtime" };
+  tokens?: { input: number; output: number; cachedInput?: number };
+  tokenScope?: "latest-turn";
+  worktree?: string;
+  branch?: string;
+  endedAt?: string;
+  telemetryAt?: string;
 }
 
 export interface FleetConnectorInput {
@@ -68,6 +86,7 @@ export interface FleetSnapshot {
   version: 2;
   cursor: number;
   generatedAt: string;
+  projects: FleetProjectInput[];
   tasks: FleetTaskInput[];
   runs: FleetRunInput[];
   connectors: FleetConnectorInput[];
@@ -77,6 +96,7 @@ export interface FleetSnapshot {
 }
 
 export interface FleetSnapshotInput {
+  projects?: readonly FleetProjectInput[];
   tasks: readonly FleetTaskInput[];
   runs: readonly FleetRunInput[];
   connectors: readonly FleetConnectorInput[];
@@ -191,6 +211,7 @@ export class FleetReadModel {
       version: 2,
       cursor: ++this.cursor,
       generatedAt: now.toISOString(),
+      projects: copySorted(input.projects ?? [], (item) => item.id),
       tasks,
       runs,
       connectors,

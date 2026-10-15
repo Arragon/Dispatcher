@@ -1,6 +1,8 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { verifyOwnerPassword } from "./owner-password.js";
 
 export const OWNER_TOKEN_REFERENCE = "secret://controller/owner-token";
+export const OWNER_PASSWORD_REFERENCE = "secret://controller/owner-password";
 export const SESSION_COOKIE = "dispatcher_session";
 export const CSRF_COOKIE = "dispatcher_csrf";
 export const CSRF_HEADER = "x-dispatcher-csrf";
@@ -34,6 +36,7 @@ export interface ControlSession {
 
 export interface ControlAuthOptions {
   resolveOwnerToken: () => Promise<string>;
+  resolveOwnerPasswordHash?: () => Promise<string | undefined>;
   allowedHosts: readonly string[];
   clock?: () => Date;
   sessionTtlMs?: number;
@@ -71,6 +74,10 @@ function hostname(host: string): string {
   if (trimmed.startsWith("[")) return trimmed.slice(1, trimmed.indexOf("]"));
   const colon = trimmed.lastIndexOf(":");
   return colon > 0 && trimmed.indexOf(":") === colon ? trimmed.slice(0, colon) : trimmed;
+}
+
+function isLoopback(ip: string): boolean {
+  return ip === "127.0.0.1" || ip === "::1" || ip === "::ffff:127.0.0.1";
 }
 
 export function parseCookies(value: string | undefined): Map<string, string> {
@@ -163,7 +170,7 @@ export class ControlPlaneAuth {
     return { code, expiresAt: new Date(expiresAt).toISOString() };
   }
 
-  async createSession(credential: { token?: string; code?: string }, ip: string): Promise<ControlSession | undefined> {
+  async createSession(credential: { token?: string; code?: string; username?: string; password?: string }, ip: string): Promise<ControlSession | undefined> {
     const now = this.nowMs();
     let accepted = false;
     if (typeof credential.code === "string" && credential.code) {
@@ -173,6 +180,9 @@ export class ControlPlaneAuth {
       accepted = expiresAt !== undefined && expiresAt > now;
     } else if (typeof credential.token === "string" && credential.token) {
       accepted = await this.matchesOwnerToken(credential.token);
+    } else if (isLoopback(ip) && credential.username === "admin" && typeof credential.password === "string" && this.options.resolveOwnerPasswordHash) {
+      const hash = await this.options.resolveOwnerPasswordHash();
+      accepted = hash ? await verifyOwnerPassword(credential.password, hash) : false;
     }
     if (!accepted) {
       this.recordFailure(ip);

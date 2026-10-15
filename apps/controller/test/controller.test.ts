@@ -399,7 +399,7 @@ describe("ControllerService", () => {
       { taskId: "task-failing", runId: "run-failing", sessionId: failingSession.id as string, workspace: failingWorkspace, verification: ["fail"] },
     ]) {
       service.database.writeCanonicalTask(fixture.taskId, 0, {
-        id: fixture.taskId, projectId: "project", title: fixture.taskId, state: "RUNNING",
+        id: fixture.taskId, projectId: "project", title: fixture.taskId, state: "RUNNING", currentRunId: fixture.runId,
         createdAt: "2026-09-22T00:00:00.000Z", updatedAt: "2026-09-22T00:00:00.000Z",
       });
       service.database.saveTaskContract(fixture.taskId, {
@@ -421,7 +421,7 @@ describe("ControllerService", () => {
     expect((await service.app.inject({ headers: OWNER, 
       method: "POST",
       url: `/api/agents/profiles/atlas/sessions/${waitingSession.id}/input`,
-      payload: { message: "approved" },
+      payload: { message: "approved", authority: { runId: "run-waiting", generation: 1, leaseId: "lease", lastActivityAt: waiting.json().run.lastActivityAt, taskRevision: service.database.getCanonicalTask("task-waiting")!.revision } },
     })).statusCode).toBe(200);
     expect(service.database.getEntity("run", "run-waiting")).toMatchObject({ state: "ACTIVE", sessionId: waitingSession.id });
     expect(service.database.getCanonicalTask("task-waiting")?.document).toMatchObject({ state: "RUNNING" });

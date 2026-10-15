@@ -22,7 +22,8 @@ import {
 } from "../src/index.js";
 
 class FakeCliTurn implements CliTurn {
-  private state: "running" | "completed" = "running";
+  // Headless follow-up contract uses a completed turn; active turns reject SESSION_BUSY.
+  private state: "running" | "completed" = "completed";
   private resultState: CliTurnResult["state"] = "completed";
   async cancel(): Promise<void> { this.state = "completed"; this.resultState = "cancelled"; }
   status(): "running" | "completed" { return this.state; }

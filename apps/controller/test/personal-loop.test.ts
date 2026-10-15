@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AgentAdapter, CodexBackend, CodexTurnResult } from "@dispatcher/adapters";
 import type { DispatcherConfig, SecretMetadata, SecretStore } from "@dispatcher/config";
 import type { Run, Task } from "@dispatcher/domain";
@@ -143,6 +143,62 @@ describe("personal Slack–Linear loop", () => {
     expect(f.starts).toHaveLength(2);
     expect(f.run(restored).state).toBe("WAITING_USER");
     expect(f.slack.some((body) => String(body.text).includes("Resumed run"))).toBe(true);
+  });
+
+  it("rejects archiving during workspace creation before reserving or starting a run", async () => {
+    const f = await setup();
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const create = f.service.workspaces.create.bind(f.service.workspaces);
+    vi.spyOn(f.service.workspaces, "create").mockImplementation(async (input) => { entered.resolve(); await release.promise; return create(input); });
+    const dispatch = f.service.app.inject({ headers: OWNER, method: "POST", url: `/api/tasks/${f.taskId}/dispatch`, payload: {} });
+    const response = dispatch.then((value) => value);
+    await entered.promise;
+    const revision = f.service.database.getCanonicalTask(f.taskId)!.revision;
+    expect((await f.service.app.inject({ headers: OWNER, method: "POST", url: `/api/tasks/${f.taskId}/archive`, payload: { archived: true, revision, archiveRevision: 0 } })).statusCode).toBe(200);
+    release.resolve();
+    expect((await response).statusCode).toBe(409);
+    expect(f.starts).toHaveLength(0);
+    expect(f.service.database.listEntities("run")).toHaveLength(0);
+    expect(f.task().state).toBe("READY");
+  });
+
+  it("fences Web replies before sending and resumes the original waiting conversation", async () => {
+    const f = await waitingFixture();
+    const run = f.run();
+    const url = `/api/agents/profiles/${run.profileId}/sessions/${run.sessionId}/input`;
+    const authority = { runId: run.id, generation: run.generation, leaseId: run.leaseId, lastActivityAt: run.lastActivityAt, taskRevision: f.service.database.getCanonicalTask(f.taskId)!.revision };
+    expect((await f.service.app.inject({headers: OWNER, method:"POST", url, payload:{message:"continue"}})).statusCode).toBe(409);
+    expect((await f.service.app.inject({headers: OWNER, method:"POST", url, payload:{message:"continue",authority:{...authority,generation:0}}})).statusCode).toBe(409);
+    expect(f.starts).toHaveLength(1);
+    f.control.turn = "running";
+    expect((await f.service.app.inject({headers: OWNER, method:"POST", url, payload:{message:"continue",authority}})).statusCode).toBe(200);
+    expect(f.starts).toHaveLength(2);
+    expect(f.run().state).toBe("ACTIVE");
+    expect(f.task().state).toBe("RUNNING");
+    expect(f.service.database.listEntities<JsonValue>("messaging-conversation")[0]).toMatchObject({state:"ACTIVE"});
+    expect((await f.service.app.inject({headers: OWNER, method:"POST", url, payload:{message:"stale",authority}})).statusCode).toBe(409);
+    expect(f.starts).toHaveLength(2);
+  });
+
+  it("rejects duplicate Web input and cancels input whose authority changed during send", async () => {
+    const f = await waitingFixture();
+    const run = f.run();
+    const agent = (f.service as unknown as { agentAdapters: Map<string, AgentAdapter> }).agentAdapters.get("orion")!;
+    const original = agent.send.bind(agent);
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    agent.send = async (...args) => { entered.resolve(); await release.promise; return original(...args); };
+    const request = { headers:OWNER, method:"POST" as const, url:`/api/agents/profiles/${run.profileId}/sessions/${run.sessionId}/input`, payload:{message:"continue",authority:{runId:run.id,generation:run.generation,leaseId:run.leaseId,lastActivityAt:run.lastActivityAt,taskRevision:f.service.database.getCanonicalTask(f.taskId)!.revision}} };
+    const response = f.service.app.inject(request).then((value) => value);
+    await entered.promise;
+    expect((await f.service.app.inject(request)).statusCode).toBe(409);
+    f.service.database.saveEntity("run", run.id, JSON.parse(JSON.stringify({...run,state:"CANCELLED"})) as JsonValue);
+    release.resolve();
+    expect((await response).statusCode).toBe(409);
+    expect(f.run().state).toBe("CANCELLED");
+    expect(f.task().state).toBe("WAITING_USER");
+    expect(f.control.cancellations).toBe(1);
   });
 
   it("projects the second WAITING_USER episode independently of the first", async () => {

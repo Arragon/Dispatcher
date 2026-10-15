@@ -32,6 +32,7 @@ export interface CodexDiscoveryResult {
 
 export type NormalizedCodexEvent =
   | { type: "activity"; summary: string }
+  | { type: "usage"; summary: string; tokens: { input: number; output: number; cachedInput?: number } }
   | { type: "waiting"; reason: string }
   | { type: "resource"; state: "RATE_LIMITED" | "QUOTA_EXHAUSTED" | "AUTH_ERROR" | "PROVIDER_DOWN" | "UNKNOWN"; reason: string; resetsAt?: string; source: "event" | "error"; confidence: "high" | "medium" | "low" }
   | { type: "failure"; reason: string };
@@ -50,6 +51,7 @@ export const codexManifest: AdapterManifest = {
       alias: { type: "string", minLength: 1 },
       codexHome: { type: "string", minLength: 1 },
       runnerId: { type: "string", minLength: 1, default: "local" },
+      enabled: { type: "boolean", default: true, title: "Enable task dispatch" },
       executable: { type: "string", minLength: 1, default: "codex" },
       model: { type: "string", minLength: 1 },
     },
@@ -92,7 +94,7 @@ export class CodexCliBackend implements CodexBackend {
       cwd: input.workspacePath,
       shell: false,
       stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, CODEX_HOME: input.codexHome },
+      env: { ...process.env, PWD: input.workspacePath, CODEX_HOME: input.codexHome },
     }));
   }
 }
@@ -158,6 +160,10 @@ class SpawnedCodexTurn implements CodexTurn {
 export class CodexAdapter implements AgentAdapter {
   readonly manifest = validateManifest(codexManifest);
   private readonly turns = new Map<string, CodexTurn>();
+  private pending = 0;
+  private readonly sending = new Set<string>();
+
+  hasActiveOperations(): boolean { return this.pending > 0 || this.sending.size > 0 || [...this.turns.values()].some((turn) => turn.status() === "running"); }
 
   constructor(
     readonly profile: CodexProfileConfig,
@@ -190,7 +196,12 @@ export class CodexAdapter implements AgentAdapter {
   }
 
   async send(sessionId: string, message: string): Promise<AdapterEvent> {
+    if (this.require(sessionId).state === "CANCELLED") throw new AdapterContractError("SESSION_CANCELLED", "A cancelled Codex session cannot accept input");
+    if (this.sending.has(sessionId) || (this.require(sessionId).state === "RUNNING" && this.turns.get(sessionId)?.status() === "running")) throw new AdapterContractError("SESSION_BUSY", "Wait for the active Codex turn before sending another message");
+    this.sending.add(sessionId);
+    try {
     const session = await this.finishCurrentTurn(sessionId);
+    if (this.require(sessionId).state === "CANCELLED") throw new AdapterContractError("SESSION_CANCELLED", "A cancelled Codex session cannot accept input");
     if (!session.providerSessionId) throw new AdapterContractError("SESSION_NOT_RESUMABLE", "Codex did not return a provider session id");
     const turn = this.backend.start({
       executable: this.profile.executable ?? "codex",
@@ -203,6 +214,7 @@ export class CodexAdapter implements AgentAdapter {
     this.turns.set(sessionId, turn);
     this.store.save({ ...session, state: "RUNNING", updatedAt: new Date().toISOString() });
     return { type: "session.message", sessionId, occurredAt: new Date().toISOString(), data: { acceptedCharacters: message.length } };
+    } finally { this.sending.delete(sessionId); }
   }
   async pause(): Promise<AdapterSession> { throw new AdapterContractError("UNSUPPORTED_CAPABILITY", "Codex exec does not support pausing a live turn"); }
   async resume(sessionId: string): Promise<AdapterSession> {
@@ -210,9 +222,12 @@ export class CodexAdapter implements AgentAdapter {
     return this.status(sessionId);
   }
   async cancel(sessionId: string): Promise<AdapterSession> {
-    const turn = this.turns.get(sessionId);
-    if (turn) await turn.cancel();
-    return this.update(sessionId, { state: "CANCELLED" });
+    this.pending++;
+    try {
+      const turn = this.turns.get(sessionId);
+      if (turn) await turn.cancel();
+      return this.update(sessionId, { state: "CANCELLED" });
+    } finally { this.pending--; }
   }
   async status(sessionId: string): Promise<AdapterSession> {
     const session = this.require(sessionId);
@@ -226,9 +241,11 @@ export class CodexAdapter implements AgentAdapter {
     return { sessionId, state: session.state, summary: result?.summary ?? `Codex session ${session.state.toLowerCase()}`, artifacts: [] };
   }
   async usage(sessionId: string): Promise<Record<string, unknown>> {
+    this.require(sessionId);
     const result = await this.turns.get(sessionId)?.result();
     const resource = result?.events.filter((event) => event.type === "resource").at(-1);
-    return resource ?? { state: "UNKNOWN", source: "event", confidence: "low" };
+    const tokens = result?.events.findLast((event) => event.type === "usage")?.tokens;
+    return { ...(resource ?? { state: "UNKNOWN", source: "event", confidence: "low" }), ...(tokens ? { tokens, tokenScope: "latest-turn" } : {}) };
   }
   async diagnostics(sessionId: string): Promise<Record<string, unknown>> {
     const session = this.require(sessionId);
@@ -238,8 +255,9 @@ export class CodexAdapter implements AgentAdapter {
   private async finishCurrentTurn(sessionId: string): Promise<AdapterSession> {
     const session = this.require(sessionId);
     const turn = this.turns.get(sessionId);
-    if (!turn) return structuredClone(session);
+    if (!turn || session.state === "CANCELLED") return structuredClone(session);
     const result = await turn.result();
+    if (this.require(sessionId).state === "CANCELLED") return structuredClone(this.require(sessionId));
     return this.update(sessionId, {
       state: result.state === "completed" ? "COMPLETED" : result.state === "cancelled" ? "CANCELLED" : result.state === "waiting" ? "PAUSED" : "FAILED",
       ...(result.providerSessionId ? { providerSessionId: result.providerSessionId } : {}),
@@ -247,7 +265,7 @@ export class CodexAdapter implements AgentAdapter {
   }
   private require(id: string): AdapterSession {
     const session = this.store.load(id);
-    if (!session) throw new AdapterContractError("SESSION_NOT_FOUND", `Unknown session ${id}`);
+    if (!session || session.profileId !== this.profile.id) throw new AdapterContractError("SESSION_NOT_FOUND", `Unknown session ${id}`);
     return session;
   }
   private update(id: string, changes: Partial<AdapterSession>): AdapterSession {
@@ -278,7 +296,13 @@ export function normalizeCodexEvent(event: Record<string, unknown>): NormalizedC
     const summary = item?.type === "agent_message" && typeof item.text === "string" ? item.text.slice(0, 2_000) : type;
     return { type: "activity", summary };
   }
-  if (type === "turn.completed") return { type: "activity", summary: type };
+  if (type === "turn.completed") {
+    const usage = event.usage as Record<string, unknown> | undefined;
+    if (usage && Number.isSafeInteger(usage.input_tokens) && Number.isSafeInteger(usage.output_tokens) && Number(usage.input_tokens) >= 0 && Number(usage.output_tokens) >= 0) {
+      return { type: "usage", summary: type, tokens: { input: Number(usage.input_tokens), output: Number(usage.output_tokens), ...(Number.isSafeInteger(usage.cached_input_tokens) && Number(usage.cached_input_tokens) >= 0 && Number(usage.cached_input_tokens) <= Number(usage.input_tokens) ? { cachedInput: Number(usage.cached_input_tokens) } : {}) } };
+    }
+    return { type: "activity", summary: type };
+  }
   if (type.includes("approval") || type.includes("input_required")) return { type: "waiting", reason: type };
   if (type.includes("rate_limit") || type.includes("quota")) {
     const exhausted = type.includes("quota") || event.remaining === 0;

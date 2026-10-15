@@ -58,7 +58,7 @@ export async function currentSession(): Promise<SessionState | undefined> {
   return response.ok ? (await response.json()) as SessionState : undefined;
 }
 
-export async function signIn(credential: { token: string } | { code: string }): Promise<void> {
+export async function signIn(credential: { token: string } | { code: string } | { username: string; password: string }): Promise<void> {
   await api("/auth/session", { method: "POST", body: JSON.stringify(credential) });
 }
 

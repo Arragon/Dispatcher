@@ -6,6 +6,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { SecretAccessContext, SecretMetadata, SecretStore } from "@dispatcher/config";
 import type { JsonValue } from "@dispatcher/persistence";
 import { ControllerService, type BackgroundWorkerOptions } from "../src/service.js";
+import { ControlPlaneAuth } from "../src/control-auth.js";
+import { hashOwnerPassword } from "../src/owner-password.js";
 
 const TOKEN = "personal-owner-token";
 const OWNER = { authorization: `Bearer ${TOKEN}` };
@@ -46,6 +48,36 @@ function cookieHeader(setCookie: string | string[] | undefined): string {
 }
 
 describe("control-plane authentication", () => {
+  it("limits password login to the local machine", async () => {
+    const hash = await hashOwnerPassword("example");
+    const auth = new ControlPlaneAuth({ resolveOwnerToken: async () => TOKEN, resolveOwnerPasswordHash: async () => hash, allowedHosts: ["localhost"] });
+    expect(await auth.createSession({ username: "admin", password: "example" }, "192.0.2.10")).toBeUndefined();
+    expect(await auth.createSession({ username: "admin", password: "example" }, "127.0.0.1")).toBeDefined();
+  });
+  it("supports a locally configured admin password without exposing it or replacing API tokens", async () => {
+    const secrets = new Secrets();
+    const service = track(new ControllerService({ ownerToken: TOKEN, dataDirectory: dataDirectory(), secretStore: secrets }));
+    await service.start({ listen: false });
+    expect((await service.app.inject({ method: "POST", url: "/auth/session", payload: { username: "admin", password: "example" } })).statusCode).toBe(401);
+    expect((await service.app.inject({ method: "POST", url: "/auth/owner-password", payload: { password: "example" } })).statusCode).toBe(401);
+    const saved = await service.app.inject({ method: "POST", url: "/auth/owner-password", headers: OWNER, payload: { password: "example" } });
+    expect(saved.statusCode).toBe(204);
+    expect(secrets.values.get("secret://controller/owner-password")).not.toContain("example");
+    expect((await service.app.inject({ method: "POST", url: "/auth/session", payload: { username: "owner", password: "example" } })).statusCode).toBe(401);
+    expect((await service.app.inject({ method: "POST", url: "/auth/session", payload: { username: "admin", password: "wrong" } })).statusCode).toBe(401);
+    const signedIn = await service.app.inject({ method: "POST", url: "/auth/session", payload: { username: "admin", password: "example" } });
+    expect(signedIn.statusCode).toBe(201);
+    expect(String(signedIn.headers["set-cookie"])).toContain("HttpOnly");
+    expect(signedIn.body).not.toContain("example");
+    const cookie = cookieHeader(signedIn.headers["set-cookie"]);
+    expect((await service.app.inject({ method: "GET", url: "/auth/session", headers: { cookie } })).statusCode).toBe(200);
+    expect((await service.app.inject({ method: "POST", url: "/auth/owner-password", headers: { cookie }, payload: { password: "changed" } })).statusCode).toBe(403);
+    expect((await service.app.inject({ method: "POST", url: "/auth/owner-password", headers: { cookie, "x-dispatcher-csrf": signedIn.json().csrfToken }, payload: { password: "changed" } })).statusCode).toBe(204);
+    expect((await service.app.inject({ method: "GET", url: "/auth/session", headers: { cookie } })).statusCode).toBe(401);
+    expect((await service.app.inject({ method: "POST", url: "/auth/session", payload: { username: "admin", password: "example" } })).statusCode).toBe(401);
+    expect((await service.app.inject({ method: "POST", url: "/auth/session", payload: { username: "admin", password: "changed" } })).statusCode).toBe(201);
+    expect((await service.app.inject({ method: "POST", url: "/auth/session", payload: { token: TOKEN } })).statusCode).toBe(201);
+  });
   it("rejects unauthenticated control requests and ignores client-supplied identity", async () => {
     const service = track(new ControllerService({ ownerToken: TOKEN, dataDirectory: dataDirectory(), secretStore: new Secrets() }));
     await service.start({ listen: false });

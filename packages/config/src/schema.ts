@@ -28,6 +28,7 @@ export interface ConnectorInstanceConfig {
 }
 
 export interface AgentProfileConfig {
+  enabled?: boolean;
   id: string;
   provider: string;
   alias: string;
@@ -296,6 +297,7 @@ export const dispatcherConfigSchema = {
           provider: { type: "string", minLength: 1 },
           alias: { type: "string", minLength: 1 },
           runnerId: { type: "string", minLength: 1 },
+          enabled: { type: "boolean" },
           credentialRef: integrationSchema.properties.credentialRef,
           settings: { type: "object", additionalProperties: true },
         },
@@ -431,13 +433,15 @@ export function validateConfig(input: unknown): DispatcherConfig {
     if (profile.provider === "codex" && (typeof profile.settings?.codexHome !== "string" || !profile.settings.codexHome)) {
       throw new ConfigValidationError([`/agentProfiles/${profile.id}/settings/codexHome is required for Codex`]);
     }
-    if (["opencode", "grok", "pi"].includes(profile.provider) && profile.settings?.approveTools !== undefined
-      && (profile.provider === "pi" || typeof profile.settings.approveTools !== "boolean")) {
-      throw new ConfigValidationError([`/agentProfiles/${profile.id}/settings/approveTools must be boolean and is supported only by OpenCode or Grok`]);
+    if (profile.settings?.trustWorkspace !== undefined && (profile.provider !== "cursor" || typeof profile.settings.trustWorkspace !== "boolean")) throw new ConfigValidationError([`/agentProfiles/${profile.id}/settings/trustWorkspace must be a Cursor boolean`]);
+    if (["cursor", "opencode", "grok", "pi", "antigravity", "zcode", "workbuddy-cli", "qoder-cn"].includes(profile.provider) && profile.settings?.approveTools !== undefined
+      && (!["cursor", "opencode", "grok", "antigravity"].includes(profile.provider) || typeof profile.settings.approveTools !== "boolean")) {
+      throw new ConfigValidationError([`/agentProfiles/${profile.id}/settings/approveTools must be boolean and is supported only by Cursor, OpenCode, Grok or Antigravity`]);
     }
-    if ((profile.provider === "opencode" || profile.provider === "pi") && profile.credentialRef) {
+    if (["opencode", "pi", "antigravity", "zcode", "workbuddy-cli", "qoder-cn"].includes(profile.provider) && profile.credentialRef) {
       throw new ConfigValidationError([`/agentProfiles/${profile.id} uses native login; credentialRef is not supported`]);
     }
+    if (profile.provider === "zcode" && profile.settings?.model !== undefined) throw new ConfigValidationError([`/agentProfiles/${profile.id} selects its model in the native ZCode client`]);
     if (profile.credentialRef && !profile.credentialRef.startsWith(`secret://${profile.provider}/`)) {
       throw new ConfigValidationError([`/agentProfiles/${profile.id}/credentialRef must use the ${profile.provider} secret namespace`]);
     }
