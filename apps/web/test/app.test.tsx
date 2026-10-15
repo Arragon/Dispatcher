@@ -1,12 +1,17 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { Navigation, SecureInput } from "../src/App.js";
+import { AuthGate, Navigation, SecureInput } from "../src/App.js";
 import SettingsPage from "../src/SettingsPage.js";
 import AgentsPage from "../src/AgentsPage.js";
+
+beforeEach(() => {
+  HTMLDialogElement.prototype.showModal = function () { this.setAttribute("open", ""); };
+  HTMLDialogElement.prototype.close = function () { this.removeAttribute("open"); };
+});
 
 afterEach(() => {
   cleanup();
@@ -14,6 +19,19 @@ afterEach(() => {
 });
 
 describe("Dashboard shell", () => {
+  it("signs in with username and password without exposing the owner token", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      if (input === "/auth/session" && !init) return new Response(null, { status: 401 });
+      if (input === "/auth/session" && init?.method === "POST") return new Response(JSON.stringify({ principal: { id: "owner" } }), { status: 201 });
+      return new Response(null, { status: 404 });
+    });
+    render(<AuthGate><div>已进入控制台</div></AuthGate>);
+    expect(await screen.findByRole("heading", { name: "登录 Agent Dispatcher" })).toBeTruthy();
+    await userEvent.type(screen.getByLabelText("密码"), "example");
+    await userEvent.click(screen.getAllByRole("button", { name: "登录" })[0]!);
+    expect(await screen.findByText("已进入控制台")).toBeTruthy();
+    expect(fetchMock.mock.calls).toContainEqual(["/auth/session", expect.objectContaining({ method: "POST", body: JSON.stringify({ username: "admin", password: "example" }) })]);
+  });
   it("distinguishes installed harnesses from verified authentication", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       if (input === "/api/adapters/manifests") return new Response(JSON.stringify({ manifests: [{ id: "opencode", displayName: "OpenCode", platforms: ["darwin"], configSchema: { type: "object", properties: {} }, uiSchema: {}, secretFields: [], backends: [], capabilities: {} }] }));
@@ -23,7 +41,8 @@ describe("Dashboard shell", () => {
     });
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(<QueryClientProvider client={client}><AgentsPage /></QueryClientProvider>);
-    await userEvent.click(await screen.findByRole("button", { name: "Scan & test health" }));
+    await userEvent.click((await screen.findAllByRole("button", { name: "添加账号" }))[0]!);
+    await userEvent.click(await screen.findByRole("button", { name: "扫描并检查" }));
     expect(await screen.findByText(/Authentication remains unverified/)).toBeTruthy();
     expect(screen.queryByText(/health check passed/)).toBeNull();
   });
@@ -37,13 +56,14 @@ describe("Dashboard shell", () => {
     render(<QueryClientProvider client={client}><AgentsPage /></QueryClientProvider>);
     expect(await screen.findByText("kite")).toBeTruthy();
     expect(screen.queryByRole("option", { name: "kite (codex)" })).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "kite 详情" }));
     await userEvent.click(screen.getByRole("button", { name: "Enable dispatch for kite" }));
     expect(fetchMock.mock.calls).toContainEqual(["/api/agents/profiles/kite/enabled", expect.objectContaining({ method: "POST", body: JSON.stringify({ enabled: true }) })]);
   });
   it("exposes every M1 navigation surface", () => {
     render(<MemoryRouter><Navigation /></MemoryRouter>);
     expect(screen.getByRole("navigation", { name: "Main navigation" })).toBeTruthy();
-    for (const label of ["Overview / Fleet", "Tasks & Runs", "Runners", "Agents & Profiles", "Internal LLM", "Integrations", "Policies", "Logs & Diagnostics", "Settings"]) {
+    for (const label of ["总览", "任务与运行", "运行设备", "Agent 账号", "内部模型", "集成", "策略", "诊断", "设置"]) {
       expect(screen.getByRole("link", { name: label })).toBeTruthy();
     }
   });
@@ -98,7 +118,7 @@ describe("Dashboard shell", () => {
     });
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(<QueryClientProvider client={client}><SettingsPage /></QueryClientProvider>);
-    await userEvent.click(await screen.findByRole("button", { name: "Build configuration plan" }));
+    await userEvent.click(await screen.findByRole("button", { name: "预览配置变更" }));
     expect(await screen.findByText("Configuration is already current.")).toBeTruthy();
     expect(fetchMock).toHaveBeenCalledWith("/api/config/plans", expect.objectContaining({ method: "POST" }));
   });

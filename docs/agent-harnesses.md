@@ -222,8 +222,22 @@ Real local invocations used disposable directories and literal marker files:
   creation and exact-session edit passed content verification. The child must
   receive its worktree as both `cwd` and `PWD`; inheriting Controller's PWD
   caused this CLI to write in the Controller directory during the first smoke.
-- pi 0.99.2's default invocation lacked model credentials. Installation/native
-  protocol is verified; a successful model/business run requires native login.
+- pi 0.99.2 completed file creation and exact-session editing with
+  `openrouter/openai/gpt-4o-mini`. Its native `models.json` command credential
+  resolves the active OpenRouter key through OpenCode's official `auth export`
+  at request time; no key is copied into Dispatcher or pi's auth store.
+- Antigravity 1.2.14 completed file creation and exact-session editing after
+  the owner explicitly authorized `approveTools: true`. The native flag
+  automatically approves tools; it does not provide worktree confinement.
+- WorkBuddy's bundled headless entry and complete same-version native login
+  entry both still rejected execution with `Authentication required` after
+  owner-confirmed browser login. The native log also reported an
+  `AtRestEncryption category=missing-key` read warning. Keep dispatch disabled
+  until native credential access and actual execution pass.
+- ZCode's personal default selection is `account:zai-individual-coding-plan` /
+  `GLM-5.3-Flash`. Headless execution still failed with nested
+  `CONFIGURATION_ERROR: Select a model before continuing`; saving the selection
+  alone does not prove the native CLI account/model registry is ready.
 
 CLI cancellation is tested against real local child processes. These tests do
 not establish provider session reattachment after restart or remote Windows

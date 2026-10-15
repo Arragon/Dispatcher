@@ -407,3 +407,29 @@ attention-only and cooldown-deduplicated.
   process arguments.
 - Do not implement a later provider integration inside Controller or Runner to save a
   package boundary.
+
+## Console task views and execution evidence
+
+The authenticated Fleet snapshot includes project presentation metadata derived
+from canonical projects, task platform extensions and repositories explicitly
+referenced by task contracts. Project identifiers never imply repository
+identifiers. The Web project and account views group the same complete snapshot;
+currentRunId remains authoritative, including when its execution is missing.
+Run model selection is captured at dispatch/reroute rather than read from mutable
+profile settings. Configuration selection and runtime evidence stay distinct.
+Codex turn token evidence uses documented structured output, persists against
+its Run, and is labelled latest-turn rather than cumulative or account quota.
+
+Local task archive metadata is an additive `task-archive` entity keyed by task ID.
+It retains the canonical task and all execution/delivery evidence and does not
+change or project the task's status to an external platform. Archive/restore
+checks task and archive revisions in a transaction; archive is rejected while
+any attempt is unfinished, and dispatch is rejected until restore. This does
+not extend Controller Run/inbox exclusion to distributed CAS or multi-controller
+scheduling. Light/dark theme is a browser preference, not a ConfigPlan change.
+
+Web replies to canonical runs require the displayed task revision and waiting
+activity timestamp together with run/generation/lease identity. Controller
+checks this authority before and after adapter input and cancels stale input;
+trial sessions retain their separate input contract. Dispatch rechecks archive
+metadata inside the reservation transaction after workspace creation.

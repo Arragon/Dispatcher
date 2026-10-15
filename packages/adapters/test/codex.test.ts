@@ -22,6 +22,15 @@ describe("Codex adapter", () => {
     expect(JSON.stringify(await adapter.diagnostics(session.id))).not.toContain("/profiles/orion");
   });
 
+  it("normalizes documented turn tokens without turning them into account quota", async () => {
+    const event = normalizeCodexEvent({ type: "turn.completed", usage: { input_tokens: 100, cached_input_tokens: 70, output_tokens: 10 } });
+    expect(event).toMatchObject({ type: "usage", tokens: { input: 100, cachedInput: 70, output: 10 } });
+    expect(normalizeCodexEvent({ type: "turn.completed", usage: { input_tokens: -2, output_tokens: "10" } })).toEqual({ type: "activity", summary: "turn.completed" });
+    const adapter = new CodexAdapter({id: "ronna", alias: "ronna", codexHome: "/private/home"}, { start: () => ({ cancel: async () => undefined, status: () => "completed", result: async () => ({ state: "completed", summary: "done", events: [event!] }) }) });
+    const session = await adapter.start({runId: "r", workspacePath: "/worktree"});
+    expect(await adapter.usage(session.id)).toMatchObject({ state: "UNKNOWN", tokens: {input: 100, output: 10, cachedInput: 70}, tokenScope: "latest-turn" });
+  });
+
   it("normalizes quota as a recoverable resource condition", () => {
     expect(normalizeCodexEvent({ type: "item.completed", item: { type: "agent_message", text: "implemented" } })).toEqual({ type: "activity", summary: "implemented" });
     expect(normalizeCodexEvent({ type: "quota.exhausted", resets_at: "2026-09-23T00:00:00.000Z" })).toMatchObject({ type: "resource", state: "QUOTA_EXHAUSTED", confidence: "high" });
@@ -86,4 +95,15 @@ describe("Codex adapter", () => {
     expect((await adapter.status(session.id)).state).toBe("COMPLETED");
     expect(starts).toEqual([{ prompt: "start" }, { providerSessionId: "thread-waiting", prompt: "approved" }]);
   });
+});
+
+it("does not restart a cancelled session even when the old turn completed", async () => {
+  let starts = 0;
+  const adapter = new CodexAdapter({id:"p",alias:"P",codexHome:"/profiles/p"},{start: () => { starts++; return {cancel:async()=>undefined,status:()=>"completed",result:async()=>({state:"completed",summary:"done",providerSessionId:"thread",events:[]})}; }});
+  const session = await adapter.start({runId:"r",workspacePath:"/workspace"});
+  await adapter.status(session.id);
+  await adapter.cancel(session.id);
+  await expect(adapter.send(session.id,"stale")).rejects.toMatchObject({code:"SESSION_CANCELLED"});
+  expect((await adapter.status(session.id)).state).toBe("CANCELLED");
+  expect(starts).toBe(1);
 });

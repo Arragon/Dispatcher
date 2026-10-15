@@ -264,6 +264,11 @@ export interface Run {
   resourceBlockReason?: string;
   recoveryReason?: string;
   requiredCapabilities?: string[];
+  /** Selection captured at dispatch, independent of later profile edits. */
+  model?: { id: string; source: "configuration" | "runtime" };
+  tokens?: { input: number; output: number; cachedInput?: number };
+  tokenScope?: "latest-turn";
+  telemetryAt?: IsoDateTime;
   prUrl?: string;
   verification: VerificationEvidence;
 }

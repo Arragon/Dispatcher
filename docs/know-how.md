@@ -20,6 +20,10 @@
 - Secret values never enter the canonical configuration document. Persist only
   opaque `secret://namespace/name` references. Secure UI inputs must remain
   outside RJSF form state.
+- Local Dashboard password login uses the fixed `admin` username only over the
+  loopback interface. Store the salted scrypt hash in SecretStore, not canonical
+  config; changing it revokes browser sessions. One-time links and the owner
+  token remain recovery and API paths.
 - Enabled integrations must use their own namespace (`secret://linear/...`,
   `secret://github/...`, or `secret://slack/...`) and the referenced item must
   exist before a ConfigPlan can apply. Secret resolution additionally checks
@@ -261,6 +265,12 @@
   HTTP 401 is a credential-read/refresh gate, not evidence that a Dispatcher
   resume parser failed. Do not recover by copying credentials or extracting
   desktop encryption keys.
+- pi can reuse the active OpenCode OpenRouter credential without storing a
+  second raw key: its native `models.json` accepts an `apiKey: "!command"`
+  resolver. Use OpenCode's official `auth export openrouter`, select only the
+  active key credential in a private helper, and pipe its output directly to
+  pi. Never print the export or resolver output. Model defaults remain native
+  pi settings; Dispatcher selects the explicit `provider/model` per profile.
 - ZCode's bundled CLI needs both `ZCODE_BUILTIN_PROVIDER_CONFIG_FILE` and
   `ZCODE_PERSONAL_PROVIDER_CONFIG_FILE` to reuse its native runtime config.
   Setting only the bundled-provider fallback variable did not fix packaging
@@ -271,6 +281,12 @@
   Provider credentials do not imply a headless model selection: a missing
   personal `defaultModelSelection` caused `Model creation failed`, whose nested
   CLI log error was `CONFIGURATION_ERROR: Select a model before continuing`.
+  Persist selection inside `provider_config.json.config`, not its root.
+  Selection also requires a usable native account/model registry; the same
+  error can remain after saving a valid catalog model. The standalone CLI's
+  credential resolver requires its native coding-plan account identity entry
+  as well as an account key. Desktop OAuth presence alone is insufficient;
+  use native CLI authorization to establish those entries, not credential copy.
   The desktop-bundled 0.16.9 CLI also lacked `@zcode/tui`; do not recommend its
   interactive `/model` menu without verifying that package is present.
 - Shared session persistence must validate profile ownership before status,
@@ -289,3 +305,24 @@
   directory differs from invoking the built CLI directly at repository root.
   Pass an explicit `--data-dir` when restarting an existing instance; otherwise
   it opens a separate empty configuration, rather than losing saved profiles.
+
+- Console grouping must use a coherent full Fleet snapshot, never a first-page
+  task/run sample. Keep `currentRunId` even if the Run is missing so a historical
+  attempt cannot silently become current. Completing or failing a task does not
+  archive it; archive is explicit local metadata with a reversible restore.
+- Capture selected model at dispatch and reset model/token evidence on reroute.
+  A configured model is not runtime confirmation. Codex `turn.completed.usage`
+  reports the latest turn; cached input is a subset of input, not an extra token
+  charge. Account quota, token count, and currency are separate measurements.
+- Sectioned settings must merge into the complete draft, keep hidden sections,
+  avoid injecting RJSF defaults into untouched data, and invalidate a ConfigPlan
+  after any edit. Keep dirty drafts across query refreshes; apply the reviewed
+  plan ID and preserve the server's revision/confirmation checks.
+
+- A Web decision answer belongs to the displayed waiting episode. Do not fetch
+  newer revisions and silently attach an old answer to them. Reset the input on
+  episode changes and fence current task/run/lease before and after adapter send.
+
+- Serve the HTML entry with no-cache; only hashed assets may be immutable.
+  Missing asset paths must return 404 rather than the SPA HTML fallback.
+  After rebuilding production assets, restart the static-file registration.

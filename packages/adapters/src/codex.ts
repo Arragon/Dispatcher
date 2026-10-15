@@ -32,6 +32,7 @@ export interface CodexDiscoveryResult {
 
 export type NormalizedCodexEvent =
   | { type: "activity"; summary: string }
+  | { type: "usage"; summary: string; tokens: { input: number; output: number; cachedInput?: number } }
   | { type: "waiting"; reason: string }
   | { type: "resource"; state: "RATE_LIMITED" | "QUOTA_EXHAUSTED" | "AUTH_ERROR" | "PROVIDER_DOWN" | "UNKNOWN"; reason: string; resetsAt?: string; source: "event" | "error"; confidence: "high" | "medium" | "low" }
   | { type: "failure"; reason: string };
@@ -195,10 +196,12 @@ export class CodexAdapter implements AgentAdapter {
   }
 
   async send(sessionId: string, message: string): Promise<AdapterEvent> {
+    if (this.require(sessionId).state === "CANCELLED") throw new AdapterContractError("SESSION_CANCELLED", "A cancelled Codex session cannot accept input");
     if (this.sending.has(sessionId) || (this.require(sessionId).state === "RUNNING" && this.turns.get(sessionId)?.status() === "running")) throw new AdapterContractError("SESSION_BUSY", "Wait for the active Codex turn before sending another message");
     this.sending.add(sessionId);
     try {
     const session = await this.finishCurrentTurn(sessionId);
+    if (this.require(sessionId).state === "CANCELLED") throw new AdapterContractError("SESSION_CANCELLED", "A cancelled Codex session cannot accept input");
     if (!session.providerSessionId) throw new AdapterContractError("SESSION_NOT_RESUMABLE", "Codex did not return a provider session id");
     const turn = this.backend.start({
       executable: this.profile.executable ?? "codex",
@@ -241,7 +244,8 @@ export class CodexAdapter implements AgentAdapter {
     this.require(sessionId);
     const result = await this.turns.get(sessionId)?.result();
     const resource = result?.events.filter((event) => event.type === "resource").at(-1);
-    return resource ?? { state: "UNKNOWN", source: "event", confidence: "low" };
+    const tokens = result?.events.findLast((event) => event.type === "usage")?.tokens;
+    return { ...(resource ?? { state: "UNKNOWN", source: "event", confidence: "low" }), ...(tokens ? { tokens, tokenScope: "latest-turn" } : {}) };
   }
   async diagnostics(sessionId: string): Promise<Record<string, unknown>> {
     const session = this.require(sessionId);
@@ -251,8 +255,9 @@ export class CodexAdapter implements AgentAdapter {
   private async finishCurrentTurn(sessionId: string): Promise<AdapterSession> {
     const session = this.require(sessionId);
     const turn = this.turns.get(sessionId);
-    if (!turn) return structuredClone(session);
+    if (!turn || session.state === "CANCELLED") return structuredClone(session);
     const result = await turn.result();
+    if (this.require(sessionId).state === "CANCELLED") return structuredClone(this.require(sessionId));
     return this.update(sessionId, {
       state: result.state === "completed" ? "COMPLETED" : result.state === "cancelled" ? "CANCELLED" : result.state === "waiting" ? "PAUSED" : "FAILED",
       ...(result.providerSessionId ? { providerSessionId: result.providerSessionId } : {}),
@@ -291,7 +296,13 @@ export function normalizeCodexEvent(event: Record<string, unknown>): NormalizedC
     const summary = item?.type === "agent_message" && typeof item.text === "string" ? item.text.slice(0, 2_000) : type;
     return { type: "activity", summary };
   }
-  if (type === "turn.completed") return { type: "activity", summary: type };
+  if (type === "turn.completed") {
+    const usage = event.usage as Record<string, unknown> | undefined;
+    if (usage && Number.isSafeInteger(usage.input_tokens) && Number.isSafeInteger(usage.output_tokens) && Number(usage.input_tokens) >= 0 && Number(usage.output_tokens) >= 0) {
+      return { type: "usage", summary: type, tokens: { input: Number(usage.input_tokens), output: Number(usage.output_tokens), ...(Number.isSafeInteger(usage.cached_input_tokens) && Number(usage.cached_input_tokens) >= 0 && Number(usage.cached_input_tokens) <= Number(usage.input_tokens) ? { cachedInput: Number(usage.cached_input_tokens) } : {}) } };
+    }
+    return { type: "activity", summary: type };
+  }
   if (type.includes("approval") || type.includes("input_required")) return { type: "waiting", reason: type };
   if (type.includes("rate_limit") || type.includes("quota")) {
     const exhausted = type.includes("quota") || event.remaining === 0;
