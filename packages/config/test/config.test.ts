@@ -133,6 +133,12 @@ describe("ConfigurationEngine", () => {
     database.close();
   });
 
+  it("requires privileged confirmation for controller connection or Runner credential changes",()=>{
+    const database=new DispatcherDatabase(":memory:"),engine=new ConfigurationEngine(database);
+    for(const next of [configured({port:8348}),configured({listen:"127.0.0.2"})]){const plan=engine.buildPlan(next,"test","web");expect(plan.risk).toBe("privileged");expect(()=>engine.applyPlan(plan.id)).toThrow(expect.objectContaining({code:"CONFIG_CONFIRMATION_REQUIRED"}));}
+    const next=configured();next.runners.push({id:"remote",displayName:"Remote",mode:"remote",capacity:1,tags:[],credentialRef:"secret://runner/fixture/remote"});expect(engine.buildPlan(next,"test","web").risk).toBe("privileged");database.close();
+  });
+
   it("requires confirmation for sensitive plans", () => {
     const database = new DispatcherDatabase(":memory:");
     const engine = new ConfigurationEngine(database);

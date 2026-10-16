@@ -1,3 +1,4 @@
+import { applyConfigEdits, consoleConfig, consoleConfigPlan } from "./config-edits.js";
 import {qualifyRoutingPolicy,type PolicyConfigEvidence} from "./policy-config.js";
 import {TaskClassifier} from "./task-classifier.js";
 import { remoteCatalog, remoteRunInventory } from "./remote-results.js";
@@ -282,6 +283,7 @@ interface SecretBody {
 interface ConfigPlanBody {
   baseRevision?: number;
   config?: unknown;
+  edits?: unknown;
   actor?: string;
 }
 
@@ -3384,22 +3386,31 @@ export class ControllerService {
       });
     });
 
-    this.app.get("/api/config", async () => this.configuration.current());
+    this.app.get<{Querystring:{view?:string}}>("/api/config", async (request,reply) => {if(request.query.view!==undefined&&request.query.view!=="console")return reply.code(400).send({code:"CONFIG_VIEW_INVALID"});const current=this.configuration.current();return request.query.view==="console"?{...current,...consoleConfig(current.config)}:current;});
     this.app.get("/api/config/schema", async () => ({ schema: dispatcherConfigSchema, uiSchema: dispatcherConfigUiSchema }));
     this.app.get("/api/config/audit", async () => ({ audit: this.database.listAudit() }));
-    this.app.post<{ Body: ConfigPlanBody }>("/api/config/plans", async (request, reply) => {
-      if (request.body?.config === undefined) return reply.code(400).send({ code: "CONFIG_REQUIRED" });
-      if (request.body.baseRevision !== undefined) {
-        if(!Number.isInteger(request.body.baseRevision)) return reply.code(400).send({code:"INVALID_CONFIG_REVISION"});
-        const actual=this.configuration.current().revision;
-        if(request.body.baseRevision!==actual) throw new RevisionConflictError(request.body.baseRevision,actual);
-      }
-      const plan = await this.planConfiguration(request.body.config, this.principalFor(request).id, "web");
-      return reply.code(201).send({ plan });
+
+    this.app.get<{Params:{id:string}}>("/api/config/plans/:id",async(request,reply)=>{
+      const plan=this.configuration.getPlan(request.params.id);if(!plan)return reply.code(404).send({code:"CONFIG_PLAN_NOT_FOUND"});
+      return {plan:consoleConfigPlan(plan),currentRevision:this.configuration.current().revision,...(["APPLIED","ROLLED_BACK"].includes(plan.state)?{appliedRevision:plan.baseRevision+1}:{})};
     });
-    this.app.post<{ Params: { id: string }; Body: ApplyPlanBody }>("/api/config/plans/:id/apply", async (request) => {
-      const confirmed = request.body?.confirmed;
-      return this.applyConfigurationPlan(request.params.id, confirmed === undefined ? {} : { confirmed });
+    this.app.post<{ Body: ConfigPlanBody }>("/api/config/plans", async (request, reply) => {
+      const body=request.body;if(!body||(body.config===undefined)===(body.edits===undefined))return reply.code(400).send({code:"CONFIG_INPUT_REQUIRED",message:"Provide exactly one of config or edits"});
+      if(body.edits!==undefined&&body.baseRevision===undefined)return reply.code(400).send({code:"CONFIG_REVISION_REQUIRED"});
+      if (body.baseRevision !== undefined) {
+        if(!Number.isInteger(body.baseRevision)) return reply.code(400).send({code:"INVALID_CONFIG_REVISION"});
+        const actual=this.configuration.current().revision;
+        if(body.baseRevision!==actual) throw new RevisionConflictError(body.baseRevision,actual);
+      }
+      const proposed=body.edits===undefined?body.config:applyConfigEdits(this.configuration.current().config,body.edits);
+      const plan = await this.planConfiguration(proposed, this.principalFor(request).id, "web");
+      return reply.code(201).send({ plan:body.edits===undefined?plan:consoleConfigPlan(plan) });
+    });
+    this.app.post<{ Params: { id: string }; Body: ApplyPlanBody;Querystring:{view?:string} }>("/api/config/plans/:id/apply", async (request,reply) => {
+      if(request.query.view!==undefined&&request.query.view!=="console")return reply.code(400).send({code:"CONFIG_VIEW_INVALID"});
+      const before=this.configuration.getPlan(request.params.id),confirmed = request.body?.confirmed;
+      const applied=await this.applyConfigurationPlan(request.params.id, confirmed === undefined ? {} : { confirmed });
+      return {...applied,...(request.query.view==="console"?consoleConfig(applied.config):{}),planId:request.params.id,state:this.configuration.getPlan(request.params.id)?.state,currentRevision:applied.revision,...(before?{appliedRevision:before.baseRevision+1,repeated:before.state==="APPLIED"}:{})};
     });
     this.app.post<{ Params: { id: string } }>("/api/config/plans/:id/rollback", async (request) =>
       this.rollbackConfigurationPlan(request.params.id),

@@ -602,3 +602,17 @@ activity timestamp together with run/generation/lease identity. Controller
 checks this authority before and after adapter input and cancels stale input;
 trial sessions retain their separate input contract. Dispatch rechecks archive
 metadata inside the reservation transaction after workspace creation.
+
+## Console configuration edits
+
+The authenticated legacy configuration read remains compatible. The console
+view omits native private paths and secret-like values, with exact protected
+JSON Pointer paths rather than writable placeholder strings. Revision-bound
+add/replace/remove edits are applied to a clone of the real configuration and
+validated through the same ConfigPlan engine. Indexed entity edits require its
+current ID; unsafe pointers, root names and protected parent replacements are
+rejected before plan creation. Explicit leaf changes and identified entity
+removal remain available under existing confirmation/runtime lifecycle rules.
+Plan status exposes original applied revision separately from current revision;
+console plan/apply responses use the same safe projection. Controller connection
+and Runner identity/credential changes require privileged confirmation.

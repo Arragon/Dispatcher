@@ -484,3 +484,8 @@
   cleanup completes, even on a nominally successful parent exit. Verification
   revocation awaits its serialized command cleanup before returning a stop ACK.
   An in-memory cancelled-session fence survives cancellation-record write failure.
+
+- Never submit a redacted console config as a full replacement. Omitted private
+  values are preserved by applying revision-bound leaf edits to the real server
+  document. Bind array edits to entity IDs as well as their same-revision index;
+  normalization sorts configured entity arrays after validation.
