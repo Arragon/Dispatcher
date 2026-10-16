@@ -109,11 +109,13 @@ export class WorkspaceManager {
     return {...structuredClone(plan),repositoryRoot:inspected.root,path,branch,baseRevision:inspected.baseCommit,createdAt:new Date().toISOString()};
   }
 
-  async create(plan: WorkspacePlan): Promise<WorkspaceHandle> {
+  async create(plan: WorkspacePlan, options: { beforeCreate?: () => void } = {}): Promise<WorkspaceHandle> {
     const handle=await this.plan(plan);
+    options.beforeCreate?.();
     await mkdir(this.worktreeRoot,{recursive:true});
     const root=await realpath(this.worktreeRoot);
     if(!within(root,handle.path))throw new WorkspacePolicyError("WORKSPACE_PATH_ESCAPE","Managed root changed after planning");
+    options.beforeCreate?.();
     try{await execute("git",["-C",handle.repositoryRoot!,"worktree","add","-b",handle.branch,handle.path,handle.baseRevision]);}
     catch(error){throw new WorkspacePolicyError("WORKTREE_CREATE_FAILED",error instanceof Error?error.message:"Worktree creation failed");}
     this.managed.set(handle.path,structuredClone(handle));return handle;

@@ -152,6 +152,12 @@
   Native adapters must save STARTING after asynchronous credential preparation
   and before spawn, so the SessionStore can recheck the current lease at that
   final boundary. Verification children also need abort signals on revocation.
+- Runner registration CLI and service share one ConfigPlan database. Acquire
+  its atomic single-writer claim before reading execution recovery records;
+  a second live process must fail without rewriting RUNNING as unknown.
+  Local configuration commands run while the service is stopped. Controller
+  authorization loss (WebSocket1008) ends reconnect attempts and cancels owned
+  execution; ordinary connection loss stays bounded by the existing lease.
 - Native PTY uses Microsoft `node-pty` (MIT, pinned at 1.1.0) for Unix PTY and
   Windows ConPTY. pnpm must explicitly allow its native build; some pnpm
   installations lose the executable bit on the packaged Unix `spawn-helper`,

@@ -377,7 +377,16 @@ Native adapters persist STARTING immediately before spawn and record the actual
 backend PID only when provided. Lease expiry/revocation stops owned native
 handles and aborts active verification. Registration replacement is blocked
 while an active or uncertain execution owns it. Runtime handlers are implemented;
-production CLI wiring and Controller remote orchestration remain separate units.
+`agent-runner serve` loads these applied registrations, advertises native
+execution only when it has native profiles, registers the owning handlers and
+uses a durable transport journal. `agent-runner config plan --file <config.json>`
+and `config apply --plan-id <id> --confirm` use the existing DispatcherConfig and
+ConfigPlan engine in that Runner's data directory. Stop the owning service before
+using these configuration commands. An atomic SQLite writer claim prevents a
+second live process from interpreting active sessions as restart recovery;
+dead-owner takeover remains serialized and PID reuse conservatively blocks it.
+An authenticated policy close stops reconnect attempts and shuts down owned
+execution. Controller remote orchestration remains a separate unit.
 
 Linear webhook ingress verifies the HMAC against the exact request bytes,
 enforces payload and timestamp limits, normalizes the event, and deduplicates it

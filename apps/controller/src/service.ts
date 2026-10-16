@@ -16,19 +16,14 @@ import fastify, { type FastifyBaseLogger, type FastifyInstance } from "fastify";
 import fastifyStatic from "@fastify/static";
 import {
   CodexAdapter,
+  createNativeProfileAdapter,
   codexManifest,
   QoderAdapter,
   qoderManifest,
-  CursorAdapter,
   cursorManifest,
-  KiroAdapter,
   StructuredCliAdapter,
   AdapterContractError,
   kiroManifest,
-  OpenCodeAdapter,
-  GrokAdapter,
-  PiAdapter,
-  AntigravityAdapter, ZCodeAdapter, WorkBuddyCliAdapter, QoderCnAdapter,
   antigravityManifest, zcodeManifest, workbuddyCliManifest, qoderCnManifest,
   opencodeManifest,
   grokManifest,
@@ -875,19 +870,19 @@ export class ControllerService {
     }
     const store = new DatabaseSessionStore(this.database);
     const enabledProfiles = config.agentProfiles.filter((profile) => profile.enabled !== false);
-    for (const profile of enabledProfiles.filter((entry) => entry.provider === "codex")) {
+    const resolveProviderCredential = (reference: string): Promise<string> => this.secrets.resolve(reference, { principal: "controller", purpose: "provider" });
+    for (const profile of enabledProfiles) {
       if (retainedNativeAdapters.has(profile.id)) continue;
-      const codexHome = stringSetting(profile.settings?.codexHome);
-      if (!codexHome) continue;
-      const adapterProfile: CodexProfileConfig = {
-        id: profile.id,
-        alias: profile.alias,
-        codexHome,
-        ...(stringSetting(profile.settings?.executable) ? { executable: stringSetting(profile.settings?.executable)! } : {}),
-        ...(stringSetting(profile.settings?.model) ? { model: stringSetting(profile.settings?.model)! } : {}),
-      };
-      this.agentAdapters.set(profile.id, new CodexAdapter(adapterProfile, this.options.codexBackendFactory?.(adapterProfile), store, this.options.codexNativeReader));
-      this.nativeProfileConfigurations.set(profile.id, structuredClone(profile));
+      const adapter = createNativeProfileAdapter(profile, {
+        store, resolveCredential: resolveProviderCredential,
+        ...(this.options.codexBackendFactory ? { codexBackendFactory: this.options.codexBackendFactory } : {}),
+        ...(this.options.codexNativeReader ? { codexNativeReader: this.options.codexNativeReader } : {}),
+        ...(this.options.cliBackendFactory ? { cliBackendFactory: this.options.cliBackendFactory } : {}),
+      });
+      if (adapter) {
+        this.agentAdapters.set(profile.id, adapter);
+        this.nativeProfileConfigurations.set(profile.id, structuredClone(profile));
+      }
     }
     for (const profile of enabledProfiles.filter((entry) => entry.provider === "qoder")) {
       const adapterProfile: QoderProfileConfig = {
@@ -898,44 +893,6 @@ export class ControllerService {
         ...(stringSetting(profile.settings?.model) ? { model: stringSetting(profile.settings?.model)! } : {}),
       };
       this.agentAdapters.set(profile.id, new QoderAdapter(adapterProfile, this.options.qoderBackendFactory?.(adapterProfile), store));
-    }
-    const resolveProviderCredential = (reference: string): Promise<string> => this.secrets.resolve(reference, { principal: "controller", purpose: "provider" });
-    for (const profile of enabledProfiles.filter((entry) => entry.provider === "cursor" || entry.provider === "kiro")) {
-      if (retainedNativeAdapters.has(profile.id)) continue;
-      const adapterProfile: CliAgentProfile = {
-        id: profile.id,
-        alias: profile.alias,
-        ...(typeof profile.settings?.approveTools === "boolean" ? { approveTools: profile.settings.approveTools } : {}),
-        ...(typeof profile.settings?.trustWorkspace === "boolean" ? { trustWorkspace: profile.settings.trustWorkspace } : {}),
-        ...(stringSetting(profile.settings?.executable) ? { executable: stringSetting(profile.settings?.executable)! } : {}),
-        ...(profile.credentialRef ? { credentialRef: profile.credentialRef } : {}),
-        ...(stringSetting(profile.settings?.model) ? { model: stringSetting(profile.settings?.model)! } : {}),
-      };
-      const backend = this.options.cliBackendFactory?.(profile.provider as "cursor" | "kiro", adapterProfile);
-      this.agentAdapters.set(profile.id, profile.provider === "cursor"
-        ? new CursorAdapter(adapterProfile, backend, store, resolveProviderCredential)
-        : new KiroAdapter(adapterProfile, backend, store, resolveProviderCredential));
-      this.nativeProfileConfigurations.set(profile.id, structuredClone(profile));
-    }
-    for (const profile of enabledProfiles) {
-      if (!isNativeCliProvider(profile.provider)) continue;
-      if (retainedNativeAdapters.has(profile.id)) continue;
-      const adapterProfile: CliAgentProfile = { id: profile.id, alias: profile.alias,
-        ...(stringSetting(profile.settings?.configDir) ? { configDir: stringSetting(profile.settings?.configDir)! } : {}),
-        ...(typeof profile.settings?.approveTools === "boolean" ? { approveTools: profile.settings.approveTools } : {}),
-        ...(stringSetting(profile.settings?.executable) ? { executable: stringSetting(profile.settings?.executable)! } : {}),
-        ...(stringSetting(profile.settings?.model) ? { model: stringSetting(profile.settings?.model)! } : {}),
-        ...(profile.credentialRef ? { credentialRef: profile.credentialRef } : {}),
-      };
-      const backend = this.options.cliBackendFactory?.(profile.provider, adapterProfile);
-      this.agentAdapters.set(profile.id, profile.provider === "opencode" ? new OpenCodeAdapter(adapterProfile, backend, store)
-        : profile.provider === "grok" ? new GrokAdapter(adapterProfile, backend, store, resolveProviderCredential)
-        : profile.provider === "antigravity" ? new AntigravityAdapter(adapterProfile, backend, store)
-        : profile.provider === "zcode" ? new ZCodeAdapter(adapterProfile, backend, store)
-        : profile.provider === "workbuddy-cli" ? new WorkBuddyCliAdapter(adapterProfile, backend, store)
-        : profile.provider === "qoder-cn" ? new QoderCnAdapter(adapterProfile, backend, store)
-        : new PiAdapter(adapterProfile, backend, store));
-      this.nativeProfileConfigurations.set(profile.id, structuredClone(profile));
     }
     for (const profile of enabledProfiles.filter((entry) => entry.provider === "devin")) {
       const organizationId = stringSetting(profile.settings?.organizationId);

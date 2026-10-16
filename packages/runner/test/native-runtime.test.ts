@@ -162,3 +162,21 @@ it("aborts a running verification child when its lease expires", async () => {
   f.expire(); await f.runtime.expireLeases(); await rejected;
   expect(existsSync(join(workspace.path, "late-write.txt"))).toBe(false);
 });
+
+it("rejects a second database owner before it can rewrite live executions as recovery records", async () => {
+  const f = fixture(); f.apply(); await f.prepare(); await f.start();
+  expect(() => new NativeRunnerRuntime(f.options)).toThrow(expect.objectContaining({ code: "RUNNER_ALREADY_RUNNING" }));
+  expect(f.runtime.database.getEntity("native-execution", "run")).toMatchObject({ state: "RUNNING" });
+  expect(await f.call({ type: "native.run", runId: "run", action: "status" })).toMatchObject({ state: "RUNNING" });
+});
+
+it("rechecks expiry after durable STARTING storage returns and before the backend is spawned", async () => {
+  const f = fixture(); f.apply(); await f.prepare();
+  const save = f.runtime.database.saveEntity.bind(f.runtime.database);
+  const delayed = vi.spyOn(f.runtime.database, "saveEntity").mockImplementation((...args) => {
+    save(...args);
+    if (args[0] === "adapter-session" && (args[2] as { state?: string }).state === "STARTING") f.expire();
+  });
+  try { await expect(f.start()).rejects.toMatchObject({ code: "LEASE_EXPIRED" }); expect(f.starts()).toBe(0); }
+  finally { delayed.mockRestore(); }
+});

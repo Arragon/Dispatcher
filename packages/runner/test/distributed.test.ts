@@ -48,6 +48,13 @@ function runner(id = "remote-mac") {
 }
 
 describe("remote runner control plane", () => {
+  it("stops reconnecting and reports authorization loss when the Controller revokes its connection", async () => {
+    const authenticate = vi.fn(() => true), revoked = vi.fn();
+    const server = new RemoteRunnerServer({ registry: new RunnerRegistry(), port: 0, authenticate }); await server.ready();
+    const client = new RemoteRunnerClient({ url: `ws://127.0.0.1:${server.address()!.port}`, bearerToken: "fixture", runner: runner(), reconnectBackoffMs: 250, onAuthorizationLost: revoked });
+    try { await client.start(); server.disconnect("remote-mac", "credential revoked"); await vi.waitFor(() => expect(revoked).toHaveBeenCalledOnce()); await new Promise(resolve => setTimeout(resolve, 300)); expect(authenticate).toHaveBeenCalledOnce(); }
+    finally { await client.stop(); await server.close(); }
+  });
   it("merges concurrent retries and rejects a changed payload on a used command ID",async()=>{
     const server=new RemoteRunnerServer({registry:new RunnerRegistry(),port:0,authenticate:()=>true,rpcTimeoutMs:1000});await server.ready();
     const client=new RemoteRunnerClient({url:`ws://127.0.0.1:${server.address()!.port}`,bearerToken:"fixture",runner:runner()});const entered=Promise.withResolvers<void>(),release=Promise.withResolvers<void>();const handler=vi.fn(async()=>{entered.resolve();await release.promise;return {started:true};});client.register("run.start",handler);await client.start();

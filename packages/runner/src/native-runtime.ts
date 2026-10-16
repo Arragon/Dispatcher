@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { join } from "node:path";
 import type { AdapterSession, AgentAdapter, SessionStore } from "@dispatcher/adapters";
 import { ConfigurationEngine, type AgentProfileConfig, type DispatcherConfig, type RepositoryConfig } from "@dispatcher/config";
@@ -51,29 +51,57 @@ export class NativeRunnerRuntime {
   private readonly now: () => Date;
   private timer?: ReturnType<typeof setInterval>;
   private closed = false;
+  private readonly writerToken = randomUUID();
+  private writerClaimed = false;
 
   constructor(private readonly options: NativeRunnerRuntimeOptions) {
     this.now = options.now ?? (() => new Date());
     this.database = new DispatcherDatabase(join(options.dataDirectory, "native-execution.sqlite"));
-    for (const value of this.database.listEntities<JsonValue>("native-execution")) {
-      const record = value as unknown as ExecutionRecord;
-      // A stored PID is evidence, never proof that this process owns a live handle.
-      if (["PREPARING", "STARTING", "RUNNING"].includes(record.state)) record.state = "OUTCOME_UNKNOWN";
-      this.records.set(record.runId, record);
-      this.authority.issue(record.lease, this.now().toISOString());
-      this.save(record);
-    }
-    this.configuration = new ConfigurationEngine(this.database, { apply: config => this.applyRegistrations(config) });
-    this.applyRegistrations(this.configuration.current().config);
-    const interval = options.monitorIntervalMs ?? 1000;
-    if (interval > 0) { this.timer = setInterval(() => { void this.expireLeases().catch(() => undefined); }, interval); this.timer.unref(); }
+    try {
+      this.claimWriter();
+      for (const value of this.database.listEntities<JsonValue>("native-execution")) {
+        const record = value as unknown as ExecutionRecord;
+        // A stored PID is evidence, never proof that this process owns a live handle.
+        if (["PREPARING", "STARTING", "RUNNING"].includes(record.state)) record.state = "OUTCOME_UNKNOWN";
+        this.records.set(record.runId, record);
+        this.authority.issue(record.lease, this.now().toISOString());
+        this.save(record);
+      }
+      this.configuration = new ConfigurationEngine(this.database, { apply: config => this.applyRegistrations(config) });
+      this.applyRegistrations(this.configuration.current().config);
+      const interval = options.monitorIntervalMs ?? 1000;
+      if (interval > 0) { this.timer = setInterval(() => { void this.expireLeases().catch(() => undefined); }, interval); this.timer.unref(); }
+    } catch (error) { this.releaseWriter(); this.database.close(); throw error; }
+  }
+
+  private claimWriter(): void {
+    this.database.transaction(() => {
+      const owner = this.database.getEntity<JsonValue>("native-writer", "owner") as { pid: number; token: string; runnerId: string } | undefined;
+      if (owner && owner.runnerId !== this.options.runnerId) throw new NativeRunnerError("RUNNER_DATA_IDENTITY_MISMATCH", "This data directory belongs to another Runner");
+      if (owner && owner.pid > 0) {
+        let alive = true;
+        try { process.kill(owner.pid, 0); } catch (error) { alive = (error as NodeJS.ErrnoException).code !== "ESRCH"; }
+        if (alive) throw new NativeRunnerError("RUNNER_ALREADY_RUNNING", "Stop the owning Runner process before applying its local configuration");
+      }
+      // BEGIN IMMEDIATE serializes dead-owner recovery; no stale lock-file unlink race.
+      this.database.saveEntity("native-writer", "owner", { pid: process.pid, token: this.writerToken, runnerId: this.options.runnerId });
+    });
+    this.writerClaimed = true;
+  }
+  private releaseWriter(): void {
+    if (!this.writerClaimed) return;
+    this.database.transaction(() => {
+      const owner = this.database.getEntity<JsonValue>("native-writer", "owner") as { token: string } | undefined;
+      if (owner?.token === this.writerToken) this.database.saveEntity("native-writer", "owner", { pid: 0, token: this.writerToken, runnerId: this.options.runnerId });
+    });
+    this.writerClaimed = false;
   }
 
   private registration(profile: AgentProfileConfig, repository: RepositoryConfig): string { return hash({ profile, repository }); }
   private applyRegistrations(config: DispatcherConfig): void {
     const profiles = config.agentProfiles.filter(profile => profile.runnerId === this.options.runnerId && profile.enabled !== false);
     for (const record of this.records.values()) {
-      if (terminal(record.state)) continue;
+      if (terminal(record.state) && !this.verificationAborts.has(record.runId)) continue;
       const profile = profiles.find(p => p.id === record.profileId), repository = config.repositories.find(r => r.id === record.plan.repositoryId);
       if (!profile || !repository || this.registration(profile, repository) !== record.registrationHash) throw new NativeRunnerError("RUNNER_CONFIGURATION_BUSY", "An active or uncertain execution still owns this registration");
     }
@@ -106,10 +134,16 @@ export class NativeRunnerRuntime {
           this.database.saveEntity("adapter-session", session.id, json(session), session.updatedAt);
           record.session = structuredClone(session); this.save(record);
         });
+        if (session.state === "STARTING") this.authority.fence(record.runId, record.lease.leaseId, record.lease.generation, "native-spawn-after-persist", this.now().toISOString());
       },
     };
   }
   profileInventory(): string[] { return [...this.adapters.keys()].sort(); }
+  capacity(): number { return this.config.runners.find(r => r.id === this.options.runnerId)?.capacity ?? 0; }
+  registerHandlers(client: { register(type: CommandPayload["type"], handler: (payload: CommandPayload, envelope: ProtocolEnvelope<CommandPayload>) => Promise<unknown>): unknown }): void {
+    const commands: CommandPayload["type"][] = ["native.repository", "native.workspace_plan", "native.workspace_prepare", "native.model_catalog", "native.profile_probe", "native.run", "native.run_verify", "native.run_files", "run.start", "runner.reconcile", "lease.renew", "lease.revoke"];
+    for (const type of commands) client.register(type, (payload, envelope) => this.handle(payload, envelope));
+  }
   private profile(id: string): { profile: AgentProfileConfig; adapter: AgentAdapter } {
     const profile = this.config.agentProfiles.find(p => p.id === id && p.runnerId === this.options.runnerId && p.enabled !== false), adapter = this.adapters.get(id);
     if (!profile || !adapter) throw new NativeRunnerError("PROFILE_UNAVAILABLE", "Profile is not registered and enabled on this Runner");
@@ -261,7 +295,7 @@ export class NativeRunnerRuntime {
     const record: ExecutionRecord = { version: 1, runId: payload.runId, profileId: profile.id, plan: structuredClone(payload.plan), planHash, registrationHash: this.registration(profile, repository), state: "PREPARING", lease, verificationCommands };
     this.records.set(record.runId, record); this.save(record);
     try {
-      const workspace = await this.workspaces.create(payload.plan); record.workspace = workspace;
+      const workspace = await this.workspaces.create(payload.plan, { beforeCreate: () => this.fence(record, envelope) }); record.workspace = workspace;
       this.fence(record, envelope); record.state = "PREPARED"; this.save(record); return structuredClone(workspace);
     } catch (error) { record.state = "OUTCOME_UNKNOWN"; this.save(record); throw error; }
   }
@@ -304,6 +338,9 @@ export class NativeRunnerRuntime {
     const identity = remoteCommandHash(envelope), id = envelope.messageId, previous = this.readReceipt(envelope);
     if (previous) return previous.result;
     this.database.saveEntity("native-operation", id, json({ identity, state: "PENDING" }));
+    if (envelope.payload.type === "native.run" && ["send", "resume"].includes(envelope.payload.action)) {
+      record.state = "STARTING"; delete record.result; this.save(record);
+    }
     try {
       const result = json(await action());
       this.database.saveEntity("native-operation", id, json({ identity, state: "COMPLETE", result })); return result;
@@ -356,5 +393,5 @@ export class NativeRunnerRuntime {
     await Promise.allSettled([...this.locks.values()]); this.close();
   }
   /** Closes storage after shutdown, or simulates abrupt process loss in recovery tests. */
-  close(): void { if (this.closed) return; this.closed = true; if (this.timer) clearInterval(this.timer); this.database.close(); }
+  close(): void { if (this.closed) return; this.closed = true; if (this.timer) clearInterval(this.timer); this.releaseWriter(); this.database.close(); }
 }

@@ -6,6 +6,11 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import type { Runner } from "@dispatcher/domain";
+import { createNativeProfileAdapter, probeNativeProfile } from "@dispatcher/adapters";
+import { validateConfig, type DispatcherConfig } from "@dispatcher/config";
+import { NATIVE_EXECUTION_CAPABILITY } from "@dispatcher/protocol";
+import { NativeRunnerRuntime, NativeRunnerError } from "./native-runtime.js";
+import { RunnerJournal } from "./journal.js";
 import { RemoteRunnerClient } from "./remote.js";
 import { NativeCredentialStoreAdapter, commandAvailable, createPlatformAdapter, type ServiceAction } from "./platform.js";
 
@@ -97,29 +102,63 @@ async function serve(args: string[]): Promise<void> {
   const options = serviceOptions(args);
   const credentialStore = new NativeCredentialStoreAdapter(adapter.platform);
   const token = await credentialStore.resolve(options.credentialRef);
+  const runtime = nativeRuntime(options.runnerId, options.dataDirectory, credentialStore);
+  const journal = new RunnerJournal(join(options.dataDirectory, "transport-journal.sqlite"));
   const runner: Runner = {
     id: options.runnerId,
     displayName: flag(args, "--display-name", options.runnerId)!,
     platform: adapter.platform,
     architecture: adapter.architecture,
     state: "ONLINE",
-    capabilities: adapter.capabilities(),
-    capacity: Number(flag(args, "--capacity", "1")),
+    capabilities: [...adapter.capabilities(), ...(runtime.profileInventory().length ? [NATIVE_EXECUTION_CAPABILITY] : [])],
+    capacity: Math.min(Number(flag(args, "--capacity", String(runtime.capacity() || 1))), runtime.capacity() || 1),
     lastSeenAt: new Date().toISOString(),
   };
-  const client = new RemoteRunnerClient({ url: options.controllerUrl, bearerToken: token, runner, profileInventory: [] });
+  let shutdownPromise: Promise<void> | undefined;
+  const shutdown = (): Promise<void> => shutdownPromise ??= (async () => { await runtime.shutdown(); await client.stop(); journal.close(); })();
+  const client = new RemoteRunnerClient({ url: options.controllerUrl, bearerToken: token, runner, journal, profileInventory: runtime.profileInventory(), onAuthorizationLost: shutdown });
+  runtime.registerHandlers(client);
   client.register("runner.health", () => ({ runner, resources: adapter.resourceStats() }));
-  client.register("runner.reconcile", () => ({ runnerId: runner.id, runs: [] }));
-  client.register("run.start", () => { throw new Error("Run execution descriptor is unavailable; reconcile with Controller before retrying"); });
-  const shutdown = async () => { await client.stop(); process.exitCode = 0; };
   process.once("SIGINT", () => void shutdown());
   process.once("SIGTERM", () => void shutdown());
-  await client.start();
+  try { await client.start(); } catch (error) { await shutdown(); throw error; }
+}
+
+function nativeRuntime(runnerId: string, dataDirectory: string, credentials: NativeCredentialStoreAdapter): NativeRunnerRuntime {
+  const resolveCredential = (reference: string) => credentials.resolve(reference);
+  return new NativeRunnerRuntime({ runnerId, dataDirectory,
+    createAdapter: (profile, store) => createNativeProfileAdapter(profile, { store, resolveCredential }),
+    probeProfile: profile => probeNativeProfile(profile, resolveCredential),
+  });
+}
+function assertOwningRegistration(config: DispatcherConfig, runnerId: string): void {
+  if (!config.runners.some(r => r.id === runnerId) || config.agentProfiles.some(p => p.runnerId !== runnerId)) throw new NativeRunnerError("RUNNER_REGISTRATION_MISMATCH", "Registration must name this Runner and contain only its own native profiles");
+}
+async function configure(args: string[]): Promise<void> {
+  const dataDirectory = resolve(flag(args, "--data-dir", ".dispatcher-runner")!);
+  let enrolledId: string | undefined;
+  try { enrolledId = (JSON.parse(readFileSync(join(dataDirectory, "identity.json"), "utf8")) as { runnerId?: string }).runnerId; }
+  catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+  const runnerId = flag(args, "--runner-id", enrolledId) ?? requiredFlag(args, "--runner-id");
+  const runtime = nativeRuntime(runnerId, dataDirectory, new NativeCredentialStoreAdapter(createPlatformAdapter().platform));
+  try {
+    if (args[1] === "plan") {
+      const config = validateConfig(JSON.parse(readFileSync(resolve(requiredFlag(args, "--file")), "utf8")));
+      assertOwningRegistration(config, runnerId);
+      const plan = runtime.configuration.buildPlan(config, "runner-operator", "cli");
+      console.log(JSON.stringify({ ...plan, changes: plan.changes.map(change => ({ op: change.op, path: change.path })) }, null, 2));
+    } else if (args[1] === "apply") {
+      const id = requiredFlag(args, "--plan-id"); assertOwningRegistration(runtime.configuration.proposedConfig(id), runnerId);
+      const applied = runtime.configuration.applyPlan(id, { confirmed: args.includes("--confirm") });
+      console.log(JSON.stringify({ id, state: runtime.configuration.getPlan(id)?.state, revision: applied.revision, profiles: runtime.profileInventory(), repositories: applied.config.repositories.map(r => r.id) }, null, 2));
+    } else throw new Error("Usage: agent-runner config plan --file <DispatcherConfig.json> | config apply --plan-id <id> --confirm");
+  } finally { runtime.close(); }
 }
 
 export async function runRunnerCli(args = process.argv.slice(2)): Promise<void> {
   const command = args[0] ?? "doctor";
   if (command === "serve") await serve(args);
+  else if (command === "config") await configure(args);
   else if (command === "enroll") await enroll(args);
   else if (command === "doctor") await doctor(args);
   else if (["install", "upgrade", "start", "stop", "restart", "status", "logs", "uninstall"].includes(command)) await runServiceAction(command as ServiceAction, args);

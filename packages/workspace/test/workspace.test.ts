@@ -29,6 +29,8 @@ describe("WorkspaceManager", () => {
     const fixture=repository(),registry=new RepositoryRegistry();registry.register({id:"repo",root:fixture.root});const manager=new WorkspaceManager(registry,fixture.worktrees);
     const request={repositoryId:"repo",taskId:"task",runId:"run",attempt:1,baseRef:"main",scopePaths:["src"]};
     const plan=await manager.plan(request);expect(existsSync(fixture.worktrees)).toBe(false);expect(execFileSync("git",["-C",fixture.root,"branch","--list",plan.branch],{encoding:"utf8"})).toBe("");
+    await expect(manager.create(request,{beforeCreate:()=>{throw new Error("lease expired");}})).rejects.toThrow("lease expired");
+    expect(existsSync(fixture.worktrees)).toBe(false);expect(execFileSync("git",["-C",fixture.root,"branch","--list",plan.branch],{encoding:"utf8"})).toBe("");
     const actual=await manager.create({...request,baseCommit:plan.baseRevision});expect(actual).toMatchObject({path:plan.path,branch:plan.branch,baseRevision:plan.baseRevision});
   });
   it("creates traceable isolated worktrees for concurrent runs", async () => {

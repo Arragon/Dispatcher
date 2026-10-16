@@ -280,6 +280,7 @@ export interface RemoteRunnerClientOptions {
   reconnectBackoffMs?: number;
   maxReconnectBackoffMs?: number;
   runnerVersion?: string;
+  onAuthorizationLost?: () => void | Promise<void>;
 }
 
 export class RemoteRunnerClient {
@@ -358,7 +359,7 @@ export class RemoteRunnerClient {
     this.heartbeat = setInterval(() => void this.sendEvent({ type: "runner.heartbeat", runnerId: this.options.runner.id, state: this.currentState }).catch(() => undefined), interval);
     this.heartbeat.unref();
     this.reconnectAttempt = 0;
-    socket.once("close", () => this.handleDisconnect(socket));
+    socket.once("close", (code) => this.handleDisconnect(socket, code));
   }
 
   async sendEvent(payload: EventPayload): Promise<void> {
@@ -439,12 +440,17 @@ export class RemoteRunnerClient {
     return this.socket;
   }
 
-  private handleDisconnect(socket: WebSocket): void {
+  private handleDisconnect(socket: WebSocket, code: number): void {
     if (this.socket !== socket) return;
     this.socket = undefined;
     if (this.heartbeat) clearInterval(this.heartbeat);
     this.heartbeat = undefined;
     if (this.stopping) return;
+    if (code === 1008) {
+      this.stopping = true;
+      void Promise.resolve().then(() => this.options.onAuthorizationLost?.()).catch(() => undefined);
+      return;
+    }
     const base = Math.max(250, this.options.reconnectBackoffMs ?? 1_000);
     const maximum = Math.max(base, this.options.maxReconnectBackoffMs ?? 30_000);
     const delay = Math.min(maximum, base * 2 ** this.reconnectAttempt++);
