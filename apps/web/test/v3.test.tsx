@@ -45,7 +45,8 @@ it("validates references and does not manufacture a successful publication", asy
   expect(screen.queryByText("发布成功")).toBeNull();
 });
 it("opens the authoritative task from a deep link even when archived", async () => {
-  vi.spyOn(globalThis,"fetch").mockResolvedValue(new Response(JSON.stringify({snapshot:{generatedAt:"2026-10-15T00:00:00Z",projects:[],profiles:[],tasks:[{id:"archived",title:"Archived task",projectId:"p",state:"DONE",archivedAt:"2026-10-14",updatedAt:"now"}],runs:[]}})));
+  const task={id:"archived",title:"Archived task",projectId:"p",state:"DONE",archivedAt:"2026-10-14",updatedAt:"now"};
+  vi.spyOn(globalThis,"fetch").mockImplementation(async input=>new Response(JSON.stringify(String(input)==="/api/fleet"?{snapshot:{generatedAt:"2026-10-15T00:00:00Z",projects:[],profiles:[],tasks:[task],runs:[]}}:{revision:1,document:task,archive:{revision:1,archivedAt:task.archivedAt},runs:[],deliveries:[]})));
   mount(<TasksPage/>,"/tasks?task=archived");
   const dialog = await screen.findByRole("dialog",{name:"Archived task"});
   expect(within(dialog).getByRole("button",{name:"恢复到当前项目"})).toBeTruthy();

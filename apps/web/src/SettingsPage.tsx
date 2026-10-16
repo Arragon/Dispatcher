@@ -4,7 +4,7 @@ import Form from "@rjsf/core";
 import { customizeValidator } from "@rjsf/validator-ajv8";
 import type { RJSFSchema, UiSchema } from "@rjsf/utils";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, AUTH_REQUIRED_EVENT, type ConfigResponse } from "./api.js";
+import { api, ApiError, refreshConfiguration, AUTH_REQUIRED_EVENT, type ConfigResponse } from "./api.js";
 import { Icon, Notice } from "./ui.js";
 import { SecureInput } from "./App.js";
 interface SchemaResponse { schema: RJSFSchema; uiSchema: UiSchema }
@@ -12,10 +12,11 @@ interface Plan { id: string; risk: string; requiresConfirmation: boolean; change
 interface ConfigDocument extends Record<string, unknown> { integrations?: { linear?: { enabled: boolean; credentialRef?: string } } }
 const validator = customizeValidator({ AjvClass: Ajv2020 });
 const sectionNames: Record<string, string> = { controller: "控制台", runners: "运行设备", integrations: "兼容集成", connectors: "集成连接", repositories: "项目仓库", agentProfiles: "Agent 账号", internalLlm: "内部模型", policies: "策略" };
+const schemaTitles:Record<string,string>={"Controller": "控制台", "Runners": "运行设备", "Integrations": "兼容集成", "Connectors": "集成连接", "Repositories": "项目仓库", "Internal LLM": "内部模型", "Agent profiles": "Agent 账号", "Policies": "策略"};
 const fieldLabels: Record<string,string> = { ...sectionNames, id:"标识", displayName:"显示名称", mode:"运行模式", capacity:"并发槽位", tags:"标签", root:"仓库目录", remote:"Git 远端", defaultBaseRef:"基准分支", scopePaths:"允许修改的目录", verificationCommands:"验证命令", file:"可执行文件", args:"参数", required:"必须通过", timeoutMs:"超时（毫秒）", outputLimitBytes:"输出上限（字节）", enabled:"启用", provider:"提供方", alias:"别名", runnerId:"执行设备", settings:"工具设置", credentialRef:"凭据引用", endpoints:"服务连接", profiles:"模型配置", pools:"模型池", roleBindings:"用途绑定", defaultPoolId:"默认模型池", profileIds:"模型顺序", endpointId:"服务连接", model:"模型 ID", protocol:"协议", baseUrl:"服务地址", poolId:"模型池", role:"用途", configured:"启用内部模型", definitionId:"连接器类型", kind:"类型", highRiskRequiresConfirmation:"高风险操作需要确认", rawShellDefault:"原始 Shell 默认策略", listen:"监听地址", port:"端口", deploymentMode:"部署模式", adminStrategy:"管理策略" };
 function displaySchema(schema:RJSFSchema):RJSFSchema {
   const result={...schema};
-  if(schema.properties) result.properties=Object.fromEntries(Object.entries(schema.properties).map(([key,value])=>[key,typeof value === "object" ? {...displaySchema(value),title:value.title ?? fieldLabels[key] ?? key} : value]));
+  if(schema.properties) result.properties=Object.fromEntries(Object.entries(schema.properties).map(([key,value])=>[key,typeof value === "object" ? {...displaySchema(value),title:(value.title?schemaTitles[value.title]??value.title:fieldLabels[key]??key)} : value]));
   if(schema.items && typeof schema.items === "object" && !Array.isArray(schema.items)) result.items=displaySchema(schema.items);
   return result;
 }
@@ -72,9 +73,9 @@ export default function SettingsPage({sectionId, embedded = false}: {sectionId?:
     try {
       const latest = await api<ConfigResponse<ConfigDocument>>("/api/config");
       if (latest.revision !== baseRevision.current) { setConflict(true); throw new Error("配置版本已改变。请重新载入当前配置后再编辑，现有草稿尚未提交。"); }
-      const response = await api<{ plan: Plan }>("/api/config/plans", { method: "POST", body: JSON.stringify({ config: draft ?? configQuery.data?.config, actor: "local-web" }) });
+      const response = await api<{ plan: Plan }>("/api/config/plans", { method: "POST", body: JSON.stringify({ config: draft ?? configQuery.data?.config, baseRevision: baseRevision.current, actor: "local-web" }) });
       setPlan(response.plan); setAppliedPlanId(undefined);
-      setMessage(response.plan.changes.length === 0 ? "Configuration is already current." : "计划已生成，请审阅变更和风险。");
+      setMessage(response.plan.changes.length === 0 ? "配置与当前版本一致。" : "计划已生成，请审阅变更和风险。");
     } catch (error) { setMessage(error instanceof Error ? error.message : "配置校验失败"); }
     finally { setBusy(false); }
   }
@@ -84,8 +85,8 @@ export default function SettingsPage({sectionId, embedded = false}: {sectionId?:
     try {
       await api(`/api/config/plans/${plan.id}/apply`, { method: "POST", body: JSON.stringify({ confirmed: plan.requiresConfirmation }) });
       setAppliedPlanId(plan.id); setPlan(undefined); dirty.current = false;
-      await configQuery.refetch(); await Promise.all(["fleet","runners","agent-profiles","llm"].map((key)=>client.invalidateQueries({queryKey:[key]}))); setMessage("配置已应用并记录审计。");
-    } catch (error) { setMessage(error instanceof Error ? error.message : "应用失败，请检查当前配置版本。"); }
+      await configQuery.refetch(); await refreshConfiguration(client); setMessage("配置已应用并记录审计。");
+    } catch (error) { setMessage(error instanceof Error ? error.message : "应用失败，请检查当前配置版本。"); if(error instanceof ApiError && error.status===409) {setConflict(true);setPlan(undefined);} }
     finally { setBusy(false); }
   }
   async function rollbackPlan(): Promise<void> {
@@ -94,9 +95,15 @@ export default function SettingsPage({sectionId, embedded = false}: {sectionId?:
     try {
       await api(`/api/config/plans/${appliedPlanId}/rollback`, { method: "POST" });
       setAppliedPlanId(undefined); setPlan(undefined); dirty.current = false;
-      await configQuery.refetch(); await Promise.all(["fleet","runners","agent-profiles","llm"].map((key)=>client.invalidateQueries({queryKey:[key]}))); setMessage("配置已回滚并记录审计。");
+      await configQuery.refetch(); await refreshConfiguration(client); setMessage("配置已回滚并记录审计。");
     } catch (error) { setMessage(error instanceof Error ? error.message : "回滚失败，当前版本保留。"); }
     finally { setBusy(false); }
+  }
+  async function reloadCurrent():Promise<void>{
+    if(busy||!window.confirm("重新载入会放弃当前未提交的配置草稿，继续吗？"))return;
+    setBusy(true);
+    try{const current=await configQuery.refetch();if(current.error||!current.data)throw current.error??new Error("配置读取失败");setDraft(structuredClone(current.data.config));baseRevision.current=current.data.revision;dirty.current=false;setConflict(false);setPlan(undefined);setMessage("已载入当前配置，可重新编辑。");}
+    catch(error){setMessage(error instanceof Error?error.message:"配置读取失败，草稿保留");}finally{setBusy(false);}
   }
   if (configQuery.isLoading || schemaQuery.isLoading) return <div className="page-state" role="status">正在读取配置…</div>;
   if (configQuery.error || schemaQuery.error || !configQuery.data || !schemaQuery.data) return <div className="page-state error" role="alert"><strong>配置读取失败</strong><button onClick={() => { void configQuery.refetch(); void schemaQuery.refetch(); }}>重试</button></div>;
@@ -109,7 +116,7 @@ export default function SettingsPage({sectionId, embedded = false}: {sectionId?:
     <div className={embedded ? "" : "settings-workspace"}>
     {!sectionId && <nav className="settings-sections" aria-label="设置分区">{sections.map((key) => <button key={key} disabled={busy} aria-pressed={currentSection === key} onClick={() => setSection(key)}>{sectionNames[key] ?? key}</button>)}</nav>}
     <div className={embedded ? "settings-layout embedded-settings" : "settings-layout"}><div className="panel config-form"><Form key={currentSection ?? "all"} schema={sectionSchema} uiSchema={schemaQuery.data.uiSchema} validator={validator} formData={currentSection ? { [currentSection]: currentDraft[currentSection] } : currentDraft} disabled={busy} noHtml5Validate experimental_defaultFormStateBehavior={{ emptyObjectFields: "skipDefaults", arrayMinItems: { populate: "never" }, allOf: "skipDefaults" }} onChange={({ formData }) => edit(formData as Record<string, unknown>)} onSubmit={() => void buildPlan()}><button type="submit" className="primary" disabled={busy}>预览配置变更</button></Form><Notice>其他分区的草稿保留；计划校验完整配置，审阅后才会生效。</Notice></div>
-    <aside className="settings-aside"><div className="panel plan-card" aria-live="polite"><h2>{plan ? "审阅配置计划" : appliedPlanId ? "已应用的计划" : "尚无待应用计划"}</h2><p>{message || "编辑字段后生成计划，草稿不会自动生效。"}</p>{conflict && <button disabled={busy} onClick={() => { if (!window.confirm("重新载入会放弃当前未提交的配置草稿，继续吗？")) return; dirty.current = false; setConflict(false); setPlan(undefined); void configQuery.refetch(); }}>重新载入当前配置</button>}{plan && <><p>风险：{plan.risk} · {plan.changes.length} 项变更</p><ul className="plan-changes">{plan.changes.map((change, index) => <li key={index}>{change.path}</li>)}</ul></>}{plan && plan.changes.length > 0 && <button disabled={busy} className="primary" onClick={() => void applyPlan()}>{plan.requiresConfirmation ? "确认并应用" : "应用计划"}</button>}{appliedPlanId && <button disabled={busy} onClick={() => void rollbackPlan()}>回滚上次计划</button>}</div>
+    <aside className="settings-aside"><div className="panel plan-card" aria-live="polite"><h2>{plan ? "审阅配置计划" : appliedPlanId ? "已应用的计划" : "尚无待应用计划"}</h2><p>{message || "编辑字段后生成计划，草稿不会自动生效。"}</p>{conflict && <button disabled={busy} onClick={()=>void reloadCurrent()}>重新载入当前配置</button>}{plan && <><p>风险：{plan.risk} · {plan.changes.length} 项变更</p><ul className="plan-changes">{plan.changes.map((change, index) => <li key={index}>{change.path}</li>)}</ul></>}{plan && plan.changes.length > 0 && <button disabled={busy} className="primary" onClick={() => void applyPlan()}>{plan.requiresConfirmation ? "确认并应用" : "应用计划"}</button>}{appliedPlanId && <button disabled={busy} onClick={() => void rollbackPlan()}>回滚上次计划</button>}</div>
     {!embedded && <OwnerPasswordSettings />}
     {!embedded && currentDraft.integrations?.linear && <fieldset disabled={busy} className="panel"><h2>安全凭据</h2><p>凭据直接存入安全存储，不进入普通配置草稿。</p><SecureInput namespace="linear" name="main" label="Linear credential" onStored={(reference) => updateLinearCredential(reference)} onDeleted={() => updateLinearCredential()} /></fieldset>}</aside></div></div>
   </section>;

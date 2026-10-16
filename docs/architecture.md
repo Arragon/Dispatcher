@@ -194,6 +194,16 @@ archived tasks. Devices combine configured registrations with independent
 Runner heartbeat evidence. Repository and policy editors embed the same
 sectioned settings/ConfigPlan workflow rather than adding configuration writers.
 Global search, appearance preferences, and publication drafts are browser-local.
+Task drawers read canonical records, persisted attempts and archive revisions
+independently of Fleet. Run details expose their frozen contracts; result reads
+remain separate from Task acceptance. Known UI operations submit structured
+semantic intents with explicit entity identities through the existing approval
+workflow. Harness trials enter canonical publication. Account creation can
+return a preview-only ConfigPlan before explicit apply; legacy API callers keep
+the existing apply behavior. Console configuration plans send baseRevision for
+an atomic editing-base fence, while legacy plans retain their apply-time fence.
+Internal role reset restores pool order without inference and fences asynchronous
+selection writes that began before the reset.
 The publication composer uses durable Controller preview/commit/read APIs. A
 confirmed publication atomically reserves its canonical task, contract,
 execution intent and idempotency receipt. The existing dispatch path reserves

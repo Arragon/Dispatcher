@@ -1,3 +1,11 @@
+import type { QueryClient } from "@tanstack/react-query";
+
+/** All projections affected by an applied configuration share this refresh boundary. */
+export async function refreshConfiguration(client: QueryClient): Promise<void> {
+  const keys = new Set(["config", "setup", "llm", "fleet", "runners", "agent-profiles", "fleet-connectors", "resources", "native-models"]);
+  await client.invalidateQueries({ predicate: query => keys.has(String(query.queryKey[0])) });
+}
+
 export interface Health {
   status: "ok" | "degraded" | "starting";
   lifecycle: string;
@@ -25,6 +33,23 @@ export interface ConfigResponse<T = Record<string, unknown>> {
 
 export const AUTH_REQUIRED_EVENT = "dispatcher:auth-required";
 
+export class ApiError extends Error {
+  override name = "ApiError";
+  readonly code: string;
+  readonly fieldErrors: unknown;
+  readonly recovery: unknown;
+  readonly taskId: string | undefined;
+  readonly runId: string | undefined;
+  constructor(readonly status: number, body: Record<string, unknown>) {
+    super(typeof body.message === "string" ? body.message : typeof body.code === "string" ? body.code : `请求失败（${status}）`);
+    this.code = typeof body.code === "string" ? body.code : "REQUEST_FAILED";
+    this.fieldErrors = body.fieldErrors;
+    this.recovery = body.recovery;
+    this.taskId = typeof body.taskId === "string" ? body.taskId : undefined;
+    this.runId = typeof body.runId === "string" ? body.runId : undefined;
+  }
+}
+
 function cookie(name: string): string | undefined {
   if (typeof document === "undefined") return undefined;
   const entry = document.cookie.split(";").map((part) => part.trim()).find((part) => part.startsWith(`${name}=`));
@@ -41,8 +66,8 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   });
   if (response.status === 401 && typeof window !== "undefined") window.dispatchEvent(new Event(AUTH_REQUIRED_EVENT));
   if (!response.ok) {
-    const body = (await response.json().catch(() => ({ code: "REQUEST_FAILED" }))) as { code?: string; message?: string };
-    throw new Error(body.message ?? body.code ?? `Request failed (${response.status})`);
+    const body: unknown = await response.json().catch(() => ({}));
+    throw new ApiError(response.status, body && typeof body === "object" && !Array.isArray(body) ? body as Record<string, unknown> : {});
   }
   if (response.status === 204) return undefined as T;
   return (await response.json()) as T;

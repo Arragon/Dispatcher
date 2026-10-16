@@ -110,7 +110,7 @@ it("reviews task operations with the latest workflow revision before execution",
   expect(posted).toHaveLength(1);
   await userEvent.click(await screen.findByRole("button",{name:"确认本次操作"}));
   await userEvent.click(await screen.findByRole("button",{name:"执行已确认操作"}));
-  expect(posted).toEqual([{path:"/api/assistant/workflows",body:{text:"/task dispatch t"}},{path:"/api/assistant/workflows/w/approve",body:{revision:1}},{path:"/api/assistant/workflows/w/execute",body:{revision:2}}]);
+  expect(posted).toEqual([{path:"/api/assistant/workflows",body:{intent:{version:2,action:"task.dispatch",entities:[{kind:"task",value:"t",id:"t"}],arguments:{target:"t"},confidence:1,source:"ui"}}},{path:"/api/assistant/workflows/w/approve",body:{revision:1}},{path:"/api/assistant/workflows/w/execute",body:{revision:2}}]);
   expect(refresh).toHaveBeenCalledOnce();
 });
 it("submits run and task authority with a decision reply and retains failed input", async () => {

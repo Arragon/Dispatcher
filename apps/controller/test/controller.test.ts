@@ -99,6 +99,21 @@ describe("ControllerService", () => {
     await service.stop();
   });
 
+  it("fences console editing bases and previews Harness creation without applying", async () => {
+    const service = new ControllerService({ownerToken:TEST_OWNER_TOKEN,dataDirectory:dataDirectory(),secretStore:new FakeSecretStore()});
+    await service.start({listen:false});
+    try {
+      const current=service.configuration.current();
+      const stale=await service.app.inject({headers:OWNER,method:"POST",url:"/api/config/plans",payload:{config:current.config,baseRevision:current.revision-1}});
+      expect(stale.statusCode).toBe(409);
+      const preview=await service.app.inject({headers:OWNER,method:"POST",url:"/api/agents/codex/profiles",payload:{id:"review-only",alias:"Review",codexHome:"/private/nonexistent-review-home",previewOnly:true,baseRevision:current.revision}});
+      expect(preview.statusCode).toBe(201);
+      expect(preview.json().plan).toMatchObject({baseRevision:current.revision,changes:expect.any(Array)});
+      expect(service.configuration.current().revision).toBe(current.revision);
+      expect(service.configuration.current().config.agentProfiles).toHaveLength(0);
+    } finally { await service.stop(); }
+  });
+
   it("never exposes a secret read endpoint", async () => {
     const secrets = new FakeSecretStore();
     const directory = dataDirectory();

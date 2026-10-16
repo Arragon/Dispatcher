@@ -81,6 +81,7 @@ export class LlmRuntime {
   private configuration: LlmConfiguration = { endpoints: [], profiles: [], pools: [], roleBindings: [] };
   private state: LlmRuntimeState;
   private calls = 0;
+  private readonly selectionVersions=new Map<LlmRole,number>();
 
   constructor(
     private readonly database: DispatcherDatabase,
@@ -150,7 +151,10 @@ export class LlmRuntime {
   async switchProfile(role: LlmRole, profileId: string): Promise<LlmRuntimeState> {
     const previous = this.state.activeProfileByRole[role];
     if (!this.resolveProfiles(role).some((profile) => profile.id === profileId)) throw new Error(`Profile ${profileId} is not eligible for role ${role}`);
+    const version=(this.selectionVersions.get(role)??0)+1;
+    this.selectionVersions.set(role,version);
     const health = await this.probe(profileId, "explicit");
+    if(this.selectionVersions.get(role)!==version)throw new LlmRuntimeError("SELECTION_CHANGED","Role selection changed during the switch; refresh the current selection",false,false);
     if (health.status !== "HEALTHY") {
       if (previous) this.state.activeProfileByRole[role] = previous;
       else delete this.state.activeProfileByRole[role];
@@ -164,11 +168,13 @@ export class LlmRuntime {
   }
 
   async attemptFailback(role: LlmRole): Promise<boolean> {
+    const version=this.selectionVersions.get(role)??0;
     const binding = this.configuration.roleBindings.find((entry) => entry.role === role);
     const poolId = binding?.poolId ?? this.configuration.defaultPoolId;
     const preferredId = this.configuration.pools.find((pool) => pool.id === poolId)?.profileIds[0];
     if (!preferredId || this.state.activeProfileByRole[role] === preferredId) return false;
     const result = await this.probe(preferredId, "circuit");
+    if((this.selectionVersions.get(role)??0)!==version)return false;
     const recoveryCount = this.state.circuits[preferredId]?.consecutiveRecoveryProbes ?? 1;
     if (result.status !== "HEALTHY" || recoveryCount < (this.options.recoveryProbeThreshold ?? 2)) return false;
     this.state.activeProfileByRole[role] = preferredId;
@@ -177,7 +183,15 @@ export class LlmRuntime {
     return true;
   }
 
+  resetRole(role: LlmRole): LlmRuntimeState {
+    this.selectionVersions.set(role,(this.selectionVersions.get(role)??0)+1);
+    delete this.state.activeProfileByRole[role];
+    this.persist();
+    return structuredClone(this.state);
+  }
+
   async invoke(role: LlmRole, request: LlmRequest, signal?: AbortSignal): Promise<LlmResponse> {
+    const version=this.selectionVersions.get(role)??0;
     let lastError: LlmRuntimeError | undefined;
     for (const profile of this.resolveProfiles(role)) {
       if (this.inCooldown(profile.id)) continue;
@@ -189,7 +203,7 @@ export class LlmRuntime {
         this.calls += 1;
         const context = { endpoint, profile, credential, timeoutMs: this.options.timeoutMs ?? 15_000, ...(signal ? { signal } : {}) };
         const response = await adapter.invoke(request, context);
-        this.state.activeProfileByRole[role] = profile.id;
+        if((this.selectionVersions.get(role)??0)===version)this.state.activeProfileByRole[role] = profile.id;
         this.state.healthByProfile[profile.id] = { profileId: profile.id, status: "HEALTHY", checkedAt: new Date().toISOString(), source: "request", capabilities: adapter.capabilities };
         delete this.state.circuits[profile.id];
         this.state.mode = "ACTIVE";

@@ -153,3 +153,37 @@ describe("LLM runtime", () => {
     database.close();
   });
 });
+
+it("resets a role to pool order without inference and persists the reset",async()=>{
+  const database=new DispatcherDatabase(":memory:");
+  const fetcher=vi.fn(async()=>jsonResponse({choices:[{message:{content:"ok"}}]}));
+  const runtime=new LlmRuntime(database,async()=>"secret",fetcher);
+  runtime.configure(configuration());
+  await runtime.switchProfile("command_parser","backup");
+  expect(runtime.resolveProfiles("command_parser")[0]?.id).toBe("backup");
+  fetcher.mockClear();
+  runtime.resetRole("command_parser");
+  expect(fetcher).not.toHaveBeenCalled();
+  expect(runtime.resolveProfiles("command_parser")[0]?.id).toBe("primary");
+  const restarted=new LlmRuntime(database,async()=>"secret",fetcher);
+  restarted.configure(configuration());
+  expect(restarted.resolveProfiles("command_parser")[0]?.id).toBe("primary");
+  database.close();
+});
+
+
+it.each(["invoke","switch","failback"] as const)("does not let a pending %s undo a later role reset",async(operation)=>{
+  const database=new DispatcherDatabase(":memory:");
+  let deferred=false;
+  let complete:(response:Response)=>void=()=>undefined;
+  let started:()=>void=()=>undefined;
+  const start=new Promise<void>(resolve=>{started=resolve;});
+  const reply=()=>jsonResponse({output_text:"ok",choices:[{message:{content:"ok"}}]});
+  const fetcher:FetchLike=async()=>deferred?new Promise<Response>(resolve=>{complete=resolve;started();}):reply();
+  const runtime=new LlmRuntime(database,async()=>"secret",fetcher,{recoveryProbeThreshold:1});
+  runtime.configure(configuration());await runtime.switchProfile("command_parser","backup");deferred=true;
+  const pending=operation==="invoke"?runtime.invoke("command_parser",{messages:[{role:"user",content:"pending"}]}):operation==="switch"?runtime.switchProfile("command_parser","backup"):runtime.attemptFailback("command_parser");
+  const outcome=pending.then(()=>undefined,()=>undefined);
+  await start;runtime.resetRole("command_parser");complete(reply());await outcome;
+  expect(runtime.resolveProfiles("command_parser")[0]?.id).toBe("primary");expect(runtime.snapshot().state.activeProfileByRole.command_parser).toBeUndefined();database.close();
+});

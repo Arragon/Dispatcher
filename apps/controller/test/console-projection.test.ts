@@ -22,6 +22,12 @@ it("projects full metadata and archives only explicitly with revision and active
     const snapshot = (await service.app.inject({headers, url: "/api/fleet"})).json().snapshot;
     expect(snapshot.projects).toContainEqual(expect.objectContaining({ id: "p", name: "Dispatcher", externalRefs: [expect.objectContaining({externalUrl: "https://linear.app/project/p"})] }));
     expect(snapshot.tasks[0].currentRunId).toBe("r");
+    service.database.saveTaskContract("t", {version:1,revision:2,goal:"Task",scope:["src"],acceptanceCriteria:[],verification:[],constraints:[],delivery:{type:"none"}});
+    service.database.saveEntity("run-contract", "r", {revision:1,goal:"Frozen contract",scope:["original"]});
+    const detail=(await service.app.inject({headers,url:"/api/tasks/t"})).json();
+    expect(detail).toMatchObject({revision:1,contract:{revision:2},runs:[{id:"r",model:{id:"gpt-x"}}]});
+    expect((await service.app.inject({headers,url:"/api/runs/r"})).json().contract).toMatchObject({revision:1,scope:["original"]});
+
     expect(snapshot.tasks[0].archivedAt).toBeUndefined();
     expect(snapshot.runs[0]).toMatchObject({ model: { id: "gpt-x", source: "configuration" }, tokens: { input: 10, output: 3 }, worktree: "/workspace/task" });
     expect((await service.app.inject({headers, method: "POST", url: "/api/tasks/t/archive", payload: { archived: true, revision: 99, archiveRevision: 0 } })).statusCode).toBe(409);

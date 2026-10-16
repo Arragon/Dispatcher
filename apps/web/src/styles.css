@@ -147,7 +147,7 @@ section { min-width: 0; }
 .view-tabs { display: flex; gap: 25px; border-bottom: 1px solid var(--line); margin-bottom: 21px; overflow-x: auto; }
 .view-tabs button { border: 0; border-radius: 0; background: transparent; padding: 0 1px; min-height: 43px; border-bottom: 2px solid transparent; color: var(--muted); white-space: nowrap; }
 .view-tabs button[aria-selected="true"], .view-tabs button[aria-pressed="true"] { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
-.table-wrap { overflow-x: auto; max-width: 100%; }
+.table-wrap { position:relative; overflow-x: auto; max-width: 100%; }
 table { width: 100%; border-collapse: collapse; font-size: 12px; text-align: left; }
 th { background: var(--panel-2); color: var(--muted); font-size: 11px; font-weight: 500; white-space: nowrap; }
 th, td { padding: var(--row-pad); border-bottom: 1px solid var(--line); vertical-align: middle; }
@@ -368,3 +368,19 @@ dd { margin: 5px 0 0; font-size: 12px; overflow-wrap: anywhere; }
 .config-form .rjsf > .rjsf-field-object > fieldset { border: 0; padding: 0; margin: 0; }
 .config-form .rjsf > .rjsf-field-object > fieldset > legend { display: none; }
 .config-form .rjsf-field-array > fieldset { border: 0; padding: 0; }
+
+/* Canonical task evidence uses the same drawer rhythm as the v3 management pages. */
+.detail-toolbar { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:22px; }
+.detail-toolbar > span, .detail-section, .detail-section li { min-width:0; overflow-wrap:anywhere; }
+.detail-section { padding-block:22px; border-top:1px solid var(--line); }
+.detail-section h3 { margin:0 0 14px; }
+.detail-section h4 { margin:20px 0 8px; font-size:13px; }
+.task-instructions { white-space:pre-wrap; font-family:inherit; line-height:1.8; background:var(--panel-2); padding:16px; border-radius:8px; }
+.detail-list { padding-inline-start:20px; margin:8px 0; }
+.detail-list li + li { margin-top:6px; }
+.catalog-controls { border:0; padding:0; margin:0; min-width:0; }
+::selection { background:var(--selected); color:var(--text); }
+input, textarea { caret-color:var(--accent); }
+@media(max-width:580px) { input,textarea,select { font-size:16px; } .drawer .details-grid { grid-template-columns:1fr; } .detail-toolbar { flex-wrap:wrap; } }
+.config-form .rjsf-array-item > div:first-child { flex:1; min-width:0; }
+.drawer > .panel-heading > button, .modal > .panel-heading > button { flex-shrink:0; white-space:nowrap; }

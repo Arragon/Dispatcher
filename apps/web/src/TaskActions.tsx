@@ -11,11 +11,11 @@ export function TaskActions({ task, run, profiles, refresh }: { task: FleetTaskI
   const [message, setMessage] = useState("");
   const [answer, setAnswer] = useState("");
   const [workflow, setWorkflow] = useState<Workflow>();
-  async function prepare(text: string): Promise<void> {
+  async function prepare(action: string, target: string, kind: "task" | "run"): Promise<void> {
     if (busy) return;
     setBusy(true); setWorkflow(undefined); setMessage("正在校验操作…");
     try {
-      const result = await api<{ workflow: Workflow }>("/api/assistant/workflows", { method: "POST", body: JSON.stringify({ text }) });
+      const result = await api<{ workflow: Workflow }>("/api/assistant/workflows", { method: "POST", body: JSON.stringify({ intent: { version: 2, action, entities: [{kind, value: target, id: target}], arguments: {target, ...(action === "task.dispatch" && profileId ? {profileId} : {})}, confidence: 1, source: "ui", ...(kind === "task" && task.revision !== undefined ? {expectedRevision: task.revision} : {}) } }) });
       setWorkflow(result.workflow); setMessage("请确认目标和操作后继续。");
     } catch (error) { setMessage(error instanceof Error ? error.message : "操作计划失败"); }
     finally { setBusy(false); }
@@ -45,8 +45,8 @@ export function TaskActions({ task, run, profiles, refresh }: { task: FleetTaskI
     finally { setBusy(false); }
   }
   return <div className="workflow-card"><h3>任务操作</h3>
-    {task.state === "READY" && !task.archivedAt && <><label>执行账号<select disabled={busy} value={profileId} onChange={(event) => {setProfileId(event.target.value); setWorkflow(undefined);}}><option value="">自动选择可用账号</option>{profiles.filter((profile) => profile.state === "CONFIGURED").map((profile) => <option key={profile.id} value={profile.id}>{profile.alias} · {profile.provider}</option>)}</select></label><button disabled={busy} onClick={() => void prepare(`/task dispatch ${task.id}${profileId ? ` ${profileId}` : ""}`)}>派发任务</button></>}
-    {run && !terminalStates.has(run.state) && <div className="secure-actions"><button disabled={busy} onClick={() => void prepare(`/task cancel ${task.id}`)}>取消任务…</button>{["RESOURCE_BLOCKED", "RUNNER_UNAVAILABLE", "SUSPECTED_STALL"].includes(run.state) && <button disabled={busy} onClick={() => void prepare(`/run resume ${run.id}`)}>恢复运行…</button>}</div>}
+    {task.state === "READY" && !task.archivedAt && <><label>执行账号<select disabled={busy} value={profileId} onChange={(event) => {setProfileId(event.target.value); setWorkflow(undefined);}}><option value="">自动选择可用账号</option>{profiles.filter((profile) => profile.state === "CONFIGURED").map((profile) => <option key={profile.id} value={profile.id}>{profile.alias} · {profile.provider}</option>)}</select></label><button disabled={busy} onClick={() => void prepare("task.dispatch", task.id, "task")}>派发任务</button></>}
+    {run && !terminalStates.has(run.state) && <div className="secure-actions"><button disabled={busy} onClick={() => void prepare("task.cancel", task.id, "task")}>取消任务…</button>{["RESOURCE_BLOCKED", "RUNNER_UNAVAILABLE", "SUSPECTED_STALL"].includes(run.state) && <button disabled={busy} onClick={() => void prepare("run.resume", run.id, "run")}>恢复运行…</button>}</div>}
     {run?.state === "WAITING_USER" && <form onSubmit={(event) => void reply(event)}><label>回复 Agent 的决策请求<textarea disabled={busy} value={answer} onChange={(event) => setAnswer(event.target.value)} required /></label><button className="primary" disabled={busy || !answer.trim()} type="submit">发送回复并继续</button></form>}
     {workflow && <div className="workflow-card"><strong>{workflow.toolName}</strong><small>目标：{task.title} · {task.id}</small>{workflow.questions.map((question) => <p key={question}>{question}</p>)}{workflow.state === "NEEDS_APPROVAL" && <button disabled={busy} onClick={() => void act("approve")}>确认本次操作</button>}{workflow.state === "READY" && <button disabled={busy} className="primary" onClick={() => void act("execute")}>执行已确认操作</button>}<small>{workflow.state}</small></div>}
     <p role="status">{busy ? "处理中…" : message || "所有操作由服务端校验权限与当前任务状态。"}</p>

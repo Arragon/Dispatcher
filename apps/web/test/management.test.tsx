@@ -7,8 +7,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import DevicesPage from "../src/DevicesPage.js";
 import DiagnosticsPage from "../src/DiagnosticsPage.js";
 import SettingsPage from "../src/SettingsPage.js";
-beforeEach(() => { HTMLDialogElement.prototype.showModal = function () {this.setAttribute("open","");}; HTMLDialogElement.prototype.close = function () {this.removeAttribute("open");}; });
-afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+beforeEach(() => { vi.stubGlobal("EventSource",class{addEventListener(){}close(){}}); HTMLDialogElement.prototype.showModal = function () {this.setAttribute("open","");}; HTMLDialogElement.prototype.close = function () {this.removeAttribute("open");}; });
+afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 function mount(ui: React.ReactNode) { return render(<QueryClientProvider client={new QueryClient({defaultOptions:{queries:{retry:false}}})}><MemoryRouter>{ui}</MemoryRouter></QueryClientProvider>); }
 it("separates registered devices from heartbeat evidence and does not enroll on read", async () => {
   const fetchMock=vi.spyOn(globalThis,"fetch").mockImplementation(async (input) => new Response(JSON.stringify(input === "/api/config" ? {revision:1,config:{runners:[{id:"remote",displayName:"Remote workstation",mode:"remote",capacity:2,tags:[]}],agentProfiles:[]}} : {runners:[]})));

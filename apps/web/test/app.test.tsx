@@ -40,7 +40,7 @@ describe("Dashboard shell", () => {
       return new Response(JSON.stringify({ installed: true, compatible: true, authenticated: false, authentication: "unknown", version: "2.0.21", diagnostic: "Authentication remains unverified." }));
     });
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    render(<QueryClientProvider client={client}><AgentsPage /></QueryClientProvider>);
+    render(<QueryClientProvider client={client}><MemoryRouter><AgentsPage /></MemoryRouter></QueryClientProvider>);
     await userEvent.click((await screen.findAllByRole("button", { name: "添加账号" }))[0]!);
     await userEvent.click(await screen.findByRole("button", { name: "扫描并检查" }));
     expect(await screen.findByText(/Authentication remains unverified/)).toBeTruthy();
@@ -53,7 +53,7 @@ describe("Dashboard shell", () => {
       return new Response(JSON.stringify({ matrix: [] }));
     });
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    render(<QueryClientProvider client={client}><AgentsPage /></QueryClientProvider>);
+    render(<QueryClientProvider client={client}><MemoryRouter><AgentsPage /></MemoryRouter></QueryClientProvider>);
     expect(await screen.findByText("kite")).toBeTruthy();
     expect(screen.queryByRole("option", { name: "kite (codex)" })).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: "kite 详情" }));
@@ -119,7 +119,7 @@ describe("Dashboard shell", () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(<QueryClientProvider client={client}><SettingsPage /></QueryClientProvider>);
     await userEvent.click(await screen.findByRole("button", { name: "预览配置变更" }));
-    expect(await screen.findByText("Configuration is already current.")).toBeTruthy();
+    expect(await screen.findByText("配置与当前版本一致。")).toBeTruthy();
     expect(fetchMock).toHaveBeenCalledWith("/api/config/plans", expect.objectContaining({ method: "POST" }));
   });
 });

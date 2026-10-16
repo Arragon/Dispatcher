@@ -26,7 +26,8 @@ export type LlmErrorCode =
   | "SCHEMA_MISMATCH"
   | "MODEL_MISSING"
   | "UNSUPPORTED_CAPABILITY"
-  | "NO_AVAILABLE_PROFILE";
+  | "NO_AVAILABLE_PROFILE"
+  | "SELECTION_CHANGED";
 
 export interface LlmEndpoint {
   id: string;

@@ -277,6 +277,7 @@ interface SecretBody {
 }
 
 interface ConfigPlanBody {
+  baseRevision?: number;
   config?: unknown;
   actor?: string;
 }
@@ -306,7 +307,9 @@ interface SecretTestState {
   lastTestStatus: "ok" | "failed";
 }
 
-interface CodexProfileBody {
+interface ProfilePlanOptions { previewOnly?: boolean; baseRevision?: number }
+
+interface CodexProfileBody extends ProfilePlanOptions {
   enabled?: boolean;
   id?: string;
   alias?: string;
@@ -316,7 +319,7 @@ interface CodexProfileBody {
   model?: string;
 }
 
-interface QoderProfileBody {
+interface QoderProfileBody extends ProfilePlanOptions {
   id?: string;
   alias?: string;
   runnerId?: string;
@@ -325,7 +328,7 @@ interface QoderProfileBody {
   model?: string;
 }
 
-interface EcosystemProfileBody {
+interface EcosystemProfileBody extends ProfilePlanOptions {
   trustWorkspace?: boolean;
   enabled?: boolean;
   configDir?: string;
@@ -2557,6 +2560,7 @@ export class ControllerService {
     this.app.get("/api/adapters/manifests", async () => ({ manifests: adapterManifests }));
     this.app.get("/api/adapters/compatibility", async () => ({ matrix: buildAdapterCompatibilityMatrix(adapterManifests) }));
     this.app.get("/api/agents/profiles", async () => ({
+      revision: this.configuration.current().revision,
       profiles: this.configuration.current().config.agentProfiles.map((profile) => {
         const manifest = manifestForProvider(profile.provider);
         return {
@@ -2622,7 +2626,13 @@ export class ControllerService {
           ...(body.model ? { model: body.model } : {}),
         },
       });
-      const plan = this.configuration.buildPlan(next, "local-web", "web");
+      if (body.baseRevision !== undefined) {
+        if (!Number.isInteger(body.baseRevision)) return reply.code(400).send({code:"INVALID_CONFIG_REVISION"});
+        const actual=this.configuration.current().revision;
+        if(body.baseRevision!==actual) throw new RevisionConflictError(body.baseRevision,actual);
+      }
+      const plan = this.configuration.buildPlan(next, this.principalFor(request).id, "web");
+      if(body.previewOnly === true) return reply.code(201).send({plan});
       const applied = this.configuration.applyPlan(plan.id, { confirmed: true });
       return reply.code(201).send({ profile: { id: body.id, provider: "codex", alias: body.alias, runnerId: body.runnerId ?? "local", state: body.enabled === false ? "DISABLED" : "CONFIGURED" }, revision: applied.revision });
     });
@@ -2652,7 +2662,13 @@ export class ControllerService {
         runnerId: body.runnerId ?? "local",
         settings: { executable: discovery.selected.executable, ...(body.configDir ? { configDir: body.configDir } : {}), ...(body.model ? { model: body.model } : {}) },
       });
-      const plan = this.configuration.buildPlan(next, "local-web", "web");
+      if (body.baseRevision !== undefined) {
+        if (!Number.isInteger(body.baseRevision)) return reply.code(400).send({code:"INVALID_CONFIG_REVISION"});
+        const actual=this.configuration.current().revision;
+        if(body.baseRevision!==actual) throw new RevisionConflictError(body.baseRevision,actual);
+      }
+      const plan = this.configuration.buildPlan(next, this.principalFor(request).id, "web");
+      if(body.previewOnly === true) return reply.code(201).send({plan});
       const applied = this.configuration.applyPlan(plan.id, { confirmed: true });
       return reply.code(201).send({ profile: { id: body.id, provider: "qoder", alias: body.alias, runnerId: body.runnerId ?? "local", state: "CONFIGURED" }, discovery: discovery.selected, revision: applied.revision });
     });
@@ -2715,7 +2731,13 @@ export class ControllerService {
       if (latest.config.agentProfiles.some((profile) => profile.id === body.id)) return reply.code(409).send({ code: "PROFILE_EXISTS" });
       const next = structuredClone(latest.config);
       next.agentProfiles.push({ id: body.id, provider, ...(body.enabled !== undefined ? { enabled: body.enabled } : {}), alias: body.alias, runnerId: body.runnerId ?? "local", ...(credentialRef ? { credentialRef } : {}), settings });
-      const plan = this.configuration.buildPlan(next, "local-web", "web");
+      if (body.baseRevision !== undefined) {
+        if (!Number.isInteger(body.baseRevision)) return reply.code(400).send({code:"INVALID_CONFIG_REVISION"});
+        const actual=this.configuration.current().revision;
+        if(body.baseRevision!==actual) throw new RevisionConflictError(body.baseRevision,actual);
+      }
+      const plan = this.configuration.buildPlan(next, this.principalFor(request).id, "web");
+      if(body.previewOnly === true) return reply.code(201).send({plan});
       const applied = this.configuration.applyPlan(plan.id, { confirmed: true });
       return reply.code(201).send({ profile: { id: body.id, provider, alias: body.alias, runnerId: body.runnerId ?? "local", state: body.enabled === false ? "DISABLED" : this.agentAdapters.has(body.id) ? "CONFIGURED" : "UNAVAILABLE" }, revision: applied.revision });
     });
@@ -2847,7 +2869,7 @@ export class ControllerService {
       return { probe };
     });
     this.app.post("/api/connectors/projections/drain", async () => this.drainProjections());
-    this.app.get("/api/connectors/dead-letters", async () => ({ deadLetters: this.database.listDeadLetters<JsonValue>() }));
+    this.app.get("/api/connectors/dead-letters", async () => ({ deadLetters: this.database.listDeadLetters<JsonValue>().map(entry=>({...entry,canRetry:entry.source==="outbox" || entry.source==="inbox"&&entry.sourceId.startsWith(`${MESSAGING_INBOX_KIND}:`)})) }));
     this.app.post<{ Params: { id: string } }>("/api/connectors/dead-letters/:id/retry", async (request, reply) => {
       const deadLetter = this.database.listDeadLetters<JsonValue>().find((entry) => entry.id === request.params.id);
       const inboxPrefix = `${MESSAGING_INBOX_KIND}:`;
@@ -3005,7 +3027,9 @@ export class ControllerService {
     this.app.get<{ Params: { id: string } }>("/api/tasks/:id", async (request, reply) => {
       const task = this.database.getCanonicalTask<JsonValue>(request.params.id);
       if (!task) return reply.code(404).send({ code: "TASK_NOT_FOUND" });
-      return { ...task, contract: this.database.getTaskContract<JsonValue>(request.params.id), deliveries: this.database.listDeliveryEvidence<JsonValue>(request.params.id) };
+      return { ...task, contract: this.database.getTaskContract<JsonValue>(request.params.id), deliveries: this.database.listDeliveryEvidence<JsonValue>(request.params.id),
+        archive: this.database.getEntity<JsonValue>("task-archive", request.params.id),
+        runs: this.database.listEntities<JsonValue>("run").filter(value => (value as unknown as Run).taskId === request.params.id) };
     });
     this.app.post<{ Params: { id: string }; Body: TaskDispatchBody }>("/api/tasks/:id/dispatch", async (request, reply) => {
       return reply.code(201).send(await this.dispatchTask(request.params.id, request.body ?? {}));
@@ -3013,7 +3037,7 @@ export class ControllerService {
     this.app.get<{ Params: { id: string } }>("/api/runs/:id", async (request, reply) => {
       const run = this.database.getEntity<JsonValue>("run", request.params.id);
       if (!run) return reply.code(404).send({ code: "RUN_NOT_FOUND" });
-      return { run };
+      return { run, contract: this.database.getEntity<JsonValue>("run-contract", request.params.id) };
     });
     this.app.get<{Params:{id:string}}>("/api/runs/:id/result",async(request,reply)=>{
       const result=this.database.getEntity<JsonValue>("run-result",request.params.id);
@@ -3058,6 +3082,10 @@ export class ControllerService {
     this.app.post<{ Params: { role: LlmRole }; Body: LlmSwitchBody }>("/api/llm/roles/:role/switch", async (request, reply) => {
       if (!request.body?.profileId) return reply.code(400).send({ code: "LLM_PROFILE_REQUIRED" });
       return { state: await this.llm.switchProfile(request.params.role, request.body.profileId) };
+    });
+    this.app.post<{Params:{role:LlmRole}}>("/api/llm/roles/:role/reset", async(request,reply)=>{
+      if(!["command_parser","config_assistant","runtime_summarizer","error_classifier"].includes(request.params.role)) return reply.code(400).send({code:"LLM_ROLE_REQUIRED"});
+      return {state:this.llm.resetRole(request.params.role)};
     });
     this.app.post<{ Params: { role: LlmRole } }>("/api/llm/roles/:role/failback", async (request) => ({
       switched: await this.llm.attemptFailback(request.params.role),
@@ -3125,6 +3153,11 @@ export class ControllerService {
     this.app.get("/api/config/audit", async () => ({ audit: this.database.listAudit() }));
     this.app.post<{ Body: ConfigPlanBody }>("/api/config/plans", async (request, reply) => {
       if (request.body?.config === undefined) return reply.code(400).send({ code: "CONFIG_REQUIRED" });
+      if (request.body.baseRevision !== undefined) {
+        if(!Number.isInteger(request.body.baseRevision)) return reply.code(400).send({code:"INVALID_CONFIG_REVISION"});
+        const actual=this.configuration.current().revision;
+        if(request.body.baseRevision!==actual) throw new RevisionConflictError(request.body.baseRevision,actual);
+      }
       const plan = this.configuration.buildPlan(request.body.config, this.principalFor(request).id, "web");
       return reply.code(201).send({ plan });
     });
@@ -3218,7 +3251,7 @@ export class ControllerService {
       const status = error instanceof PublicationError ? error.statusCode : error instanceof TaskDispatchError ? error.statusCode : error instanceof RevisionConflictError
         ? 409
         : error instanceof LlmRuntimeError
-          ? error.code === "NO_AVAILABLE_PROFILE" ? 503 : 400
+          ? error.code === "SELECTION_CHANGED" ? 409 : error.code === "NO_AVAILABLE_PROFILE" ? 503 : 400
         : error instanceof ConfigPlanError || error instanceof ConfigValidationError
           ? 400
           : semanticStatus ?? workspaceStatus ?? connectorStatus ?? secretStatus ?? (error && typeof error === "object" && "validation" in error ? 400 : 500);

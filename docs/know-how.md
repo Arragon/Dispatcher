@@ -333,8 +333,10 @@
   or receipt. Missing publication/catalog APIs must leave submission unavailable.
 - Before building a configuration plan from an edited form, re-read the applied
   revision and reject a changed base while preserving the draft. This client
-  check is not an atomic server-side editing-base CAS; ConfigPlan's existing
-  apply revision fence remains required. Device/repository/policy editors share
+  check alone is not atomic: console plans must also send baseRevision, which
+  Controller compares immediately before building the plan. ConfigPlan's apply
+  revision fence remains required, including for legacy callers without a base.
+  Device/repository/policy editors share
   the complete-draft settings path and must not discard hidden fields.
 - `/api/system-impact` currently returns a placeholder local-process count and
   non-windowed LLM counters. Do not display these as measured process counts or
@@ -386,3 +388,17 @@
 - Controller tests import compiled workspace adapter exports. After adapter edits,
   rebuild before running targeted Controller tests; a direct targeted rerun can
   otherwise exercise stale `dist` code. The full `pnpm check` builds first.
+
+- React Query structural sharing can preserve data identity after an explicit
+  refetch. Discard/reload must copy the returned applied data and revision into
+  the draft directly; toggling a dirty ref does not rerun a data-keyed effect.
+- Internal model role reset must fence pending invoke, switch and failback
+  selection writes. A completed pre-reset call remains valid output, but cannot
+  repin the old profile after the user restored pool order.
+- Publication receipt recovery must retain the original reviewed draft identity.
+  Do not label an old dispatch commit from the currently edited create-only draft;
+  late preview reads must not interrupt newer editing. Legacy receipts without
+  a bound review snapshot remain readable but require a fresh review to commit.
+- Scroll wrappers containing absolutely positioned screen-reader text need a
+  positioning context: clipped hidden table headings can otherwise expand the
+  document on narrow viewports even while the table itself scrolls correctly.
