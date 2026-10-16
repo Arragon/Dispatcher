@@ -44,6 +44,17 @@ it("keeps incomplete diagnostic sections visible and ignores known placeholder m
   expect(screen.getByText("未采集")).toBeTruthy();
   expect(screen.queryByText("999")).toBeNull();
 });
+it("keeps unknown execution evidence separate from healthy Controller and only checks an explicit registered target",async()=>{
+ const snapshot={generatedAt:"2026-10-16T12:00:00Z",controllerReady:true,executionReadiness:"unverified",configRevision:1,summary:{pass:1,fail:0,unknown:1,stale:0},checks:[{id:"profile.native",cost:"provider-query",entityRequired:true}],entries:[{id:"profile:p:authentication",entityRef:{kind:"profile",id:"p"},category:"authentication",status:"unknown",severity:"info",source:"saved-profile-evidence",message:"此项尚无已验证的有效证据。",reasonCode:"EVIDENCE_UNVERIFIED",actions:[{label:"原生检查",checkId:"profile.native"}]}]};
+ const fetch=vi.spyOn(globalThis,"fetch").mockImplementation(async(input,init)=>{
+  if(input==="/health")return new Response(JSON.stringify({status:"ok",version:"0.1",mode:"embedded",uptimeMs:1000}));
+  if(input==="/api/system-impact")return new Response(JSON.stringify({rssBytes:1,heapUsedBytes:1,databaseBytes:1,dashboardClients:0,llmCallsSinceStart:3}));
+  if(input==="/api/resources")return new Response(JSON.stringify({resources:[]}));
+  if(input==="/api/diagnostics/checks"&&init?.method==="POST")return new Response(JSON.stringify({diagnostics:snapshot}));
+  return new Response(JSON.stringify(snapshot));
+ });mount(<DiagnosticsPage/>);expect(await screen.findByText("执行就绪：尚未验证")).toBeTruthy();expect(screen.getByText("未知")).toBeTruthy();expect(fetch.mock.calls.every(([,init])=>!init?.method)).toBe(true);
+ await userEvent.click(screen.getByRole("button",{name:"原生检查（查询提供方）"}));expect(await screen.findByText("检查已完成，结论以各项证据为准。")).toBeTruthy();const mutation=fetch.mock.calls.find(([,init])=>init?.method==="POST");expect(mutation?.[0]).toBe("/api/diagnostics/checks");expect(JSON.parse(String(mutation?.[1]?.body))).toEqual({checkId:"profile.native",entityId:"p"});
+});
 it("refuses to build a configuration plan when the editing base revision changed", async () => {
   let reads=0;
   const fetchMock=vi.spyOn(globalThis,"fetch").mockImplementation(async (input) => {

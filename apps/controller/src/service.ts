@@ -2,7 +2,8 @@ import { resolveProfileExecutionContext } from "./execution-context.js";
 import { ProfileProbeService } from "./profile-probes.js";
 import {RunInputReceipts,InputReceiptError,type RunInputIdentity} from "./run-inputs.js";
 import {UsageObservations,UsageObservationError} from "./usage-observations.js";
-import type { ProfileConsoleView } from "@dispatcher/domain";
+import {buildDiagnostics,diagnosticChecks} from "./diagnostics.js";
+import type { ProfileConsoleView,DeliveryEvidence } from "@dispatcher/domain";
 import { applyConfigEdits, consoleConfig, consoleConfigPlan } from "./config-edits.js";
 import {qualifyRoutingPolicy,type PolicyConfigEvidence} from "./policy-config.js";
 import {TaskClassifier} from "./task-classifier.js";
@@ -1312,7 +1313,7 @@ export class ControllerService {
       ...(typeof usage.resetsAt === "string" ? { resetsAt: usage.resetsAt } : {}),
       source: reportedSource ?? (usage.source === "error" ? "error" : "session"),
       confidence: usage.confidence === "high" || usage.confidence === "medium" ? usage.confidence : "low",
-      checkedAt: new Date().toISOString(),
+      checkedAt:(()=>{const session=this.database.getEntity<JsonValue>("adapter-session",sessionId) as unknown as AdapterSession|undefined,candidate=[usage.checkedAt,usage.observedAt,...(["event","error","session"].includes(String(usage.source))?[session?.updatedAt]:[])].find(value=>typeof value==="string"&&Number.isFinite(Date.parse(value)));return typeof candidate==="string"?new Date(candidate).toISOString():new Date().toISOString();})(),
     };
     this.database.saveEntity("resource-signal", `${profileId}:${snapshot.source}`, json(snapshot), snapshot.checkedAt);
     const assessment = this.resourceRegistry.record(snapshot);
@@ -1355,6 +1356,29 @@ export class ControllerService {
     const assessment = this.resourceRegistry.assess(profileId);
     if (assessment.state === "AVAILABLE" || assessment.state === "LOW") await this.recoverProfileRuns(profileId, assessment);
     return snapshot;
+  }
+
+  private canRetryDeadLetter(entry:{source:string;sourceId:string}):boolean{return entry.source==="outbox"||entry.source==="inbox"&&entry.sourceId.startsWith(`${MESSAGING_INBOX_KIND}:`);}
+  private connectorConfigurationFingerprint(id:string):string{const config=this.configuration.current().config;return contentHash(config.connectors.find(entry=>entry.id===id)??{id,compatibility:config.integrations});}
+  private diagnosticsSnapshot(){
+    const current=this.configuration.current(),now=this.now(),runs=this.database.listEntities<JsonValue>("run") as unknown as Run[];
+    const profiles=current.config.agentProfiles.map(profile=>{const view=this.profileConsoleView(profile.id),signals=this.resourceRegistry.signalsFor(profile.id).sort((a,b)=>Date.parse(b.checkedAt)-Date.parse(a.checkedAt));if(view.resources.status==="unknown"&&signals[0]&&Date.parse(signals[0].checkedAt)+this.resourceRegistry.maxSignalAgeMs<now.getTime())view.resources={status:"stale",observedAt:signals[0].checkedAt,source:signals[0].source,reasonCode:"RESOURCE_EVIDENCE_EXPIRED"};return view;});
+    const publications=(this.database.listEntities<JsonValue>("task-publication") as unknown as PublicationRecord[]).flatMap(publication=>publication.receipt?[{id:publication.preview.publicationId,state:publication.receipt.state}]:[]);
+    const deliveries=this.database.listCanonicalTasks<JsonValue>().flatMap(task=>this.database.listDeliveryEvidence<JsonValue>((task.document as unknown as Task).id)) as unknown as DeliveryEvidence[];
+    return buildDiagnostics({now:now.toISOString(),revision:current.revision,lifecycle:this.lifecycle.state,profiles,runners:current.config.runners.map(runner=>({id:runner.id,connected:runner.mode==="embedded"?this.embeddedRunner?.runner.id===runner.id:this.remoteRunnerServer.isConnected(runner.id)})),connectors:this.connectors.list().map(connector=>{const saved=this.database.getEntity<JsonValue>("connector-health",connector.instance.id) as {health?:string;checkedAt?:string;contextFingerprint?:string}|undefined;return {id:connector.instance.id,health:saved?saved.contextFingerprint===this.connectorConfigurationFingerprint(connector.instance.id)?saved.health??"UNKNOWN":"CONTEXT_CHANGED":"UNKNOWN",...(saved?.checkedAt?{updatedAt:saved.checkedAt}:{})};}),runs,publications,deliveries,deadLetters:this.database.listDeadLetters<JsonValue>().map(entry=>({id:entry.id,canRetry:this.canRetryDeadLetter(entry),createdAt:entry.createdAt}))});
+  }
+  private systemImpact(){
+    const memory=process.memoryUsage();let databaseBytes:number|null=null;try{databaseBytes=statSync(join(this.options.dataDirectory,"dispatcher.sqlite")).size;}catch{/* A missing/unreadable file is unknown, not measured zero. */}
+    return {rssBytes:memory.rss,heapUsedBytes:memory.heapUsed,runnerCount:this.runners.list().length,activeLocalProcesses:null,databaseBytes,dashboardClients:this.dashboardClients,llmCallsLastHour:null,llmCallsSinceStart:this.llm.snapshot().calls,llmCallScope:{basis:"generate-attempts",includesExplicitProbes:false,reset:"controller-instance",startedAt:new Date(this.startedAt).toISOString()}};
+  }
+  private async probeConnector(id:string){
+    const connector=this.connectors.get(id);if(!connector)throw new ConfigPlanError("CONNECTOR_NOT_FOUND","Configured connector is unavailable");
+    const contextFingerprint=this.connectorConfigurationFingerprint(id),probe=await connector.probe();
+    if(contextFingerprint!==this.connectorConfigurationFingerprint(id))throw new ConfigPlanError("CONNECTOR_CONTEXT_CHANGED","Connector configuration changed during the health check");
+    const current=this.connectors.get(id);if(!current)throw new ConfigPlanError("CONNECTOR_CONTEXT_CHANGED","Connector registration changed during the health check");current.instance.health=probe.health;current.instance.updatedAt=probe.checkedAt;
+    this.database.saveEntity("connector-health",id,json({...redactValue(probe) as object,contextFingerprint}),probe.checkedAt);this.fleetEvents.publish("connector.changed",id,redactValue(probe));
+    if(probe.health==="AUTH_REQUIRED")await this.notifyOperationalAttention({key:id,state:"CONNECTOR_AUTH",subject:`Connector authentication required: ${connector.instance.displayName}`,body:probe.message??"Open Integrations to repair credentials."});
+    return probe;
   }
 
   private async runDueResourceProbes(): Promise<void> {
@@ -1750,7 +1774,7 @@ export class ControllerService {
     let probeContext=context;if(last?.repositoryId)try{probeContext=this.resolveProfileExecutionContext(profileId,last.repositoryId,"probe");}catch{/* Removed repository evidence remains stale. */}
     const probe=this.profileProbes.current(probeContext);
     const unknown={status:"unknown" as const,reasonCode:"NATIVE_PROBE_REQUIRED"},installation=probe?.installation??unknown,compatibility=probe?.compatibility??unknown,authentication=probe?.authentication??unknown;
-    const enabled=profile.enabled!==false,remote=context.runner.mode==="remote",online=remote?this.remoteRunnerServer.isConnected(context.runnerId):Boolean(this.embeddedRunner),registered=!remote||this.remoteRunnerServer.profileInventory(context.runnerId).includes(profileId);
+    const enabled=profile.enabled!==false,remote=context.runner.mode==="remote",online=remote?this.remoteRunnerServer.isConnected(context.runnerId)&&Boolean(this.runners.list().find(runner=>runner.id===context.runnerId)?.capabilities.includes(NATIVE_EXECUTION_CAPABILITY)):Boolean(this.embeddedRunner),registered=!remote||this.remoteRunnerServer.profileInventory(context.runnerId).includes(profileId);
     const supportedProbe=Boolean(manifest?.probes.length)&&profile.provider!=="generic-mock",available=enabled&&Boolean(adapter)&&online&&registered&&["AVAILABLE","LOW","UNKNOWN"].includes(resource.state),verified=[installation,compatibility,authentication].every(evidence=>evidence.status==="ready");
     const model=stringSetting(profile.settings?.model);
     return {id:profile.id,alias:profile.alias,providerId:profile.provider,provider:profile.provider,adapterId:manifest?.id??profile.provider,runnerId:profile.runnerId,dispatchEnabled:enabled,configRevision:context.configRevision,state:!enabled?"DISABLED":adapter?"CONFIGURED":"UNAVAILABLE",resourceState:resource.state,capabilities:manifest?manifestCapabilities(manifest):[],installation,compatibility,authentication,
@@ -3138,18 +3162,10 @@ export class ControllerService {
 
     this.app.get("/api/connectors", async () => ({ connectors: this.connectors.list().map((adapter) => ({ definition: adapter.definition, instance: adapter.instance })) }));
     this.app.post<{ Params: { id: string } }>("/api/connectors/:id/test", async (request, reply) => {
-      const connector = this.connectors.get(request.params.id);
-      if (!connector) return reply.code(404).send({ code: "CONNECTOR_NOT_FOUND" });
-      const probe = await connector.probe();
-      connector.instance.health = probe.health;
-      connector.instance.updatedAt = probe.checkedAt;
-      this.database.saveEntity("connector-health", connector.instance.id, json(probe), probe.checkedAt);
-      this.fleetEvents.publish("connector.changed", connector.instance.id, probe);
-      if (probe.health === "AUTH_REQUIRED") await this.notifyOperationalAttention({ key: connector.instance.id, state: "CONNECTOR_AUTH", subject: `Connector authentication required: ${connector.instance.displayName}`, body: probe.message ?? "Open Integrations to repair credentials." });
-      return { probe };
+      if(!this.connectors.get(request.params.id))return reply.code(404).send({code:"CONNECTOR_NOT_FOUND"});return {probe:redactValue(await this.probeConnector(request.params.id))};
     });
     this.app.post("/api/connectors/projections/drain", async () => this.drainProjections());
-    this.app.get("/api/connectors/dead-letters", async () => ({ deadLetters: this.database.listDeadLetters<JsonValue>().map(entry=>({...entry,canRetry:entry.source==="outbox" || entry.source==="inbox"&&entry.sourceId.startsWith(`${MESSAGING_INBOX_KIND}:`)})) }));
+    this.app.get("/api/connectors/dead-letters", async () => ({ deadLetters: this.database.listDeadLetters<JsonValue>().map(entry=>({...entry,canRetry:this.canRetryDeadLetter(entry)})) }));
     this.app.post<{ Params: { id: string } }>("/api/connectors/dead-letters/:id/retry", async (request, reply) => {
       const deadLetter = this.database.listDeadLetters<JsonValue>().find((entry) => entry.id === request.params.id);
       const inboxPrefix = `${MESSAGING_INBOX_KIND}:`;
@@ -3356,18 +3372,18 @@ export class ControllerService {
       const advanced = await this.advanceRunExclusive(request.params.id);
       return reply.code(advanced.waiting ? 202 : 200).send(advanced);
     });
-    this.app.get("/api/system-impact", async () => {
-      const memory = process.memoryUsage();
-      const databasePath = join(this.options.dataDirectory, "dispatcher.sqlite");
-      return {
-        rssBytes: memory.rss,
-        heapUsedBytes: memory.heapUsed,
-        runnerCount: this.runners.list().length,
-        activeLocalProcesses: 0,
-        databaseBytes: existsSync(databasePath) ? statSync(databasePath).size : 0,
-        dashboardClients: this.dashboardClients,
-        llmCallsLastHour: this.llm.snapshot().calls,
-      };
+    this.app.get("/api/system-impact",async()=>this.systemImpact());
+    this.app.get("/api/diagnostics",async()=>this.diagnosticsSnapshot());
+    this.app.get("/api/diagnostics/checks",async()=>({checks:diagnosticChecks}));
+    this.app.get("/api/diagnostics/export",async()=>{const diagnostics=this.diagnosticsSnapshot(),measurements=this.systemImpact();return {schemaVersion:1,exportedAt:diagnostics.generatedAt,summary:diagnostics.summary,controllerReady:diagnostics.controllerReady,executionReadiness:diagnostics.executionReadiness,measurements};});
+    this.app.post<{Body:{checkId:string;entityId?:string;repositoryId?:string}}>("/api/diagnostics/checks",{schema:{body:{type:"object",additionalProperties:false,required:["checkId"],properties:{checkId:{type:"string",maxLength:100},entityId:{type:"string",maxLength:200},repositoryId:{type:"string",maxLength:200}}}}},async(request,reply)=>{
+      const check=diagnosticChecks.find(check=>check.id===request.body.checkId),id=request.body.entityId;
+      if(!check)return reply.code(400).send({code:"DIAGNOSTIC_CHECK_UNKNOWN"});if(check.entityRequired&&!id)return reply.code(400).send({code:"DIAGNOSTIC_ENTITY_REQUIRED"});
+      if(!check.entityRequired&&id!==undefined||request.body.repositoryId!==undefined&&check.id!=="profile.native")return reply.code(400).send({code:"DIAGNOSTIC_CONTEXT_INVALID"});
+      if(check.id==="profile.native"){if(!this.configuration.current().config.agentProfiles.some(profile=>profile.id===id))return reply.code(404).send({code:"PROFILE_NOT_FOUND"});const action=this.profileConsoleView(id!).actions.test;if(action?.allowed===false)return reply.code(409).send({code:"DIAGNOSTIC_CHECK_UNAVAILABLE",message:action.message??"This account has no available registered native check"});await this.probeConfiguredProfile(id!,request.body.repositoryId);}
+      if(check.id==="connector.health"){if(!this.connectors.get(id!))return reply.code(404).send({code:"CONNECTOR_NOT_FOUND"});await this.probeConnector(id!);}
+      if(check.id==="runner.connection"&&!this.configuration.current().config.runners.some(runner=>runner.id===id))return reply.code(404).send({code:"RUNNER_NOT_FOUND"});
+      return {checkId:check.id,cost:check.cost,completedAt:this.now().toISOString(),diagnostics:this.diagnosticsSnapshot()};
     });
     this.app.get<{Querystring:{profileId?:string;runId?:string;from?:string;to?:string}}>("/api/usage",async request=>({...this.usageObservations.query(request.query),errors:this.database.listEntities<JsonValue>("usage-error").filter(value=>{const error=value as {profileId?:string;runId?:string;status?:string};return error.status==="unknown"&&(!request.query.profileId||error.profileId===request.query.profileId)&&(!request.query.runId||error.runId===request.query.runId);})}));
 
@@ -3569,7 +3585,7 @@ export class ControllerService {
         ? 409
         : error instanceof LlmRuntimeError
           ? error.code === "SELECTION_CHANGED" ? 409 : error.code === "NO_AVAILABLE_PROFILE" ? 503 : 400
-        : error instanceof ConfigPlanError && ["PROFILE_CONTEXT_CHANGED","REMOTE_DRAFT_PROBE_UNAVAILABLE"].includes(error.code)?409:error instanceof ConfigPlanError || error instanceof ConfigValidationError
+        : error instanceof ConfigPlanError && ["PROFILE_CONTEXT_CHANGED","CONNECTOR_CONTEXT_CHANGED","REMOTE_DRAFT_PROBE_UNAVAILABLE"].includes(error.code)?409:error instanceof ConfigPlanError || error instanceof ConfigValidationError
           ? 400
           : semanticStatus ?? workspaceStatus ?? connectorStatus ?? secretStatus ?? (error && typeof error === "object" && "validation" in error ? 400 : 500);
       const code = error instanceof UsageObservationError||error instanceof InputReceiptError||error instanceof AdapterContractError||error instanceof PublicationError || error instanceof TaskDispatchError || error instanceof RevisionConflictError || error instanceof ConfigPlanError || error instanceof SecretStoreError || error instanceof LlmRuntimeError || error instanceof ConnectorError || error instanceof WorkspacePolicyError || error instanceof SemanticPolicyError

@@ -37,7 +37,7 @@ export type NormalizedCodexEvent =
   | { type: "activity"; summary: string }
   | { type: "usage"; summary: string;observedAt?:string; tokens: { input: number; output: number; cachedInput?: number } }
   | { type: "waiting"; reason: string }
-  | { type: "resource"; state: "RATE_LIMITED" | "QUOTA_EXHAUSTED" | "AUTH_ERROR" | "PROVIDER_DOWN" | "UNKNOWN"; reason: string; resetsAt?: string; source: "event" | "error"; confidence: "high" | "medium" | "low" }
+  | { type: "resource";observedAt?:string; state: "AVAILABLE"|"RATE_LIMITED" | "QUOTA_EXHAUSTED" | "AUTH_ERROR" | "PROVIDER_DOWN" | "UNKNOWN"; reason: string; resetsAt?: string; source: "event" | "error"|"probe"; confidence: "high" | "medium" | "low" }
   | { type: "failure"; reason: string };
 
 export const codexManifest: AdapterManifest = {
@@ -137,7 +137,7 @@ class SpawnedCodexTurn implements CodexTurn {
           if(event.type==="turn.completed")completedTurn=true;
           if(event.type==="turn.failed"||event.type==="error")failedTurn=true;
           const normalized = normalizeCodexEvent(event);
-          if (normalized)this.record(normalized.type==="usage"?{...normalized,observedAt:new Date().toISOString()}:normalized);
+          if (normalized)this.record(normalized.type==="usage"||normalized.type==="resource"?{...normalized,observedAt:new Date().toISOString()}:normalized);
         } catch {
           this.record({ type: "activity", summary: line.slice(0, 500) });
         }
@@ -152,7 +152,7 @@ class SpawnedCodexTurn implements CodexTurn {
         await this.ownership.stop();
         this.completed = true;
         const normalized = code===0 ? undefined : normalizeCodexError(stderr);
-        if (normalized)this.record(normalized);
+        if (normalized)this.record(normalized.type==="resource"?{...normalized,observedAt:new Date().toISOString()}:normalized);
         const events=this.events();
         const last = events.findLast(e=>e.type==="failure"||e.type==="activity");
         const waiting = events.findLast((event) => event.type === "waiting");
@@ -285,7 +285,7 @@ export class CodexAdapter implements AgentAdapter {
     const resource=events.findLast(event=>event.type==="resource"),usage=events.findLast(event=>event.type==="usage"),tokens=usage?.tokens;
     const observedAt=usage?.observedAt??session.turnStartedAt??session.createdAt;
     const observation:UsageObservationV1|undefined=tokens&&session.turnId?{version:1,eventId:`${session.turnId}:usage`,profileId:this.profile.id,runId:session.runId,sessionId:session.id,turnId:session.turnId,scope:"turn",mode:"snapshot",observedAt,collectedAt:observedAt,source:"native-event",completeness:"complete",metrics:[{name:"input",value:String(tokens.input),unit:"tokens"},{name:"output",value:String(tokens.output),unit:"tokens"},...(tokens.cachedInput!==undefined?[{name:"cachedInput",value:String(tokens.cachedInput),unit:"tokens",includedIn:"input"}]:[])]}:undefined;
-    return { ...(resource ?? (result?.state==="completed" ? {state:"AVAILABLE",source:"event",confidence:"medium",reason:"Native turn completed; remaining quota was not reported"} : { state: "UNKNOWN", source: "event", confidence: "low" })), ...(tokens ? { tokens, tokenScope: "latest-turn" } : {}),...(observation?{observations:[observation]}:{}) };
+    return { ...(resource ?? (result?.state==="completed" ? {state:"AVAILABLE",source:"event",confidence:"medium",reason:"Native turn completed; remaining quota was not reported"} : { state: "UNKNOWN", source: "event", confidence: "low" })),checkedAt:resource?.observedAt??(resource?.source==="probe"?new Date().toISOString():observedAt), ...(tokens ? { tokens, tokenScope: "latest-turn" } : {}),...(observation?{observations:[observation]}:{}) };
   }
   async diagnostics(sessionId: string): Promise<Record<string, unknown>> {
     const session = this.require(sessionId);

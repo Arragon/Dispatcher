@@ -522,6 +522,16 @@
   Remote usage needs an allowlisted numeric token projection and validated
   scope enum; never relax generic secret redaction or return arbitrary vendor
   usage objects to preserve those metrics.
+
+- A resource collection time is not automatically a new native observation.
+  Preserve cached event/session timestamps through local and remote reads;
+  explicit probe results may establish a new time. Retain the recovery path
+  where a newer verified probe supersedes an earlier quota/error signal.
+- Diagnostic GET/export paths only project facts. Registered checks declare
+  provider-query cost and cannot accept executable strings or a client-supplied
+  cost. Connector health binds applied configuration, expires after five minutes,
+  and rejects results whose configuration changed while awaiting the provider.
+  Legacy unbound health records require another check rather than a green state.
 - Input uncertainty belongs to a waiting episode, not just a client nonce.
   A new nonce, actor or task-description revision must not authorize resending
   an unconfirmed native reply. Store its original authority/message hashes and

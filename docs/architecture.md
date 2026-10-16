@@ -671,3 +671,24 @@ Run.tokens remains the compatible latest-turn projection. Missing metrics and
 unavailable billing baselines stay unknown. Management reads never query a
 native provider. The current normalized token emitter is Codex; providers with
 no qualified observation emitter do not acquire synthetic usage values.
+
+## Diagnostic reads and registered checks
+
+The diagnostics snapshot combines saved account evidence, current transport
+connections, canonical recovery states, publication/delivery receipts and
+durable synchronization failures. It does not invoke native tools, providers,
+inference or recovery. Controller readiness remains separate from qualified
+execution readiness; pass, fail, unknown and stale remain distinct.
+
+Explicit check requests select a registered check/target. The registry declares
+read-only versus provider-query cost and accepts no executable or client-defined
+cost. Account checks reuse applied execution context/probe persistence; connector
+checks bind the applied connector configuration and reject async drift. Their
+saved health evidence expires after five minutes or a configuration change.
+Export contains only scalar measurements and aggregate status counts.
+
+Cached native resource reads retain event/session observation times; a new
+explicit probe result may establish a new time. Remote cached reads preserve
+their original timestamp across restart. Unmeasured process totals and hourly
+LLM counts are null; the measured cumulative counter covers generation attempts
+since this Controller instance started and excludes independent probes.

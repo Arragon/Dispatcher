@@ -1,27 +1,39 @@
-import { useQuery } from "@tanstack/react-query";
+import {useEffect,useState} from "react";
+import { useQuery,useQueryClient } from "@tanstack/react-query";
+import type {DiagnosticEntry,DiagnosticsSnapshot} from "@dispatcher/domain";
 import { Link } from "react-router-dom";
 import type { ResourceAssessment } from "@dispatcher/fleet";
-import { api, type Health } from "./api.js";
+import { api,subscribeToEvents, type Health } from "./api.js";
 import { EmptyState, Icon, Notice } from "./ui.js";
 import { stateLabel } from "./task-view.js";
-interface Impact {rssBytes:number;heapUsedBytes:number;databaseBytes:number;dashboardClients:number;runnerCount:number}
-function bytes(value?:number):string {return value === undefined || !Number.isFinite(value) ? "未提供" : `${(value/1024/1024).toFixed(1)} MB`;}
+interface Impact {rssBytes:number;heapUsedBytes:number;databaseBytes:number|null;dashboardClients:number;runnerCount:number;llmCallsSinceStart?:number}
+function bytes(value?:number|null):string {return typeof value!=="number" || !Number.isFinite(value) ? "未提供" : `${(value/1024/1024).toFixed(1)} MB`;}
+const categories:Record<string,string>={lifecycle:"Controller",connection:"设备连接",installation:"原生安装",compatibility:"原生兼容性",authentication:"原生认证",resources:"账号资源",integration:"平台连接",execution:"运行恢复",publication:"发布回执",delivery:"交付",synchronization:"同步恢复"};
 export default function DiagnosticsPage():React.JSX.Element {
+  const client=useQueryClient(),[busyCheck,setBusyCheck]=useState(""),[message,setMessage]=useState("");
   const health=useQuery({queryKey:["health"],queryFn:()=>api<Health>("/health")});
   const impact=useQuery({queryKey:["system-impact"],queryFn:()=>api<Impact>("/api/system-impact")});
   const resources=useQuery({queryKey:["resources"],queryFn:()=>api<{resources:ResourceAssessment[]}>("/api/resources")});
-  const loading=health.isFetching || impact.isFetching || resources.isFetching;
-  function refresh():void {void Promise.all([health.refetch(),impact.refetch(),resources.refetch()]);}
-  function exportReport():void {
-    // Export only measured, allowlisted scalar fields. No config, paths, IDs, free text or credentials.
-    const report={schemaVersion:1,exportedAt:new Date().toISOString(),controller:health.data && !health.error ? {status:health.data.status,version:health.data.version,mode:health.data.mode,uptimeMs:health.data.uptimeMs} : {status:"unknown"},measurements:impact.data && !impact.error ? {rssBytes:impact.data.rssBytes,heapUsedBytes:impact.data.heapUsedBytes,databaseBytes:impact.data.databaseBytes,dashboardClients:impact.data.dashboardClients} : null,resourceAccounts:resources.data?.resources.length ?? null,resourceRead:resources.error ? "failed" : resources.data ? "available" : "unknown",activeLocalProcesses:null,llmCallsLastHour:null};
-    const url=URL.createObjectURL(new Blob([JSON.stringify(report,null,2)],{type:"application/json"}));const anchor=document.createElement("a");anchor.href=url;anchor.download="dispatcher-diagnostics.json";anchor.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+  const diagnostics=useQuery({queryKey:["diagnostics"],queryFn:async()=>{const snapshot=await api<DiagnosticsSnapshot>("/api/diagnostics");if(!Array.isArray(snapshot.entries)||!Array.isArray(snapshot.checks)||!snapshot.summary)throw new Error("聚合诊断响应无效");return snapshot;},retry:false});
+  useEffect(()=>subscribeToEvents(()=>void diagnostics.refetch()),[diagnostics.refetch]);
+  const loading=health.isFetching || impact.isFetching || resources.isFetching||diagnostics.isFetching;
+  function refresh():void {void Promise.all([health.refetch(),impact.refetch(),resources.refetch(),diagnostics.refetch()]);}
+  async function runCheck(entry:DiagnosticEntry,checkId:string):Promise<void>{
+    if(busyCheck)return;setBusyCheck(entry.id);setMessage("正在执行已登记检查…");
+    try{const result=await api<{diagnostics:DiagnosticsSnapshot}>("/api/diagnostics/checks",{method:"POST",body:JSON.stringify({checkId,...(entry.entityRef.kind!=="controller"?{entityId:entry.entityRef.id}:{})})});client.setQueryData(["diagnostics"],result.diagnostics);setMessage("检查已完成，结论以各项证据为准。");}
+    catch(error){setMessage(error instanceof Error?error.message:"检查失败，已有证据保留。");}finally{setBusyCheck("");}
   }
-  return <section><header className="page-header"><div><h1>诊断</h1><p>从系统与资源证据出发，定位需要处理的问题。</p></div><div className="page-actions"><button onClick={exportReport}><Icon name="download"/>导出诊断摘要</button><button className="primary" disabled={loading} onClick={refresh}><Icon name="refresh"/>{loading ? "读取中…" : "刷新诊断"}</button></div></header>
+  async function exportReport():Promise<void> {
+    try{const report=await api<Record<string,unknown>>("/api/diagnostics/export");
+    const url=URL.createObjectURL(new Blob([JSON.stringify(report,null,2)],{type:"application/json"}));const anchor=document.createElement("a");anchor.href=url;anchor.download="dispatcher-diagnostics.json";anchor.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+    }catch(error){setMessage(error instanceof Error?error.message:"导出失败，请重试。");}
+  }
+  return <section><header className="page-header"><div><h1>诊断</h1><p>从系统与资源证据出发，定位需要处理的问题。</p></div><div className="page-actions"><button onClick={()=>void exportReport()}><Icon name="download"/>导出诊断摘要</button><button className="primary" disabled={loading} onClick={refresh}><Icon name="refresh"/>{loading ? "读取中…" : "刷新诊断"}</button></div></header>
     <div className={`diagnostic-summary ${!health.error && health.data?.status === "ok" ? "healthy" : ""}`}><span className="diagnostic-symbol"><Icon name={!health.error && health.data?.status === "ok" ? "check" : "pulse"} size={27}/></span><div><h2>{health.isLoading ? "正在检查 Controller…" : health.error ? "Controller 状态读取失败" : !health.error && health.data?.status === "ok" ? "Controller 正常响应" : "Controller 需要关注"}</h2><p>{health.data ? `版本 ${health.data.version} · ${health.data.mode} · 运行 ${Math.floor(health.data.uptimeMs/60_000)} 分钟` : "读取失败不等于服务已停止，请重试核对。"}</p></div><Link className="button-link" to="/settings">查看设置</Link></div>
     <div className="metric-strip"><article className="metric-cell"><p className="metric-top">进程内存</p><strong className="metric-value metric-text">{bytes(impact.error?undefined:impact.data?.rssBytes)}</strong><small>Controller RSS 实测值</small></article><article className="metric-cell"><p className="metric-top">数据库</p><strong className="metric-value metric-text">{bytes(impact.error?undefined:impact.data?.databaseBytes)}</strong><small>当前 SQLite 文件</small></article><article className="metric-cell"><p className="metric-top">控制台连接</p><strong className="metric-value">{!impact.error&&impact.data?.dashboardClients!==undefined?impact.data.dashboardClients:"未知"}</strong><small>SSE 连接数</small></article><article className="metric-cell"><p className="metric-top">本地 Agent 进程</p><strong className="metric-value metric-text">未采集</strong><small>等待真实进程计量</small></article></div>
     {impact.error && <Notice tone="error">系统占用读取失败。其他诊断仍可查看。<button onClick={()=>void impact.refetch()}>重试</button></Notice>}
+    <article className="panel flush-panel"><header className="panel-heading"><div><h2>执行与恢复证据</h2><p>普通刷新读取已保存事实。账号和平台检查会查询已登记工具或服务。</p></div></header>{diagnostics.isLoading?<p role="status">正在读取聚合诊断…</p>:diagnostics.error?<Notice tone="error">聚合诊断读取失败。<button onClick={()=>void diagnostics.refetch()}>重试聚合诊断</button></Notice>:diagnostics.data&&<><div className="panel-content"><p>执行就绪：{diagnostics.data.executionReadiness==="ready"?"已有验证就绪的账号":diagnostics.data.executionReadiness==="unconfigured"?"尚未配置账号":"尚未验证"}</p><p>通过 {diagnostics.data.summary.pass} · 未通过 {diagnostics.data.summary.fail} · 未知 {diagnostics.data.summary.unknown} · 过期 {diagnostics.data.summary.stale}</p><p>内部模型本次启动累计生成尝试：{impact.data?.llmCallsSinceStart??"未提供"}，不含独立连接探测。</p></div>{diagnostics.data.entries.map(entry=><article className="diagnostic-row" key={entry.id}><Icon name={entry.status==="pass"?"check":"warning"}/><div><strong>{categories[entry.category]??entry.category} · {entry.entityRef.id}</strong><p>{entry.message}</p><small>{entry.source} · {entry.observedAt?new Date(entry.observedAt).toLocaleString():"取证时间未提供"} · {entry.reasonCode}</small><div className="secure-actions">{entry.actions.map((action,index)=>action.href?<Link key={index} to={action.href}>{action.label}</Link>:action.checkId?<button key={index} disabled={Boolean(busyCheck)} onClick={()=>void runCheck(entry,action.checkId!)}>{action.label}（{diagnostics.data!.checks.find(check=>check.id===action.checkId)?.cost==="provider-query"?"查询提供方":"只读"}）</button>:null)}</div></div><span className={`status status-${entry.status==="pass"?"available":entry.status==="fail"?"failed":"unknown"}`}>{{pass:"已验证",fail:"未通过",unknown:"未知",stale:"已过期"}[entry.status]}</span></article>)}</>}{message&&<p role="status" className="panel-content">{message}</p>}</article>
     <article className="panel flush-panel"><header className="panel-heading"><div><h2>账号资源与恢复线索</h2><p>只展示已有证据，不发起模型调用。</p></div><Link to="/harnesses">管理账号</Link></header>{resources.isLoading ? <p className="panel-content" role="status">正在读取资源证据…</p> : resources.error ? <div className="panel-content"><p role="alert">资源状态读取失败</p><button onClick={()=>void resources.refetch()}>重新读取资源</button></div> : resources.data?.resources.length ? resources.data.resources.map((entry)=><article className="diagnostic-row" key={entry.profileId}><Icon name={entry.state === "AVAILABLE" ? "check" : "warning"}/><div><strong>{entry.profileId}</strong><p>{entry.reason ?? "资源说明未提供"}</p><small>来源 {entry.source} · 可信度 {entry.confidence} · {entry.checkedAt ? new Date(entry.checkedAt).toLocaleString() : "时间未提供"}{new Date(entry.freshUntil).getTime() < Date.now() ? " · 证据已过期" : ""}</small></div><span className={`status status-${entry.state.toLowerCase()}`}>{stateLabel(entry.state)}</span></article>) : <EmptyState title="暂无账号资源证据" icon="pulse"><p>接入账号并执行检查后，这里会展示真实资源状态。</p></EmptyState>}</article>
-    <Notice>账户额度数值、每小时模型调用和实际费用尚无可靠计量。诊断导出只包含测量字段和汇总数量，不包含配置、路径、凭据或原始日志。</Notice>
+    <Notice>本地进程总数和每小时调用数尚未采集。账户周期额度与实际用量按各自原生来源验证；诊断导出只含测量字段和汇总数量。</Notice>
   </section>;
 }

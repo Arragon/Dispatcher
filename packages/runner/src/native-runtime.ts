@@ -38,12 +38,13 @@ function canonical(value: unknown): unknown {
 const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(canonical(value))).digest("hex");
 const terminal = (state: ExecutionState) => ["COMPLETE", "FAILED", "CANCELLED"].includes(state);
 const occupies = (record: ExecutionRecord) => !record.settledAt && record.state !== "CANCELLED";
-function nativeUsage(value:unknown):Record<string,unknown>{
+function nativeUsage(value:unknown,fallbackTime?:string,freshRead=false):Record<string,unknown>{
   const raw=value&&typeof value==="object"&&!Array.isArray(value)?value as Record<string,unknown>:{},redacted=redactValue(raw) as Record<string,unknown>,result:Record<string,unknown>={};
   for(const key of ["state","reason","source","confidence","resetsAt","observations"])if(redacted[key]!==undefined)result[key]=redacted[key];
   const tokens=raw.tokens&&typeof raw.tokens==="object"&&!Array.isArray(raw.tokens)?raw.tokens as Record<string,unknown>:undefined;
   if(tokens&&Number.isSafeInteger(tokens.input)&&Number(tokens.input)>=0&&Number.isSafeInteger(tokens.output)&&Number(tokens.output)>=0)result.tokens={input:tokens.input,output:tokens.output,...(Number.isSafeInteger(tokens.cachedInput)&&Number(tokens.cachedInput)>=0&&Number(tokens.cachedInput)<=Number(tokens.input)?{cachedInput:tokens.cachedInput}:{})};
   if(raw.tokenScope==="latest-turn")result.tokenScope="latest-turn";
+  const checkedAt=raw.checkedAt??raw.observedAt??(freshRead&&raw.source==="probe"?new Date().toISOString():fallbackTime);if(typeof checkedAt==="string"&&Number.isFinite(Date.parse(checkedAt)))result.checkedAt=new Date(checkedAt).toISOString();
   return result;
 }
 
@@ -264,7 +265,7 @@ export class NativeRunnerRuntime {
           const session = await adapter.status(sessionId); this.fence(record, envelope);
           if (["COMPLETED","FAILED","CANCELLED"].includes(session.state)) {
             record.result=json(redactValue(await adapter.result(sessionId)));this.fence(record,envelope);
-            try{record.observedUsage=json(nativeUsage(await adapter.usage?.(sessionId)??{state:"UNKNOWN",reason:"Native usage unavailable"}));}catch{record.observedUsage={state:"UNKNOWN",reason:"Native usage unavailable"};}
+            try{record.observedUsage=json(nativeUsage(await adapter.usage?.(sessionId)??{state:"UNKNOWN",reason:"Native usage unavailable"},session.updatedAt,true));}catch{record.observedUsage={state:"UNKNOWN",reason:"Native usage unavailable"};}
             this.fence(record,envelope);
           }
           this.observe(record, session); return session;
@@ -275,7 +276,7 @@ export class NativeRunnerRuntime {
           const result = redactValue(await adapter.result(sessionId)); this.fence(record, envelope); record.result = json(result); this.save(record); return result;
         }
         if (payload.action === "diagnostics") return this.diagnostics(record);
-        if (payload.action === "usage") { if(!this.attached.has(record.runId))return record.observedUsage??{state:"UNKNOWN",reason:"No attached native usage source"};const result = nativeUsage(await adapter.usage?.(sessionId) ?? { state: "UNKNOWN", reason: "Native usage unavailable" }); this.fence(record, envelope);record.observedUsage=json(result);this.save(record);return result; }
+        if (payload.action === "usage") { if(!this.attached.has(record.runId))return nativeUsage(record.observedUsage??{state:"UNKNOWN",reason:"No attached native usage source"},record.session?.updatedAt);const result = nativeUsage(await adapter.usage?.(sessionId) ?? { state: "UNKNOWN", reason: "Native usage unavailable" },record.session?.updatedAt,true); this.fence(record, envelope);record.observedUsage=json(result);this.save(record);return result; }
         if(!this.attached.has(record.runId))throw new NativeRunnerError("COMMAND_OUTCOME_UNKNOWN","No attached native process handle");
         return this.operation(record, envelope, async () => {
           if (payload.action === "send" || payload.action === "resume") {

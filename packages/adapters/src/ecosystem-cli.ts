@@ -42,7 +42,7 @@ export interface CliDiscoveryResult {
 export type NormalizedCliEvent =
   | { type: "activity"; summary: string; providerSessionId?: string; executionEvidence?: true }
   | { type: "waiting"; reason: string }
-  | { type: "resource"; state: "RATE_LIMITED" | "QUOTA_EXHAUSTED" | "AUTH_ERROR" | "PROVIDER_DOWN" | "UNKNOWN"; reason: string; remaining?: number; resetsAt?: string; source: "event" | "error"; confidence: "high" | "medium" | "low" }
+  | { type: "resource";observedAt?:string; state: "RATE_LIMITED" | "QUOTA_EXHAUSTED" | "AUTH_ERROR" | "PROVIDER_DOWN" | "UNKNOWN"; reason: string; remaining?: number; resetsAt?: string; source: "event" | "error"; confidence: "high" | "medium" | "low" }
   | { type: "failure"; reason: string };
 type CliErrorEvent = Extract<NormalizedCliEvent, { type: "resource" | "failure" }>;
 
@@ -110,6 +110,7 @@ class SpawnedCliTurn implements CliTurn {
     let executionEvidence = false;
     const record = (event: NormalizedCliEvent | undefined): void => {
       if (!event) return;
+      if(event.type==="resource"&&!event.observedAt)event={...event,observedAt:new Date().toISOString()};
       this.retainedEvents.push(event);
       if (this.retainedEvents.length > 256) this.retainedEvents.shift();
       if (event.type === "failure" || (event.type === "resource" && event.state !== "UNKNOWN")) failure = event;

@@ -219,6 +219,10 @@ describe("personal Slack–Linear loop", () => {
     const calls=usage.mock.calls.length;expect((await f.service.app.inject({headers:OWNER,url:"/api/usage?from=invalid"})).statusCode).toBe(400);expect(usage.mock.calls.length).toBe(calls);
     await f.service.stop();const restored=await f.make();expect((await restored.app.inject({headers:OWNER,url:`/api/usage?runId=${run.id}`})).json().observations).toHaveLength(1);expect(f.starts).toHaveLength(1);
   });
+  it("does not refresh old cached resource evidence into a new successful check",async()=>{
+    const f=await setup();await f.service.app.inject({headers:OWNER,method:"POST",url:`/api/tasks/${f.taskId}/dispatch`,payload:{}});const run=f.run(),adapter=(f.service as unknown as {agentAdapters:Map<string,AgentAdapter>}).agentAdapters.get(run.profileId)!,checkedAt=new Date(f.control.now.getTime()-7*60*60_000).toISOString();adapter.usage=async()=>({state:"AVAILABLE",source:"event",confidence:"medium",checkedAt});await f.service.runBackgroundCycle();
+    const report=(await f.service.app.inject({headers:OWNER,url:"/api/diagnostics"})).json();expect(report.entries).toContainEqual(expect.objectContaining({entityRef:{kind:"profile",id:run.profileId},category:"resources",status:"stale",observedAt:checkedAt}));
+  });
 
   it("still stops a newly owned child if authority changes after the final spawn fence",async()=>{
     const f=await waitingFixture(),run=f.run();f.control.onStart=()=>f.service.database.saveEntity("run",run.id,JSON.parse(JSON.stringify({...run,state:"CANCELLED"})) as JsonValue);

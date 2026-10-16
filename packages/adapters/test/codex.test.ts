@@ -2,6 +2,10 @@ import { describe, expect, it,vi } from "vitest";
 import { CodexAdapter,CodexCliBackend, normalizeCodexError, normalizeCodexEvent, type CodexBackend, type AdapterSession } from "../src/index.js";
 
 describe("Codex adapter", () => {
+  it("keeps the native resource observation time when reading a cached completed turn again",async()=>{
+    const observedAt="2026-10-16T10:00:00Z",usage={...normalizeCodexEvent({type:"turn.completed",usage:{input_tokens:10,output_tokens:0}})!,observedAt};
+    const adapter=new CodexAdapter({id:"p",alias:"P",codexHome:"/native"},{start:()=>({cancel:async()=>undefined,status:()=>"completed",result:async()=>({state:"completed",summary:"done",providerSessionId:"native",events:[usage]})})});const session=await adapter.start({runId:"r",workspacePath:"/work"});await adapter.status(session.id);expect(await adapter.usage(session.id)).toMatchObject({checkedAt:observedAt});await adapter.status(session.id);expect(await adapter.usage(session.id)).toMatchObject({checkedAt:observedAt});
+  });
   it("retains native usage through bounded noisy output without losing turn completion",async()=>{
     const {mkdtempSync,writeFileSync,rmSync}=await import("node:fs"),{tmpdir}=await import("node:os"),{join}=await import("node:path");const root=mkdtempSync(join(tmpdir(),"codex-usage-events-"));
     try{writeFileSync(join(root,"exec"),`console.log(JSON.stringify({type:'thread.started',thread_id:'native'}));console.log(JSON.stringify({type:'turn.completed',usage:{input_tokens:100,output_tokens:0,cached_input_tokens:50}}));for(let i=0;i<4000;i++)console.log(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:'activity '+i}}));`);
