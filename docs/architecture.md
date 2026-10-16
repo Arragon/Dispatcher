@@ -364,6 +364,11 @@ workspace-bound queries require lease identity/generation/expiry metadata.
 Remote RPC coalesces matching in-flight retries, durably binds command identities,
 and associates responses with the exact request hash using envelope idempotencyKey.
 Changed-payload errors cannot replace successful receipts, including after reconnect.
+Registration publishes connection readiness after installing the stream handler.
+The client flushes retained outgoing frames before immediate reconnect RPCs and
+sends late old-connection replies through the current ordered stream. Peers
+without a disk journal use a bounded in-memory replay buffer for that process;
+production Runner service uses its durable journal.
 Workspace planning resolves the owning node's managed path without creating a
 branch or worktree.
 `NativeRunnerRuntime` owns a separate ConfigPlan-backed registration database,
@@ -373,6 +378,9 @@ effects; uncertain outcomes never authorize another spawn. Command bindings and
 input/verification receipts survive transport journal compaction. Restarted
 process ownership is unknown even when a stored PID exists; an unstarted
 PREPARED workspace can be restored and started with its original descriptor.
+Terminal native status stores result and observed usage before persisting the
+completed execution state. A restarted Runner can expose that durable completed
+evidence while honestly reporting that no process handle is attached.
 Native adapters persist STARTING immediately before spawn and record the actual
 backend PID only when provided. Lease expiry/revocation stops owned native
 handles and aborts active verification. Registration replacement is blocked

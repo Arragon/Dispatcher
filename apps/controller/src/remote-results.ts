@@ -1,5 +1,6 @@
 import { AdapterContractError } from "@dispatcher/adapters";
 import type { AccountModelCatalog } from "@dispatcher/domain";
+import type { RunnerLease, RunnerRunSnapshot } from "@dispatcher/runner";
 const object = (value: unknown): value is Record<string, unknown> => Boolean(value && typeof value === "object" && !Array.isArray(value));
 const text = (value: unknown, max = 200): value is string => typeof value === "string" && value.length > 0 && value.length <= max;
 const parameter = (value: unknown) => typeof value === "boolean" || typeof value === "number" && Number.isFinite(value) || typeof value === "string" && value.length <= 4000;
@@ -18,4 +19,20 @@ export function remoteCatalog(value: unknown, expected: { profileId: string; run
     if (entry.billing !== undefined && (!object(entry.billing) || !keys(entry.billing, ["mode"]) || !["unknown", "subscription", "metered"].includes(String(entry.billing.mode)))) return invalid();
   }
   return structuredClone(value) as unknown as AccountModelCatalog;
+}
+
+export interface NativeRunObservation extends RunnerRunSnapshot {
+  runnerId: string; profileId: string; nativeState: string; attached: boolean;
+  lease: RunnerLease; settledAt?: string; resultAvailable: boolean;
+}
+export function remoteRunInventory(value: unknown, runnerId: string): NativeRunObservation[] {
+  const invalid=():never=>{throw new AdapterContractError("REMOTE_RESULT_INVALID","Owning Runner returned invalid native reconciliation evidence");};
+  if(!object(value)||value.runnerId!==runnerId||!Array.isArray(value.runs)||value.runs.length>10000)return invalid();
+  const seen=new Set<string>();
+  return value.runs.map(row=>{
+    if(!object(row)||row.runnerId!==runnerId||!text(row.runId)||seen.has(row.runId)||!text(row.profileId)||!text(row.leaseId)||!Number.isSafeInteger(row.generation)||Number(row.generation)<1||typeof row.attached!=="boolean"||typeof row.resultAvailable!=="boolean"||!["PREPARING","PREPARED","STARTING","RUNNING","COMPLETE","FAILED","CANCELLED","OUTCOME_UNKNOWN"].includes(String(row.state))||!object(row.lease)||row.lease.runId!==row.runId||row.lease.runnerId!==runnerId||row.lease.leaseId!==row.leaseId||row.lease.generation!==row.generation||typeof row.lease.expiresAt!=="string"||!Number.isFinite(Date.parse(row.lease.expiresAt)))return invalid();
+    seen.add(row.runId);
+    if(row.workspace!==undefined&&!text(row.workspace,4000)||row.sessionId!==undefined&&!text(row.sessionId)||row.startCommandHash!==undefined&&(typeof row.startCommandHash!=="string"||!/^[a-f0-9]{64}$/.test(row.startCommandHash))||row.lease.revokedAt!==undefined&&(typeof row.lease.revokedAt!=="string"||!Number.isFinite(Date.parse(row.lease.revokedAt)))||row.settledAt!==undefined&&(typeof row.settledAt!=="string"||!Number.isFinite(Date.parse(row.settledAt))))return invalid();
+    return {runId:row.runId,runnerId,profileId:row.profileId,generation:Number(row.generation),leaseId:row.leaseId,nativeState:String(row.state),attached:row.attached,resultAvailable:row.resultAvailable,lease:structuredClone(row.lease) as unknown as RunnerLease,...(row.workspace?{workspace:String(row.workspace)}:{}),...(row.sessionId?{sessionId:String(row.sessionId)}:{}),...(row.startCommandHash?{startCommandHash:String(row.startCommandHash)}:{}),...(row.settledAt?{settledAt:String(row.settledAt)}:{})};
+  });
 }

@@ -201,3 +201,11 @@ it("holds capacity through native completion until Controller finalization and t
   await expect(f.call({ type: "native.run", runId: "run", action: "send", message: "late input" })).rejects.toMatchObject({ code: "EXECUTION_SETTLED" });
   expect(f.starts()).toBe(1);
 });
+
+it("preserves completed native result evidence across Runner restart without claiming a live process handle",async()=>{
+  const f=fixture();f.apply();await f.prepare();await f.start();f.complete();await f.call({type:"native.run",runId:"run",action:"status"});
+  f.runtime.close();const restored=new NativeRunnerRuntime(f.options);cleanups.push(()=>restored.close());
+  const payload={type:"native.run" as const,runId:"run",action:"result" as const};
+  const result=await restored.handle(payload,createEnvelope({kind:"command",runnerId:"remote",traceId:"trace",messageId:"completed-result",sequence:100,leaseId:"lease",generation:1,leaseExpiresAt:"2026-10-16T12:01:00Z",payload}));
+  expect(result).toMatchObject({state:"COMPLETED",summary:"done"});expect(restored.reconcile()).toMatchObject({runs:[{attached:false,state:"COMPLETE",resultAvailable:true}]});expect(f.starts()).toBe(1);
+});

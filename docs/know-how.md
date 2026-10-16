@@ -170,6 +170,12 @@
   Runner slot until canonical verification/result delivery is finalized, even
   when the native turn already reports COMPLETED. Use configured capacity as
   an admission ceiling over a device's reported capacity.
+- Reconnect must flush old outgoing frames before answering new RPCs, and late
+  replies from the former socket must still enter the current ordered stream.
+  Merely replaying at the end of an asynchronous start leaves a sequence race.
+  Native ownership reconciliation additionally binds the original start hash
+  and session identity; stored PIDs alone are insufficient. Durable completed
+  result evidence may survive Runner restart without claiming a live handle.
 - Native PTY uses Microsoft `node-pty` (MIT, pinned at 1.1.0) for Unix PTY and
   Windows ConPTY. pnpm must explicitly allow its native build; some pnpm
   installations lose the executable bit on the packaged Unix `spawn-helper`,

@@ -4,6 +4,9 @@ export interface ControllerRunSnapshot {
   leaseId: string;
   runnerId: string;
   workspace?: string;
+  sessionId?: string;
+  startCommandHash?: string;
+  requiresNativeOwnership?: boolean;
 }
 
 export interface RunnerRunSnapshot {
@@ -12,6 +15,11 @@ export interface RunnerRunSnapshot {
   leaseId: string;
   processId?: number;
   workspace?: string;
+  sessionId?: string;
+  startCommandHash?: string;
+  attached?: boolean;
+  nativeState?: string;
+  resultAvailable?: boolean;
 }
 
 export interface ReconcileDecision {
@@ -41,6 +49,9 @@ export function reconcileRunnerState(
     if (expected.workspace && actual.workspace && expected.workspace !== actual.workspace) {
       return { runId, action: "ATTENTION", reason: "workspace identity differs" };
     }
+    if(expected.startCommandHash&&actual.startCommandHash!==expected.startCommandHash)return {runId,action:"ATTENTION",reason:"native start descriptor differs or is missing"};
+    if(expected.sessionId&&actual.sessionId!==expected.sessionId)return {runId,action:"ATTENTION",reason:"native session identity differs or is missing"};
+    if(expected.requiresNativeOwnership&&actual.attached!==true&&!(actual.nativeState==="COMPLETE"&&actual.resultAvailable===true))return {runId,action:"ATTENTION",reason:"native process ownership is unconfirmed"};
     return { runId, action: "KEEP", reason: "runner and controller state agree" };
   });
 }

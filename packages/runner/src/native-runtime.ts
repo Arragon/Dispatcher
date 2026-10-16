@@ -17,6 +17,7 @@ interface ExecutionRecord {
   registrationHash: string; state: ExecutionState; lease: RunnerLease;
   verificationCommands: VerificationCommand[]; workspace?: WorkspaceHandle;
   descriptorHash?: string; session?: AdapterSession; result?: JsonValue;
+  observedUsage?: JsonValue;
   startCommandHash?: string; settledAt?: string;
 }
 interface OperationReceipt { identity: string; state: "PENDING" | "COMPLETE" | "UNKNOWN"; result?: JsonValue }
@@ -248,7 +249,13 @@ export class NativeRunnerRuntime {
         const sessionId = record.session.id;
         if (payload.action === "status") {
           if (!this.attached.has(record.runId)) return structuredClone(record.session);
-          const session = await adapter.status(sessionId); this.fence(record, envelope); this.observe(record, session); return session;
+          const session = await adapter.status(sessionId); this.fence(record, envelope);
+          if (["COMPLETED","FAILED","CANCELLED"].includes(session.state)) {
+            record.result=json(redactValue(await adapter.result(sessionId)));this.fence(record,envelope);
+            try{record.observedUsage=json(redactValue(await adapter.usage?.(sessionId)??{state:"UNKNOWN",reason:"Native usage unavailable"}));}catch{record.observedUsage={state:"UNKNOWN",reason:"Native usage unavailable"};}
+            this.fence(record,envelope);
+          }
+          this.observe(record, session); return session;
         }
         if (payload.action === "result") {
           if (record.result !== undefined) return record.result;
@@ -256,9 +263,9 @@ export class NativeRunnerRuntime {
           const result = redactValue(await adapter.result(sessionId)); this.fence(record, envelope); record.result = json(result); this.save(record); return result;
         }
         if (payload.action === "diagnostics") return this.diagnostics(record);
-        if (payload.action === "usage") { const result = redactValue(await adapter.usage?.(sessionId) ?? { state: "UNKNOWN", reason: "Native usage unavailable" }); this.fence(record, envelope); return result; }
+        if (payload.action === "usage") { if(!this.attached.has(record.runId))return record.observedUsage??{state:"UNKNOWN",reason:"No attached native usage source"};const result = redactValue(await adapter.usage?.(sessionId) ?? { state: "UNKNOWN", reason: "Native usage unavailable" }); this.fence(record, envelope); return result; }
+        if(!this.attached.has(record.runId))throw new NativeRunnerError("COMMAND_OUTCOME_UNKNOWN","No attached native process handle");
         return this.operation(record, envelope, async () => {
-          if (!this.attached.has(record.runId)) throw new NativeRunnerError("COMMAND_OUTCOME_UNKNOWN", "No attached native process handle");
           if (payload.action === "send" || payload.action === "resume") {
             const selection = record.session?.executionSelection;
             if (!selection) throw new NativeRunnerError("SELECTION_CHANGED", "Native selection snapshot is unavailable");
@@ -393,7 +400,7 @@ export class NativeRunnerRuntime {
     }
   }
   private diagnostics(record: ExecutionRecord): unknown {
-    return { runnerId: this.options.runnerId, runId: record.runId, profileId: record.profileId, state: record.state, attached: this.attached.has(record.runId), sessionId: record.session?.id, providerSessionId: record.session?.providerSessionId, processId: record.session?.processId, workspace: record.workspace?.path, generation: record.lease.generation, leaseId: record.lease.leaseId, lease: structuredClone(record.lease), startCommandHash: record.startCommandHash, settledAt: record.settledAt };
+    return { runnerId: this.options.runnerId, runId: record.runId, profileId: record.profileId, state: record.state, attached: this.attached.has(record.runId), sessionId: record.session?.id, providerSessionId: record.session?.providerSessionId, processId: record.session?.processId, workspace: record.workspace?.path, generation: record.lease.generation, leaseId: record.lease.leaseId, lease: structuredClone(record.lease), startCommandHash: record.startCommandHash, settledAt: record.settledAt, resultAvailable:record.result!==undefined };
   }
   reconcile(): unknown { return { runnerId: this.options.runnerId, runs: [...this.records.values()].map(record => this.diagnostics(record)) }; }
   async shutdown(): Promise<void> {

@@ -48,6 +48,30 @@ function runner(id = "remote-mac") {
 }
 
 describe("remote runner control plane", () => {
+  it.each([true,false])("replays before immediate reconnect RPC and flushes late old-socket replies (journal=%s)",async(durable)=>{
+    const directory=mkdtempSync(join(tmpdir(),"runner-reconnect-order-"));tempDirectories.push(directory);
+    const journal=durable?new RunnerJournal(join(directory,"journal.sqlite")):undefined;
+    const first=new RemoteRunnerServer({registry:new RunnerRegistry(),port:0,authenticate:()=>true,rpcTimeoutMs:1000});await first.ready();const port=first.address()!.port;
+    const client=new RemoteRunnerClient({url:`ws://127.0.0.1:${port}`,bearerToken:"fixture",runner:runner(),...(journal?{journal}:{}),reconnectBackoffMs:250});
+    const entered=Promise.withResolvers<void>(),release=Promise.withResolvers<void>();client.register("runner.health",()=>({ok:true}));client.register("runner.reconcile",async()=>{entered.resolve();await release.promise;return {runs:[]};});
+    let second:RemoteRunnerServer|undefined;
+    try{
+      await client.start();await first.sendCommand("remote-mac",{type:"runner.health"});
+      const old=first.sendCommand("remote-mac",{type:"runner.reconcile"}).catch(()=>undefined);await entered.promise;await first.close();await old;
+      const immediate=Promise.withResolvers<unknown>();
+      second=new RemoteRunnerServer({registry:new RunnerRegistry(),port,authenticate:()=>true,rpcTimeoutMs:1000,onRunnerChanged:runner=>{if(runner.state==="ONLINE")void second!.sendCommand(runner.id,{type:"runner.health"}).then(immediate.resolve,immediate.resolve);}});await second.ready();
+      expect(await immediate.promise).toMatchObject({payload:{type:"rpc.result",result:{ok:true}}});release.resolve();
+      await vi.waitFor(()=>expect(journal?.replay(0).some(entry=>entry.envelope.kind==="response"&&entry.envelope.payload.type==="rpc.result"&&JSON.stringify(entry.envelope.payload.result)==='{"runs":[]}')??true).toBe(true));
+      expect((await second.sendCommand("remote-mac",{type:"runner.health"})).payload).toMatchObject({type:"rpc.result",result:{ok:true}});
+    }finally{release.resolve();await client.stop();await second?.close();if(!second)await first.close();journal?.close();}
+  });
+  it("requires matching native start/session identity and owned handles or durable completion during reconciliation",()=>{
+    const expected={runId:"run",runnerId:"remote",generation:1,leaseId:"lease",workspace:"/work",sessionId:"session",startCommandHash:"start",requiresNativeOwnership:true};
+    const actual={runId:"run",generation:1,leaseId:"lease",workspace:"/work",sessionId:"session",startCommandHash:"start",attached:true,nativeState:"RUNNING",resultAvailable:false};
+    expect(reconcileRunnerState("remote",[expected],[actual])[0]?.action).toBe("KEEP");
+    for(const patch of [{startCommandHash:"other"},{sessionId:"other"},{attached:false},{attached:false,nativeState:"OUTCOME_UNKNOWN"}])expect(reconcileRunnerState("remote",[expected],[{...actual,...patch}])[0]?.action).toBe("ATTENTION");
+    expect(reconcileRunnerState("remote",[expected],[{...actual,attached:false,nativeState:"COMPLETE",resultAvailable:true}])[0]?.action).toBe("KEEP");
+  });
   it("stops reconnecting and reports authorization loss when the Controller revokes its connection", async () => {
     const authenticate = vi.fn(() => true), revoked = vi.fn();
     const server = new RemoteRunnerServer({ registry: new RunnerRegistry(), port: 0, authenticate }); await server.ready();

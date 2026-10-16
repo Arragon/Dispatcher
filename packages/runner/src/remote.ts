@@ -201,13 +201,13 @@ export class RemoteRunnerServer {
         }
         registered = true;
         const runner = this.options.registry.register({ ...frame.runner, state: "ONLINE", lastSeenAt: new Date().toISOString() });
-        void this.options.onRunnerChanged?.(runner);
         const existing = this.connections.get(runner.id);
         if (existing) existing.socket.close(1012, "runner reconnected");
         const connection: ServerConnection = { socket, runner, profileInventory: frame.profileInventory.filter((id):id is string=>typeof id==="string"&&id.length<=200).slice(0,1000), nextSequence: 1, lastReceivedSequence: Number(frame.lastAcknowledgedSequence), lastSeenAt: Date.now(), pending: new Map() };
         this.connections.set(runner.id, connection);
         sendJson(socket, { type: "runner.registered" } satisfies RegistrationResult, this.maxBufferedBytes);
         socket.on("message", (message) => this.receive(connection, message));
+        void this.options.onRunnerChanged?.(runner);
       } catch (error) {
         socket.close(1002, error instanceof Error ? error.message.slice(0, 100) : "registration failed");
       }
@@ -292,6 +292,9 @@ export class RemoteRunnerClient {
   private readonly inFlight=new Map<string,Promise<ResponsePayload>>();
   private readonly pendingReceives = new Set<Promise<void>>();
   private socket: WebSocket | undefined;
+  private registeredSocket: WebSocket | undefined;
+  private readonly memoryOutgoing=new Map<number,ProtocolEnvelope<EventPayload|ResponsePayload>>();
+  private memoryAcknowledgedSequence=0;
   private nextSequence: number;
   private lastReceivedSequence = 0;
   private heartbeat: ReturnType<typeof setInterval> | undefined;
@@ -332,7 +335,7 @@ export class RemoteRunnerClient {
             protocolVersion: PROTOCOL_VERSION,
             runner: this.options.runner,
             profileInventory: this.options.profileInventory ?? [],
-            lastAcknowledgedSequence: this.options.journal?.acknowledgedSequence() ?? 0,
+            lastAcknowledgedSequence: this.options.journal?.acknowledgedSequence() ?? this.memoryAcknowledgedSequence,
             runnerVersion: this.options.runnerVersion ?? RUNNER_VERSION,
           } satisfies RegistrationFrame, this.options.maxBufferedBytes ?? 1_048_576);
         });
@@ -343,6 +346,9 @@ export class RemoteRunnerClient {
             return;
           }
           socket.off("error", fail);
+          this.registeredSocket=socket;
+          // Send retained frames synchronously before an immediate post-registration RPC can respond.
+          try{this.flushOutgoing(socket);}catch(error){this.registeredSocket=undefined;reject(error);return;}
           socket.on("message", (message) => {
             if (this.stopping || this.socket !== socket) return;
             const pending = this.receive(message, socket).catch(() => socket.terminate()).finally(() => this.pendingReceives.delete(pending));
@@ -353,10 +359,10 @@ export class RemoteRunnerClient {
       });
     } catch (error) {
       socket.terminate();
+      if(this.registeredSocket===socket)this.registeredSocket=undefined;
       this.socket = undefined;
       throw error;
     }
-    for (const entry of this.options.journal?.replay() ?? []) sendJson(socket, entry.envelope, this.options.maxBufferedBytes ?? 1_048_576);
     const interval = Math.max(5_000, this.options.heartbeatIntervalMs ?? 30_000);
     this.heartbeat = setInterval(() => void this.sendEvent({ type: "runner.heartbeat", runnerId: this.options.runner.id, state: this.currentState }).catch(() => undefined), interval);
     this.heartbeat.unref();
@@ -365,9 +371,9 @@ export class RemoteRunnerClient {
   }
 
   async sendEvent(payload: EventPayload): Promise<void> {
-    const envelope = createEnvelope({ kind: "event", messageId: randomUUID(), traceId: randomUUID(), runnerId: this.options.runner.id, sequence: this.nextSequence++, ackSequence: this.lastReceivedSequence, payload, origin: "runner" });
-    this.options.journal?.append(envelope);
-    sendJson(this.requireSocket(), envelope, this.options.maxBufferedBytes ?? 1_048_576);
+    const envelope = createEnvelope({ kind: "event", messageId: randomUUID(), traceId: randomUUID(), runnerId: this.options.runner.id, sequence: this.nextSequence, ackSequence: this.lastReceivedSequence, payload, origin: "runner" });
+    this.appendOutgoing(envelope);this.nextSequence++;
+    this.flushOutgoing(this.requireSocket());
   }
 
   async stop(): Promise<void> {
@@ -378,6 +384,7 @@ export class RemoteRunnerClient {
     this.heartbeat = undefined;
     const socket = this.socket;
     this.socket = undefined;
+    this.registeredSocket=undefined;
     if (socket) await new Promise<void>((resolve) => {
       socket.once("close", () => resolve());
       socket.close(1000, "runner shutdown");
@@ -392,6 +399,8 @@ export class RemoteRunnerClient {
     if(envelope.ackSequence!==undefined){
       if(envelope.ackSequence>=this.nextSequence)throw new Error("Acknowledgement exceeds sent Runner sequence");
       this.options.journal?.acknowledge(envelope.ackSequence);this.options.journal?.compact();
+      this.memoryAcknowledgedSequence=Math.max(this.memoryAcknowledgedSequence,envelope.ackSequence);
+      for(const sequence of this.memoryOutgoing.keys())if(sequence<=this.memoryAcknowledgedSequence)this.memoryOutgoing.delete(sequence);
     }
     const duplicate=this.responses.get(envelope.messageId),pending=this.inFlight.get(envelope.messageId);
     const knownHash=this.commandHashes.get(envelope.messageId)??this.options.journal?.commandIdentity(envelope.messageId);
@@ -430,11 +439,22 @@ export class RemoteRunnerClient {
   }
 
   private async respond(command: ProtocolEnvelope<CommandPayload>, payload: ResponsePayload, socket: WebSocket): Promise<void> {
-    const response = createEnvelope({ kind: "response", messageId: randomUUID(), traceId: command.traceId, runnerId: this.options.runner.id, sequence: this.nextSequence++, ackSequence: this.lastReceivedSequence, correlationId: command.messageId,idempotencyKey:remoteCommandHash(command), payload, origin: "runner" });
+    const response = createEnvelope({ kind: "response", messageId: randomUUID(), traceId: command.traceId, runnerId: this.options.runner.id, sequence: this.nextSequence, ackSequence: this.lastReceivedSequence, correlationId: command.messageId,idempotencyKey:remoteCommandHash(command), payload, origin: "runner" });
     if(canCacheResponse(payload))this.responses.set(command.messageId, response);
-    this.options.journal?.append(response);
-    // A completed command remains replayable even when its originating socket closed.
-    if (this.socket === socket && socket.readyState === WebSocket.OPEN) sendJson(socket, response, this.options.maxBufferedBytes ?? 1_048_576);
+    this.appendOutgoing(response);this.nextSequence++;
+    // A late old-connection reply still belongs in the current ordered stream.
+    const target=this.socket===socket?socket:this.registeredSocket;if(target)this.flushOutgoing(target);
+  }
+
+  private appendOutgoing(envelope:ProtocolEnvelope<EventPayload|ResponsePayload>):void {
+    if(this.options.journal){this.options.journal.append(envelope);return;}
+    if(this.memoryOutgoing.size>=10000)throw new Error("Runner outgoing replay capacity exceeded; wait for Controller acknowledgement");
+    this.memoryOutgoing.set(envelope.sequence,envelope);
+  }
+  private flushOutgoing(socket:WebSocket):void {
+    if(this.registeredSocket!==socket||this.socket!==socket||socket.readyState!==WebSocket.OPEN)return;
+    const outgoing=this.options.journal?.replay().map(entry=>entry.envelope)??[...this.memoryOutgoing.values()];
+    for(const envelope of outgoing)sendJson(socket,envelope,this.options.maxBufferedBytes??1_048_576);
   }
 
   private requireSocket(): WebSocket {
@@ -445,6 +465,7 @@ export class RemoteRunnerClient {
   private handleDisconnect(socket: WebSocket, code: number): void {
     if (this.socket !== socket) return;
     this.socket = undefined;
+    if(this.registeredSocket===socket)this.registeredSocket=undefined;
     if (this.heartbeat) clearInterval(this.heartbeat);
     this.heartbeat = undefined;
     if (this.stopping) return;

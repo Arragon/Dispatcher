@@ -115,11 +115,25 @@ describe("installed native CLI harnesses", () => {
     writeFileSync(file, `#!${process.execPath}\nconst args=process.argv.slice(2); if(args[0]==='auth') console.log(JSON.stringify({status:'ready',provider:'openai'})); else if(args.includes('--help')) console.log('--mode json --session-id --session --format'); else console.log('1.0');`);
     chmodSync(file, 0o700);
     try {
-      expect(await probeNativeCliProfile("pi", { id: "pi", alias: "Pi", executable: file, model: "openai/model" })).toMatchObject({ installed: true, compatible: true, authenticated: true, authentication: "ready" });
+      const readiness=await probeNativeCliProfile("pi", { id: "pi", alias: "Pi", executable: file, model: "openai/model" });
+      expect(readiness,JSON.stringify(readiness)).toMatchObject({ installed: true, compatible: true, authenticated: true, authentication: "ready" });
       expect(await probeNativeCliProfile("opencode", { id: "oc", alias: "OC", executable: file })).toMatchObject({ installed: true, compatible: false, authenticated: false });
       writeFileSync(file, `#!${process.execPath}\nconsole.error('sk-private-test-secret'); process.exit(1);`);
       expect(JSON.stringify(await probeNativeCliProfile("grok", { id: "grok", alias: "Grok", executable: file }))).not.toContain("sk-private-test-secret");
     } finally { rmSync(directory, { recursive: true, force: true }); }
+  });
+
+  it("reports safe probe failure stages for missing executables, bounded timeouts and output limits",async()=>{
+    expect(await probeNativeCliProfile("pi",{id:"missing",alias:"Missing",executable:"/dispatcher-missing-probe"})).toMatchObject({failure:{stage:"version",code:"NOT_FOUND"}});
+    const directory=mkdtempSync(join(tmpdir(),"native-probe-failure-")),file=join(directory,"probe");
+    try{
+      writeFileSync(file,`#!${process.execPath}\nsetTimeout(()=>{},30000)`);chmodSync(file,0o700);
+      expect(await probeNativeCliProfile("pi",{id:"slow",alias:"Slow",executable:file})).toMatchObject({failure:{stage:"version",code:"TIMEOUT"}});
+      writeFileSync(file,`#!${process.execPath}\nconsole.log('x'.repeat(100000));`);
+      expect(await probeNativeCliProfile("pi",{id:"large",alias:"Large",executable:file})).toMatchObject({failure:{stage:"version",code:"OUTPUT_LIMIT"}});
+      writeFileSync(file,`#!${process.execPath}\nconsole.error('sk-private-test-secret');process.exit(1);`);
+      const failed=await probeNativeCliProfile("pi",{id:"failed",alias:"Failed",executable:file});expect(failed).toMatchObject({failure:{stage:"version",code:"EXECUTION_FAILED"}});expect(JSON.stringify(failed)).not.toContain("sk-private-test-secret");
+    }finally{rmSync(directory,{recursive:true,force:true});}
   });
 
   it("cancels a child that ignores SIGTERM and retains CANCELLED after result settles", async () => {

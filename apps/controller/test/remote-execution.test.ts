@@ -16,8 +16,13 @@ async function setup(verificationFails = false) {
   const root = join(directory, "repo"); execFileSync("git", ["init", "-b", "main", root], { stdio: "ignore" }); execFileSync("git", ["-C", root, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "--allow-empty", "-m", "base"], { stdio: "ignore" });
   const controllerData = join(directory, "controller"), runnerData = join(directory, "runner");
   const localBackend = vi.fn(() => { throw new Error("Controller must not construct native remote execution"); });
-  const service = new ControllerService({ dataDirectory: controllerData, host: "127.0.0.1", port: 0, withRunner: true, ownerToken: "owner", codexBackendFactory: localBackend, backgroundWorker: { enabled: false }, secretStore: { resolve: async () => "fixture", test: async () => true } as unknown as SecretStore });
-  await service.start(); cleanups.push(() => service.stop());
+  let clock=new Date();const now=()=>new Date(clock);
+  const restores:ReturnType<typeof vi.spyOn>[]=[];
+  const makeService=async()=>{
+    const instance=new ControllerService({dataDirectory:controllerData,host:"127.0.0.1",port:0,withRunner:true,ownerToken:"owner",clock:now,codexBackendFactory:localBackend,backgroundWorker:{enabled:false},secretStore:{resolve:async()=>"fixture",test:async()=>true} as unknown as SecretStore});
+    restores.push(vi.spyOn(instance.workspaces,"restore"));await instance.start();cleanups.push(()=>instance.stop());return instance;
+  };
+  let service=await makeService();
   const repository = { id: "repo", runnerId: "remote", root, defaultBaseRef: "main", scopePaths: ["."], verificationCommands: [{ id: "check", file: process.execPath, args: ["-e", "if(require('node:fs').readFileSync('result.txt','utf8')!=='remote-ok\\n')process.exit(1)"], required: true, timeoutMs: 3000, outputLimitBytes: 1000 }] };
   if(verificationFails)repository.verificationCommands[0]!.args=["-e","process.exit(1)"];
   const config = service.configuration.current().config; config.runners.push({ id: "remote", displayName: "Remote", mode: "remote", capacity: 1, tags: [], credentialRef: "secret://runner/fixture/remote" }); config.repositories = [repository]; config.agentProfiles = [{ id: "p", alias: "P", provider: "codex", runnerId: "remote", settings: { codexHome: "/must-not-use/controller-native" } }];
@@ -25,30 +30,37 @@ async function setup(verificationFails = false) {
   const starts: Array<{ workspacePath: string; codexHome: string; model?: string; reasoningEffort?: string }> = [], catalogs: string[] = [];
   const nativeConfig = structuredClone(defaultDispatcherConfig); nativeConfig.runners = [config.runners.find(r => r.id === "remote")!]; nativeConfig.repositories = [repository]; nativeConfig.agentProfiles = [{ ...config.agentProfiles[0]!, settings: { codexHome: join(runnerData, "native-account") } }];
   const catalog: AccountModelCatalog = { profileId: "p", runnerId: "remote", providerId: "codex", backendId: "codex-exec-json", contextFingerprint: "remote-context", revision: "remote-catalog", fetchedAt: new Date().toISOString(), freshness: "native-fresh", source: "native-rpc", selectionSupport: "explicit", entries: [{ id: "model", displayName: "Model", kind: "model", selectable: true, access: "account-listed", parameterOptions: { reasoningEffort: ["low"] } }] };
-  const runtime = new NativeRunnerRuntime({ runnerId: "remote", dataDirectory: runnerData, monitorIntervalMs: 0, createAdapter: (_profile, store) => {
+  const runtime = new NativeRunnerRuntime({ runnerId: "remote", dataDirectory: runnerData, monitorIntervalMs: 0, now, createAdapter: (_profile, store) => {
     const adapter = new CodexAdapter({ id: "p", alias: "P", codexHome: join(runnerData, "native-account") }, { start: input => { starts.push(input); writeFileSync(join(input.workspacePath, "result.txt"), "remote-ok\n"); return { status: () => "completed", cancel: async () => undefined, result: async () => ({ state: "completed", summary: "remote native turn completed", providerSessionId: "native-remote-session", events: [] }) }; } }, store);
     adapter.modelCatalog = async context => { catalogs.push(context.workspacePath); return structuredClone(catalog); }; return adapter;
   } }); cleanups.push(() => runtime.shutdown());
   runtime.configuration.applyPlan(runtime.configuration.buildPlan(nativeConfig, "fixture", "cli").id, { confirmed: true });
   const journal = new RunnerJournal(join(runnerData, "transport.sqlite")); cleanups.push(() => journal.close());
-  const address = service.app.server.address() as { port: number }, client = new RemoteRunnerClient({ url: `ws://127.0.0.1:${address.port}/runner`, bearerToken: "fixture", runner: { id: "remote", displayName: "Remote", platform: process.platform as "darwin", architecture: process.arch, capacity: 3, state: "ONLINE", capabilities: [NATIVE_EXECUTION_CAPABILITY], lastSeenAt: new Date().toISOString() }, profileInventory: ["p"], journal });
-  const gate = Promise.withResolvers<void>(), entered = Promise.withResolvers<void>(), control = { holdStart: false, invalidatePrepared: false };
-  runtime.registerHandlers({ register: (type, handler) => client.register(type, async (payload, envelope) => {
-    if (payload.type === "native.workspace_prepare" || payload.type === "run.start") {
-      const run = service.database.getEntity("run", payload.runId) as unknown as Run, task = service.database.getCanonicalTask(run.taskId)?.document as unknown as Task;
-      expect(run).toMatchObject({ state: "STARTING", leaseId: envelope.leaseId, generation: envelope.generation }); expect(task).toMatchObject({ state: "QUEUED", currentRunId: run.id });
-    }
-    const value = await handler(payload, envelope);
-    if(payload.type==="native.workspace_prepare"&&control.invalidatePrepared)catalog.revision="changed-after-prepare";
-    if (payload.type === "run.start" && control.holdStart) { entered.resolve(); await gate.promise; }
-    return value;
-  }) });
-  await client.start(); cleanups.push(() => client.stop()); cleanups.push(() => gate.resolve());
+  const gate=Promise.withResolvers<void>(),entered=Promise.withResolvers<void>(),control={holdStart:false,invalidatePrepared:false,expireAfterRenew:false};
+  let client!:RemoteRunnerClient;
+  const connect=async()=>{
+    const address=service.app.server.address() as {port:number};
+    const connected=new RemoteRunnerClient({url:`ws://127.0.0.1:${address.port}/runner`,bearerToken:"fixture",runner:{id:"remote",displayName:"Remote",platform:process.platform as "darwin",architecture:process.arch,capacity:3,state:"ONLINE",capabilities:[NATIVE_EXECUTION_CAPABILITY],lastSeenAt:now().toISOString()},profileInventory:["p"],journal});
+    runtime.registerHandlers({register:(type,handler)=>connected.register(type,async(payload,envelope)=>{
+      if(payload.type==="native.workspace_prepare"||payload.type==="run.start"){
+        const run=service.database.getEntity("run",payload.runId) as unknown as Run,task=service.database.getCanonicalTask(run.taskId)?.document as unknown as Task;
+        expect(run).toMatchObject({state:"STARTING",leaseId:envelope.leaseId,generation:envelope.generation});expect(task).toMatchObject({state:"QUEUED",currentRunId:run.id});
+      }
+      const value=await handler(payload,envelope);
+      if(payload.type==="native.workspace_prepare"&&control.invalidatePrepared)catalog.revision="changed-after-prepare";
+      if(payload.type==="run.start"&&control.holdStart){entered.resolve();await gate.promise;}
+      if(payload.type==="lease.renew"&&control.expireAfterRenew)clock=new Date(clock.getTime()+2*60_000);
+      return value;
+    })});
+    await connected.start();client=connected;cleanups.push(()=>connected.stop());cleanups.push(()=>gate.resolve());return connected;
+  };
+  await connect();
+  const restartController=async()=>{await client.stop();await service.stop();service=await makeService();return service;};
   const createLocal = vi.spyOn(service.workspaces, "create"), headers = { authorization: "Bearer owner" };
   const draft = { schemaVersion: 1, clientDraftId: "draft", projectId: "local:repo", repositoryId: "repo", description: "Write the result", scopePaths: ["."], acceptanceCriteria: ["result is correct"], startMode: "dispatch", execution: { profileId: "p", selectionMode: "manual", selectionType: "explicit-model", nativeModelId: "model", nativeParameters: {}, catalogRevision: catalog.revision, contextFingerprint: catalog.contextFingerprint }, delivery: { type: "none" } };
   const preview = async (clientDraftId="draft") => (await service.app.inject({ method: "POST", url: "/api/task-publications/preview", headers, payload: {...draft,clientDraftId} })).json();
   const commit = (p: { publicationId: string; revision: number; confirmation: { reviewHash: string } }) => service.app.inject({ method: "POST", url: `/api/task-publications/${p.publicationId}/commit`, headers: { ...headers, "idempotency-key": "remote-publication" }, payload: { revision: p.revision, reviewHash: p.confirmation.reviewHash, confirmation: { accepted: true } } });
-  return { service, runtime, client, root, runnerData, controllerData, starts, catalogs, localBackend, createLocal, headers, preview, commit, gate, entered, control };
+  return {get service(){return service;},runtime,get client(){return client;},root,runnerData,controllerData,starts,catalogs,localBackend,createLocal,headers,preview,commit,gate,entered,control,connect,restartController,restores,now,advanceClock:(ms:number)=>{clock=new Date(clock.getTime()+ms);}};
 }
 it("reserves canonical authority before owning-Runner worktree creation and completes remote verification/result delivery", async () => {
   const f = await setup(), p = await f.preview(); expect(p.canCommit).toBe(true); expect(f.starts).toHaveLength(0); expect(existsSync(join(f.runnerData, "worktrees"))).toBe(false);

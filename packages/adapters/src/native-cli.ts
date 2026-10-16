@@ -134,6 +134,12 @@ export class QoderCnAdapter extends StructuredCliAdapter {
 export interface NativeCliDiscoveryResult extends CliDiscoveryResult {
   compatible: boolean;
   authentication: "unknown" | "ready" | "missing";
+  failure?: {stage:"version"|"capability"|"authentication";code:"TIMEOUT"|"OUTPUT_LIMIT"|"NOT_FOUND"|"PERMISSION_DENIED"|"INVALID_OUTPUT"|"EXECUTION_FAILED"};
+}
+
+function probeFailure(stage:NonNullable<NativeCliDiscoveryResult["failure"]>["stage"],error:unknown):NonNullable<NativeCliDiscoveryResult["failure"]>{
+  const value=error&&typeof error==="object"?error as {killed?:boolean;code?:unknown;signal?:unknown}:{};
+  return {stage,code:value.code==="ERR_CHILD_PROCESS_STDIO_MAXBUFFER"?"OUTPUT_LIMIT":value.code==="ETIMEDOUT"||value.killed&&value.code===null&&value.signal==="SIGTERM"?"TIMEOUT":value.code==="ENOENT"?"NOT_FOUND":value.code==="EACCES"?"PERMISSION_DENIED":error instanceof SyntaxError?"INVALID_OUTPUT":"EXECUTION_FAILED"};
 }
 
 export async function probeNativeCliProfile(provider: NativeCliProvider, profile: CliAgentProfile): Promise<NativeCliDiscoveryResult> {
@@ -143,7 +149,7 @@ export async function probeNativeCliProfile(provider: NativeCliProvider, profile
     const version = await execFileAsync(file, ["--version"], { timeout: 3_000, maxBuffer: 32_768 });
     base.installed = true;
     base.version = version.stdout.trim().slice(0, 120);
-  } catch { return { ...base, diagnostic: "CLI version probe failed; check the installed executable." }; }
+  } catch(error) { return { ...base, failure:probeFailure("version",error),diagnostic: "CLI version probe failed; check the installed executable." }; }
   try {
     const help = await execFileAsync(file, provider === "opencode" ? ["run", "--help"] : ["--help"], { timeout: 3_000, maxBuffer: 65_536 });
     const output = help.stdout + help.stderr;
@@ -154,14 +160,14 @@ export async function probeNativeCliProfile(provider: NativeCliProvider, profile
       : provider === "zcode" ? /--resume/.test(output) && /--json/.test(output) && /--prompt/.test(output) && /--mode/.test(output)
       : /--session-id/.test(output) && /--resume/.test(output) && /--output-format/.test(output) && /--permission-mode/.test(output);
     if (!base.compatible) return { ...base, diagnostic: "Installed CLI lacks the required native JSON/session flags. OpenCode requires v2." };
-  } catch { return { ...base, diagnostic: "CLI capability probe failed." }; }
+  } catch(error) { return { ...base, failure:probeFailure("capability",error),diagnostic: "CLI capability probe failed." }; }
   if (provider === "pi" && profile.model) {
     try {
       const auth = await execFileAsync(file, ["auth", "check", "--model", profile.model, "--json", "--no-refresh"], { timeout: 5_000, maxBuffer: 32_768 });
       const value: unknown = JSON.parse(auth.stdout);
       if (object(value)?.status === "ready") return { ...base, authenticated: true, authentication: "ready" };
       return { ...base, authentication: "missing", diagnostic: "Selected pi model is not ready; authenticate in the native CLI." };
-    } catch { return { ...base, diagnostic: "pi authentication check failed; login or refresh in the native CLI." }; }
+    } catch(error) { return { ...base, failure:probeFailure("authentication",error),diagnostic: "pi authentication check failed; login or refresh in the native CLI." }; }
   }
   return { ...base, diagnostic: "Native JSON/session flags verified. Authentication is unverified until a model invocation succeeds." };
 }
