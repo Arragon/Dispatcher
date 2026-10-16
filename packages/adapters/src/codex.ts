@@ -306,14 +306,14 @@ export class CodexAdapter implements AgentAdapter {
   }
 }
 
-export async function probeCodexProfile(profile: CodexProfileConfig): Promise<CodexDiscoveryResult> {
+export async function probeCodexProfile(profile: CodexProfileConfig,context:{workspacePath?:string}={}): Promise<CodexDiscoveryResult> {
   const executable = profile.executable ?? "codex";
-  const environment = { ...process.env, CODEX_HOME: profile.codexHome };
+  const environment = { ...process.env, CODEX_HOME: profile.codexHome,...(context.workspacePath?{PWD:context.workspacePath}:{}) };
   let version: string | undefined;
-  try { version = (await execFileAsync(executable, ["--version"], { env: environment, timeout: 3_000 })).stdout.trim(); }
+  try { version = (await execFileAsync(executable, ["--version"], { env: environment,...(context.workspacePath?{cwd:context.workspacePath}:{}), timeout: 3_000 })).stdout.trim(); }
   catch (error) { return { executable, authenticated: false, profile: { id: profile.id, alias: profile.alias }, diagnostic: error instanceof Error ? error.message.slice(0, 240) : "Codex executable unavailable" }; }
   try {
-    await execFileAsync(executable, ["login", "status"], { env: environment, timeout: 5_000 });
+    await execFileAsync(executable, ["login", "status"], { env: environment,...(context.workspacePath?{cwd:context.workspacePath}:{}), timeout: 5_000 });
     return { executable, version, authenticated: true, profile: { id: profile.id, alias: profile.alias } };
   } catch {
     return { executable, version, authenticated: false, profile: { id: profile.id, alias: profile.alias }, diagnostic: "Authentication is required for this profile" };

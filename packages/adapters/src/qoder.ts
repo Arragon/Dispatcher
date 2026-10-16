@@ -178,15 +178,15 @@ export class QoderAdapter implements AgentAdapter {
 
 const defaultQoderCandidates = ["qoder", join(homedir(), ".qoder", "entry", "qoder"), "/Applications/Qoder.app/Contents/MacOS/qoder"];
 
-export async function probeQoderProfile(profile: QoderProfileConfig): Promise<QoderDiscoveryResult> {
+export async function probeQoderProfile(profile: QoderProfileConfig,context:{workspacePath?:string}={}): Promise<QoderDiscoveryResult> {
   const executables = [...new Set([profile.executable, ...defaultQoderCandidates].filter((value): value is string => Boolean(value)))];
   const candidates: QoderDiscoveryResult["candidates"] = [];
   for (const executable of executables) {
     if (executable.includes("/")) { try { await access(executable); } catch { continue; } }
     let version: string;
-    try { version = (await execFileAsync(executable, ["--version"], { timeout: 3_000 })).stdout.trim(); } catch { continue; }
+    try { version = (await execFileAsync(executable, ["--version"], { timeout: 3_000,...(context.workspacePath?{cwd:context.workspacePath,env:{...process.env,PWD:context.workspacePath}}:{}) })).stdout.trim(); } catch { continue; }
     try {
-      const result = await execFileAsync(executable, ["--list-models", ...(profile.configDir ? ["--config-dir", profile.configDir] : [])], { timeout: 8_000, maxBuffer: 256 * 1024 });
+      const result = await execFileAsync(executable, ["--list-models", ...(profile.configDir ? ["--config-dir", profile.configDir] : [])], { timeout: 8_000, maxBuffer: 256 * 1024,...(context.workspacePath?{cwd:context.workspacePath,env:{...process.env,PWD:context.workspacePath}}:{}) });
       const diagnostic = qoderAuthenticationDiagnostic(`${result.stdout}\n${result.stderr}`);
       candidates.push({ executable, version, authenticated: !diagnostic, backends: ["qoder-cli-json"], ...(diagnostic ? { diagnostic } : {}) });
     } catch (error) {

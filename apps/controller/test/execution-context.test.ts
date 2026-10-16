@@ -1,0 +1,14 @@
+import {expect,it} from "vitest";import {defaultDispatcherConfig} from "@dispatcher/config";import {resolveProfileExecutionContext} from "../src/execution-context.js";
+it("binds applied account directories, Runner and repository without rewriting the registration",()=>{
+ const config=structuredClone(defaultDispatcherConfig);config.runners.push({id:"remote",displayName:"Remote",mode:"remote",capacity:1,tags:[],credentialRef:"secret://runner/r/token"});config.agentProfiles=[{id:"a",alias:"A",provider:"qoder-cn",runnerId:"remote",settings:{configDir:"C:\\private\\a"}},{id:"b",alias:"B",provider:"qoder-cn",runnerId:"remote",settings:{configDir:"C:\\private\\b"}}];config.repositories=[{id:"repo",root:"C:\\repo",runnerId:"remote",defaultBaseRef:"main",scopePaths:[],verificationCommands:[]}];const before=structuredClone(config);
+ const a=resolveProfileExecutionContext({revision:1,config},"a","repo","probe"),b=resolveProfileExecutionContext({revision:1,config},"b","repo","catalog");expect(a.profile.settings?.configDir).toBe("C:\\private\\a");expect(a.fingerprint).not.toBe(b.fingerprint);expect(a.runner.mode).toBe("remote");expect(config).toEqual(before);
+ config.repositories[0]!.runnerId="local";expect(()=>resolveProfileExecutionContext({revision:1,config},"a","repo","start")).toThrow(expect.objectContaining({code:"RUNNER_REPOSITORY_MISMATCH"}));
+});
+it("keeps unrelated config revisions out of account identity while fencing disabled execution",()=>{
+ const config=structuredClone(defaultDispatcherConfig);config.agentProfiles=[{id:"a",alias:"A",provider:"codex",runnerId:"local",enabled:false,settings:{codexHome:"/native/a"}}];const first=resolveProfileExecutionContext({revision:1,config},"a",undefined,"probe");expect(resolveProfileExecutionContext({revision:2,config},"a",undefined,"probe").fingerprint).toBe(first.fingerprint);expect(()=>resolveProfileExecutionContext({revision:2,config},"a",undefined,"resume")).toThrow(expect.objectContaining({code:"PROFILE_DISABLED"}));
+});
+
+it("invalidates local executable upgrade evidence without interpreting remote native paths",async()=>{
+ const {mkdtempSync,writeFileSync,rmSync}=await import("node:fs"),{tmpdir}=await import("node:os"),{join}=await import("node:path");const root=mkdtempSync(join(tmpdir(),"native-probe-epoch-")),executable=join(root,"native");
+ try{writeFileSync(executable,"one");const config=structuredClone(defaultDispatcherConfig);config.agentProfiles=[{id:"a",alias:"A",provider:"qoder-cn",runnerId:"local",settings:{executable}}];const first=resolveProfileExecutionContext({revision:1,config},"a",undefined,"probe");writeFileSync(executable,"upgraded-native");expect(resolveProfileExecutionContext({revision:1,config},"a",undefined,"probe").fingerprint).not.toBe(first.fingerprint);}finally{rmSync(root,{recursive:true,force:true});}
+});

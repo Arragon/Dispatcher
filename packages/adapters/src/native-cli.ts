@@ -9,7 +9,7 @@ import type { SessionStore } from "./generic.js";
 import {
   StructuredCliAdapter, normalizeCliError,
   type CliAgentBackend, type CliAgentProfile, type CliDiscoveryResult,
-  type CliProviderDefinition, type CredentialResolver, type NormalizedCliEvent,
+  type NativeProbeContext, type CliProviderDefinition, type CredentialResolver, type NormalizedCliEvent,
 } from "./ecosystem-cli.js";
 
 const execFileAsync = promisify(execFile);
@@ -142,16 +142,18 @@ function probeFailure(stage:NonNullable<NativeCliDiscoveryResult["failure"]>["st
   return {stage,code:value.code==="ERR_CHILD_PROCESS_STDIO_MAXBUFFER"?"OUTPUT_LIMIT":value.code==="ETIMEDOUT"||value.killed&&value.code===null&&value.signal==="SIGTERM"?"TIMEOUT":value.code==="ENOENT"?"NOT_FOUND":value.code==="EACCES"?"PERMISSION_DENIED":error instanceof SyntaxError?"INVALID_OUTPUT":"EXECUTION_FAILED"};
 }
 
-export async function probeNativeCliProfile(provider: NativeCliProvider, profile: CliAgentProfile): Promise<NativeCliDiscoveryResult> {
+export async function probeNativeCliProfile(provider: NativeCliProvider, profile: CliAgentProfile,context:NativeProbeContext={}): Promise<NativeCliDiscoveryResult> {
   const file = await executable(provider, profile);
+  const prefix=provider==="qoder-cn"?["--config-dir",profile.configDir??join(homedir(),".qoder-cn")]:[];
+  const options={...(context.workspacePath?{cwd:context.workspacePath,env:{...process.env,PWD:context.workspacePath}}:{})};
   const base: NativeCliDiscoveryResult = { executable: file, installed: false, compatible: false, authenticated: false, authentication: "unknown" };
   try {
-    const version = await execFileAsync(file, ["--version"], { timeout: 3_000, maxBuffer: 32_768 });
+    const version = await execFileAsync(file, [...prefix,"--version"], { ...options,timeout: 3_000, maxBuffer: 32_768 });
     base.installed = true;
     base.version = version.stdout.trim().slice(0, 120);
   } catch(error) { return { ...base, failure:probeFailure("version",error),diagnostic: "CLI version probe failed; check the installed executable." }; }
   try {
-    const help = await execFileAsync(file, provider === "opencode" ? ["run", "--help"] : ["--help"], { timeout: 3_000, maxBuffer: 65_536 });
+    const help = await execFileAsync(file, [...prefix,...(provider === "opencode" ? ["run", "--help"] : ["--help"])], { ...options,timeout: 3_000, maxBuffer: 65_536 });
     const output = help.stdout + help.stderr;
     base.compatible = provider === "opencode" ? /--standalone/.test(output) && /--format/.test(output) && /--session/.test(output)
       : provider === "grok" ? /streaming-messages-json/.test(output) && /--session-id/.test(output) && /--resume/.test(output)
@@ -161,9 +163,13 @@ export async function probeNativeCliProfile(provider: NativeCliProvider, profile
       : /--session-id/.test(output) && /--resume/.test(output) && /--output-format/.test(output) && /--permission-mode/.test(output);
     if (!base.compatible) return { ...base, diagnostic: "Installed CLI lacks the required native JSON/session flags. OpenCode requires v2." };
   } catch(error) { return { ...base, failure:probeFailure("capability",error),diagnostic: "CLI capability probe failed." }; }
+  if(provider==="qoder-cn"){
+    try{const result=await execFileAsync(file,[...prefix,"status","--output","json"],{...options,timeout:5000,maxBuffer:32768}),value:unknown=JSON.parse(result.stdout);if(object(value)?.logged_in===true&&typeof object(value)?.username==="string"&&object(value)?.username)return {...base,authenticated:true,authentication:"ready"};if(object(value)?.logged_in===false)return {...base,authentication:"missing",diagnostic:"Native account login is required"};return {...base,diagnostic:"Native account identity remains unverified"};}
+    catch(error){return {...base,failure:probeFailure("authentication",error),diagnostic:"Native account check failed"};}
+  }
   if (provider === "pi" && profile.model) {
     try {
-      const auth = await execFileAsync(file, ["auth", "check", "--model", profile.model, "--json", "--no-refresh"], { timeout: 5_000, maxBuffer: 32_768 });
+      const auth = await execFileAsync(file, ["auth", "check", "--model", profile.model, "--json", "--no-refresh"], { ...options,timeout: 5_000, maxBuffer: 32_768 });
       const value: unknown = JSON.parse(auth.stdout);
       if (object(value)?.status === "ready") return { ...base, authenticated: true, authentication: "ready" };
       return { ...base, authentication: "missing", diagnostic: "Selected pi model is not ready; authenticate in the native CLI." };

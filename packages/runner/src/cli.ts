@@ -128,7 +128,7 @@ function nativeRuntime(runnerId: string, dataDirectory: string, credentials: Nat
   const resolveCredential = (reference: string) => credentials.resolve(reference);
   return new NativeRunnerRuntime({ runnerId, dataDirectory,
     createAdapter: (profile, store) => createNativeProfileAdapter(profile, { store, resolveCredential }),
-    probeProfile: profile => probeNativeProfile(profile, resolveCredential),
+    probeProfile: (profile,repository) => probeNativeProfile(profile, resolveCredential,repository?{workspacePath:repository.root}:{}),
   });
 }
 function assertOwningRegistration(config: DispatcherConfig, runnerId: string): void {

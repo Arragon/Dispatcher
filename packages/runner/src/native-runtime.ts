@@ -214,7 +214,9 @@ export class NativeRunnerRuntime {
       if (payload.type === "native.profile_probe") {
         const { profile } = this.profile(payload.profileId), repository = payload.repositoryId ? this.repository(payload.repositoryId) : undefined;
         if (!this.options.probeProfile) throw new NativeRunnerError("PROBE_UNAVAILABLE", "Native probe is unavailable");
-        return redactValue(await this.options.probeProfile(profile, repository));
+        const before=hash({profile,repository}),result=await this.options.probeProfile(profile,repository);
+        if(hash({profile:this.profile(profile.id).profile,repository:repository?this.repository(repository.id):undefined})!==before)throw new NativeRunnerError("SELECTION_CHANGED","Runner registration changed during the native probe");
+        return redactValue(result);
       }
       if (payload.type === "native.model_catalog") {
         const record = payload.runId ? this.require(payload.runId) : undefined;

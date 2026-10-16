@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -133,6 +133,14 @@ describe("installed native CLI harnesses", () => {
       expect(await probeNativeCliProfile("pi",{id:"large",alias:"Large",executable:file})).toMatchObject({failure:{stage:"version",code:"OUTPUT_LIMIT"}});
       writeFileSync(file,`#!${process.execPath}\nconsole.error('sk-private-test-secret');process.exit(1);`);
       const failed=await probeNativeCliProfile("pi",{id:"failed",alias:"Failed",executable:file});expect(failed).toMatchObject({failure:{stage:"version",code:"EXECUTION_FAILED"}});expect(JSON.stringify(failed)).not.toContain("sk-private-test-secret");
+    }finally{rmSync(directory,{recursive:true,force:true});}
+  });
+
+  it("uses the applied Qoder CN directory and registered workspace for every probe stage",async()=>{
+    const directory=realpathSync(mkdtempSync(join(tmpdir(),"qoder-probe-context-"))),file=join(directory,"qoder"),log=join(directory,"calls.jsonl"),configDir=join(directory,"account");
+    writeFileSync(file,`#!${process.execPath}\nconst fs=require('node:fs'),args=process.argv.slice(2);fs.appendFileSync(${JSON.stringify(log)},JSON.stringify({args,cwd:process.cwd(),pwd:process.env.PWD})+'\\n');if(args.includes('--version'))console.log('1.0');else if(args.includes('--help'))console.log('--session-id --resume --output-format --permission-mode');else console.log(JSON.stringify({logged_in:true,username:'fixture'}));`);chmodSync(file,0o700);
+    try{expect(await probeNativeCliProfile("qoder-cn",{id:"p",alias:"P",executable:file,configDir},{workspacePath:directory})).toMatchObject({installed:true,compatible:true,authenticated:true});
+      const calls=readFileSync(log,"utf8").trim().split("\n").map(line=>JSON.parse(line));expect(calls).toHaveLength(3);for(const call of calls)expect(call).toMatchObject({args:["--config-dir",configDir,...call.args.slice(2)],cwd:directory,pwd:directory});
     }finally{rmSync(directory,{recursive:true,force:true});}
   });
 

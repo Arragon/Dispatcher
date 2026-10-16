@@ -178,3 +178,9 @@ describe("Generic CLI adapter", () => {
     expect(session.backendId).toBe("restricted-pty");
   });
 });
+
+it("does not report Cursor authentication from a zero-exit login without a qualified identity",async()=>{
+  const {chmodSync,mkdtempSync,writeFileSync,rmSync}=await import("node:fs"),{tmpdir}=await import("node:os"),{join}=await import("node:path"),{probeCursorProfile}=await import("../src/ecosystem-cli.js");const root=mkdtempSync(join(tmpdir(),"cursor-probe-")),file=join(root,"native");
+  writeFileSync(file,`#!${process.execPath}\nif(process.argv.includes('--version'))console.log('1.0');else console.log('Login successful!\\nLogged in (unable to fetch user details)');`);chmodSync(file,0o700);
+  try{expect(await probeCursorProfile({id:"a",alias:"A",executable:file})).toMatchObject({installed:true,authenticated:false,authentication:"unknown"});}finally{rmSync(root,{recursive:true,force:true});}
+});

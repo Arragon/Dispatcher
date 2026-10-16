@@ -80,6 +80,7 @@ it("keeps absent authoritative run evidence absent instead of selecting a newer 
 });
 
 it("keeps login evidence in the checked account row and prevents duplicate checks", async () => {
+  vi.stubGlobal("EventSource",class{addEventListener(){}close(){}});
   const {default: AgentsPage} = await import("../src/AgentsPage.js");
   let complete: ((value: Response) => void) | undefined;
   const fetchMock = vi.spyOn(globalThis,"fetch").mockImplementation(async (input) => {
@@ -92,7 +93,7 @@ it("keeps login evidence in the checked account row and prevents duplicate check
   const check = await screen.findByRole("button",{name:"测试 ronna 登录"});
   await userEvent.click(check); await userEvent.click(check);
   expect(fetchMock.mock.calls.filter(([path]) => String(path).endsWith("/test"))).toHaveLength(1);
-  complete?.(new Response(JSON.stringify({authenticated:true})));
+  complete?.(new Response(JSON.stringify({profile:{id:"ronna",alias:"ronna",provider:"codex",runnerId:"local",state:"CONFIGURED",authentication:{status:"ready",observedAt:"2026-10-16T12:00:00Z",source:"native-probe"}}})));
   expect(await screen.findByText(/登录已验证/)).toBeTruthy();
   expect(within(screen.getByText("kite").closest("tr")!).getByText("未检查")).toBeTruthy();
 });
@@ -159,4 +160,11 @@ it("shows the native enabled default without adding an untouched enabled edit",a
   await userEvent.clear(field);await userEvent.type(field,"After");await userEvent.click(screen.getByRole("button",{name:"预览配置变更"}));await screen.findByRole("button",{name:"确认并应用"});
   expect(posted[0]!.edits).toEqual([{op:"replace",path:"/agentProfiles/0/alias",entityId:"a",value:"After"}]);
   await userEvent.click(screen.getByRole("checkbox",{name:"启用"}));await userEvent.click(screen.getByRole("button",{name:"预览配置变更"}));await screen.findByRole("button",{name:"确认并应用"});expect(posted[1]!.edits).toContainEqual({op:"add",path:"/agentProfiles/0/enabled",entityId:"a",value:false});
+});
+
+it("renders durable server authentication evidence on a fresh page load and marks stale evidence explicitly",async()=>{
+  vi.stubGlobal("EventSource",class{addEventListener(){}close(){}});const {default:AgentsPage}=await import("../src/AgentsPage.js");let stale=false;
+  vi.spyOn(globalThis,"fetch").mockImplementation(async input=>new Response(JSON.stringify(String(input).includes("manifests")?{manifests:[{id:"codex",displayName:"Codex",platforms:[],configSchema:{type:"object"},uiSchema:{},secretFields:[],backends:[],capabilities:{}}]}:String(input).includes("compatibility")?{matrix:[]}:{profiles:[{id:"a",alias:"Account",provider:"codex",runnerId:"local",state:"CONFIGURED",authentication:{status:stale?"stale":"ready",observedAt:"2026-10-16T12:00:00Z",source:"native-probe"}}],sessions:[]})));
+  const mount=()=>render(<QueryClientProvider client={new QueryClient({defaultOptions:{queries:{retry:false}}})}><MemoryRouter><AgentsPage/></MemoryRouter></QueryClientProvider>);
+  const first=mount();expect(await screen.findByText(/登录已验证/)).toBeTruthy();first.unmount();stale=true;mount();expect(await screen.findByText(/已过期，请重新检查/)).toBeTruthy();expect(screen.queryByText(/登录已验证/)).toBeNull();
 });

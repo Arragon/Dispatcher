@@ -13,7 +13,7 @@ import {
 } from "./contracts.js";
 import { MemorySessionStore, type SessionStore } from "./generic.js";
 import type { AccountModelCatalog, ExecutionSelection, ModelCatalogContext } from "@dispatcher/domain";
-import { readNativeCliCatalog, type CatalogCliProvider } from "./cli-catalog.js";
+import { readNativeCliCatalog, cursorLoginIdentity, type CatalogCliProvider } from "./cli-catalog.js";
 import { readOpenCodeCatalog } from "./opencode-catalog.js";
 
 const execFileAsync = promisify(execFile);
@@ -33,6 +33,8 @@ export interface CliDiscoveryResult {
   executable: string;
   installed: boolean;
   authenticated: boolean;
+  authentication?:"ready"|"missing"|"unknown";
+  compatible?:boolean;
   version?: string;
   diagnostic?: string;
 }
@@ -432,32 +434,29 @@ export class KiroAdapter extends StructuredCliAdapter {
   }
 }
 
-export async function probeCursorProfile(profile: CliAgentProfile, resolveCredential?: CredentialResolver): Promise<CliDiscoveryResult> {
-  return probeCliProfile(cursorDefinition, profile, resolveCredential);
+export interface NativeProbeContext {workspacePath?:string}
+export async function probeCursorProfile(profile: CliAgentProfile, resolveCredential?: CredentialResolver,context:NativeProbeContext={}): Promise<CliDiscoveryResult> {
+  return probeCliProfile(cursorDefinition, profile, resolveCredential,context);
 }
-
-export async function probeKiroProfile(profile: CliAgentProfile, resolveCredential?: CredentialResolver): Promise<CliDiscoveryResult> {
-  return probeCliProfile(kiroDefinition, profile, resolveCredential);
+export async function probeKiroProfile(profile: CliAgentProfile, resolveCredential?: CredentialResolver,context:NativeProbeContext={}): Promise<CliDiscoveryResult> {
+  return probeCliProfile(kiroDefinition, profile, resolveCredential,context);
 }
-
-async function probeCliProfile(definition: CliProviderDefinition, profile: CliAgentProfile, resolveCredential?: CredentialResolver): Promise<CliDiscoveryResult> {
-  const executable = profile.executable ?? definition.defaultExecutable;
+async function probeCliProfile(definition: CliProviderDefinition, profile: CliAgentProfile, resolveCredential:CredentialResolver|undefined,context:NativeProbeContext): Promise<CliDiscoveryResult> {
+  const executable = profile.executable ?? definition.defaultExecutable,environment:NodeJS.ProcessEnv={...process.env,...(context.workspacePath?{PWD:context.workspacePath}:{})},cwd=context.workspacePath;
   let version: string;
-  try { version = (await execFileAsync(executable, definition.versionArgs, { timeout: 3_000 })).stdout.trim(); }
-  catch (error) { return { executable, installed: false, authenticated: false, diagnostic: error instanceof Error ? error.message.slice(0, 240) : "Executable not found" }; }
-  const environment = { ...process.env };
+  try { version = (await execFileAsync(executable, definition.versionArgs, { timeout: 3_000,maxBuffer:32768,env:environment,...(cwd?{cwd}:{}) })).stdout.trim(); }
+  catch { return { executable, installed: false, authenticated: false, authentication:"unknown",diagnostic:"Native executable version check failed" }; }
+  let compatible:boolean|undefined;
+  try{const result=await execFileAsync(executable,definition.catalogProvider==="cursor"?["--help"]:["chat","--help"],{timeout:3000,maxBuffer:65536,env:environment,...(cwd?{cwd}:{})});const output=result.stdout+result.stderr;compatible=definition.catalogProvider==="cursor"?/--print/.test(output)&&/--output-format/.test(output)&&/--resume/.test(output):/--no-interactive/.test(output)&&/--agent-engine/.test(output)&&/--output-format/.test(output);}catch{compatible=undefined;}
   if (profile.credentialRef) {
-    if (!definition.environmentKey || !resolveCredential) return { executable, installed: true, authenticated: false, version, diagnostic: "Credential reference cannot be resolved in this runtime" };
+    if (!definition.environmentKey || !resolveCredential) return { executable, installed: true, authenticated: false, authentication:"unknown",...(compatible===undefined?{}:{compatible}),version, diagnostic: "Credential reference cannot be resolved in this runtime" };
     environment[definition.environmentKey] = await resolveCredential(profile.credentialRef);
   }
   try {
-    const result = await execFileAsync(executable, definition.authArgs, { timeout: 8_000, maxBuffer: 256 * 1024, env: environment });
-    const output = `${result.stdout}\n${result.stderr}`;
-    const diagnostic = /not authenticated|not logged in|login required|unauthorized|forbidden/i.test(output) ? output.trim().slice(0, 240) : undefined;
-    return { executable, installed: true, authenticated: !diagnostic, version, ...(diagnostic ? { diagnostic } : {}) };
-  } catch (error) {
-    return { executable, installed: true, authenticated: false, version, diagnostic: error instanceof Error ? error.message.slice(0, 240) : "Authentication probe failed" };
-  }
+    const result = await execFileAsync(executable, definition.authArgs, { timeout: 8_000, maxBuffer: 256 * 1024, env: environment,...(cwd?{cwd}:{}) });
+    const output=result.stdout+result.stderr,login=definition.catalogProvider==="cursor"?cursorLoginIdentity(result.stdout,result.stderr):{status:/not authenticated|not logged in|login required|unauthorized|forbidden/i.test(output)?"missing" as const:"unknown" as const};
+    return {executable,installed:true,...(compatible===undefined?{}:{compatible}),version,authenticated:login.status==="ready",authentication:login.status,...(login.status!=="ready"?{diagnostic:login.status==="missing"?"Native authentication is required":"Native account identity remains unverified"}:{})};
+  } catch { return {executable,installed:true,...(compatible===undefined?{}:{compatible}),version,authenticated:false,authentication:"unknown",diagnostic:"Native authentication check failed"}; }
 }
 
 export function normalizeCliLine(line: string): NormalizedCliEvent | undefined {

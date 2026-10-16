@@ -616,3 +616,20 @@ removal remain available under existing confirmation/runtime lifecycle rules.
 Plan status exposes original applied revision separately from current revision;
 console plan/apply responses use the same safe projection. Controller connection
 and Runner identity/credential changes require privileged confirmation.
+
+## Account console evidence
+
+Applied profile/Runner/repository registrations resolve through one Controller
+execution context before saved-account probe, catalog, start or resume. Remote
+native reads execute on the owning Runner; draft remote discovery is rejected
+before Controller can spawn a probe. Account plan previews perform structural
+validation without requiring an installed local executable.
+
+Profile checks persist separate installation, compatibility and authentication
+evidence in the existing entity store. List and detail use one projection;
+ordinary reads never repeat native queries. Checks coalesce by account/context,
+reject registration changes during a read, and expire after five minutes.
+Registered local executable/native configuration file epochs invalidate prior
+evidence where observable. External account switches and PATH-resolved upgrades
+cannot always be observed without another native check and remain an explicit
+limitation. Waiting canonical Runs also prevent unsafe adapter replacement.

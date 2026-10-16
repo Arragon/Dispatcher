@@ -1,7 +1,7 @@
 import { AdapterContractError, type AgentAdapter } from "./contracts.js";
 import { CodexAdapter, probeCodexProfile, type CodexBackend, type CodexProfileConfig } from "./codex.js";
 import type { CodexReadRequest } from "./codex-catalog.js";
-import { CursorAdapter, KiroAdapter, probeCursorProfile, probeKiroProfile, type CliAgentBackend, type CliAgentProfile, type CredentialResolver } from "./ecosystem-cli.js";
+import { CursorAdapter, KiroAdapter, probeCursorProfile, probeKiroProfile, type CliAgentBackend, type CliAgentProfile, type NativeProbeContext, type CredentialResolver } from "./ecosystem-cli.js";
 import { AntigravityAdapter, GrokAdapter, OpenCodeAdapter, PiAdapter, QoderCnAdapter, WorkBuddyCliAdapter, ZCodeAdapter, isNativeCliProvider, probeNativeCliProfile, type NativeCliProvider } from "./native-cli.js";
 import type { SessionStore } from "./generic.js";
 
@@ -50,15 +50,14 @@ export function createNativeProfileAdapter(profile: NativeProfileRegistration, o
     case "qoder-cn": return new QoderCnAdapter(native, backend, store);
   }
 }
-export async function probeNativeProfile(profile: NativeProfileRegistration, resolveCredential?: CredentialResolver): Promise<unknown> {
-  if (profile.enabled === false) throw new AdapterContractError("PROFILE_DISABLED", "Native profile is disabled");
+export async function probeNativeProfile(profile: NativeProfileRegistration, resolveCredential?: CredentialResolver,context:NativeProbeContext={}): Promise<unknown> {
   if (profile.provider === "codex") {
     const native = codexProfile(profile); if (!native) throw new AdapterContractError("PROFILE_UNAVAILABLE", "Codex home is not registered");
-    return probeCodexProfile(native);
+    return probeCodexProfile(native,context);
   }
   const native = cliProfile(profile);
-  if (profile.provider === "cursor") return probeCursorProfile(native, resolveCredential);
-  if (profile.provider === "kiro") return probeKiroProfile(native, resolveCredential);
-  if (isNativeCliProvider(profile.provider)) return probeNativeCliProfile(profile.provider, native);
+  if (profile.provider === "cursor") return probeCursorProfile(native, resolveCredential,context);
+  if (profile.provider === "kiro") return probeKiroProfile(native, resolveCredential,context);
+  if (isNativeCliProvider(profile.provider)) return probeNativeCliProfile(profile.provider, native,context);
   throw new AdapterContractError("PROBE_UNAVAILABLE", "Provider has no qualified native probe");
 }

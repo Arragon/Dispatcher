@@ -64,6 +64,16 @@ it("requires applied owning registrations, plans without mutation, executes and 
   expect(await f.call({ type: "native.run", runId: "run", action: "result" })).toMatchObject({ state: "COMPLETED", summary: "done" });
 });
 
+it("rejects native probe evidence when the owning registration changes during the read",async()=>{
+  const f=fixture();f.runtime.close();const entered=Promise.withResolvers<void>(),gate=Promise.withResolvers<void>();
+  const runtime=new NativeRunnerRuntime({...f.options,probeProfile:async()=>{entered.resolve();await gate.promise;return {installed:true,authenticated:true};}});cleanups.push(()=>runtime.close());
+  runtime.configuration.applyPlan(runtime.configuration.buildPlan(f.config,"fixture","cli").id,{confirmed:true});
+  const payload:CommandPayload={type:"native.profile_probe",profileId:"p",repositoryId:"repo"};
+  const pending=runtime.handle(payload,createEnvelope({kind:"command",runnerId:"remote",traceId:"probe",messageId:"probe",sequence:1,payload}));
+  const rejected=expect(pending).rejects.toMatchObject({code:"SELECTION_CHANGED"});await entered.promise;
+  const changed=structuredClone(f.config);changed.agentProfiles[0]!.settings={codexHome:"/different-account"};runtime.configuration.applyPlan(runtime.configuration.buildPlan(changed,"fixture","cli").id,{confirmed:true});gate.resolve();await rejected;
+});
+
 it("rejects foreign runners, unsafe scopes, missing commands and stale concrete selections before native start", async () => {
   const f = fixture(); f.apply();
   await expect(f.call({ type: "native.workspace_plan", profileId: "p", plan: f.plan }, undefined, { runnerId: "other" })).rejects.toMatchObject({ code: "RUNNER_MISMATCH" });

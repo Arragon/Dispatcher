@@ -96,6 +96,6 @@ export async function signIn(credential: { token: string } | { code: string } | 
 
 export function subscribeToEvents(onEvent: () => void): () => void {
   const source = new EventSource("/api/events");
-  for (const event of ["runner.changed", "run.changed", "task.changed", "connector.changed", "resource.changed", "fleet.reset"]) source.addEventListener(event, onEvent);
+  for (const event of ["runner.changed", "run.changed", "task.changed", "connector.changed", "resource.changed", "profile.changed", "fleet.reset"]) source.addEventListener(event, onEvent);
   return () => source.close();
 }

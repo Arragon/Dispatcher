@@ -1,3 +1,4 @@
+export * from "./profile-console.js";
 import type { ExecutionSelection } from "./publication.js";
 export * from "./publication.js";
 export * from "./model-routing.js";

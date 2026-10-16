@@ -15,6 +15,12 @@ const clean = (value: string) => value.replace(new RegExp(`${String.fromCharCode
 const invalid = () => new AdapterContractError("INVALID_MODEL_CATALOG", "Native model catalog format is unsupported");
 const nativeAuthFailure=/not authenticated|not logged in|authentication failed|invalid.grant|expired credentials|session has expired|login required|please.*log.?in|unauthorized|forbidden|no auth credentials/i;
 
+export function cursorLoginIdentity(stdout:string,stderr=""):{status:"ready"|"missing"|"unknown";accountId?:string}{
+  const output=clean(stdout);if(nativeAuthFailure.test(output+clean(stderr)))return {status:"missing"};
+  const accounts=[...new Set([...output.matchAll(/^[^\p{L}\p{N}\r\n]*Logged in as[ \t]+(\S+)[ \t]*$/gimu)].map(match=>match[1]!))];
+  return accounts.length===1?{status:"ready",accountId:accounts[0]!}:{status:"unknown"};
+}
+
 /** Only the adapter's fixed read-only commands reach this private subprocess boundary. */
 export function readNativeCli(input: NativeCliReadRequest): Promise<NativeCliReadResult> {
   return new Promise((resolve, reject) => {
@@ -75,14 +81,10 @@ export async function readNativeCliCatalog(input: { provider: CatalogCliProvider
   const identity = (account: NativeCliReadResult | undefined): unknown => {
     if (!account) return undefined;
     if (input.provider==="cursor") {
-      const output=clean(account.stdout);
-      if(nativeAuthFailure.test(output+clean(account.stderr)))return {authenticated:false};
-      // Status progress/spinner lines vary with network timing. Only the qualified
-      // login marker identifies the account; unknown/contradictory formats fail closed.
-      const accounts=[...new Set([...output.matchAll(/^[^\p{L}\p{N}\r\n]*Logged in as[ \t]+(\S+)[ \t]*$/gimu)].map(match=>match[1]!))];
-      if(accounts.length!==1)throw invalid();
-      return {authenticated:true,accountId:accounts[0]};
+      const login=cursorLoginIdentity(account.stdout,account.stderr);if(login.status==="unknown")throw invalid();
+      return {authenticated:login.status==="ready",...(login.accountId?{accountId:login.accountId}:{})};
     }
+
     if (!qoder) return clean(account.stdout).trim();
     const value = JSON.parse(account.stdout) as Record<string, unknown>;
     if (typeof value.logged_in !== "boolean" || value.logged_in && (typeof value.username !== "string" || !value.username)) throw invalid();

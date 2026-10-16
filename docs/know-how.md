@@ -494,3 +494,10 @@
   undefined as false; wrap its existing checkbox for that field's presentation,
   without adding a default to form data. Otherwise a harmless edit can appear to
   disable an account or manufacture an untouched configuration change.
+
+- Account installation, native flag compatibility and login are independent
+  evidence. Cursor's login-success/unable-to-fetch-details output is not a
+  qualified identity. Qoder CN version/help/status probes must all use the
+  applied configDir and both cwd/PWD of the registered repository. Persist only
+  normalized evidence with its original check time; refreshes must not promote
+  old or unknown authentication to success.

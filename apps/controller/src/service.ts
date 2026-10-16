@@ -1,3 +1,6 @@
+import { resolveProfileExecutionContext } from "./execution-context.js";
+import { ProfileProbeService } from "./profile-probes.js";
+import type { ProfileConsoleView } from "@dispatcher/domain";
 import { applyConfigEdits, consoleConfig, consoleConfigPlan } from "./config-edits.js";
 import {qualifyRoutingPolicy,type PolicyConfigEvidence} from "./policy-config.js";
 import {TaskClassifier} from "./task-classifier.js";
@@ -21,6 +24,7 @@ import fastifyStatic from "@fastify/static";
 import {
   CodexAdapter,
   createNativeProfileAdapter,
+  probeNativeProfile,
   codexManifest,
   QoderAdapter,
   qoderManifest,
@@ -178,6 +182,7 @@ export interface ControllerOptions {
   ownerToken?: string;
   allowedHosts?: string[];
   clock?: () => Date;
+  profileProbeExecutor?:(profile:AgentProfileConfig,repository?:RepositoryConfig)=>Promise<unknown>;
   backgroundWorker?: BackgroundWorkerOptions;
 }
 
@@ -463,6 +468,7 @@ export class ControllerService {
   private readonly attentionNotifications = new AttentionNotificationPolicy();
   private readonly leaseAuthority = new RunnerLeaseAuthority();
   private readonly pendingConsoleInputs = new Set<string>();
+  private readonly profileProbes:ProfileProbeService;
   private readonly secureLinks: SecureDashboardLinkIssuer;
   private readonly messagingChannels = new Map<string, string>();
   private readonly agentAdapters = new Map<string, AgentAdapter>();
@@ -496,6 +502,7 @@ export class ControllerService {
     const logger = createLogger({ level: process.env.LOG_LEVEL ?? "info" });
     this.app = fastify({ loggerInstance: logger as unknown as FastifyBaseLogger, ajv: {customOptions:{coerceTypes:false,removeAdditional:false}} });
     this.database = new DispatcherDatabase(join(options.dataDirectory, "dispatcher.sqlite"));
+    this.profileProbes=new ProfileProbeService(this.database,()=>this.now());
     this.agentProcesses = new ProcessManager(join(options.dataDirectory, "agent-logs"));
     this.enrollments = new RunnerEnrollmentAuthority(
       this.database.listEntities<JsonValue>("runner-enrollment") as unknown as RunnerEnrollmentRecord[],
@@ -664,6 +671,7 @@ export class ControllerService {
     this.stopping = (async () => {
       await this.lifecycle.stop();
       await Promise.allSettled([...this.remoteLifecycleJobs.values()]);
+      await this.profileProbes.drain();
       if (this.listening) await this.app.close();
       else await this.app.close();
       this.events.close();
@@ -902,7 +910,7 @@ export class ControllerService {
       const next = config.agentProfiles.find((profile) => profile.id === id && profile.enabled !== false);
       const local = next && !config.runners.some(runner => runner.id === next.runnerId && runner.mode === "remote");
       if (adapter && (local || adapter instanceof RemoteNativeAdapter) && isDeepStrictEqual(previous, next)) retainedNativeAdapters.set(id, adapter);
-      else if ((adapter instanceof StructuredCliAdapter || adapter instanceof CodexAdapter || adapter instanceof RemoteNativeAdapter) && adapter.hasActiveOperations()) {
+      else if ((adapter instanceof StructuredCliAdapter || adapter instanceof CodexAdapter || adapter instanceof RemoteNativeAdapter) && (adapter.hasActiveOperations()||this.database.listEntities<JsonValue>("run").some(value=>{const run=value as unknown as Run;return run.profileId===id&&!isTerminalRunState(run.state);}))) {
         throw new ConfigPlanError("ACTIVE_AGENT_PROFILE", `Finish or cancel active harness operations before changing or removing profile ${id}`);
       }
     }
@@ -1679,6 +1687,59 @@ export class ControllerService {
     if(!handle||contentHash(identity(handle))!==contentHash(identity(plan))||typeof handle.path!=="string"||!handle.path||handle.path.length>4000||typeof handle.repositoryRoot!=="string"||typeof handle.branch!=="string"||!handle.branch||!Number.isFinite(Date.parse(handle.createdAt))||typeof handle.baseRevision!=="string"||!/^[a-f0-9]{40,64}$/i.test(handle.baseRevision)||plan.baseCommit&&handle.baseRevision!==plan.baseCommit||reviewed&&["path","branch","baseRevision","repositoryRoot"].some(key=>handle[key as keyof WorkspaceHandle]!==reviewed[key as keyof WorkspaceHandle]))throw new AdapterContractError(reviewed?"COMMAND_OUTCOME_UNKNOWN":"REMOTE_RESULT_INVALID","Owning Runner workspace identity does not match its approved plan");
     return structuredClone(handle);
   }
+  private resolveProfileExecutionContext(profileId:string,repositoryId:string|undefined,purpose:Parameters<typeof resolveProfileExecutionContext>[3]) {return resolveProfileExecutionContext(this.configuration.current(),profileId,repositoryId,purpose);}
+  private assertLocalDraftProbe(runnerId?:string):void{
+    if(!runnerId)return;const runner=this.configuration.current().config.runners.find(runner=>runner.id===runnerId);
+    if(!runner)throw new ConfigPlanError("RUNNER_NOT_FOUND","Choose a configured Runner");
+    if(runner.mode==="remote")throw new ConfigPlanError("REMOTE_DRAFT_PROBE_UNAVAILABLE","Apply this account and its owning Runner registration before testing remotely");
+  }
+  private async executeProfileProbe(context:ReturnType<typeof resolveProfileExecutionContext>):Promise<unknown>{
+    const profile=context.profile;
+    if(context.runner.mode==="remote")return this.remoteRequest(context.runnerId,{type:"native.profile_probe",profileId:profile.id,...(context.repository?{repositoryId:context.repository.id}:{})});
+    if(this.options.profileProbeExecutor)return this.options.profileProbeExecutor(profile,context.repository);
+    const resolveCredential=(reference:string)=>this.secrets.resolve(reference,{principal:"controller",purpose:"provider"});
+    if(profile.provider==="codex"||profile.provider==="cursor"||profile.provider==="kiro"||isNativeCliProvider(profile.provider))return probeNativeProfile(profile,resolveCredential,context.repository?{workspacePath:context.repository.root}:{});
+      if (profile.provider === "qoder") return probeQoderProfile({
+        id: profile.id,
+        alias: profile.alias,
+        ...(stringSetting(profile.settings?.executable) ? { executable: stringSetting(profile.settings?.executable)! } : {}),
+        ...(stringSetting(profile.settings?.configDir) ? { configDir: stringSetting(profile.settings?.configDir)! } : {}),
+        ...(stringSetting(profile.settings?.model) ? { model: stringSetting(profile.settings?.model)! } : {}),
+      },context.repository?{workspacePath:context.repository.root}:{});
+      if (profile.provider === "devin" && profile.credentialRef && stringSetting(profile.settings?.organizationId)) {
+        const devinProfile: DevinProfileConfig = { id: profile.id, alias: profile.alias, organizationId: stringSetting(profile.settings?.organizationId)!, credentialRef: profile.credentialRef, ...(stringSetting(profile.settings?.apiBase) ? { apiBase: stringSetting(profile.settings?.apiBase)! } : {}), ...(typeof profile.settings?.maxSessionAcu === "number" ? { maxSessionAcu: profile.settings.maxSessionAcu } : {}) };
+        const backend = this.options.devinBackendFactory?.(devinProfile);
+        if (backend) { const health = await backend.health(); return { authenticated: health.ok, apiVersion: "v3", ...(health.diagnostic ? { diagnostic: health.diagnostic } : {}) }; }
+        return probeDevinProfile(devinProfile, resolveCredential, this.options.integrationFetch as typeof fetch | undefined);
+      }
+      if (profile.provider === "workbuddy" || profile.provider === "codebuddy") {
+        const local = localServiceProfile({ id: profile.id, alias: profile.alias, provider: profile.provider, ...(profile.credentialRef ? { credentialRef: profile.credentialRef } : {}), ...(stringSetting(profile.settings?.baseUrl) ? { baseUrl: stringSetting(profile.settings?.baseUrl)! } : {}), ...(stringSetting(profile.settings?.healthPath) ? { healthPath: stringSetting(profile.settings?.healthPath)! } : {}), ...(stringSetting(profile.settings?.startPath) ? { startPath: stringSetting(profile.settings?.startPath)! } : {}), ...(stringSetting(profile.settings?.statusPath) ? { statusPath: stringSetting(profile.settings?.statusPath)! } : {}), ...(stringSetting(profile.settings?.inputPath) ? { inputPath: stringSetting(profile.settings?.inputPath)! } : {}), ...(stringSetting(profile.settings?.cancelPath) ? { cancelPath: stringSetting(profile.settings?.cancelPath)! } : {}), ...(stringSetting(profile.settings?.resourcePath) ? { resourcePath: stringSetting(profile.settings?.resourcePath)! } : {}) });
+        if (local) return probeLocalService(local, resolveCredential, this.options.integrationFetch as typeof fetch | undefined);
+      }
+      if (profile.provider === "generic-cli" && stringSetting(profile.settings?.executable) && stringArraySetting(profile.settings?.args)) return probeGenericCli({ file: stringSetting(profile.settings?.executable)!, args: stringArraySetting(profile.settings?.args)!, ...(profile.settings?.mode === "pty" || profile.settings?.mode === "headless" ? { mode: profile.settings.mode } : {}) });
+    throw new ConfigPlanError("PROFILE_UNSUPPORTED","Configured account has no qualified probe");
+  }
+  private async probeConfiguredProfile(profileId:string,repositoryId?:string){
+    const context=this.resolveProfileExecutionContext(profileId,repositoryId,"probe");
+    const evidence=await this.profileProbes.run(context,()=>this.executeProfileProbe(context),()=>{try{return this.resolveProfileExecutionContext(profileId,repositoryId,"probe").fingerprint;}catch{return "removed";}});
+    this.fleetEvents.publish("profile.changed",profileId,{id:profileId,evidence});
+    return {evidence,source:context.runner.mode==="remote"?"owning-runner":"local-native",authenticated:evidence.authentication.status==="ready",authentication:evidence.authentication.status==="ready"?"ready":evidence.authentication.status==="missing"?"missing":"unknown",...(["ready","missing"].includes(evidence.installation.status)?{installed:evidence.installation.status==="ready"}:{}),...(["ready","failed"].includes(evidence.compatibility.status)?{compatible:evidence.compatibility.status==="ready"}:{}),...(evidence.nativeVersion?{version:evidence.nativeVersion}:{}),...(context.profile.provider==="devin"?{apiVersion:"v3"}:{}),profile:this.profileConsoleView(profileId)};
+  }
+  private profileConsoleView(profileId:string):ProfileConsoleView&{provider:string;state:string;capabilities:string[];resourceState:ResourceState}{
+    const context=this.resolveProfileExecutionContext(profileId,undefined,"probe"),profile=context.profile,manifest=manifestForProvider(profile.provider),adapter=this.agentAdapters.get(profile.id),last=this.profileProbes.latest(profileId),resource=this.resourceRegistry.assess(profile.id,this.now());
+    let probeContext=context;if(last?.repositoryId)try{probeContext=this.resolveProfileExecutionContext(profileId,last.repositoryId,"probe");}catch{/* Removed repository evidence remains stale. */}
+    const probe=this.profileProbes.current(probeContext);
+    const unknown={status:"unknown" as const,reasonCode:"NATIVE_PROBE_REQUIRED"},installation=probe?.installation??unknown,compatibility=probe?.compatibility??unknown,authentication=probe?.authentication??unknown;
+    const enabled=profile.enabled!==false,remote=context.runner.mode==="remote",online=remote?this.remoteRunnerServer.isConnected(context.runnerId):Boolean(this.embeddedRunner),registered=!remote||this.remoteRunnerServer.profileInventory(context.runnerId).includes(profileId);
+    const supportedProbe=Boolean(manifest?.probes.length)&&profile.provider!=="generic-mock",available=enabled&&Boolean(adapter)&&online&&registered&&["AVAILABLE","LOW","UNKNOWN"].includes(resource.state),verified=[installation,compatibility,authentication].every(evidence=>evidence.status==="ready");
+    const model=stringSetting(profile.settings?.model);
+    return {id:profile.id,alias:profile.alias,providerId:profile.provider,provider:profile.provider,adapterId:manifest?.id??profile.provider,runnerId:profile.runnerId,dispatchEnabled:enabled,configRevision:context.configRevision,state:!enabled?"DISABLED":adapter?"CONFIGURED":"UNAVAILABLE",resourceState:resource.state,capabilities:manifest?manifestCapabilities(manifest):[],installation,compatibility,authentication,
+      resources:{status:["AVAILABLE","LOW"].includes(resource.state)?"ready":resource.state==="UNKNOWN"?"unknown":"failed",reasonCode:resource.state,source:"resource-registry",...(resource.evidence.length?{observedAt:resource.checkedAt}:{})},
+      ...(model?{defaultModel:{id:model}}:{}),configuration:{complete:registered,missingFields:registered?[]:["owningRunnerRegistration"]},executionSupport:!manifest||profile.provider==="generic-mock"?"unsupported":available&&verified?remote?"remote-ready":"local-ready":"unverified",
+      actions:{test:{allowed:supportedProbe&&(!remote||online&&registered&&enabled),requiresConfirmation:false,...(!supportedProbe?{reasonCode:"PROFILE_UNSUPPORTED",message:"This adapter has no qualified native probe"}:remote&&(!online||!registered||!enabled)?{reasonCode:"REMOTE_EXECUTION_UNAVAILABLE",message:"Apply and connect the owning Runner registration before probing"}:{})},publish:{allowed:available,requiresConfirmation:true,...(!available?{reasonCode:!enabled?"PROFILE_DISABLED":"EXECUTION_UNAVAILABLE"}:{})}},
+      limitations:["Native login and CLI evidence describe the last check; external account switches or upgrades require another check","A native catalog does not prove model access or cost"]};
+  }
+
   private async modelCatalog(profileId:string,repositoryId:string,reason:ModelCatalogContext["reason"]="open",workspacePath?:string):Promise<AccountModelCatalog> {
     const snapshot=this.configuration.current();const profile=snapshot.config.agentProfiles.find(p=>p.id===profileId),repository=snapshot.config.repositories.find(r=>r.id===repositoryId);
     if(!profile||!repository)throw new PublicationError("CATALOG_CONTEXT_REQUIRED",400,"Choose a registered account and repository");
@@ -1688,7 +1749,8 @@ export class ControllerService {
     if(repositoryRunnerId(snapshot.config,repository)!==profile.runnerId)return fallback("RUNNER_REPOSITORY_MISMATCH","Account and repository belong to different Runners");
     const remote=snapshot.config.runners.some(runner=>runner.id===profile.runnerId&&runner.mode==="remote");
     if(!remote&&profile.runnerId!==this.embeddedRunner?.runner.id)return fallback("REMOTE_EXECUTION_UNAVAILABLE","Owning local Runner is unavailable");
-    const adapter=this.agentAdapters.get(profileId);
+    const applied=this.resolveProfileExecutionContext(profileId,repositoryId,"catalog");
+    const adapter=this.agentAdapters.get(applied.profileId);
     if(!remote&&!adapter?.modelCatalog)return fallback("MODEL_CATALOG_UNSUPPORTED","This native adapter does not expose a model catalog");
     const key=contentHash({profileId,repositoryId});const generation=(this.catalogGenerations.get(key)??0)+1;this.catalogGenerations.set(key,generation);
     let catalog:AccountModelCatalog;
@@ -1745,6 +1807,8 @@ export class ControllerService {
   }
 
   private async validateRunSelection(run:Run):Promise<void> {
+    const registeredContract=(this.database.getEntity<JsonValue>("run-contract",run.id)??this.database.getTaskContract<JsonValue>(run.taskId)) as unknown as TaskContract|undefined;
+    this.resolveProfileExecutionContext(run.profileId,registeredContract?.workspace?.repositoryId,"resume");
     if(!run.executionSelection)return;
     if(run.recoveryReason==="NATIVE_OUTCOME_UNKNOWN")throw new PublicationError("NATIVE_OUTCOME_UNKNOWN",409,"Inspect the original native process before continuing");
     const selection=run.executionSelection;
@@ -1855,6 +1919,7 @@ export class ControllerService {
         },
         runId,
         onRunStarting: (run, decision) => {
+          this.resolveProfileExecutionContext(run.profileId,repositoryId,"start");
           const selectedModel = this.configuration.current().config.agentProfiles.find((profile) => profile.id === run.profileId)?.settings?.model;
           if(publication?.selection?.requestedModel)run.model={id:publication.selection.requestedModel,source:"selection"};
           if (!publication?.selection && typeof selectedModel === "string") run.model = { id: selectedModel, source: "configuration" };
@@ -1922,7 +1987,7 @@ export class ControllerService {
       execute: async (arguments_) => {
         const provider = String(arguments_.provider).toLocaleLowerCase();
         const alias = String(arguments_.alias);
-        if (isNativeCliProvider(provider)) return probeNativeCliProfile(provider, { id: alias.toLocaleLowerCase(), alias, ...(typeof arguments_.executable === "string" ? { executable: arguments_.executable } : {}), ...(typeof arguments_.model === "string" ? { model: arguments_.model } : {}) });
+        if (isNativeCliProvider(provider)) return probeNativeCliProfile(provider, { id: alias.toLocaleLowerCase(), alias, ...(typeof arguments_.configDir === "string" ? {configDir:arguments_.configDir}:{}), ...(typeof arguments_.executable === "string" ? { executable: arguments_.executable } : {}), ...(typeof arguments_.model === "string" ? { model: arguments_.model } : {}) });
         if (provider === "qoder") return probeQoderProfile({ id: alias.toLocaleLowerCase(), alias, ...(typeof arguments_.executable === "string" ? { executable: arguments_.executable } : {}), ...(typeof arguments_.configDir === "string" ? { configDir: arguments_.configDir } : {}), ...(typeof arguments_.model === "string" ? { model: arguments_.model } : {}) });
         if (provider === "codex" && typeof arguments_.codexHome === "string") return probeCodexProfile({ id: alias.toLocaleLowerCase(), alias, codexHome: arguments_.codexHome, ...(typeof arguments_.executable === "string" ? { executable: arguments_.executable } : {}), ...(typeof arguments_.model === "string" ? { model: arguments_.model } : {}) });
         throw new SemanticPolicyError("INVALID_INPUT", `Unsupported discovery provider ${provider}`);
@@ -1930,16 +1995,7 @@ export class ControllerService {
     });
     this.semanticTools.register({
       name: "agent.test_profile", description: "Test a configured agent profile", risk: "read", input: { required: ["target"], properties: { target: "string" }, additionalProperties: false },
-      execute: async ({ target }) => {
-        const profile = this.configuration.current().config.agentProfiles.find((entry) => entry.id === String(target));
-        if (!profile) throw new SemanticPolicyError("INVALID_INPUT", `Unknown profile ${String(target)}`);
-        if(this.configuration.current().config.runners.some(runner=>runner.id===profile.runnerId&&runner.mode==="remote"))return redactValue(await this.remoteRequest(profile.runnerId,{type:"native.profile_probe",profileId:profile.id}));
-        if (isNativeCliProvider(profile.provider)) return probeNativeCliProfile(profile.provider, { id: profile.id, alias: profile.alias, ...(stringSetting(profile.settings?.executable) ? { executable: stringSetting(profile.settings?.executable)! } : {}), ...(stringSetting(profile.settings?.model) ? { model: stringSetting(profile.settings?.model)! } : {}) });
-        if (profile.provider === "qoder") return probeQoderProfile({ id: profile.id, alias: profile.alias, ...(stringSetting(profile.settings?.executable) ? { executable: stringSetting(profile.settings?.executable)! } : {}), ...(stringSetting(profile.settings?.configDir) ? { configDir: stringSetting(profile.settings?.configDir)! } : {}), ...(stringSetting(profile.settings?.model) ? { model: stringSetting(profile.settings?.model)! } : {}) });
-        const codexHome = stringSetting(profile.settings?.codexHome);
-        if (profile.provider === "codex" && codexHome) return probeCodexProfile({ id: profile.id, alias: profile.alias, codexHome, ...(stringSetting(profile.settings?.executable) ? { executable: stringSetting(profile.settings?.executable)! } : {}), ...(stringSetting(profile.settings?.model) ? { model: stringSetting(profile.settings?.model)! } : {}) });
-        throw new SemanticPolicyError("INVALID_INPUT", `Profile ${profile.id} cannot be probed`);
-      },
+      execute:async({target})=>this.probeConfiguredProfile(String(target)),
     });
     this.semanticTools.register({
       name: "fleet.list", description: "Read the current fleet snapshot", risk: "read", input: { additionalProperties: false },
@@ -2771,23 +2827,15 @@ export class ControllerService {
     this.app.get("/api/adapters/compatibility", async () => ({ matrix: buildAdapterCompatibilityMatrix(adapterManifests) }));
     this.app.get("/api/agents/profiles", async () => ({
       revision: this.configuration.current().revision,
-      profiles: this.configuration.current().config.agentProfiles.map((profile) => {
-        const manifest = manifestForProvider(profile.provider);
-        return {
-          id: profile.id,
-          provider: profile.provider,
-          alias: profile.alias,
-          runnerId: profile.runnerId,
-          state: profile.enabled === false ? "DISABLED" : this.agentAdapters.has(profile.id) ? "CONFIGURED" : "UNAVAILABLE",
-          resourceState: this.profileResourceState(profile.id),
-          capabilities: manifest ? manifestCapabilities(manifest) : [],
-        };
-      }),
+      profiles:this.configuration.current().config.agentProfiles.map(profile=>this.profileConsoleView(profile.id)),
       sessions: this.database.listEntities<JsonValue>("adapter-session").map((value) => {
         const session = value as Record<string, JsonValue>;
         return { id: session.id, runId: session.runId, profileId: session.profileId, state: session.state, updatedAt: session.updatedAt };
       }),
     }));
+    this.app.get<{Params:{id:string}}>("/api/agents/profiles/:id",async(request,reply)=>{
+      if(!this.configuration.current().config.agentProfiles.some(profile=>profile.id===request.params.id))return reply.code(404).send({code:"PROFILE_NOT_FOUND"});return {profile:this.profileConsoleView(request.params.id)};
+    });
     this.app.get("/api/resources", async () => ({
       resources: this.configuration.current().config.agentProfiles.map((profile) => {
         const assessment = this.resourceRegistry.assess(profile.id);
@@ -2810,6 +2858,7 @@ export class ControllerService {
     });
     this.app.post<{ Body: CodexProfileBody }>("/api/agents/codex/discover", async (request, reply) => {
       if (!request.body?.codexHome || !request.body.alias) return reply.code(400).send({ code: "CODEX_PROFILE_REQUIRED" });
+      this.assertLocalDraftProbe(request.body?.runnerId);
       return probeCodexProfile({
         id: request.body.id ?? "discovered-codex",
         alias: request.body.alias,
@@ -2848,6 +2897,7 @@ export class ControllerService {
     });
     this.app.post<{ Body: QoderProfileBody }>("/api/agents/qoder/discover", async (request, reply) => {
       if (!request.body?.alias) return reply.code(400).send({ code: "QODER_PROFILE_REQUIRED" });
+      this.assertLocalDraftProbe(request.body?.runnerId);
       return probeQoderProfile({
         id: request.body.id ?? "discovered-qoder",
         alias: request.body.alias,
@@ -2861,16 +2911,17 @@ export class ControllerService {
       if (!body?.id || !body.alias) return reply.code(400).send({ code: "QODER_PROFILE_REQUIRED" });
       const current = this.configuration.current();
       if (current.config.agentProfiles.some((profile) => profile.id === body.id)) return reply.code(409).send({ code: "PROFILE_EXISTS" });
-      const discovery = await probeQoderProfile({ id: body.id, alias: body.alias, ...(body.executable ? { executable: body.executable } : {}), ...(body.configDir ? { configDir: body.configDir } : {}), ...(body.model ? { model: body.model } : {}) });
-      if (!discovery.selected) return reply.code(409).send({ code: "QODER_SELECTION_REQUIRED", candidates: discovery.candidates });
-      if (!discovery.selected.authenticated) return reply.code(409).send({ code: "QODER_AUTH_REQUIRED", candidate: discovery.selected });
+      if(body.previewOnly!==true)this.assertLocalDraftProbe(body.runnerId);
+      const discovery=body.previewOnly?undefined:await probeQoderProfile({id:body.id,alias:body.alias,...(body.executable?{executable:body.executable}:{}),...(body.configDir?{configDir:body.configDir}:{}),...(body.model?{model:body.model}:{})});
+      if(discovery&&!discovery.selected)return reply.code(409).send({code:"QODER_SELECTION_REQUIRED",candidates:discovery.candidates});
+      if(discovery&&!discovery.selected?.authenticated)return reply.code(409).send({code:"QODER_AUTH_REQUIRED",candidate:discovery.selected});
       const next = structuredClone(current.config);
       next.agentProfiles.push({
         id: body.id,
         provider: "qoder",
         alias: body.alias,
         runnerId: body.runnerId ?? "local",
-        settings: { executable: discovery.selected.executable, ...(body.configDir ? { configDir: body.configDir } : {}), ...(body.model ? { model: body.model } : {}) },
+        settings: { ...(discovery?.selected?{executable:discovery.selected.executable}:body.executable?{executable:body.executable}:{}), ...(body.configDir ? { configDir: body.configDir } : {}), ...(body.model ? { model: body.model } : {}) },
       });
       if (body.baseRevision !== undefined) {
         if (!Number.isInteger(body.baseRevision)) return reply.code(400).send({code:"INVALID_CONFIG_REVISION"});
@@ -2880,12 +2931,13 @@ export class ControllerService {
       const plan = await this.planConfiguration(next, this.principalFor(request).id, "web");
       if(body.previewOnly === true) return reply.code(201).send({plan:consoleConfigPlan(plan)});
       const applied = await this.applyConfigurationPlan(plan.id, { confirmed: true });
-      return reply.code(201).send({ profile: { id: body.id, provider: "qoder", alias: body.alias, runnerId: body.runnerId ?? "local", state: "CONFIGURED" }, discovery: discovery.selected, revision: applied.revision });
+      return reply.code(201).send({ profile: { id: body.id, provider: "qoder", alias: body.alias, runnerId: body.runnerId ?? "local", state: "CONFIGURED" }, discovery: discovery?.selected, revision: applied.revision });
     });
     this.app.post<{ Params: { provider: string }; Body: EcosystemProfileBody }>("/api/agents/:provider/discover", async (request, reply) => {
       const body = request.body;
       if (!body?.alias) return reply.code(400).send({ code: "AGENT_PROFILE_REQUIRED" });
-      if (isNativeCliProvider(request.params.provider)) return probeNativeCliProfile(request.params.provider, { id: body.id ?? `discovered-${request.params.provider}`, alias: body.alias, ...(body.executable ? { executable: body.executable } : {}), ...(body.model ? { model: body.model } : {}) });
+      this.assertLocalDraftProbe(request.body?.runnerId);
+      if (isNativeCliProvider(request.params.provider)) return probeNativeCliProfile(request.params.provider, { id: body.id ?? `discovered-${request.params.provider}`, alias: body.alias, ...(body.configDir ? {configDir:body.configDir}:{}), ...(body.executable ? { executable: body.executable } : {}), ...(body.model ? { model: body.model } : {}) });
       const resolveCredential = (reference: string): Promise<string> => this.secrets.resolve(reference, { principal: "controller", purpose: "provider" });
       if (request.params.provider === "cursor" || request.params.provider === "kiro") {
         const profile: CliAgentProfile = { id: body.id ?? `discovered-${request.params.provider}`, alias: body.alias, ...(body.executable ? { executable: body.executable } : {}), ...(body.credentialRef ? { credentialRef: body.credentialRef } : {}), ...(body.model ? { model: body.model } : {}) };
@@ -2915,12 +2967,13 @@ export class ControllerService {
       let settings: Record<string, JsonValue>;
       let credentialRef = body.credentialRef;
       if (isNativeCliProvider(provider)) {
+        if(body.previewOnly!==true)this.assertLocalDraftProbe(body.runnerId);
         if (provider === "zcode" && body.model) return reply.code(400).send({ code: "NATIVE_MODEL_SETTINGS_REQUIRED", message: "Select ZCode models in its native client." });
         if (body.approveTools !== undefined && (!["opencode", "grok", "antigravity"].includes(provider) || typeof body.approveTools !== "boolean")) return reply.code(400).send({ code: "INVALID_TOOL_APPROVAL" });
         if (credentialRef && provider !== "grok") return reply.code(400).send({ code: "NATIVE_LOGIN_REQUIRED", message: "Use the harness's native provider login for this profile." });
-        const discovery = await probeNativeCliProfile(provider, { id: body.id, alias: body.alias, ...(body.executable ? { executable: body.executable } : {}), ...(body.model ? { model: body.model } : {}) });
-        if (!discovery.installed || !discovery.compatible) return reply.code(409).send({ code: "CLI_INCOMPATIBLE", discovery });
-        settings = { executable: discovery.executable, ...(provider === "qoder-cn" && body.configDir ? { configDir: body.configDir } : {}), ...(body.model ? { model: body.model } : {}), ...(body.approveTools !== undefined ? { approveTools: body.approveTools } : {}) };
+        const discovery=body.previewOnly?undefined:await probeNativeCliProfile(provider,{id:body.id,alias:body.alias,...(body.executable?{executable:body.executable}:{}),...(body.configDir?{configDir:body.configDir}:{}),...(body.model?{model:body.model}:{})});
+        if(discovery&&(!discovery.installed||!discovery.compatible))return reply.code(409).send({code:"CLI_INCOMPATIBLE",discovery});
+        settings={...(discovery?{executable:discovery.executable}:body.executable?{executable:body.executable}:{}),...(provider==="qoder-cn"&&body.configDir?{configDir:body.configDir}:{}),...(body.model?{model:body.model}:{}),...(body.approveTools!==undefined?{approveTools:body.approveTools}:{})};
       } else if (provider === "cursor" || provider === "kiro") {
         settings = { ...(body.executable ? { executable: body.executable } : {}), ...(body.model ? { model: body.model } : {}), ...(provider === "cursor" && body.approveTools !== undefined ? { approveTools: body.approveTools } : {}), ...(provider === "cursor" && body.trustWorkspace !== undefined ? { trustWorkspace: body.trustWorkspace } : {}) };
       } else if (provider === "devin") {
@@ -2961,43 +3014,8 @@ export class ControllerService {
       const applied = await this.applyConfigurationPlan(plan.id, { confirmed: true });
       return { revision: applied.revision, profile: { id: profile.id, alias: profile.alias, enabled: profile.enabled } };
     });
-    this.app.post<{ Params: { id: string } }>("/api/agents/profiles/:id/test", async (request, reply) => {
-      const profile = this.configuration.current().config.agentProfiles.find((entry) => entry.id === request.params.id);
-      const codexHome = stringSetting(profile?.settings?.codexHome);
-      if (!profile) return reply.code(404).send({ code: "PROFILE_NOT_FOUND" });
-      if(this.configuration.current().config.runners.some(runner=>runner.id===profile.runnerId&&runner.mode==="remote"))return redactValue(await this.remoteRequest(profile.runnerId,{type:"native.profile_probe",profileId:profile.id}));
-      if (isNativeCliProvider(profile.provider)) return probeNativeCliProfile(profile.provider, { id: profile.id, alias: profile.alias, ...(stringSetting(profile.settings?.executable) ? { executable: stringSetting(profile.settings?.executable)! } : {}), ...(stringSetting(profile.settings?.model) ? { model: stringSetting(profile.settings?.model)! } : {}) });
-      if (profile.provider === "codex" && codexHome) return probeCodexProfile({
-        id: profile.id,
-        alias: profile.alias,
-        codexHome,
-        ...(stringSetting(profile.settings?.executable) ? { executable: stringSetting(profile.settings?.executable)! } : {}),
-        ...(stringSetting(profile.settings?.model) ? { model: stringSetting(profile.settings?.model)! } : {}),
-      });
-      if (profile.provider === "qoder") return probeQoderProfile({
-        id: profile.id,
-        alias: profile.alias,
-        ...(stringSetting(profile.settings?.executable) ? { executable: stringSetting(profile.settings?.executable)! } : {}),
-        ...(stringSetting(profile.settings?.configDir) ? { configDir: stringSetting(profile.settings?.configDir)! } : {}),
-        ...(stringSetting(profile.settings?.model) ? { model: stringSetting(profile.settings?.model)! } : {}),
-      });
-      const resolveCredential = (reference: string): Promise<string> => this.secrets.resolve(reference, { principal: "controller", purpose: "provider" });
-      if (profile.provider === "cursor" || profile.provider === "kiro") {
-        const cliProfile: CliAgentProfile = { id: profile.id, alias: profile.alias, ...(stringSetting(profile.settings?.executable) ? { executable: stringSetting(profile.settings?.executable)! } : {}), ...(profile.credentialRef ? { credentialRef: profile.credentialRef } : {}), ...(stringSetting(profile.settings?.model) ? { model: stringSetting(profile.settings?.model)! } : {}) };
-        return profile.provider === "cursor" ? probeCursorProfile(cliProfile, resolveCredential) : probeKiroProfile(cliProfile, resolveCredential);
-      }
-      if (profile.provider === "devin" && profile.credentialRef && stringSetting(profile.settings?.organizationId)) {
-        const devinProfile: DevinProfileConfig = { id: profile.id, alias: profile.alias, organizationId: stringSetting(profile.settings?.organizationId)!, credentialRef: profile.credentialRef, ...(stringSetting(profile.settings?.apiBase) ? { apiBase: stringSetting(profile.settings?.apiBase)! } : {}), ...(typeof profile.settings?.maxSessionAcu === "number" ? { maxSessionAcu: profile.settings.maxSessionAcu } : {}) };
-        const backend = this.options.devinBackendFactory?.(devinProfile);
-        if (backend) { const health = await backend.health(); return { authenticated: health.ok, apiVersion: "v3", ...(health.diagnostic ? { diagnostic: health.diagnostic } : {}) }; }
-        return probeDevinProfile(devinProfile, resolveCredential, this.options.integrationFetch as typeof fetch | undefined);
-      }
-      if (profile.provider === "workbuddy" || profile.provider === "codebuddy") {
-        const local = localServiceProfile({ id: profile.id, alias: profile.alias, provider: profile.provider, ...(profile.credentialRef ? { credentialRef: profile.credentialRef } : {}), ...(stringSetting(profile.settings?.baseUrl) ? { baseUrl: stringSetting(profile.settings?.baseUrl)! } : {}), ...(stringSetting(profile.settings?.healthPath) ? { healthPath: stringSetting(profile.settings?.healthPath)! } : {}), ...(stringSetting(profile.settings?.startPath) ? { startPath: stringSetting(profile.settings?.startPath)! } : {}), ...(stringSetting(profile.settings?.statusPath) ? { statusPath: stringSetting(profile.settings?.statusPath)! } : {}), ...(stringSetting(profile.settings?.inputPath) ? { inputPath: stringSetting(profile.settings?.inputPath)! } : {}), ...(stringSetting(profile.settings?.cancelPath) ? { cancelPath: stringSetting(profile.settings?.cancelPath)! } : {}), ...(stringSetting(profile.settings?.resourcePath) ? { resourcePath: stringSetting(profile.settings?.resourcePath)! } : {}) });
-        if (local) return probeLocalService(local, resolveCredential, this.options.integrationFetch as typeof fetch | undefined);
-      }
-      if (profile.provider === "generic-cli" && stringSetting(profile.settings?.executable) && stringArraySetting(profile.settings?.args)) return probeGenericCli({ file: stringSetting(profile.settings?.executable)!, args: stringArraySetting(profile.settings?.args)!, ...(profile.settings?.mode === "pty" || profile.settings?.mode === "headless" ? { mode: profile.settings.mode } : {}) });
-      return reply.code(409).send({ code: "PROFILE_UNSUPPORTED" });
+    this.app.post<{ Params:{id:string};Body:{repositoryId?:string}|undefined }>("/api/agents/profiles/:id/test",async(request,reply)=>{
+      if(!this.configuration.current().config.agentProfiles.some(profile=>profile.id===request.params.id))return reply.code(404).send({code:"PROFILE_NOT_FOUND"});return this.probeConfiguredProfile(request.params.id,request.body?.repositoryId);
     });
     this.app.post<{ Params: { id: string }; Body: CodexRunBody }>("/api/agents/profiles/:id/runs", async (request, reply) => {
       if (!request.body?.workspacePath || !request.body.prompt) return reply.code(400).send({ code: "RUN_INPUT_REQUIRED" });
@@ -3499,7 +3517,7 @@ export class ControllerService {
         ? 409
         : error instanceof LlmRuntimeError
           ? error.code === "SELECTION_CHANGED" ? 409 : error.code === "NO_AVAILABLE_PROFILE" ? 503 : 400
-        : error instanceof ConfigPlanError || error instanceof ConfigValidationError
+        : error instanceof ConfigPlanError && ["PROFILE_CONTEXT_CHANGED","REMOTE_DRAFT_PROBE_UNAVAILABLE"].includes(error.code)?409:error instanceof ConfigPlanError || error instanceof ConfigValidationError
           ? 400
           : semanticStatus ?? workspaceStatus ?? connectorStatus ?? secretStatus ?? (error && typeof error === "object" && "validation" in error ? 400 : 500);
       const code = error instanceof PublicationError || error instanceof TaskDispatchError || error instanceof RevisionConflictError || error instanceof ConfigPlanError || error instanceof SecretStoreError || error instanceof LlmRuntimeError || error instanceof ConnectorError || error instanceof WorkspacePolicyError || error instanceof SemanticPolicyError

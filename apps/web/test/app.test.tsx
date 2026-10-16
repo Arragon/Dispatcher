@@ -9,6 +9,7 @@ import SettingsPage from "../src/SettingsPage.js";
 import AgentsPage from "../src/AgentsPage.js";
 
 beforeEach(() => {
+  vi.stubGlobal("EventSource",class{addEventListener(){}close(){}});
   HTMLDialogElement.prototype.showModal = function () { this.setAttribute("open", ""); };
   HTMLDialogElement.prototype.close = function () { this.removeAttribute("open"); };
 });
@@ -16,6 +17,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe("Dashboard shell", () => {
