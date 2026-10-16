@@ -395,8 +395,20 @@ adapters. Applied-profile tests and model catalogs use the same owning Runner
 RPC; publication inspection compares its registered root and verification
 commands before freezing a base commit. Catalog results are bounded normalized
 DTOs with matching account/Runner/provider identity. Global Policy qualification
-uses only repositories on the selected account's Runner. Controller remote
-start/result orchestration remains a separate unit.
+uses only repositories on the selected account's Runner.
+Controller's RemoteNativeAdapter sends normalized commands using a reserved
+canonical Run's lease and frozen selection; it never constructs a native backend
+or interprets remote filesystem paths. Remote workspace preparation happens
+after the canonical Run/task reservation, and actual-worktree catalog evidence
+is checked before native start. Verification, changed-file evidence and native
+results return through that same owning authority. The Runner keeps capacity
+through native turn completion until a fenced finalization command settles the
+execution. Admission uses the lower of configured and reported capacity.
+Lost start responses retain RUNNER_UNAVAILABLE/OUTCOME_UNKNOWN and immutable
+start identity rather than releasing capacity as a known failure. Remote
+delivery currently supports results on the owning device (`none`); remote
+commit/PR delivery, reconnect reconciliation and real-process/device acceptance
+remain distinct follow-up units.
 
 Linear webhook ingress verifies the HMAC against the exact request bytes,
 enforces payload and timestamp limits, normalizes the event, and deduplicates it

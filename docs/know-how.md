@@ -164,6 +164,12 @@
   ID is insufficient: publication inspection must also match the owning root
   registration and frozen verification commands. Global Policy qualification
   excludes repositories on other Runners.
+- `COMMAND_OUTCOME_UNKNOWN` is a startup authority outcome, not a known failed
+  process. Scheduler preserves RUNNER_UNAVAILABLE and the publication keeps an
+  OUTCOME_UNKNOWN receipt; neither may trigger another native start. Keep the
+  Runner slot until canonical verification/result delivery is finalized, even
+  when the native turn already reports COMPLETED. Use configured capacity as
+  an admission ceiling over a device's reported capacity.
 - Native PTY uses Microsoft `node-pty` (MIT, pinned at 1.1.0) for Unix PTY and
   Windows ConPTY. pnpm must explicitly allow its native build; some pnpm
   installations lose the executable bit on the packaged Unix `spawn-helper`,

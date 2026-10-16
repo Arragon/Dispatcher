@@ -14,7 +14,8 @@ export type NativeCommandPayload=
   |{type:"native.profile_probe";profileId:string;repositoryId?:string}
   |{type:"native.run";runId:string;action:NativeRunAction;message?:string}
   |{type:"native.run_verify";runId:string}
-  |{type:"native.run_files";runId:string};
+  |{type:"native.run_files";runId:string}
+  |{type:"native.run_finalize";runId:string};
 const object=(value:unknown):value is Record<string,unknown>=>Boolean(value&&typeof value==="object"&&!Array.isArray(value));
 const keys=(value:Record<string,unknown>,required:string[],optional:string[]=[])=>required.every(key=>key in value)&&Object.keys(value).every(key=>required.includes(key)||optional.includes(key));
 const id=(value:unknown,max=200):value is string=>typeof value==="string"&&value.trim().length>0&&value.length<=max&&Array.from(value).every(character=>character.codePointAt(0)!>=32);
@@ -37,7 +38,7 @@ export function validateNativeExecutionCommand(payload:Record<string,unknown>,au
     case "native.model_catalog":return keys(payload,["type","profileId","repositoryId","reason"],["runId"])&&id(payload.profileId)&&id(payload.repositoryId)&&["open","selection-change","preflight","before-start","manual-refresh"].includes(String(payload.reason))&&(payload.runId===undefined||id(payload.runId)&&fenced());
     case "native.profile_probe":return keys(payload,["type","profileId"],["repositoryId"])&&id(payload.profileId)&&(payload.repositoryId===undefined||id(payload.repositoryId));
     case "native.run":return keys(payload,["type","runId","action"],payload.action==="send"?["message"]:[])&&id(payload.runId)&&["status","result","usage","diagnostics","send","pause","resume","cancel"].includes(String(payload.action))&&(payload.action!=="send"||typeof payload.message==="string"&&payload.message.length>0&&payload.message.length<=20000)&&fenced();
-    case "native.run_verify":case "native.run_files":return keys(payload,["type","runId"])&&id(payload.runId)&&fenced();
+    case "native.run_verify":case "native.run_files":case "native.run_finalize":return keys(payload,["type","runId"])&&id(payload.runId)&&fenced();
     case "run.start":{
       const execution=payload.execution;
       return keys(payload,["type","runId","execution"])&&id(payload.runId)&&object(execution)&&keys(execution,["version","profileId","workspaceId","prompt","selection"])&&execution.version===1&&id(execution.profileId)&&execution.workspaceId===payload.runId&&typeof execution.prompt==="string"&&execution.prompt.length>0&&execution.prompt.length<=128000&&selection(execution.selection)&&object(execution.selection)&&execution.selection.profileId===execution.profileId&&execution.selection.runnerId===authority.runnerId&&fenced();

@@ -7,6 +7,7 @@ import type { DispatcherDatabase, JsonValue } from "@dispatcher/persistence";
 import { TaskContractCompiler } from "@dispatcher/semantic";
 import type { WorkspaceManager } from "@dispatcher/workspace";
 const json = (value: unknown): JsonValue => JSON.parse(JSON.stringify(value)) as JsonValue;
+const startupState = (run: Run): PublicationReceipt["state"] => run.state === "RUNNER_UNAVAILABLE" ? "OUTCOME_UNKNOWN" : run.state === "FAILED" ? "START_FAILED" : "STARTED";
 export function contentHash(value: unknown): string {
   const stable = (v: unknown): unknown => Array.isArray(v) ? v.map(stable) : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).sort(([a],[b])=>a.localeCompare(b)).map(([k,x])=>[k,stable(x)])) : v;
   return createHash("sha256").update(JSON.stringify(stable(value))??"undefined").digest("hex");
@@ -55,7 +56,7 @@ export class PublicationService {
   }
   markOutcome(owner:string,id:string,run:Run):void {
     const r=this.record(owner,id);if(r.receipt?.runId!==run.id)throw new PublicationError("PUBLICATION_CHANGED",409,"Run is not the publication startup");
-    r.receipt={...r.receipt,state:run.state==="FAILED"?"START_FAILED":"STARTED",...(run.failureReason?{message:run.failureReason}:{})};this.db.saveEntity("task-publication",id,json(r));
+    r.receipt={...r.receipt,state:startupState(run),...(run.failureReason?{message:run.failureReason}:{})};this.db.saveEntity("task-publication",id,json(r));
   }
   get(owner: string, id: string): PublicationPreview | PublicationReceipt {
     const record = this.record(owner,id); return record.receipt ?? record.preview;
@@ -185,7 +186,7 @@ export class PublicationService {
     if(r.draft.startMode!=="dispatch")return receipt;
     try {
       const run=await this.runtime.dispatch(r,receipt.taskId);
-      const latest=this.record(owner,id);latest.receipt={...receipt,runId:run.id,state:run.state==="FAILED"?"START_FAILED":"STARTED",...(run.failureReason?{message:run.failureReason}:{})};this.db.saveEntity("task-publication",id,json(latest));return latest.receipt;
+      const latest=this.record(owner,id);latest.receipt={...receipt,runId:run.id,state:startupState(run),...(run.failureReason?{message:run.failureReason}:{})};this.db.saveEntity("task-publication",id,json(latest));return latest.receipt;
     } catch(error) {
       const latest=this.record(owner,id);latest.receipt={...latest.receipt!,state:latest.receipt?.runId?"OUTCOME_UNKNOWN":"START_FAILED",message:error instanceof PublicationError?error.message:"Startup could not be confirmed; inspect the retained task before any further action"};this.db.saveEntity("task-publication",id,json(latest));return latest.receipt;
     }

@@ -191,3 +191,13 @@ it("ignores foreign native paths and rejects cross-device repository use and sco
   for (const scopePaths of [[], ["."], ["src-other"]]) await expect(f.call({ type: "native.workspace_plan", profileId: "p", plan: { ...f.plan, scopePaths } })).rejects.toMatchObject({ code: "SCOPE_NOT_REGISTERED" });
   expect(f.starts()).toBe(0);
 });
+
+it("holds capacity through native completion until Controller finalization and then prevents further input", async () => {
+  const f = fixture(); f.apply(); await f.prepare(); await f.start(); f.complete(); await f.call({ type: "native.run", runId: "run", action: "status" });
+  const other = { ...f.plan, runId: "next", taskId: "next" }, prepareNext = () => f.call({ type: "native.workspace_prepare", runId: "next", profileId: "p", plan: other, verificationCommandIds: ["check"] }, undefined, { leaseId: "next-lease" });
+  await expect(prepareNext()).rejects.toMatchObject({ code: "RUNNER_CAPACITY" });
+  await f.call({ type: "native.run_finalize", runId: "run" });
+  expect(await prepareNext()).toMatchObject({ runId: "next" });
+  await expect(f.call({ type: "native.run", runId: "run", action: "send", message: "late input" })).rejects.toMatchObject({ code: "EXECUTION_SETTLED" });
+  expect(f.starts()).toBe(1);
+});

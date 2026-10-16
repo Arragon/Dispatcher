@@ -17,6 +17,7 @@ interface ExecutionRecord {
   registrationHash: string; state: ExecutionState; lease: RunnerLease;
   verificationCommands: VerificationCommand[]; workspace?: WorkspaceHandle;
   descriptorHash?: string; session?: AdapterSession; result?: JsonValue;
+  startCommandHash?: string; settledAt?: string;
 }
 interface OperationReceipt { identity: string; state: "PENDING" | "COMPLETE" | "UNKNOWN"; result?: JsonValue }
 export class NativeRunnerError extends Error {
@@ -35,6 +36,7 @@ function canonical(value: unknown): unknown {
 }
 const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(canonical(value))).digest("hex");
 const terminal = (state: ExecutionState) => ["COMPLETE", "FAILED", "CANCELLED"].includes(state);
+const occupies = (record: ExecutionRecord) => !record.settledAt && record.state !== "CANCELLED";
 
 /** Owns physical execution. Transport journal retention never authorizes another native start. */
 export class NativeRunnerRuntime {
@@ -101,7 +103,7 @@ export class NativeRunnerRuntime {
   private applyRegistrations(config: DispatcherConfig): void {
     const profiles = config.agentProfiles.filter(profile => profile.runnerId === this.options.runnerId && profile.enabled !== false);
     for (const record of this.records.values()) {
-      if (terminal(record.state) && !this.verificationAborts.has(record.runId)) continue;
+      if (!occupies(record) && !this.verificationAborts.has(record.runId)) continue;
       const profile = profiles.find(p => p.id === record.profileId), repository = config.repositories.find(r => r.id === record.plan.repositoryId && repositoryRunnerId(config, r) === this.options.runnerId);
       if (!profile || !repository || this.registration(profile, repository) !== record.registrationHash) throw new NativeRunnerError("RUNNER_CONFIGURATION_BUSY", "An active or uncertain execution still owns this registration");
     }
@@ -141,7 +143,7 @@ export class NativeRunnerRuntime {
   profileInventory(): string[] { return [...this.adapters.keys()].sort(); }
   capacity(): number { return this.config.runners.find(r => r.id === this.options.runnerId)?.capacity ?? 0; }
   registerHandlers(client: { register(type: CommandPayload["type"], handler: (payload: CommandPayload, envelope: ProtocolEnvelope<CommandPayload>) => Promise<unknown>): unknown }): void {
-    const commands: CommandPayload["type"][] = ["native.repository", "native.workspace_plan", "native.workspace_prepare", "native.model_catalog", "native.profile_probe", "native.run", "native.run_verify", "native.run_files", "run.start", "runner.reconcile", "lease.renew", "lease.revoke"];
+    const commands: CommandPayload["type"][] = ["native.repository", "native.workspace_plan", "native.workspace_prepare", "native.model_catalog", "native.profile_probe", "native.run", "native.run_verify", "native.run_files", "native.run_finalize", "run.start", "runner.reconcile", "lease.renew", "lease.revoke"];
     for (const type of commands) client.register(type, (payload, envelope) => this.handle(payload, envelope));
   }
   private profile(id: string): { profile: AgentProfileConfig; adapter: AgentAdapter } {
@@ -190,7 +192,7 @@ export class NativeRunnerRuntime {
     if (envelope.runnerId !== this.options.runnerId) throw new NativeRunnerError("RUNNER_MISMATCH", "Command targets a different Runner");
     parseEnvelope(envelope);
     if (hash(envelope.payload) !== hash(payload)) throw new NativeRunnerError("COMMAND_IDEMPOTENCY_CONFLICT", "Envelope and command disagree");
-    const mutating = payload.type === "native.workspace_prepare" || payload.type === "run.start" || payload.type === "native.run_verify" || payload.type === "lease.renew" || payload.type === "lease.revoke" || payload.type === "native.run" && ["send", "pause", "resume", "cancel"].includes(payload.action);
+    const mutating = payload.type === "native.workspace_prepare" || payload.type === "run.start" || payload.type === "native.run_verify" || payload.type === "native.run_finalize" || payload.type === "lease.renew" || payload.type === "lease.revoke" || payload.type === "native.run" && ["send", "pause", "resume", "cancel"].includes(payload.action);
     if (mutating) {
       const identity = remoteCommandHash(envelope), bound = this.database.getEntity<JsonValue>("native-command-binding", envelope.messageId) as { identity: string } | undefined;
       if (bound && bound.identity !== identity) throw new NativeRunnerError("COMMAND_IDEMPOTENCY_CONFLICT", "Command id is already durably bound to different content or authority");
@@ -220,11 +222,16 @@ export class NativeRunnerRuntime {
       }
       if (payload.type === "native.workspace_prepare") return this.prepare(payload, envelope);
       if (payload.type === "run.start" && payload.execution) return this.start(payload.runId, payload.execution, envelope);
-      if (payload.type === "native.run" || payload.type === "native.run_verify" || payload.type === "native.run_files") {
+      if (payload.type === "native.run" || payload.type === "native.run_verify" || payload.type === "native.run_files" || payload.type === "native.run_finalize") {
         const record = this.require(payload.runId); this.fence(record, envelope);
         const receipt = this.readReceipt(envelope);
         if (receipt) return receipt.result;
         if (record.state === "OUTCOME_UNKNOWN") throw new NativeRunnerError("COMMAND_OUTCOME_UNKNOWN", "Native process ownership must be reconciled before another operation");
+        if (payload.type === "native.run_finalize") {
+          if (!terminal(record.state) || this.verificationAborts.has(record.runId)) throw new NativeRunnerError("EXECUTION_NOT_COMPLETE", "Native execution and verification must finish before releasing capacity");
+          record.settledAt ??= this.now().toISOString(); this.save(record); return { runId: record.runId, settledAt: record.settledAt };
+        }
+        if (record.settledAt && (payload.type === "native.run_verify" || payload.type === "native.run" && ["send", "resume", "pause"].includes(payload.action))) throw new NativeRunnerError("EXECUTION_SETTLED", "Controller finalized this execution; it cannot accept further work");
         if (payload.type === "native.run_files") { const files = await this.workspaces.resultFiles(await this.workspace(record)); this.fence(record, envelope); return files; }
         if (payload.type === "native.run_verify") return this.operation(record, envelope, async () => {
           if (!terminal(record.state)) throw new NativeRunnerError("EXECUTION_NOT_COMPLETE", "Verification requires a finished native turn");
@@ -293,7 +300,7 @@ export class NativeRunnerRuntime {
       return structuredClone(await this.workspace(previous));
     }
     const capacity = this.config.runners.find(r => r.id === this.options.runnerId)?.capacity ?? 0;
-    if ([...this.records.values()].filter(r => !terminal(r.state)).length >= capacity) throw new NativeRunnerError("RUNNER_CAPACITY", "Runner capacity is occupied");
+    if ([...this.records.values()].filter(occupies).length >= capacity) throw new NativeRunnerError("RUNNER_CAPACITY", "Runner capacity is occupied");
     const lease: RunnerLease = { runId: payload.runId, runnerId: this.options.runnerId, leaseId: envelope.leaseId!, generation: envelope.generation!, expiresAt: envelope.leaseExpiresAt! };
     this.authority.issue(lease, this.now().toISOString()); this.authority.fence(lease.runId, lease.leaseId, lease.generation, "workspace-prepare", this.now().toISOString());
     const record: ExecutionRecord = { version: 1, runId: payload.runId, profileId: profile.id, plan: structuredClone(payload.plan), planHash, registrationHash: this.registration(profile, repository), state: "PREPARING", lease, verificationCommands };
@@ -323,7 +330,7 @@ export class NativeRunnerRuntime {
     const { profile, adapter } = this.profile(record.profileId), repository = this.repository(record.plan.repositoryId);
     if (this.registration(profile, repository) !== record.registrationHash) throw new NativeRunnerError("SELECTION_CHANGED", "Runner registration changed after preparation");
     const catalog = await this.catalog(profile.id, repository.id, "before-start", record); this.fence(record, envelope); this.validateSelection(execution.selection, catalog);
-    record.state = "STARTING"; record.descriptorHash = descriptorHash; this.save(record);
+    record.state = "STARTING"; record.descriptorHash = descriptorHash; record.startCommandHash = remoteCommandHash(envelope); this.save(record);
     this.attached.add(record.runId);
     try {
       const session = await adapter.start({ runId, workspacePath: record.workspace!.path, backendId: execution.selection.backendId, prompt: execution.prompt, executionSelection: execution.selection });
@@ -371,6 +378,8 @@ export class NativeRunnerRuntime {
   }
   private async stopOwned(record: ExecutionRecord): Promise<void> {
     this.verificationAborts.get(record.runId)?.abort();
+    if (record.settledAt) return;
+    if (record.state === "PREPARED" && !record.session) { record.state = "CANCELLED"; record.settledAt = this.now().toISOString(); this.save(record); return; }
     if (!this.attached.has(record.runId) || !record.session) return;
     try { const session = await this.profile(record.profileId).adapter.cancel(record.session.id); this.observe(record, session); }
     catch { record.state = "OUTCOME_UNKNOWN"; this.save(record); }
@@ -378,19 +387,19 @@ export class NativeRunnerRuntime {
   async expireLeases(): Promise<void> {
     for (const record of this.records.values()) {
       if (Date.parse(record.lease.expiresAt) > this.now().getTime() && !record.lease.revokedAt) continue;
-      if (terminal(record.state) && !this.verificationAborts.has(record.runId)) continue;
+      if (!occupies(record) && !this.verificationAborts.has(record.runId)) continue;
       if (!record.lease.revokedAt) { record.lease = this.authority.revoke(record.runId, record.lease.leaseId, record.lease.generation, "lease expired", this.now().toISOString()); this.save(record); }
       await this.stopOwned(record);
     }
   }
   private diagnostics(record: ExecutionRecord): unknown {
-    return { runnerId: this.options.runnerId, runId: record.runId, profileId: record.profileId, state: record.state, attached: this.attached.has(record.runId), sessionId: record.session?.id, providerSessionId: record.session?.providerSessionId, processId: record.session?.processId, workspace: record.workspace?.path, generation: record.lease.generation, leaseId: record.lease.leaseId, lease: structuredClone(record.lease) };
+    return { runnerId: this.options.runnerId, runId: record.runId, profileId: record.profileId, state: record.state, attached: this.attached.has(record.runId), sessionId: record.session?.id, providerSessionId: record.session?.providerSessionId, processId: record.session?.processId, workspace: record.workspace?.path, generation: record.lease.generation, leaseId: record.lease.leaseId, lease: structuredClone(record.lease), startCommandHash: record.startCommandHash, settledAt: record.settledAt };
   }
   reconcile(): unknown { return { runnerId: this.options.runnerId, runs: [...this.records.values()].map(record => this.diagnostics(record)) }; }
   async shutdown(): Promise<void> {
     if (this.closed) return;
     for (const record of this.records.values()) {
-      if (terminal(record.state) && !this.verificationAborts.has(record.runId)) continue;
+      if (!occupies(record) && !this.verificationAborts.has(record.runId)) continue;
       if (!record.lease.revokedAt) { record.lease = this.authority.revoke(record.runId, record.lease.leaseId, record.lease.generation, "runner shutdown", this.now().toISOString()); this.save(record); }
       await this.stopOwned(record);
     }

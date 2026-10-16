@@ -42,6 +42,7 @@ describe("native harness Controller composition", () => {
     try {
       await service.start({ listen: false });
       const current = (await service.app.inject({ method: "GET", url: "/api/config", headers: OWNER })).json().config;
+      current.runners[0].capacity = 8;
       current.repositories = [{ id: "fixture", root: repository, defaultBaseRef: "main", scopePaths: [], verificationCommands: [] }];
       const plan = (await service.app.inject({ method: "POST", url: "/api/config/plans", headers: OWNER, payload: { config: current } })).json().plan;
       expect((await service.app.inject({ method: "POST", url: `/api/config/plans/${plan.id}/apply`, headers: OWNER, payload: { confirmed: true } })).statusCode).toBe(200);
@@ -139,7 +140,7 @@ describe("native harness Controller composition", () => {
         service.tasks.execute({ id: `create:${taskId}`, taskId, baseRevision: 0, actor: "test", command: { type: "task.create", task: { id: taskId, projectId: "fixture", title: "Harness task", state: "READY", labels: [], createdAt: now, updatedAt: now }, bindings: [] } });
         service.database.saveTaskContract(taskId, { version: 1, revision: 1, goal: "Harness task", scope: ["README.md"], acceptanceCriteria: ["done"], verification: ["check"], constraints: [], delivery: { type: "none", repository: "fixture", baseBranch: "main" } });
         blockedProvider = provider;
-        // Embedded capacity is fixed at boot; simulate an online eight-slot Runner for this fixture.
+        // Match the applied eight-slot configuration with the fixture's trusted runtime report.
         service.runners.register({ ...service.runners.list()[0]!, capacity: 8 });
         const dispatched = await service.app.inject({ method: "POST", url: `/api/tasks/${taskId}/dispatch`, headers: OWNER, payload: { profileId: provider } });
         expect(dispatched.statusCode, dispatched.body).toBe(201);

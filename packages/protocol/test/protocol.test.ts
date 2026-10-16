@@ -7,6 +7,8 @@ describe("Runner Protocol v1", () => {
     const base={kind:"command" as const,messageId:"native",traceId:"trace",runnerId:"runner",sequence:1,leaseId:"lease",generation:1,leaseExpiresAt:"2026-10-16T20:00:00Z"};
     const envelope={...createEnvelope({...base,payload:{type:"runner.health"}}),payload:{type:"native.workspace_prepare",runId:"run",profileId:"account",plan,verificationCommandIds:["test"]}};
     expect(parseEnvelope(envelope).payload.type).toBe("native.workspace_prepare");
+    const finalize={...envelope,payload:{type:"native.run_finalize",runId:"run"}};
+    expect(()=>parseEnvelope(finalize)).not.toThrow();expect(()=>parseEnvelope({...finalize,leaseId:undefined})).toThrow();expect(()=>parseEnvelope({...finalize,payload:{...finalize.payload,root:"/outside"}})).toThrow();
     for(const patch of [{leaseId:undefined},{generation:undefined},{payload:{...envelope.payload,executable:"/bin/sh"}},{payload:{...envelope.payload,plan:{...plan,root:"/arbitrary"}}},{payload:{...envelope.payload,runId:"different"}}])expect(()=>parseEnvelope({...envelope,...patch})).toThrow();
     expect(()=>parseEnvelope({...envelope,leaseId:undefined,generation:undefined,leaseExpiresAt:undefined,payload:{type:"native.model_catalog",profileId:"account",repositoryId:"repo",reason:"open"}})).not.toThrow();
     expect(()=>parseEnvelope({...envelope,protocolVersion:"1.1"})).toThrowError(expect.objectContaining({code:"UNSUPPORTED_PROTOCOL"}));

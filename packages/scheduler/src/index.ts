@@ -109,9 +109,11 @@ export class CanonicalScheduler {
       run.resumePolicy = session.providerSessionId || decision.selected.adapter.manifest.capabilities.resume ? "same-session" : "controlled-reroute";
       run.state = "ACTIVE";
     } catch (error) {
-      run.state = "FAILED";
-      run.failureReason = `Agent start failed: ${error instanceof Error ? error.message : "unknown process error"}`;
-      run.endedAt = new Date().toISOString();
+      const unknown = error && typeof error === "object" && "code" in error && error.code === "COMMAND_OUTCOME_UNKNOWN";
+      run.state = unknown ? "RUNNER_UNAVAILABLE" : "FAILED";
+      run.failureReason = `${unknown ? "Native start outcome unknown" : "Agent start failed"}: ${error instanceof Error ? error.message : "unknown process error"}`;
+      if (unknown) { run.resumePolicy = "manual"; run.recoveryReason = "NATIVE_OUTCOME_UNKNOWN"; }
+      else run.endedAt = new Date().toISOString();
     }
     return { run, decision };
   }

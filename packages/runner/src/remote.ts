@@ -42,6 +42,7 @@ interface RegistrationResult {
 interface ServerConnection {
   socket: WebSocket;
   runner: Runner;
+  profileInventory: string[];
   nextSequence: number;
   lastReceivedSequence: number;
   lastSeenAt: number;
@@ -160,6 +161,7 @@ export class RemoteRunnerServer {
   }
 
   isConnected(runnerId:string):boolean{return this.connections.get(runnerId)?.socket.readyState===WebSocket.OPEN;}
+  profileInventory(runnerId:string):string[]{return this.isConnected(runnerId)?[...(this.connections.get(runnerId)?.profileInventory??[])]:[];}
 
   disconnect(runnerId: string, reason: string): boolean {
     const connection = this.connections.get(runnerId);
@@ -202,7 +204,7 @@ export class RemoteRunnerServer {
         void this.options.onRunnerChanged?.(runner);
         const existing = this.connections.get(runner.id);
         if (existing) existing.socket.close(1012, "runner reconnected");
-        const connection: ServerConnection = { socket, runner, nextSequence: 1, lastReceivedSequence: Number(frame.lastAcknowledgedSequence), lastSeenAt: Date.now(), pending: new Map() };
+        const connection: ServerConnection = { socket, runner, profileInventory: frame.profileInventory.filter((id):id is string=>typeof id==="string"&&id.length<=200).slice(0,1000), nextSequence: 1, lastReceivedSequence: Number(frame.lastAcknowledgedSequence), lastSeenAt: Date.now(), pending: new Map() };
         this.connections.set(runner.id, connection);
         sendJson(socket, { type: "runner.registered" } satisfies RegistrationResult, this.maxBufferedBytes);
         socket.on("message", (message) => this.receive(connection, message));

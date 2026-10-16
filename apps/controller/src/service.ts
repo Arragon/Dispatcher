@@ -1,6 +1,7 @@
 import {qualifyRoutingPolicy,type PolicyConfigEvidence} from "./policy-config.js";
 import {TaskClassifier} from "./task-classifier.js";
 import { remoteCatalog } from "./remote-results.js";
+import { RemoteNativeAdapter } from "./remote-adapter.js";
 import { NATIVE_EXECUTION_CAPABILITY, type CommandPayload } from "@dispatcher/protocol";
 import { ModelRoutingService } from "./model-routing.js";
 import type { WorkspaceHandle } from "@dispatcher/workspace";
@@ -788,8 +789,8 @@ export class ControllerService {
       const adapter = this.agentAdapters.get(id);
       const next = config.agentProfiles.find((profile) => profile.id === id && profile.enabled !== false);
       const local = next && !config.runners.some(runner => runner.id === next.runnerId && runner.mode === "remote");
-      if (adapter && local && isDeepStrictEqual(previous, next)) retainedNativeAdapters.set(id, adapter);
-      else if ((adapter instanceof StructuredCliAdapter || adapter instanceof CodexAdapter) && adapter.hasActiveOperations()) {
+      if (adapter && (local || adapter instanceof RemoteNativeAdapter) && isDeepStrictEqual(previous, next)) retainedNativeAdapters.set(id, adapter);
+      else if ((adapter instanceof StructuredCliAdapter || adapter instanceof CodexAdapter || adapter instanceof RemoteNativeAdapter) && adapter.hasActiveOperations()) {
         throw new ConfigPlanError("ACTIVE_AGENT_PROFILE", `Finish or cancel active harness operations before changing or removing profile ${id}`);
       }
     }
@@ -874,6 +875,20 @@ export class ControllerService {
       if (!retainedNativeAdapters.has(id)) this.nativeProfileConfigurations.delete(id);
     }
     const store = new DatabaseSessionStore(this.database);
+    for(const profile of config.agentProfiles.filter(profile=>profile.enabled!==false&&config.runners.some(runner=>runner.id===profile.runnerId&&runner.mode==="remote"))){
+      if(retainedNativeAdapters.has(profile.id))continue;
+      const manifest=manifestForProvider(profile.provider);
+      if(!manifest||!(profile.provider==="codex"||profile.provider==="cursor"||profile.provider==="kiro"||isNativeCliProvider(profile.provider)))continue;
+      this.agentAdapters.set(profile.id,new RemoteNativeAdapter({profileId:profile.id,runnerId:profile.runnerId,manifest,
+        run:id=>this.database.getEntity<JsonValue>("run",id) as unknown as Run|undefined,
+        sessionRun:id=>{const session=store.load(id);const run=session?this.database.getEntity<JsonValue>("run",session.runId) as unknown as Run|undefined:undefined;return run?.sessionId.startsWith("unstarted:")?{...run,sessionId:id}:run;},
+        request:(payload,run,messageId)=>this.remoteRequest(profile.runnerId,payload,run,messageId),
+        saveSession:session=>{const previous=store.load(session.id);if(previous&&(previous.runId!==session.runId||previous.profileId!==session.profileId))throw new AdapterContractError("COMMAND_OUTCOME_UNKNOWN","Remote session identity collides with another Run");store.save(session);},
+        reserveStart:(run,commandHash)=>{const previous=this.database.getEntity<JsonValue>("remote-native-start",run.id) as {commandHash?:string}|undefined;if(previous&&previous.commandHash!==commandHash)throw new AdapterContractError("EXECUTION_CONFLICT","Remote Run start is already bound to a different descriptor");this.database.saveEntity("remote-native-start",run.id,json({runId:run.id,runnerId:run.runnerId,generation:run.generation,leaseId:run.leaseId,commandHash}));},
+        active:()=>this.database.listEntities<JsonValue>("run").some(value=>{const run=value as unknown as Run;return run.profileId===profile.id&&!isTerminalRunState(run.state);}),
+      }));
+      this.nativeProfileConfigurations.set(profile.id,structuredClone(profile));
+    }
     const enabledProfiles = config.agentProfiles.filter((profile) => profile.enabled !== false && !config.runners.some(runner => runner.id === profile.runnerId && runner.mode === "remote"));
     const resolveProviderCredential = (reference: string): Promise<string> => this.secrets.resolve(reference, { principal: "controller", purpose: "provider" });
     for (const profile of enabledProfiles) {
@@ -1368,6 +1383,7 @@ export class ControllerService {
         if ((current.document as unknown as Task).state === "RUNNING") {
           this.tasks.execute({ id: `run:${run.id}:failed`, taskId: run.taskId, baseRevision: current.revision, actor: "run-worker", command: { type: "task.transition", state: "FAILED" } });
         }
+        if(adapter instanceof RemoteNativeAdapter)await this.finalizeRemoteRun(run);
         return { waiting: false, run, task: this.database.getCanonicalTask<JsonValue>(run.taskId)!.document as unknown as Task, deliveries: [] };
       }
       const result = await adapter.result(run.sessionId);
@@ -1391,18 +1407,27 @@ export class ControllerService {
       const repository = this.configuration.current().config.repositories.find((entry) => entry.id === repositoryId);
       const frozen=this.database.getEntity<JsonValue>("run-verification-config",run.id) as unknown as RepositoryConfig["verificationCommands"]|undefined;
       if ((!repository && !frozen) || !run.worktree) throw new ConnectorError("PERMANENT", "Frozen verification or worktree is unavailable");
-      const verification = new VerificationRegistry();
-      for (const command of frozen ?? repository!.verificationCommands) verification.register(command);
       const summaries: string[] = [];
       let blocked = false;
-      for (const commandId of contract.verification) {
-        try {
-          const result = await verification.run(commandId, run.worktree);
-          summaries.push(`${commandId}:${result.status}`);
-          if (result.required && result.status !== "passed") blocked = true;
-        } catch {
-          summaries.push(`${commandId}:unregistered`);
-          blocked = true;
+      if (this.agentAdapters.get(run.profileId) instanceof RemoteNativeAdapter) {
+        const results = await this.remoteRequest(run.runnerId,{type:"native.run_verify",runId:run.id},run,`native-verify:${run.id}:${run.generation}`);
+        const commands=frozen??repository!.verificationCommands;
+        if(!Array.isArray(results)||results.length!==contract.verification.length)throw new AdapterContractError("REMOTE_RESULT_INVALID","Owning Runner returned an incomplete verification receipt");
+        for(const [index,result] of results.entries()) {
+          const command=commands.find(command=>command.id===contract.verification[index]);
+          if(!command||!result||typeof result!=="object"||result.commandId!==command.id||result.required!==command.required||!["passed","failed","timeout"].includes(result.status)||result.status==="passed"&&result.exitCode!==0||result.exitCode!==null&&!Number.isSafeInteger(result.exitCode)||typeof result.durationMs!=="number"||!Number.isFinite(result.durationMs)||result.durationMs<0||typeof result.output!=="string"||result.output.length>command.outputLimitBytes||typeof result.truncated!=="boolean")throw new AdapterContractError("REMOTE_RESULT_INVALID","Owning Runner verification evidence differs from the frozen commands");
+          summaries.push(`${command.id}:${result.status}`);if(command.required&&result.status!=="passed")blocked=true;
+        }
+        this.database.saveEntity("remote-verification",run.id,json(redactValue(results)));
+      } else {
+        const verification = new VerificationRegistry();
+        for (const command of frozen ?? repository!.verificationCommands) verification.register(command);
+        for (const commandId of contract.verification) {
+          try {
+            const result = await verification.run(commandId, run.worktree);
+            summaries.push(`${commandId}:${result.status}`);
+            if (result.required && result.status !== "passed") blocked = true;
+          } catch { summaries.push(`${commandId}:unregistered`); blocked = true; }
         }
       }
       run.verification = { state: blocked ? "FAILED" : "PASSED", commands: [...contract.verification], summary: summaries.join(", ") };
@@ -1416,6 +1441,7 @@ export class ControllerService {
         if ((current.document as unknown as Task).state === "VERIFYING") {
           this.tasks.execute({ id: `run:${run.id}:verification-failed`, taskId: run.taskId, baseRevision: current.revision, actor: "run-worker", command: { type: "task.transition", state: "FAILED" } });
         }
+        if(this.agentAdapters.get(run.profileId) instanceof RemoteNativeAdapter)await this.finalizeRemoteRun(run);
         return { waiting: false, run, task: this.database.getCanonicalTask<JsonValue>(run.taskId)!.document as unknown as Task, deliveries: [] };
       }
       assertRunTransition(run.state, "DELIVERING");
@@ -1425,10 +1451,14 @@ export class ControllerService {
 
     if (run.state !== "DELIVERING" || !run.worktree || !run.branch) throw new ConnectorError("CONFLICT", `Run ${run.id} is not ready for delivery`);
     if(contract.delivery.type==="none") {
-      const workspace=this.workspaces.get(run.worktree);
+      const remote=this.agentAdapters.get(run.profileId) instanceof RemoteNativeAdapter;
+      const workspace=remote?this.database.getEntity<JsonValue>("workspace-handle",run.id) as unknown as WorkspaceHandle|undefined:this.workspaces.get(run.worktree);
       if(!workspace)throw new WorkspacePolicyError("WORKSPACE_UNAVAILABLE","Managed worktree requires restoration or inspection");
-      const files=await this.workspaces.resultFiles(workspace);
-      const result={version:1,runId:run.id,taskId:run.taskId,deliveryType:"none",worktree:run.worktree,branch:run.branch,baseCommit:workspace.baseRevision,files,verification:run.verification,summary:run.activitySummary??"",createdAt:this.now().toISOString()};
+      const resultFiles=remote?await this.remoteRequest(run.runnerId,{type:"native.run_files",runId:run.id},run):await this.workspaces.resultFiles(workspace);
+      if(!Array.isArray(resultFiles)||resultFiles.length>5000||resultFiles.some(file=>typeof file!=="string"||file.length>4000||/^[/\\]|^[a-z]:/i.test(file)||file.split(/[\\/]/).some(segment=>segment===".."||segment===".git"))||new Set(resultFiles).size!==resultFiles.length)throw new AdapterContractError("REMOTE_RESULT_INVALID","Owning Runner returned an invalid change manifest");
+      const files=resultFiles as string[];if(remote)assertPublicationScope(files,workspace.scopePaths);
+      const result={version:1,runId:run.id,taskId:run.taskId,runnerId:run.runnerId,deliveryType:"none",worktree:run.worktree,branch:run.branch,baseCommit:workspace.baseRevision,files,verification:run.verification,summary:run.activitySummary??"",createdAt:this.now().toISOString()};
+      if(remote){this.fenceDelivery(run,"complete");await this.finalizeRemoteRun(run);}
       this.database.transaction(()=>{
         this.fenceDelivery(run,"complete");
         const current=this.database.getCanonicalTask<JsonValue>(run.taskId)!;
@@ -1488,7 +1518,9 @@ export class ControllerService {
     return this.configuration.current().config.agentProfiles.filter(p=>!profileId||p.id===profileId).flatMap(profile=>{
       const runner=this.runners.list().find(r=>r.id===profile.runnerId),adapter=this.agentAdapters.get(profile.id);
       if(!runner||!adapter)return [];
-      return [{runnerId:runner.id,runnerTags:runner.capabilities,capacity:runner.id===this.embeddedRunner?.runner.id && ["ONLINE","DEGRADED"].includes(runner.state)?runner.capacity:0,activeRuns:active.filter(r=>r.runnerId===runner.id).length,providerId:profile.provider,profileId:profile.id,resourceState:this.profileResourceState(profile.id),capabilities:[...new Set([...manifestCapabilities(adapter.manifest),...runner.capabilities])],adapter}];
+      const remote=adapter instanceof RemoteNativeAdapter&&this.remoteRunnerServer.isConnected(runner.id)&&runner.capabilities.includes(NATIVE_EXECUTION_CAPABILITY)&&this.remoteRunnerServer.profileInventory(runner.id).includes(profile.id);
+      const configuredCapacity=this.configuration.current().config.runners.find(configured=>configured.id===runner.id)?.capacity??0;
+      return [{runnerId:runner.id,runnerTags:runner.capabilities,capacity:(runner.id===this.embeddedRunner?.runner.id||remote) && ["ONLINE","DEGRADED"].includes(runner.state)?Math.min(runner.capacity,configuredCapacity):0,activeRuns:active.filter(r=>r.runnerId===runner.id).length,providerId:profile.provider,profileId:profile.id,resourceState:this.profileResourceState(profile.id),capabilities:[...new Set([...manifestCapabilities(adapter.manifest),...runner.capabilities])],adapter}];
     });
   }
   private readonly catalogGenerations=new Map<string,number>();
@@ -1499,6 +1531,10 @@ export class ControllerService {
     if(response.payload.type==="rpc.error")throw new AdapterContractError(response.payload.code,"Owning Runner rejected the native operation");
     return response.payload.result;
   }
+  private async finalizeRemoteRun(run:Run):Promise<void> {
+    const result=await this.remoteRequest(run.runnerId,{type:"native.run_finalize",runId:run.id},run,`native-finalize:${run.id}:${run.generation}`) as {runId?:unknown;settledAt?:unknown}|undefined;
+    if(!result||result.runId!==run.id||typeof result.settledAt!=="string"||!Number.isFinite(Date.parse(result.settledAt)))throw new AdapterContractError("REMOTE_RESULT_INVALID","Owning Runner did not confirm execution finalization");
+  }
   private async inspectRepository(plan:Parameters<WorkspaceManager["inspect"]>[0]):Promise<{baseCommit:string;root:string}> {
     const config=this.configuration.current().config,repository=config.repositories.find(repository=>repository.id===plan.repositoryId);
     if(!repository)throw new PublicationError("REPOSITORY_NOT_FOUND",404,"Repository is not registered");
@@ -1507,6 +1543,12 @@ export class ControllerService {
     const inspected=await this.remoteRequest(owner,{type:"native.repository",...plan}) as {baseCommit?:unknown;root?:unknown;registeredRoot?:unknown;verificationCommands?:unknown};
     if(!inspected||typeof inspected.baseCommit!=="string"||!/^[a-f0-9]{40,64}$/i.test(inspected.baseCommit)||typeof inspected.root!=="string"||inspected.root.length>4000||inspected.registeredRoot!==repository.root||contentHash(inspected.verificationCommands)!==contentHash(repository.verificationCommands))throw new PublicationError("REMOTE_REPOSITORY_MISMATCH",409,"Owning Runner repository or verification registration differs; review both registrations");
     return {baseCommit:inspected.baseCommit,root:inspected.root};
+  }
+  private remoteWorkspace(value:unknown,plan:Parameters<WorkspaceManager["create"]>[0],reviewed?:WorkspaceHandle):WorkspaceHandle {
+    const handle=value as WorkspaceHandle|undefined;
+    const identity=(entry:typeof plan)=>({repositoryId:entry.repositoryId,taskId:entry.taskId,runId:entry.runId,attempt:entry.attempt,baseRef:entry.baseRef,scopePaths:entry.scopePaths,baseCommit:entry.baseCommit,targetBranch:entry.targetBranch});
+    if(!handle||contentHash(identity(handle))!==contentHash(identity(plan))||typeof handle.path!=="string"||!handle.path||handle.path.length>4000||typeof handle.repositoryRoot!=="string"||typeof handle.branch!=="string"||!handle.branch||!Number.isFinite(Date.parse(handle.createdAt))||typeof handle.baseRevision!=="string"||!/^[a-f0-9]{40,64}$/i.test(handle.baseRevision)||plan.baseCommit&&handle.baseRevision!==plan.baseCommit||reviewed&&["path","branch","baseRevision","repositoryRoot"].some(key=>handle[key as keyof WorkspaceHandle]!==reviewed[key as keyof WorkspaceHandle]))throw new AdapterContractError(reviewed?"COMMAND_OUTCOME_UNKNOWN":"REMOTE_RESULT_INVALID","Owning Runner workspace identity does not match its approved plan");
+    return structuredClone(handle);
   }
   private async modelCatalog(profileId:string,repositoryId:string,reason:ModelCatalogContext["reason"]="open",workspacePath?:string):Promise<AccountModelCatalog> {
     const snapshot=this.configuration.current();const profile=snapshot.config.agentProfiles.find(p=>p.id===profileId),repository=snapshot.config.repositories.find(r=>r.id===repositoryId);
@@ -1521,7 +1563,11 @@ export class ControllerService {
     if(!remote&&!adapter?.modelCatalog)return fallback("MODEL_CATALOG_UNSUPPORTED","This native adapter does not expose a model catalog");
     const key=contentHash({profileId,repositoryId});const generation=(this.catalogGenerations.get(key)??0)+1;this.catalogGenerations.set(key,generation);
     let catalog:AccountModelCatalog;
-    try {catalog=remote?remoteCatalog(await this.remoteRequest(profile.runnerId,{type:"native.model_catalog",profileId,repositoryId,reason}),{profileId,runnerId:profile.runnerId,providerId:profile.provider}):await adapter!.modelCatalog!({...context,workspacePath:workspacePath??repository.root});}
+    try {
+      const run=remote&&workspacePath?this.database.listEntities<JsonValue>("run").map(value=>value as unknown as Run).find(run=>run.profileId===profileId&&run.worktree===workspacePath&&!isTerminalRunState(run.state)):undefined;
+      if(remote&&workspacePath&&!run)throw new AdapterContractError("RUN_CONTEXT_UNAVAILABLE","Remote worktree does not have matching canonical Run authority");
+      catalog=remote?remoteCatalog(await this.remoteRequest(profile.runnerId,{type:"native.model_catalog",profileId,repositoryId,reason,...(run?{runId:run.id}:{})},run),{profileId,runnerId:profile.runnerId,providerId:profile.provider}):await adapter!.modelCatalog!({...context,workspacePath:workspacePath??repository.root});
+    }
     catch (error) {
       catalog=error instanceof AdapterContractError&&(remote||error.code==="REMOTE_RESULT_INVALID")?fallback(error.code,error.message):error instanceof AdapterContractError && error.code==="NATIVE_VERSION_UNSUPPORTED" ? {...fallback(error.code,"Installed native version does not support the qualified catalog interface"),selectionSupport:"unsupported"} : error instanceof AdapterContractError && error.code==="NATIVE_CONTEXT_CHANGED" ? fallback(error.code,"Native account or configuration changed during the query; refresh before reviewing") : fallback("NATIVE_CATALOG_UNAVAILABLE","Native catalog could not be read; explicit selection is unavailable");
     }
@@ -1532,7 +1578,8 @@ export class ControllerService {
   private async preparePublication(draft:PublishDraftV1,repository:RepositoryConfig,_workspacePath?:string,context?:{owner:string;reviewed?:ExecutionSelection}):Promise<ExecutionSelection> {
     const snapshot=this.configuration.current();const profile=snapshot.config.agentProfiles.find(p=>p.id===draft.execution.profileId);
     if(!profile)throw new PublicationError("PROFILE_REQUIRED",409,"Choose a configured native account");
-    if(profile.runnerId!==this.embeddedRunner?.runner.id)throw new PublicationError("REMOTE_EXECUTION_UNSUPPORTED",409,"This publication path requires the local embedded runner");
+    if(repositoryRunnerId(snapshot.config,repository)!==profile.runnerId)throw new PublicationError("RUNNER_REPOSITORY_MISMATCH",409,"Account and repository belong to different Runners");
+    if(profile.runnerId!==this.embeddedRunner?.runner.id&&!(this.agentAdapters.get(profile.id) instanceof RemoteNativeAdapter))throw new PublicationError("REMOTE_EXECUTION_UNAVAILABLE",409,"Owning Runner has no qualified native execution backend");
     const catalog=await this.modelCatalog(profile.id,repository.id,_workspacePath?"before-start":"preflight",_workspacePath);
     if(catalog.selectionSupport==="unsupported")throw new PublicationError("NATIVE_SELECTION_UNSUPPORTED",409,"This native backend does not expose qualified per-run model selection");
     if(catalog.failure?.code==="NATIVE_AUTH_REQUIRED"||catalog.failure?.code==="PROFILE_DISABLED"||catalog.failure?.code==="NATIVE_CONTEXT_CHANGED")throw new PublicationError(catalog.failure.code,409,catalog.failure.message);
@@ -1623,7 +1670,11 @@ export class ControllerService {
       }
     }
     if(publication && this.configuration.current().revision!==publication.configRevision)throw new PublicationError("SELECTION_CHANGED",409,"Configuration changed before dispatch");
-    const scheduler = new CanonicalScheduler(() => this.dispatchCandidates(body?.profileId));
+    const repositoryRunner=repositoryRunnerId(this.configuration.current().config,repositoryConfig),remote=this.configuration.current().config.runners.some(runner=>runner.id===repositoryRunner&&runner.mode==="remote");
+    if(body.profileId&&this.configuration.current().config.agentProfiles.find(profile=>profile.id===body.profileId)?.runnerId!==repositoryRunner)throw new PublicationError("RUNNER_REPOSITORY_MISMATCH",409,"Account and repository belong to different Runners");
+    if(remote&&!publication?.selection)throw new PublicationError("REMOTE_SELECTION_REQUIRED",409,"Remote dispatch requires a reviewed native execution selection");
+    if(remote&&contract.delivery.type!=="none")throw new PublicationError("REMOTE_DELIVERY_UNAVAILABLE",409,"Remote execution currently requires local result delivery on the owning Runner");
+    const scheduler = new CanonicalScheduler(() => this.dispatchCandidates(body?.profileId).filter(candidate=>candidate.runnerId===repositoryRunner));
     const runId = randomUUID();
     const workspacePlan = {
       repositoryId,
@@ -1635,9 +1686,9 @@ export class ControllerService {
       ...(contract.workspace?.baseCommit ? {baseCommit:contract.workspace.baseCommit}:{}),
       ...(contract.workspace?.targetBranch ? {targetBranch:contract.workspace.targetBranch}:{}),
     };
-    this.database.saveEntity("workspace-intent",runId,json({...workspacePlan,state:"CREATING"}));
-    const workspace=await this.workspaces.create(workspacePlan);
-    this.database.transaction(()=>{this.database.saveEntity("workspace-handle",runId,json(workspace));this.database.saveEntity("workspace-intent",runId,json({...workspacePlan,state:"CREATED",path:workspace.path}));});
+    this.database.saveEntity("workspace-intent",runId,json({...workspacePlan,state:remote?"PLANNED":"CREATING",runnerId:repositoryRunner}));
+    const workspace=remote?this.remoteWorkspace(await this.remoteRequest(repositoryRunner,{type:"native.workspace_plan",profileId:publication!.selection!.profileId,plan:workspacePlan}),workspacePlan):await this.workspaces.create(workspacePlan);
+    if(!remote)this.database.transaction(()=>{this.database.saveEntity("workspace-handle",runId,json(workspace));this.database.saveEntity("workspace-intent",runId,json({...workspacePlan,state:"CREATED",path:workspace.path}));});
     let dispatched: Awaited<ReturnType<CanonicalScheduler["dispatch"]>>;
     try {
       dispatched = await scheduler.dispatch({
@@ -1653,7 +1704,16 @@ export class ControllerService {
         ...(publication?.selection ? {executionSelection:publication.selection}:{}),
         beforeStart:async()=>{
           if(publication&&contentHash(this.database.getTaskContract(taskId))!==contentHash(publication.contract))throw new PublicationError("TASK_CHANGED",409,"Task contract changed before native startup");
-          for(const scope of workspace.scopePaths)await this.workspaces.assertPathAllowed(workspace,scope);
+          if(remote){
+            const reserved=this.database.getEntity<JsonValue>("run",runId) as unknown as Run|undefined;
+            if(!reserved||reserved.state!=="STARTING")throw new PublicationError("RUN_CHANGED",409,"Remote workspace requires a reserved canonical Run");
+            this.database.saveEntity("workspace-intent",runId,json({...workspacePlan,state:"CREATING",runnerId:repositoryRunner}));
+            let prepared:unknown;
+            try{prepared=await this.remoteRequest(repositoryRunner,{type:"native.workspace_prepare",runId,profileId:reserved.profileId,plan:workspacePlan,verificationCommandIds:contract.verification},reserved,`native-prepare:${runId}:${reserved.generation}`);}
+            catch(error){if(error instanceof AdapterContractError)throw error;throw new AdapterContractError("COMMAND_OUTCOME_UNKNOWN","Remote workspace preparation response is unconfirmed");}
+            const actual=this.remoteWorkspace(prepared,workspacePlan,workspace);
+            this.database.transaction(()=>{this.database.saveEntity("workspace-handle",runId,json({...actual,runnerId:repositoryRunner}));this.database.saveEntity("workspace-intent",runId,json({...workspacePlan,state:"CREATED",path:actual.path,runnerId:repositoryRunner}));});
+          }else for(const scope of workspace.scopePaths)await this.workspaces.assertPathAllowed(workspace,scope);
           if(publication?.selection){
             const selection=await this.preparePublication(publication.draft,repositoryConfig,workspace.path,{owner:publication.owner,reviewed:publication.selection});
             if(contentHash({...selection,selectedAt:undefined})!==contentHash({...publication.selection,selectedAt:undefined}))throw new PublicationError("SELECTION_CHANGED",409,"Selection changed before native startup");
@@ -1688,8 +1748,7 @@ export class ControllerService {
         },
       });
     } catch (error) {
-      const cleanup = await this.workspaces.cleanupPlan(workspace);
-      if (cleanup.safe) await this.workspaces.cleanup(cleanup);
+      if(!remote){const cleanup = await this.workspaces.cleanupPlan(workspace);if (cleanup.safe) await this.workspaces.cleanup(cleanup);}
       if (error instanceof TaskDispatchError || error instanceof ConnectorError) throw error;
       throw new TaskDispatchError("DISPATCH_UNAVAILABLE", 409, error instanceof Error ? error.message : "Dispatch is unavailable");
     }
@@ -1704,7 +1763,7 @@ export class ControllerService {
         const task = current.document as unknown as Task;
         if (task.state !== "QUEUED" || task.currentRunId !== dispatched.run.id) throw new TaskDispatchError("TASK_CHANGED", 409, "Task changed during agent startup");
         this.saveAdvancedRun(dispatched.run, "STARTING");
-        const state = dispatched.run.state === "FAILED" ? "FAILED" : "RUNNING";
+        const state = dispatched.run.state === "FAILED" ? "FAILED" : dispatched.run.state==="RUNNER_UNAVAILABLE"?"WAITING_RESOURCE":"RUNNING";
         this.tasks.execute({ id: `dispatch:${dispatched.run.id}:${state}`, taskId, baseRevision: current.revision, actor: "scheduler", command: { type: "task.transition", state } });
         if(publication)this.publications.markOutcome(publication.owner,publication.preview.publicationId,dispatched.run);
         if (idempotencyKey) this.database.saveEntity("task-dispatch", idempotencyKey, json(result));
@@ -1718,6 +1777,7 @@ export class ControllerService {
       throw error;
     }
     this.fleetEvents.publish("run.changed", dispatched.run.id, { id: dispatched.run.id, taskId: dispatched.run.taskId, state: dispatched.run.state });
+    if(remote&&dispatched.run.state==="FAILED")try{await this.remoteRequest(repositoryRunner,{type:"lease.revoke",leaseId:dispatched.run.leaseId,generation:dispatched.run.generation,reason:"Canonical startup failed"},dispatched.run);}catch(error){this.app.log.warn({runId,error:redactValue(error)},"remote failed-start lease cleanup is unconfirmed");}
     return result;
   }
 
