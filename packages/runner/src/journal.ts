@@ -37,6 +37,10 @@ export class RunnerJournal {
         checksum TEXT NOT NULL,
         created_at TEXT NOT NULL
       ) STRICT;
+      CREATE TABLE IF NOT EXISTS runner_command_bindings (
+        message_id TEXT PRIMARY KEY,
+        identity_hash TEXT NOT NULL
+      ) STRICT;
     `);
   }
 
@@ -52,6 +56,14 @@ export class RunnerJournal {
     `).run(parsed.sequence, parsed.messageId, envelopeJson, digest, createdAt);
     this.enforceCapacity();
     return { sequence: parsed.sequence, messageId: parsed.messageId, envelope: parsed, checksum: digest, createdAt };
+  }
+  commandIdentity(messageId:string):string|undefined {
+    const row=this.database.prepare("SELECT identity_hash FROM runner_command_bindings WHERE message_id = ?").get(messageId) as {identity_hash:string}|undefined;
+    return row?.identity_hash;
+  }
+  bindCommand(messageId:string,identityHash:string):boolean {
+    this.database.prepare("INSERT OR IGNORE INTO runner_command_bindings(message_id,identity_hash) VALUES (?,?)").run(messageId,identityHash);
+    return this.commandIdentity(messageId)===identityHash;
   }
 
   replay(afterSequence = this.acknowledgedSequence()): JournalEntry[] {

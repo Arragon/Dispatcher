@@ -356,6 +356,17 @@ The version 1.2 protocol envelope adds ack sequence and lease/generation/expiry
 fencing while retaining the v1.1 origin, causation, correlation, connector,
 event, and idempotency metadata and continuing to accept v1.0/v1.1 fixtures.
 Raw provider payloads are rejected at the protocol boundary.
+The additive `native-execution-v1` capability defines bounded, versioned native
+descriptors on transport1.2; health-only peers never receive those commands.
+Descriptors reference registered account/repository/workspace IDs and frozen
+selection, with no executable or arbitrary root override. Native mutations and
+workspace-bound queries require lease identity/generation/expiry metadata.
+Remote RPC coalesces matching in-flight retries, durably binds command identities,
+and associates responses with the exact request hash using envelope idempotencyKey.
+Changed-payload errors cannot replace successful receipts, including after reconnect.
+Workspace planning resolves the owning node's managed path without creating a
+branch or worktree. Native owning-Runner orchestration remains a separate delivery
+unit from these protocol/transport foundations.
 
 Linear webhook ingress verifies the HMAC against the exact request bytes,
 enforces payload and timestamp limits, normalizes the event, and deduplicates it

@@ -373,6 +373,12 @@
   successful plan replay independent of later native availability. Read ConfigPlan
   lifecycle state from the canonical stored row, not its original embedded plan
   document, which captured PLANNED at creation.
+- Remote RPC identity binds raw payload plus lease ID/generation, independently
+  of property order and renewable expiry. Never overwrite a successful command
+  receipt with a changed-payload conflict. Responses carry the command hash in
+  envelope idempotencyKey so an unacknowledged conflict replay cannot settle a
+  later valid retry. After full journal compaction, the next outgoing sequence
+  must remain above the acknowledged sequence.
 - A source-checkout scope check is insufficient when executing another commit.
   Recheck physical scope roots in the created worktree before native queries or
   execution. Workspace-bound contracts cannot accept another repository through

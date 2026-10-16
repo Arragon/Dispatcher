@@ -1,4 +1,6 @@
 import type { ResourceSnapshot, RunState, Runner } from "@dispatcher/domain";
+import {isNativeExecutionCommand,validateNativeExecutionCommand,type NativeCommandPayload,type NativeStartDescriptor} from "./native-execution.js";
+export * from "./native-execution.js";
 
 export const LEGACY_PROTOCOL_VERSION = "1.0" as const;
 export const RESOURCE_PROTOCOL_VERSION = "1.1" as const;
@@ -6,7 +8,8 @@ export const PROTOCOL_VERSION = "1.2" as const;
 export const SUPPORTED_PROTOCOL_VERSIONS = [LEGACY_PROTOCOL_VERSION, RESOURCE_PROTOCOL_VERSION, PROTOCOL_VERSION] as const;
 
 export type CommandPayload =
-  | { type: "run.start"; runId: string }
+  | NativeCommandPayload
+  | { type: "run.start"; runId: string;execution?:NativeStartDescriptor }
   | { type: "run.send_input"; runId: string; input: string }
   | { type: "run.pause"; runId: string }
   | { type: "run.resume"; runId: string }
@@ -60,6 +63,7 @@ export interface ProtocolEnvelope<TPayload extends ProtocolPayload = ProtocolPay
 }
 
 const commandTypes = new Set<CommandPayload["type"]>([
+  "native.repository","native.workspace_plan","native.workspace_prepare","native.model_catalog","native.profile_probe","native.run","native.run_verify","native.run_files",
   "run.start",
   "run.send_input",
   "run.pause",
@@ -143,6 +147,10 @@ export function parseEnvelope(value: unknown): ProtocolEnvelope {
     (value.kind === "response" && responseTypes.has(value.payload.type as ResponsePayload["type"]));
   if (!validType) {
     throw new ProtocolValidationError("UNKNOWN_MESSAGE_TYPE", `Unknown ${String(value.kind)} type: ${value.payload.type}`);
+  }
+  if(value.kind==="command"&&isNativeExecutionCommand(value.payload as {type:string})){
+    if(value.protocolVersion!==PROTOCOL_VERSION)throw new ProtocolValidationError("UNSUPPORTED_PROTOCOL","Native execution requires transport v1.2");
+    if(!validateNativeExecutionCommand(value.payload,value))throw new ProtocolValidationError("INVALID_ENVELOPE","Native execution descriptor or authority is invalid");
   }
   return value as unknown as ProtocolEnvelope;
 }

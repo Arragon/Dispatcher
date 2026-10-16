@@ -2,6 +2,22 @@ import { describe, expect, it } from "vitest";
 import { LEGACY_PROTOCOL_VERSION, PROTOCOL_VERSION, createEnvelope, parseEnvelope, type ProtocolValidationError } from "../src/index.js";
 
 describe("Runner Protocol v1", () => {
+  it("accepts bounded native execution descriptors and requires authority for native mutations",()=>{
+    const plan={repositoryId:"repo",taskId:"task",runId:"run",attempt:1,baseRef:"main",scopePaths:["."]};
+    const base={kind:"command" as const,messageId:"native",traceId:"trace",runnerId:"runner",sequence:1,leaseId:"lease",generation:1,leaseExpiresAt:"2026-10-16T20:00:00Z"};
+    const envelope={...createEnvelope({...base,payload:{type:"runner.health"}}),payload:{type:"native.workspace_prepare",runId:"run",profileId:"account",plan,verificationCommandIds:["test"]}};
+    expect(parseEnvelope(envelope).payload.type).toBe("native.workspace_prepare");
+    for(const patch of [{leaseId:undefined},{generation:undefined},{payload:{...envelope.payload,executable:"/bin/sh"}},{payload:{...envelope.payload,plan:{...plan,root:"/arbitrary"}}},{payload:{...envelope.payload,runId:"different"}}])expect(()=>parseEnvelope({...envelope,...patch})).toThrow();
+    expect(()=>parseEnvelope({...envelope,leaseId:undefined,generation:undefined,leaseExpiresAt:undefined,payload:{type:"native.model_catalog",profileId:"account",repositoryId:"repo",reason:"open"}})).not.toThrow();
+    expect(()=>parseEnvelope({...envelope,protocolVersion:"1.1"})).toThrowError(expect.objectContaining({code:"UNSUPPORTED_PROTOCOL"}));
+  });
+  it("binds a native start selection to the descriptor's profile, Runner and managed workspace",()=>{
+    const selection={version:1,mode:"manual",source:"explicit",profileId:"account",runnerId:"runner",providerId:"codex",backendId:"codex-exec-json",selectionType:"explicit-model",requestedModel:"model",catalogRevision:"catalog",contextFingerprint:"context",configRevision:1,nativeParameters:{},selectedAt:"2026-10-16T20:00:00Z"};
+    const execution={version:1,profileId:"account",workspaceId:"run",prompt:"Original\n任务",selection};
+    const envelope={...createEnvelope({kind:"command",messageId:"start",traceId:"trace",runnerId:"runner",sequence:1,payload:{type:"runner.health"}}),leaseId:"lease",generation:1,leaseExpiresAt:"2026-10-16T20:15:00Z",payload:{type:"run.start",runId:"run",execution}};
+    expect(parseEnvelope(envelope).payload.type).toBe("run.start");
+    for(const changed of [{...execution,executable:"/bin/sh"},{...execution,workspaceId:"outside"},{...execution,selection:{...selection,profileId:"other"}},{...execution,selection:{...selection,runnerId:"other"}},{...execution,selection:{...selection,nativeParameters:{raw:{secret:"no"}}}}])expect(()=>parseEnvelope({...envelope,payload:{...envelope.payload,execution:changed}})).toThrow();
+  });
   it("round-trips a command envelope", () => {
     const envelope = createEnvelope({
       kind: "command",

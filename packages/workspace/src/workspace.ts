@@ -98,24 +98,25 @@ export class WorkspaceManager {
     return { baseCommit, root };
   }
 
+  async plan(plan:WorkspacePlan):Promise<WorkspaceHandle> {
+    if(!Number.isSafeInteger(plan.attempt)||plan.attempt<1)throw new WorkspacePolicyError("INVALID_ATTEMPT","Workspace attempt must be a positive integer");
+    const branch=plan.targetBranch??`dispatcher/${safeSegment(plan.taskId)}-${safeSegment(plan.runId)}-a${plan.attempt}`;
+    const inspected=await this.inspect({repositoryId:plan.repositoryId,baseRef:plan.baseCommit??plan.baseRef,scopePaths:plan.scopePaths,targetBranch:branch});
+    const desired=resolve(this.worktreeRoot);let ancestor=desired;
+    for(;;){try{const physical=await realpath(ancestor);ancestor=resolve(physical,relative(ancestor,desired));break;}catch(error){const parent=dirname(ancestor);if(parent===ancestor)throw error;ancestor=parent;}}
+    const path=resolve(ancestor,`${safeSegment(plan.taskId)}-${safeSegment(plan.runId)}-a${plan.attempt}`);
+    if(!within(ancestor,path))throw new WorkspacePolicyError("WORKSPACE_PATH_ESCAPE","Worktree path escapes managed root");
+    return {...structuredClone(plan),repositoryRoot:inspected.root,path,branch,baseRevision:inspected.baseCommit,createdAt:new Date().toISOString()};
+  }
+
   async create(plan: WorkspacePlan): Promise<WorkspaceHandle> {
-    const repository = this.registry.get(plan.repositoryId);
-    await mkdir(this.worktreeRoot, { recursive: true });
-    const root = await realpath(this.worktreeRoot);
-    const name = `${safeSegment(plan.taskId)}-${safeSegment(plan.runId)}-a${plan.attempt}`;
-    const path = resolve(root, name);
-    if (!within(root, path)) throw new WorkspacePolicyError("WORKSPACE_PATH_ESCAPE", "Worktree path escapes managed root");
-    const branch = plan.targetBranch ?? `dispatcher/${safeSegment(plan.taskId)}-${safeSegment(plan.runId)}-a${plan.attempt}`;
-    let baseRevision: string;
-    try {
-      baseRevision = (await execute("git", ["-C", repository.root, "rev-parse", "--verify", `${plan.baseCommit ?? plan.baseRef}^{commit}`])).stdout.trim();
-      await execute("git", ["-C", repository.root, "worktree", "add", "-b", branch, path, baseRevision]);
-    } catch (error) {
-      throw new WorkspacePolicyError("WORKTREE_CREATE_FAILED", error instanceof Error ? error.message : "Worktree creation failed");
-    }
-    const handle = { ...structuredClone(plan), repositoryRoot:await realpath(repository.root), path, branch, baseRevision, createdAt: new Date().toISOString() };
-    this.managed.set(path, structuredClone(handle));
-    return handle;
+    const handle=await this.plan(plan);
+    await mkdir(this.worktreeRoot,{recursive:true});
+    const root=await realpath(this.worktreeRoot);
+    if(!within(root,handle.path))throw new WorkspacePolicyError("WORKSPACE_PATH_ESCAPE","Managed root changed after planning");
+    try{await execute("git",["-C",handle.repositoryRoot!,"worktree","add","-b",handle.branch,handle.path,handle.baseRevision]);}
+    catch(error){throw new WorkspacePolicyError("WORKTREE_CREATE_FAILED",error instanceof Error?error.message:"Worktree creation failed");}
+    this.managed.set(handle.path,structuredClone(handle));return handle;
   }
 
   async restore(handle: WorkspaceHandle): Promise<void> {

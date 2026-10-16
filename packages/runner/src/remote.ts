@@ -1,8 +1,9 @@
-import { randomUUID } from "node:crypto";
+import { createHash,randomUUID } from "node:crypto";
 import type { Server } from "node:http";
 import type { Runner } from "@dispatcher/domain";
 import {
   PROTOCOL_VERSION,
+  NATIVE_EXECUTION_CAPABILITY,isNativeExecutionCommand,
   createEnvelope,
   parseEnvelope,
   type CommandPayload,
@@ -44,8 +45,14 @@ interface ServerConnection {
   nextSequence: number;
   lastReceivedSequence: number;
   lastSeenAt: number;
-  pending: Map<string, { resolve: (value: ProtocolEnvelope<ResponsePayload>) => void; reject: (reason: Error) => void; timer: ReturnType<typeof setTimeout> }>;
+  pending: Map<string, { identity:string;native:boolean;promise:Promise<ProtocolEnvelope<ResponsePayload>>;resolve: (value: ProtocolEnvelope<ResponsePayload>) => void; reject: (reason: Error) => void; timer: ReturnType<typeof setTimeout> }>;
 }
+export function remoteCommandHash(input:{payload:CommandPayload;leaseId?:string;generation?:number}):string {
+  const stable=(value:unknown):unknown=>Array.isArray(value)?value.map(stable):value&&typeof value==="object"?Object.fromEntries(Object.entries(value).sort(([a],[b])=>a<b?-1:a>b?1:0).map(([key,value])=>[key,stable(value)])):value;
+  // Expiry may be renewed; lease identity and the raw command payload cannot change.
+  return createHash("sha256").update(JSON.stringify(stable({payload:input.payload,leaseId:input.leaseId,generation:input.generation}))).digest("hex");
+}
+function canCacheResponse(payload:ResponsePayload):boolean{return payload.type!=="rpc.error"||!["COMMAND_IDEMPOTENCY_CONFLICT","OUT_OF_ORDER"].includes(payload.code);}
 
 export interface RemoteRunnerServerOptions {
   registry: RunnerRegistryPort;
@@ -119,8 +126,12 @@ export class RemoteRunnerServer {
   async sendCommand(runnerId: string, payload: CommandPayload, options: { messageId?: string; leaseId?: string; generation?: number; leaseExpiresAt?: string } = {}): Promise<ProtocolEnvelope<ResponsePayload>> {
     const connection = this.connections.get(runnerId);
     if (!connection) throw new Error(`Runner ${runnerId} is not connected`);
+    if(isNativeExecutionCommand(payload)&&!connection.runner.capabilities.includes(NATIVE_EXECUTION_CAPABILITY))throw new Error("Runner does not advertise native execution capability");
     if (connection.runner.state === "DRAINING" && payload.type === "run.start") throw new Error(`Runner ${runnerId} is draining`);
     const messageId = options.messageId ?? randomUUID();
+    const identity=remoteCommandHash({payload,...(options.leaseId?{leaseId:options.leaseId}:{}),...(options.generation!==undefined?{generation:options.generation}:{})});
+    const pending=connection.pending.get(messageId);
+    if(pending){if(pending.identity!==identity)throw new Error("Command ID is pending with a different payload or authority");return pending.promise;}
     const envelope = createEnvelope({
       kind: "command",
       messageId,
@@ -134,22 +145,21 @@ export class RemoteRunnerServer {
       ...(options.generation === undefined ? {} : { generation: options.generation }),
       ...(options.leaseExpiresAt ? { leaseExpiresAt: options.leaseExpiresAt } : {}),
     });
-    return await new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        connection.pending.delete(messageId);
-        reject(new Error(`Remote runner RPC timed out: ${payload.type}`));
-      }, this.rpcTimeoutMs);
-      timer.unref();
-      connection.pending.set(messageId, { resolve, reject, timer });
-      try {
-        sendJson(connection.socket, envelope, this.maxBufferedBytes);
-      } catch (error) {
-        clearTimeout(timer);
-        connection.pending.delete(messageId);
-        reject(error instanceof Error ? error : new Error("Remote runner send failed"));
-      }
-    });
+    let resolve!:(value:ProtocolEnvelope<ResponsePayload>)=>void;
+    let reject!:(error:Error)=>void;
+    const promise=new Promise<ProtocolEnvelope<ResponsePayload>>((accept,fail)=>{resolve=accept;reject=fail;});
+    const timer = setTimeout(() => {
+      connection.pending.delete(messageId);
+      reject(new Error(`Remote runner RPC timed out: ${payload.type}`));
+    }, this.rpcTimeoutMs);
+    timer.unref();
+    connection.pending.set(messageId, { identity,native:isNativeExecutionCommand(payload),promise,resolve, reject, timer });
+    try {sendJson(connection.socket, envelope, this.maxBufferedBytes);}
+    catch (error) {clearTimeout(timer);connection.pending.delete(messageId);reject(error instanceof Error ? error : new Error("Remote runner send failed"));}
+    return await promise;
   }
+
+  isConnected(runnerId:string):boolean{return this.connections.has(runnerId);}
 
   disconnect(runnerId: string, reason: string): boolean {
     const connection = this.connections.get(runnerId);
@@ -235,8 +245,12 @@ export class RemoteRunnerServer {
       const response = envelope as ProtocolEnvelope<ResponsePayload>;
       const pending = connection.pending.get(response.payload.correlationId);
       if (!pending) return;
+      // Replayed replies can share a command ID after a rejected changed-payload
+      // retry. Only the reply bound to this exact request may settle its RPC.
+      if(response.idempotencyKey!==undefined&&response.idempotencyKey!==pending.identity)return;
       clearTimeout(pending.timer);
       connection.pending.delete(response.payload.correlationId);
+      if(pending.native&&!response.idempotencyKey){pending.reject(new Error("Native response command identity is unavailable"));return;}
       pending.resolve(response);
     } catch (error) {
       connection.socket.close(1002, error instanceof Error ? error.message.slice(0, 100) : "invalid envelope");
@@ -271,6 +285,8 @@ export interface RemoteRunnerClientOptions {
 export class RemoteRunnerClient {
   private readonly handlers = new Map<CommandPayload["type"], CommandHandler>();
   private readonly responses = new Map<string, ProtocolEnvelope<ResponsePayload>>();
+  private readonly commandHashes=new Map<string,string>();
+  private readonly inFlight=new Map<string,Promise<ResponsePayload>>();
   private readonly pendingReceives = new Set<Promise<void>>();
   private socket: WebSocket | undefined;
   private nextSequence: number;
@@ -283,11 +299,11 @@ export class RemoteRunnerClient {
 
   constructor(private readonly options: RemoteRunnerClientOptions) {
     const replay = options.journal?.replay(0) ?? [];
-    this.nextSequence = (replay.at(-1)?.sequence ?? 0) + 1;
+    this.nextSequence = Math.max(replay.at(-1)?.sequence??0,options.journal?.acknowledgedSequence()??0)+1;
     this.currentState = options.runner.state;
     for (const entry of replay) {
       if (entry.envelope.kind === "response" && (entry.envelope.payload.type === "rpc.result" || entry.envelope.payload.type === "rpc.error")) {
-        this.responses.set(entry.envelope.payload.correlationId, entry.envelope as ProtocolEnvelope<ResponsePayload>);
+        if(canCacheResponse(entry.envelope.payload))this.responses.set(entry.envelope.payload.correlationId, entry.envelope as ProtocolEnvelope<ResponsePayload>);
       }
     }
   }
@@ -367,51 +383,52 @@ export class RemoteRunnerClient {
   }
 
   private async receive(data: RawData, socket: WebSocket): Promise<void> {
-    const envelope = parseEnvelope(decode(data)) as ProtocolEnvelope<CommandPayload>;
-    if (envelope.kind !== "command") return;
-    if (envelope.ackSequence !== undefined) {
-      this.options.journal?.acknowledge(envelope.ackSequence);
-      this.options.journal?.compact();
+    const envelope=parseEnvelope(decode(data)) as ProtocolEnvelope<CommandPayload>;
+    if(envelope.kind!=="command")return;
+    if(envelope.runnerId!==this.options.runner.id)throw new Error("Command runner identity does not match this Runner");
+    if(envelope.ackSequence!==undefined){
+      if(envelope.ackSequence>=this.nextSequence)throw new Error("Acknowledgement exceeds sent Runner sequence");
+      this.options.journal?.acknowledge(envelope.ackSequence);this.options.journal?.compact();
     }
-    const duplicate = this.responses.get(envelope.messageId);
-    if (duplicate) {
-      if (envelope.sequence > this.lastReceivedSequence + 1) {
-        await this.respond(envelope, { type: "rpc.error", correlationId: envelope.messageId, code: "OUT_OF_ORDER", message: `Expected sequence ${this.lastReceivedSequence + 1}, received ${envelope.sequence}` }, socket);
-        return;
+    const duplicate=this.responses.get(envelope.messageId),pending=this.inFlight.get(envelope.messageId);
+    const knownHash=this.commandHashes.get(envelope.messageId)??this.options.journal?.commandIdentity(envelope.messageId);
+    if(envelope.sequence>this.lastReceivedSequence+1||!duplicate&&!pending&&!knownHash&&envelope.sequence!==this.lastReceivedSequence+1){
+      await this.respond(envelope,{type:"rpc.error",correlationId:envelope.messageId,code:"OUT_OF_ORDER",message:`Expected sequence ${this.lastReceivedSequence+1}, received ${envelope.sequence}`},socket);return;
+    }
+    if(envelope.sequence===this.lastReceivedSequence+1)this.lastReceivedSequence=envelope.sequence;
+    const identity=remoteCommandHash(envelope);
+    if(knownHash&&knownHash!==identity){await this.respond(envelope,{type:"rpc.error",correlationId:envelope.messageId,code:"COMMAND_IDEMPOTENCY_CONFLICT",message:"Command ID was used for a different payload or authority"},socket);return;}
+    if(duplicate){
+      if(!knownHash&&isNativeExecutionCommand(envelope.payload)){await this.respond(envelope,{type:"rpc.error",correlationId:envelope.messageId,code:"COMMAND_OUTCOME_UNKNOWN",message:"Historical native command identity is unavailable; reconcile the existing Run"},socket);return;}
+      await this.respond(envelope,duplicate.payload,socket);return;
+    }
+    if(pending){await this.respond(envelope,await pending,socket);return;}
+    if(knownHash&&isNativeExecutionCommand(envelope.payload)){await this.respond(envelope,{type:"rpc.error",correlationId:envelope.messageId,code:"COMMAND_OUTCOME_UNKNOWN",message:"Native command receipt is no longer retained; reconcile the existing Run"},socket);return;}
+    if(this.options.journal&&!this.options.journal.bindCommand(envelope.messageId,identity))throw new Error("Command binding changed");
+    this.commandHashes.set(envelope.messageId,identity);
+    const operation=this.executeCommand(envelope);this.inFlight.set(envelope.messageId,operation);
+    try{await this.respond(envelope,await operation,socket);}finally{this.inFlight.delete(envelope.messageId);}
+  }
+
+  private async executeCommand(envelope:ProtocolEnvelope<CommandPayload>):Promise<ResponsePayload>{
+    try{
+      if(envelope.payload.type==="runner.drain"){
+        this.currentState=envelope.payload.draining?"DRAINING":"ONLINE";
+        await this.sendEvent({type:"runner.heartbeat",runnerId:this.options.runner.id,state:this.currentState});
+        return {type:"rpc.result",correlationId:envelope.messageId,result:{state:this.currentState}};
       }
-      if (envelope.sequence === this.lastReceivedSequence + 1) this.lastReceivedSequence = envelope.sequence;
-      await this.respond(envelope, duplicate.payload, socket);
-      return;
+      const handler=this.handlers.get(envelope.payload.type);
+      if(!handler)return {type:"rpc.error",correlationId:envelope.messageId,code:"UNSUPPORTED_COMMAND",message:`No handler registered for ${envelope.payload.type}`};
+      return {type:"rpc.result",correlationId:envelope.messageId,result:await handler(envelope.payload,envelope)};
+    }catch(error){
+      const native=isNativeExecutionCommand(envelope.payload),code=error&&typeof error==="object"&&"code" in error&&typeof error.code==="string"&&/^[A-Z_]+$/.test(error.code)?error.code:"HANDLER_FAILED";
+      return {type:"rpc.error",correlationId:envelope.messageId,code,message:native?"Native operation failed; inspect the owning Runner":error instanceof Error?error.message:"Command handler failed"};
     }
-    if (envelope.sequence !== this.lastReceivedSequence + 1) {
-      await this.respond(envelope, { type: "rpc.error", correlationId: envelope.messageId, code: "OUT_OF_ORDER", message: `Expected sequence ${this.lastReceivedSequence + 1}, received ${envelope.sequence}` }, socket);
-      return;
-    }
-    this.lastReceivedSequence = envelope.sequence;
-    if (envelope.payload.type === "runner.drain") {
-      this.currentState = envelope.payload.draining ? "DRAINING" : "ONLINE";
-      await this.sendEvent({ type: "runner.heartbeat", runnerId: this.options.runner.id, state: this.currentState });
-      await this.respond(envelope, { type: "rpc.result", correlationId: envelope.messageId, result: { state: this.currentState } }, socket);
-      return;
-    }
-    const handler = this.handlers.get(envelope.payload.type);
-    if (!handler) {
-      await this.respond(envelope, { type: "rpc.error", correlationId: envelope.messageId, code: "UNSUPPORTED_COMMAND", message: `No handler registered for ${envelope.payload.type}` }, socket);
-      return;
-    }
-    let payload: ResponsePayload;
-    try {
-      const result = await handler(envelope.payload, envelope);
-      payload = { type: "rpc.result", correlationId: envelope.messageId, result };
-    } catch (error) {
-      payload = { type: "rpc.error", correlationId: envelope.messageId, code: "HANDLER_FAILED", message: error instanceof Error ? error.message : "Command handler failed" };
-    }
-    await this.respond(envelope, payload, socket);
   }
 
   private async respond(command: ProtocolEnvelope<CommandPayload>, payload: ResponsePayload, socket: WebSocket): Promise<void> {
-    const response = createEnvelope({ kind: "response", messageId: randomUUID(), traceId: command.traceId, runnerId: this.options.runner.id, sequence: this.nextSequence++, ackSequence: this.lastReceivedSequence, correlationId: command.messageId, payload, origin: "runner" });
-    this.responses.set(command.messageId, response);
+    const response = createEnvelope({ kind: "response", messageId: randomUUID(), traceId: command.traceId, runnerId: this.options.runner.id, sequence: this.nextSequence++, ackSequence: this.lastReceivedSequence, correlationId: command.messageId,idempotencyKey:remoteCommandHash(command), payload, origin: "runner" });
+    if(canCacheResponse(payload))this.responses.set(command.messageId, response);
     this.options.journal?.append(response);
     // A completed command remains replayable even when its originating socket closed.
     if (this.socket === socket && socket.readyState === WebSocket.OPEN) sendJson(socket, response, this.options.maxBufferedBytes ?? 1_048_576);
