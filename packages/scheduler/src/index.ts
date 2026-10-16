@@ -130,3 +130,4 @@ export function renderTaskContract(contract: TaskContract): string {
 }
 
 export * from "./model-routing.js";
+export * from "./task-classification.js";

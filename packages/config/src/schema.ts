@@ -76,7 +76,7 @@ export interface LlmPoolConfig {
   profileIds: string[];
 }
 
-export type LlmRoleConfig = "command_parser" | "config_assistant" | "runtime_summarizer" | "error_classifier";
+export type LlmRoleConfig = "command_parser" | "config_assistant" | "runtime_summarizer" | "error_classifier" | "task_classifier";
 
 export interface LlmRoleBindingConfig {
   role: LlmRoleConfig;
@@ -280,7 +280,7 @@ export const dispatcherConfigSchema = {
             additionalProperties: false,
             required: ["role", "poolId"],
             properties: {
-              role: { enum: ["command_parser", "config_assistant", "runtime_summarizer", "error_classifier"] },
+              role: { enum: ["command_parser", "config_assistant", "runtime_summarizer", "error_classifier", "task_classifier"] },
               poolId: { type: "string", minLength: 1 },
             },
           },

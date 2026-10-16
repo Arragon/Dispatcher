@@ -63,6 +63,11 @@ export class PublicationService {
     const record = this.db.getEntity<JsonValue>("task-publication",id) as unknown as PublicationRecord | undefined;
     if (!record || record.owner !== owner) throw new PublicationError("PUBLICATION_NOT_FOUND",404,"Publication not found"); return record;
   }
+  private assertCurrentDraft(record:PublicationRecord):void {
+    const identity=contentHash({owner:record.owner,clientDraftId:record.draft.clientDraftId,inputHash:record.preview.inputHash});
+    const binding=this.db.getEntity<JsonValue>("publication-draft",identity) as {publicationId:string}|undefined;
+    if(binding?.publicationId!==record.preview.publicationId)throw new PublicationError("STALE_REVIEW",409,"A newer review superseded this draft publication");
+  }
   async preview(owner: string, draft: PublishDraftV1): Promise<PublicationPreview> {
     if (!draft.description.trim()) throw new PublicationError("INVALID_DRAFT",400,"Task description must not be blank");
     for (const [values,max] of [[draft.acceptanceCriteria,8000],[draft.referenceLinks??[],2000],[draft.scopePaths??[],4000]] as const) if (Array.from(values.join("\n")).length > max) throw new PublicationError("INVALID_DRAFT",400,"Draft field exceeds its length limit");
@@ -126,6 +131,7 @@ export class PublicationService {
     if(input.confirmation?.accepted!==true)throw new PublicationError("CONFIRMATION_REQUIRED",400,"Review and confirm the publication");
     if(input.revision!==r.preview.revision||input.reviewHash!==r.preview.confirmation.reviewHash)throw new PublicationError("STALE_REVIEW",409,"Review revision changed");
     if(r.receipt){this.db.createEntityIfAbsent("operation-receipt",receiptId,json({requestHash,publicationId:id}));return r.receipt;}
+    this.assertCurrentDraft(r);
     if(r.selection?.routingDecision?.confirmation.required&&input.confirmation?.routingAccepted!==true)throw new PublicationError("ROUTING_CONFIRMATION_REQUIRED",400,"Review and approve the automatic model routing separately");
     if(this.now().getTime()>=Date.parse(r.preview.expiresAt))throw new PublicationError("PREVIEW_EXPIRED",409,"Preview expired; review again");
     if(!r.preview.canCommit)throw new PublicationError("PRECHECK_BLOCKED",409,"Resolve blocked preflight checks");
@@ -137,6 +143,7 @@ export class PublicationService {
     }
     const receipt=this.db.transaction(()=>{
       r=this.record(owner,id);if(r.receipt)return r.receipt;
+      this.assertCurrentDraft(r);
       if(this.now().getTime()>=Date.parse(r.preview.expiresAt))throw new PublicationError("PREVIEW_EXPIRED",409,"Preview expired during preflight");
       if(this.config.current().revision!==r.configRevision)throw new PublicationError("SELECTION_CHANGED",409,"Configuration changed during preflight");
       if(r.selection?.routingDecision){

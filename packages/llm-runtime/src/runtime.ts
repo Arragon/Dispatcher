@@ -10,6 +10,7 @@ import {
   type LlmRequest,
   type LlmResponse,
   type LlmRole,
+  type LlmCallAttempt,
   type LlmRuntimeState,
 } from "./contracts.js";
 import { createProtocolAdapter, type FetchLike } from "./protocols.js";
@@ -75,6 +76,16 @@ function healthStatus(error: LlmRuntimeError): LlmHealthStatus {
     case "TIMEOUT": return "PROVIDER_DOWN";
     default: return "DEGRADED";
   }
+}
+
+function abortable<T>(operation:Promise<T>,signal?:AbortSignal):Promise<T> {
+  if(!signal)return operation;
+  return new Promise((resolve,reject)=>{
+    const aborted=()=>reject(new LlmRuntimeError("TIMEOUT","LLM invocation deadline or cancellation reached",false,false));
+    signal.addEventListener("abort",aborted,{once:true});
+    operation.then(resolve,reject).finally(()=>signal.removeEventListener("abort",aborted));
+    if(signal.aborted)aborted();
+  });
 }
 
 export class LlmRuntime {
@@ -190,35 +201,46 @@ export class LlmRuntime {
     return structuredClone(this.state);
   }
 
+  selectionRevision(role:LlmRole):number{return this.selectionVersions.get(role)??0;}
+
   async invoke(role: LlmRole, request: LlmRequest, signal?: AbortSignal): Promise<LlmResponse> {
+    const attempts:LlmCallAttempt[]=[];
     const version=this.selectionVersions.get(role)??0;
     let lastError: LlmRuntimeError | undefined;
     for (const profile of this.resolveProfiles(role)) {
+      if(signal?.aborted)break;
       if (this.inCooldown(profile.id)) continue;
       const endpoint = this.configuration.endpoints.find((entry) => entry.id === profile.endpointId);
       if (!endpoint) continue;
       const adapter = createProtocolAdapter(endpoint.protocol, this.fetcher);
+      const startedAt=new Date().toISOString();
       try {
-        const credential = await this.resolveSecret(endpoint.credentialRef);
+        const credential = await abortable(this.resolveSecret(endpoint.credentialRef),signal);
+        if(signal?.aborted)throw new LlmRuntimeError("TIMEOUT","LLM invocation deadline reached",false,false);
         this.calls += 1;
         const context = { endpoint, profile, credential, timeoutMs: this.options.timeoutMs ?? 15_000, ...(signal ? { signal } : {}) };
-        const response = await adapter.invoke(request, context);
+        const {jsonSchema,...textRequest}=request;
+        const qualifiedRequest=jsonSchema&&request.structuredOutputMode==="preferred"&&!adapter.capabilities.structuredOutput?textRequest:request;
+        const response = await abortable(adapter.invoke(qualifiedRequest, context),signal);
+        attempts.push({profileId:profile.id,endpointId:endpoint.id,model:profile.model,protocol:endpoint.protocol,startedAt,completedAt:new Date().toISOString(),outcome:"succeeded",usage:response.usage,...(response.providerRequestId?{providerRequestId:response.providerRequestId}:{})});
         if((this.selectionVersions.get(role)??0)===version)this.state.activeProfileByRole[role] = profile.id;
         this.state.healthByProfile[profile.id] = { profileId: profile.id, status: "HEALTHY", checkedAt: new Date().toISOString(), source: "request", capabilities: adapter.capabilities };
         delete this.state.circuits[profile.id];
         this.state.mode = "ACTIVE";
         this.persist();
-        return response;
+        return {...response,provenance:{role,profileId:profile.id,model:profile.model,attempts}};
       } catch (error) {
         lastError = error instanceof LlmRuntimeError ? error : new LlmRuntimeError("NETWORK", "LLM invocation failed", true, true, undefined, { cause: error });
+        attempts.push({profileId:profile.id,endpointId:endpoint.id,model:profile.model,protocol:endpoint.protocol,startedAt,completedAt:new Date().toISOString(),outcome:"failed",errorCode:lastError.code,...(lastError.usage?{usage:lastError.usage}:{}),...(lastError.providerRequestId?{providerRequestId:lastError.providerRequestId}:{})});
         this.state.healthByProfile[profile.id] = { profileId: profile.id, status: healthStatus(lastError), checkedAt: new Date().toISOString(), source: "request", reason: lastError.code, ...(lastError.retryAfterMs === undefined ? {} : { retryAfterMs: lastError.retryAfterMs }), capabilities: adapter.capabilities };
         this.recordFailure(profile.id, lastError);
-        if (!lastError.fallbackAllowed) break;
+        if (signal?.aborted||!lastError.fallbackAllowed) break;
       }
     }
     this.state.mode = "DEGRADED_NO_LLM";
     this.persist();
-    throw new LlmRuntimeError("NO_AVAILABLE_PROFILE", "No Internal LLM profile is currently available", true, false, lastError?.retryAfterMs, { cause: lastError });
+    const error=new LlmRuntimeError(signal?.aborted?"TIMEOUT":"NO_AVAILABLE_PROFILE", "No Internal LLM profile is currently available within the invocation deadline", true, false, lastError?.retryAfterMs, { cause: lastError });
+    error.provenance={role,attempts};throw error;
   }
 
   private lookup(profileId: string): { profile: LlmProfile; endpoint: LlmEndpoint } {

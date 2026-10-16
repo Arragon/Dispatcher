@@ -29,6 +29,14 @@ it("reviews an automatic decision separately and preserves the exact payload acr
   const button=await screen.findByRole("button",{name:"确认并启动执行"});expect((button as HTMLButtonElement).disabled).toBe(true);await userEvent.click(screen.getByLabelText("确认本次自动路由选择"));await userEvent.click(button);await screen.findByRole("link",{name:"查看已创建任务"});
   expect(posts[0]?.body.execution).toMatchObject({selectionMode:"policy-auto",profileId:"codex",allowUnconfirmedModelAccess:true});expect(posts[0]?.body.execution).not.toHaveProperty("nativeModelId");expect(posts[1]?.body).toMatchObject({confirmation:{accepted:true,routingAccepted:true}});
 });
+it("sends trial text to the classifier only after an explicit semantic trial action",async()=>{
+  const {default:PoliciesPage}=await import("../src/PoliciesPage.js"),posts:Record<string,unknown>[]=[];
+  const policy={enabled:true,requireConfirmation:true,classificationMode:"hybrid",taskTypes:[],rules:[]};
+  vi.spyOn(globalThis,"fetch").mockImplementation(async(_input,init)=>{if(init?.method==="POST"){posts.push(JSON.parse(String(init.body)));return new Response(JSON.stringify({source:"applied",decision:{id:"trial",classification:{source:"keyword",keyword:{candidates:[],evidence:[]}},ruleResult:{ruleIds:[],excluded:[]},confirmation:{mode:"pending"},policyVersion:"v1"}}));}return new Response(JSON.stringify({...config,config:{...config.config,policies:{highRiskRequiresConfirmation:true,rawShellDefault:"deny",modelRouting:policy}}}));});
+  mount(<PoliciesPage/>,"/policies");await screen.findByRole("heading",{name:"路由试算"});await userEvent.selectOptions(screen.getByLabelText("试算项目"),"repo");await userEvent.selectOptions(screen.getByLabelText("试算账号"),"codex");await userEvent.type(screen.getByLabelText("示例任务"),"repair controls");expect(posts).toHaveLength(0);
+  await userEvent.click(screen.getByRole("button",{name:"运行路由试算"}));expect(posts[0]).toMatchObject({semantic:false});
+  await userEvent.click(screen.getByLabelText("语义试算：将示例标题和任务发送给内部分类模型"));expect(posts).toHaveLength(1);await userEvent.click(screen.getByRole("button",{name:"发送到内部模型并试算"}));expect(posts[1]).toMatchObject({semantic:true});
+});
 it("keeps publication drafts across reloads without creating tasks or invoking a model", async () => {
   const fetchMock = vi.spyOn(globalThis,"fetch").mockResolvedValue(new Response(JSON.stringify(config)));
   const first = mount(<PublishPage/>);

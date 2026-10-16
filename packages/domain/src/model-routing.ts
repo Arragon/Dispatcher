@@ -19,10 +19,15 @@ export interface SemanticClassification {
   status:"matched"|"ambiguous"|"unclassified";primaryType:string|null;candidates:string[];
   evidence:Array<{field:"title"|"prompt";quote:string}>;explanation:string;
 }
+export interface TaskClassificationAnalysis {
+  id:string;inputHash:string;promptVersion:string;typeVersion:string;roleVersion:string;startedAt:string;completedAt:string;
+  result?:SemanticClassification;failure?:{code:string;message:string};
+  provenance?:{role:string;profileId?:string;model?:string;attempts:Array<{profileId:string;endpointId:string;model:string;protocol:string;startedAt:string;completedAt:string;outcome:"succeeded"|"failed";errorCode?:string;usage?:{inputTokens?:number;outputTokens?:number};providerRequestId?:string}>};
+}
 export interface ModelRoutingDecision {
   version:1;id:string;actorId:string;clientDraftId:string;inputHash:string;repositoryId:string;profileId:string;
   configRevision:number;policyVersion:string;typeVersion:string;ruleVersions:Record<string,string>;
-  classification:{source:"keyword"|"semantic"|"hybrid"|"user";keyword:TaskClassification;semantic?:SemanticClassification;taskTypeId?:string;failure?:{code:string;message:string};degraded?:boolean};
+  classification:{source:"keyword"|"semantic"|"hybrid"|"user";keyword:TaskClassification;semantic?:SemanticClassification;analysis?:TaskClassificationAnalysis;taskTypeId?:string;failure?:{code:string;message:string};degraded?:boolean};
   ruleResult:RoutingRuleResult;catalog?:AccountModelCatalog;
   target?:{modelId:string;nativeParameters:Record<string,NativeParameter>};
   status:"ready"|"needs-input";error?:{code:string;message:string};

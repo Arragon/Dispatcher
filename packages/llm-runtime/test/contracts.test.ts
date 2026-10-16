@@ -123,6 +123,7 @@ describe("LLM runtime", () => {
     runtime.configure(configuration());
     const response = await runtime.invoke("command_parser", { messages: [{ role: "user", content: "status" }] });
     expect(response.text).toBe("backup-ok");
+    expect(response.provenance).toMatchObject({role:"command_parser",profileId:"backup",model:"model-b",attempts:[{profileId:"primary",outcome:"failed",errorCode:"PROVIDER_ERROR"},{profileId:"backup",outcome:"succeeded"}]});
     expect(runtime.snapshot().state).toMatchObject({ mode: "ACTIVE", activeProfileByRole: { command_parser: "backup" } });
     expect(runtime.snapshot().state.circuits.primary?.cooldownUntil).toBeDefined();
     const restarted = new LlmRuntime(database, async () => "secret-value", fetcher);

@@ -246,8 +246,14 @@ a worktree; draft trials cannot authorize execution. Commit and startup refresh
 the native catalog against the reviewed decision without reclassifying or selecting
 a substitute. Automatic confirmation is separate from task execution approval;
 the Run records its final approval facts. Native-default reasoning omits the
-parameter instead of copying a catalog default. Hybrid classification remains
-blocked until the optional tool-free classifier is configured and qualified.
+parameter instead of copying a catalog default. Hybrid classification uses an
+optional, explicitly bound `task_classifier` role with no tools. Controller deduplicates
+raw-input/type/prompt/role-version analyses and cancels superseded work; all pool
+attempts share one 20-second deadline. Exact type/evidence validation and the
+configured failure policy precede pure rule selection. Call-local provenance and
+observed usage survive fallback independently of mutable role preferences. Trials
+default to keywords; semantic trials require an explicit action. Reanalysis creates
+new evidence and supersedes the old publication review without changing a Run.
 
 Persisted ACTIVE native sessions are not physical process evidence after a
 Controller restart. Interrupted publication starts and detached active executions

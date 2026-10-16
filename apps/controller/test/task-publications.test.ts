@@ -23,9 +23,10 @@ async function setup() {
   const starts: Array<Parameters<CodexBackend["start"]>[0]> = [];
   const cliStarts: CliStartInput[] = [];
   const control = { failStart: false, completed: false, modelId: "catalog-model", authenticated:true };
+  const classificationRequests:Record<string,unknown>[]=[];
   const backend: CodexBackend = { start(input) { if(control.failStart) throw new Error("spawn fixture ENOENT"); starts.push(input); writeFileSync(join(input.workspacePath,"result.txt"),"completed locally\n"); return {status:()=>control.completed?"completed":"running",cancel:async()=>undefined,result:async()=>({state:"completed",summary:"implemented",providerSessionId:"native-fixture-thread",events:[]})}; } };
   const clock = { now: new Date() };
-  const make = async () => { const s = new ControllerService({ dataDirectory: join(directory,"data"), ownerToken: "publication-test-owner", withRunner: true, codexBackendFactory: () => backend, cliBackendFactory: () => ({start(input) { cliStarts.push(input); writeFileSync(join(input.workspacePath,"result.txt"),"completed locally\n"); return {status:()=>"completed",cancel:async()=>undefined,result:async()=>({state:"completed",summary:"implemented",providerSessionId:"native-cli-thread",events:[]})}; }}), codexNativeReader: async input => input.method==="account/read"?{account:control.authenticated?{type:"chatgpt",email:"fixture@example.invalid"}:null,requiresOpenaiAuth:true}:{data:[{model:control.modelId,displayName:"Catalog model",hidden:false,isDefault:true,defaultReasoningEffort:"medium",supportedReasoningEfforts:[{reasoningEffort:"low"},{reasoningEffort:"medium"}]}],nextCursor:null}, clock: () => clock.now, secretStore: { test: async () => false } as unknown as SecretStore }); f.services.push(s); await s.start({listen:false}); return s; };
+  const make = async () => { const s = new ControllerService({ dataDirectory: join(directory,"data"), ownerToken: "publication-test-owner", withRunner: true, llmFetch:async(_input,init)=>{classificationRequests.push(JSON.parse(String(init?.body)));return new Response(JSON.stringify({choices:[{message:{content:JSON.stringify({status:"matched",primaryType:"fix",candidates:["fix"],evidence:[{field:"title",quote:"修复"}],explanation:"修复任务"})}}],usage:{prompt_tokens:10,completion_tokens:5}}));}, codexBackendFactory: () => backend, cliBackendFactory: () => ({start(input) { cliStarts.push(input); writeFileSync(join(input.workspacePath,"result.txt"),"completed locally\n"); return {status:()=>"completed",cancel:async()=>undefined,result:async()=>({state:"completed",summary:"implemented",providerSessionId:"native-cli-thread",events:[]})}; }}), codexNativeReader: async input => input.method==="account/read"?{account:control.authenticated?{type:"chatgpt",email:"fixture@example.invalid"}:null,requiresOpenaiAuth:true}:{data:[{model:control.modelId,displayName:"Catalog model",hidden:false,isDefault:true,defaultReasoningEffort:"medium",supportedReasoningEfforts:[{reasoningEffort:"low"},{reasoningEffort:"medium"}]}],nextCursor:null}, clock: () => clock.now, secretStore: { test: async (reference:string) => reference==="secret://llm/classifier",resolve:async()=>"fixture-secret" } as unknown as SecretStore }); f.services.push(s); await s.start({listen:false}); return s; };
   const service = await make();
   const config = service.configuration.current().config as DispatcherConfig;
   config.agentProfiles = [{id:"codex-local",alias:"Local",provider:"codex",runnerId:"local",settings:{codexHome:join(directory,"native"),model:"profile-default"}}];
@@ -34,7 +35,7 @@ async function setup() {
   const draft = { schemaVersion:1, clientDraftId:"draft-1", description:"\n完整正文  😀\r\n保持原样\n",projectId:"local:repo",repositoryId:"repo",acceptanceCriteria:["works"],scopePaths:["."],verificationCommandIds:["check"],startMode:"create-only",execution:{selectionMode:"manual",selectionType:"native-default"},delivery:{type:"none"} };
   const preview = async (payload: unknown = draft, s = service) => s.app.inject({method:"POST",url:"/api/task-publications/preview",headers:OWNER,payload});
   const commit = (p: {publicationId:string;revision:number;confirmation:{reviewHash:string}}, key="key-1", s=service, extra={}) => s.app.inject({method:"POST",url:`/api/task-publications/${p.publicationId}/commit`,headers:{...OWNER,"idempotency-key":key},payload:{revision:p.revision,reviewHash:p.confirmation.reviewHash,confirmation:{accepted:true},...extra}});
-  return {service,root,clock,make,draft,preview,commit,starts,cliStarts,control};
+  return {service,root,clock,make,draft,preview,commit,starts,cliStarts,control,classificationRequests};
 }
 describe("task publication receipts", () => {
   async function policyFixture() {
@@ -83,6 +84,20 @@ describe("task publication receipts", () => {
     const deferred=(await f.preview({...f.autoDraft,clientDraftId:"deferred-auto",startMode:"create-only"})).json();expect(deferred.routingDecision).toBeUndefined();
     const task=(await f.commit(deferred,"deferred")).json();
     const bypass=await f.service.app.inject({headers:OWNER,method:"POST",url:`/api/tasks/${task.taskId}/dispatch`,payload:{profileId:"codex-local"}});expect(bypass.json().code).toBe("ROUTING_REVIEW_REQUIRED");expect(f.starts).toHaveLength(1);
+  });
+  it("classifies hybrid publication once, keeps trials keyword-only by default, and invalidates superseded reanalysis reviews",async()=>{
+    const f=await policyFixture(),config=f.service.configuration.current().config;
+    config.policies.modelRouting!.classificationMode="hybrid";
+    config.internalLlm={configured:true,endpoints:[{id:"llm",protocol:"openai-chat",baseUrl:"http://127.0.0.1:9999/v1",credentialRef:"secret://llm/classifier"}],profiles:[{id:"classifier",endpointId:"llm",alias:"Classifier",model:"classifier-model",enabled:true}],pools:[{id:"pool",profileIds:["classifier"]}],roleBindings:[{role:"task_classifier",poolId:"pool"}]};
+    const plan=f.service.configuration.buildPlan(config,"owner","web");await f.service.configuration.applyPlan(plan.id,{confirmed:true});
+    const trial=(await f.service.app.inject({headers:OWNER,method:"POST",url:"/api/model-routing/test",payload:{draft:f.autoDraft}})).json();expect(trial.decision.classification.source).toBe("keyword");expect(f.classificationRequests).toHaveLength(0);
+    const semanticTrial=(await f.service.app.inject({headers:OWNER,method:"POST",url:"/api/model-routing/test",payload:{draft:f.autoDraft,semantic:true}})).json();expect(semanticTrial.decision.classification.source).toBe("hybrid");expect(f.classificationRequests).toHaveLength(1);
+    const p=(await f.preview(f.autoDraft)).json();expect(p.canCommit).toBe(true);expect(p.routingDecision.classification).toMatchObject({source:"hybrid",analysis:{provenance:{profileId:"classifier",model:"classifier-model"}}});
+    expect((await f.preview(f.autoDraft)).json().publicationId).toBe(p.publicationId);expect(f.classificationRequests).toHaveLength(1);
+    await f.service.app.inject({headers:OWNER,method:"POST",url:"/api/model-routing/preview?reanalyze=true",payload:f.autoDraft});expect(f.classificationRequests).toHaveLength(2);
+    const updated=(await f.preview(f.autoDraft)).json();expect(updated.publicationId).not.toBe(p.publicationId);
+    expect((await f.commit(p,"old",f.service,{confirmation:{accepted:true,routingAccepted:true}})).json().code).toBe("STALE_REVIEW");
+    const receipt=(await f.commit(updated,"new",f.service,{confirmation:{accepted:true,routingAccepted:true}})).json();expect(receipt.state).toBe("STARTED");expect(f.classificationRequests).toHaveLength(2);expect(f.starts).toHaveLength(1);
   });
   it("blocks native-default OpenCode publication when the installed account schema is incompatible", async () => {
     const f = await setup(), data = join(f.root,"native-data"); mkdirSync(data); mkdirSync(join(data,"opencode"));

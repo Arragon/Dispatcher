@@ -49,8 +49,8 @@ Files: apps/controller/src/model-routing.ts, service.ts, task-publications.ts; d
 ### 3. Optional semantic classification
 
 Files: llm-runtime contracts/runtime, config roles, Controller model-routing, web internal roles and tests.
-- [ ] Add task_classifier only when requested, strict type/evidence schema, tool-free bounded input, 20s total cancellation, <=700 output tokens, 16000 Unicode input characters.
-- [ ] Per-call provenance/usage/fallback trace, keyed deduplication and stored classification; native refresh never re-bills classifier. Test complete hybrid arbitration matrix and configured unique-keyword downgrade.
+- [x] Add task_classifier only when requested, strict type/evidence schema, tool-free bounded input, 20s total cancellation, <=700 output tokens, 16000 Unicode input characters.
+- [x] Per-call provenance/usage/fallback trace, keyed deduplication and stored classification; native refresh never re-bills classifier. Test complete hybrid arbitration matrix and configured unique-keyword downgrade.
 - [ ] Full gate and controlled endpoint evidence; commit/check quota.
 
 ### 4. Remote native execution
@@ -75,3 +75,6 @@ Files: protocol commands, runner command handlers/runtime, Controller remote ada
 - Unit 1: opt-in schema, bounded references/keywords and deterministic keyword/rule evaluation implemented. Domain/config/scheduler builds, 40 config+scheduler regression tests, lint and diff check passed. Official remaining74%; no external inference used.
 
 - Unit 2 implementation checkpoint: publication decision/approval/catalog fences and ConfigPlan-backed policy UI/trials are implemented; full gate passed50 files/388 tests. Official remaining73%. Real Cursor policy execution is running in a disposable repository; native completion/browser evidence and deferred-task fresh review remain tracked, not claimed complete.
+
+- Unit 2 native/browser evidence: Cursor gpt-5.4-nano-low, Run c7273401-e24d-41ef-bfb0-a8116ac3cc71, native session 2b2d3d4c-b9ee-409f-8f5b-139baaf2ef71 reached COMPLETE/PASSED and Task REVIEW in disposable repository. result.txt exact bytes dispatcher-publication-ok plus newline; native reasoning parameter omitted. Browser4178 displayed the real catalog-backed keyword trial, selected rule and native-default omission. Deferred-task fresh routing review remains the next Policy follow-up.
+- Unit 3: optional task_classifier, strict type/evidence validation, complete hybrid arbitration, per-call fallback provenance/observed usage, shared deadline/cancellation, analysis deduplication and explicit reanalysis implemented. Full gate passed52 files/403 tests; official remaining72%. Controlled injected endpoint only for classifier tests; real paid semantic-provider acceptance is not claimed.

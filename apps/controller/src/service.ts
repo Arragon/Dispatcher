@@ -1,3 +1,4 @@
+import {TaskClassifier} from "./task-classifier.js";
 import { ModelRoutingService } from "./model-routing.js";
 import type { WorkspaceHandle } from "@dispatcher/workspace";
 import { PublicationService, PublicationError, contentHash, assertPublicationScope, type PublicationRecord } from "./task-publications.js";
@@ -608,7 +609,7 @@ export class ControllerService {
     });
     if (worker.enabled) modules.push({ name: "background-worker", start: () => this.background.start(), stop: () => this.background.stop() });
     this.lifecycle = new LifecycleManager(modules);
-    this.modelRouting = new ModelRoutingService(this.database,()=>this.now());
+    this.modelRouting = new ModelRoutingService(this.database,()=>this.now(),new TaskClassifier(this.database,this.llm,()=>this.now()));
     this.publications = new PublicationService(this.database, this.configuration, this.tasks, this.workspaces, () => this.now(), {
       prepare: (draft,repository,workspacePath,context) => this.preparePublication(draft,repository,workspacePath,context),
       dispatch: async (record,taskId) => (await this.dispatchTask(taskId,{profileId:record.selection!.profileId,repositoryId:record.repository!.id},`publication:${record.preview.publicationId}`,record)).run,
@@ -1537,7 +1538,8 @@ export class ControllerService {
       if(context.reviewed){
         if(!context.reviewed.routingDecision)throw new PublicationError("ROUTING_REVIEW_REQUIRED",409,"Routing decision is required");
         routingDecision=context.reviewed.routingDecision;this.modelRouting.revalidate(context.owner,draft,snapshot.revision,catalog,routingDecision);
-      }else routingDecision=this.modelRouting.preview(context.owner,draft,snapshot.config,snapshot.revision,catalog);
+      }else routingDecision=await this.modelRouting.preview(context.owner,draft,snapshot.config,snapshot.revision,catalog);
+      if(this.configuration.current().revision!==snapshot.revision)throw new PublicationError("ROUTING_DECISION_STALE",409,"Configuration changed during task classification");
       if(routingDecision.status!=="ready")throw new PublicationError(routingDecision.error!.code,409,routingDecision.error!.message,routingDecision);
     }
     const explicit=automatic||draft.execution.selectionType==="explicit-model";
@@ -3007,24 +3009,28 @@ export class ControllerService {
       return this.modelCatalog(request.params.id,request.query.repositoryId,"open");
     });
     this.app.get<{Params:{id:string}}>("/api/model-routing/decisions/:id",async request=>this.modelRouting.read(this.principalFor(request).id,request.params.id));
-    this.app.post<{Body:PublishDraftV1}>("/api/model-routing/preview",{schema:{body:publishDraftSchema}},async request=>{
+    this.app.post<{Body:PublishDraftV1;Querystring:{reanalyze?:string}}>("/api/model-routing/preview",{schema:{body:publishDraftSchema}},async request=>{
       const principal=this.principalFor(request);if(!principal.roles.includes("operator"))throw new PublicationError("FORBIDDEN",403,"Operator role required");
       const snapshot=this.configuration.current();const draft=request.body;
       if(draft.execution.selectionMode!=="policy-auto")throw new PublicationError("INVALID_AUTO_SELECTION",400,"Routing preview requires automatic mode");
       const catalog=await this.modelCatalog(draft.execution.profileId??"",draft.repositoryId,"preflight");
       if(this.configuration.current().revision!==snapshot.revision)throw new PublicationError("SELECTION_CHANGED",409,"Configuration changed during routing preview");
-      return this.modelRouting.preview(principal.id,draft,snapshot.config,snapshot.revision,catalog);
+      const decision=await this.modelRouting.preview(principal.id,draft,snapshot.config,snapshot.revision,catalog,{forceAnalysis:request.query.reanalyze==="true"});
+      if(this.configuration.current().revision!==snapshot.revision)throw new PublicationError("ROUTING_DECISION_STALE",409,"Configuration changed during classification");
+      return decision;
     });
-    this.app.post<{Body:{draft:PublishDraftV1;policy?:NonNullable<DispatcherConfig["policies"]["modelRouting"]>}}>("/api/model-routing/test",{schema:{body:{type:"object",additionalProperties:false,required:["draft"],properties:{draft:publishDraftSchema,policy:dispatcherConfigSchema.properties.policies.properties.modelRouting}}}},async request=>{
+    this.app.post<{Body:{draft:PublishDraftV1;semantic?:boolean;policy?:NonNullable<DispatcherConfig["policies"]["modelRouting"]>}}>("/api/model-routing/test",{schema:{body:{type:"object",additionalProperties:false,required:["draft"],properties:{draft:publishDraftSchema,semantic:{type:"boolean"},policy:dispatcherConfigSchema.properties.policies.properties.modelRouting}}}},async request=>{
       const principal=this.principalFor(request);if(!principal.roles.includes("operator"))throw new PublicationError("FORBIDDEN",403,"Operator role required");
       const snapshot=this.configuration.current();const {draft,policy}=request.body;
       // Draft rules use the same schema/reference validation as ConfigPlan and cannot authorize a Run.
       if(policy){if(!principal.roles.includes("admin"))throw new PublicationError("FORBIDDEN",403,"Configuration editing permission required for draft policy trials");validateConfig({...snapshot.config,policies:{...snapshot.config.policies,modelRouting:policy}});}
       const catalog=await this.modelCatalog(draft.execution.profileId??"",draft.repositoryId,"preflight");
       if(this.configuration.current().revision!==snapshot.revision)throw new PublicationError("SELECTION_CHANGED",409,"Configuration changed during routing trial");
-      return {trial:true,source:policy?"draft":"applied",decision:this.modelRouting.preview(principal.id,draft,snapshot.config,snapshot.revision,catalog,{trial:true,...(policy?{policy}:{})})};
+      const decision=await this.modelRouting.preview(principal.id,draft,snapshot.config,snapshot.revision,catalog,{trial:true,keywordOnly:request.body.semantic!==true,forceSemantic:request.body.semantic===true,...(policy?{policy}:{})});
+      if(this.configuration.current().revision!==snapshot.revision)throw new PublicationError("ROUTING_DECISION_STALE",409,"Configuration changed during classification trial");
+      return {trial:true,source:policy?"draft":"applied",decision};
     });
-    this.app.get("/api/task-publications/capabilities", async () => ({ schemaVersion: 1, startModes: ["create-only","dispatch"], deliveryTypes: ["none"], projects: this.configuration.current().config.repositories.map(r => ({ id: `local:${r.id}`, repositoryId: r.id })) }));
+    this.app.get("/api/task-publications/capabilities", async () => ({ schemaVersion: 1, startModes: ["create-only","dispatch"], deliveryTypes: ["none"], selectionModes:["manual","policy-auto"], modelRouting:{classificationModes:["keyword","hybrid"],enabled:this.configuration.current().config.policies.modelRouting?.enabled===true}, projects: this.configuration.current().config.repositories.map(r => ({ id: `local:${r.id}`, repositoryId: r.id })) }));
     this.app.post<{ Body: PublishDraftV1 }>("/api/task-publications/preview", { schema: { body: publishDraftSchema } }, async request => {
       const principal = this.principalFor(request);
       if (!principal.roles.includes("operator")) throw new PublicationError("FORBIDDEN", 403, "Operator role required");
@@ -3118,7 +3124,7 @@ export class ControllerService {
       return { state: await this.llm.switchProfile(request.params.role, request.body.profileId) };
     });
     this.app.post<{Params:{role:LlmRole}}>("/api/llm/roles/:role/reset", async(request,reply)=>{
-      if(!["command_parser","config_assistant","runtime_summarizer","error_classifier"].includes(request.params.role)) return reply.code(400).send({code:"LLM_ROLE_REQUIRED"});
+      if(!["command_parser","config_assistant","runtime_summarizer","error_classifier","task_classifier"].includes(request.params.role)) return reply.code(400).send({code:"LLM_ROLE_REQUIRED"});
       return {state:this.llm.resetRole(request.params.role)};
     });
     this.app.post<{ Params: { role: LlmRole } }>("/api/llm/roles/:role/failback", async (request) => ({
