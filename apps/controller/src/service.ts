@@ -478,7 +478,8 @@ export class ControllerService {
   private readonly secureLinks: SecureDashboardLinkIssuer;
   private readonly messagingChannels = new Map<string, string>();
   private readonly agentAdapters = new Map<string, AgentAdapter>();
-  private readonly nativeProfileConfigurations = new Map<string, AgentProfileConfig>();
+  private readonly profileAdapterConfigurations = new Map<string, { profile: AgentProfileConfig; runner: { id: string; mode: string; credentialRef?: string } | undefined }>();
+  private readonly pendingProfileStarts = new Map<string, number>();
   private readonly rawWebhookBodies = new WeakMap<object, Uint8Array>();
   private readonly startedAt = Date.now();
   private readonly embeddedRunner?: EmbeddedRunner;
@@ -912,14 +913,30 @@ export class ControllerService {
   }
 
   private applyRuntimeConfiguration(config: DispatcherConfig): void {
-    const retainedNativeAdapters = new Map<string, AgentAdapter>();
-    for (const [id, previous] of this.nativeProfileConfigurations) {
+    const retainedAdapters = new Map<string, AgentAdapter>();
+    const runnerIdentity = (runnerId: string) => {
+      const runner = config.runners.find(candidate => candidate.id === runnerId);
+      return runner ? { id: runner.id, mode: runner.mode, ...(runner.credentialRef ? { credentialRef: runner.credentialRef } : {}) } : undefined;
+    };
+    const adapterConfiguration = (profile: AgentProfileConfig) => structuredClone({ profile, runner: runnerIdentity(profile.runnerId) });
+    const runs = this.database.listEntities<JsonValue>("run") as unknown as Run[];
+    const sessions = this.database.listEntities<JsonValue>("adapter-session") as unknown as AdapterSession[];
+    for (const [id, previous] of this.profileAdapterConfigurations) {
       const adapter = this.agentAdapters.get(id);
-      const next = config.agentProfiles.find((profile) => profile.id === id && profile.enabled !== false);
-      const local = next && !config.runners.some(runner => runner.id === next.runnerId && runner.mode === "remote");
-      if (adapter && (local || adapter instanceof RemoteNativeAdapter) && isDeepStrictEqual(previous, next)) retainedNativeAdapters.set(id, adapter);
-      else if ((adapter instanceof StructuredCliAdapter || adapter instanceof CodexAdapter || adapter instanceof RemoteNativeAdapter) && (adapter.hasActiveOperations()||this.database.listEntities<JsonValue>("run").some(value=>{const run=value as unknown as Run;return run.profileId===id&&!isTerminalRunState(run.state);}))) {
-        throw new ConfigPlanError("ACTIVE_AGENT_PROFILE", `Finish or cancel active harness operations before changing or removing profile ${id}`);
+      const next = config.agentProfiles.find(profile => profile.id === id && profile.enabled !== false);
+      if (adapter && next && isDeepStrictEqual(previous, adapterConfiguration(next))) {
+        retainedAdapters.set(id, adapter);
+        continue;
+      }
+      const owned = adapter instanceof StructuredCliAdapter || adapter instanceof CodexAdapter || adapter instanceof RemoteNativeAdapter;
+      const busy = (this.pendingProfileStarts.get(id) ?? 0) > 0
+        || runs.some(run => run.profileId === id && !isTerminalRunState(run.state))
+        || (owned && adapter.hasActiveOperations())
+        || sessions.some(session => session.profileId === id && (this.pendingConsoleInputs.has(session.id)
+          || session.state === "PAUSED" || (!owned && ["STARTING", "RUNNING"].includes(session.state))));
+      if (busy) throw new ConfigPlanError("ACTIVE_AGENT_PROFILE", `Finish or cancel active harness operations before changing or removing profile ${id}`);
+      if (previous.runner?.mode === "remote" && !isDeepStrictEqual(previous.runner, runnerIdentity(previous.runner.id)) && this.remoteRunnerServer?.isConnected(previous.runner.id)) {
+        throw new ConfigPlanError("RUNNER_CONNECTED", "Revoke and disconnect the Runner before changing its execution identity");
       }
     }
     this.llm.configure(llmConfiguration(config.internalLlm));
@@ -998,9 +1015,9 @@ export class ControllerService {
     }
 
     this.agentAdapters.clear();
-    for (const [id, adapter] of retainedNativeAdapters) this.agentAdapters.set(id, adapter);
-    for (const id of this.nativeProfileConfigurations.keys()) {
-      if (!retainedNativeAdapters.has(id)) this.nativeProfileConfigurations.delete(id);
+    for (const [id, adapter] of retainedAdapters) this.agentAdapters.set(id, adapter);
+    for (const id of this.profileAdapterConfigurations.keys()) {
+      if (!retainedAdapters.has(id)) this.profileAdapterConfigurations.delete(id);
     }
     const store = new DatabaseSessionStore(this.database,session=>{
       const run=this.database.getEntity<JsonValue>("run",session.runId) as unknown as Run|undefined;if(!run)return;
@@ -1009,7 +1026,7 @@ export class ControllerService {
       this.restoreLeaseAuthority(run);this.leaseAuthority.fence(run.id,run.leaseId,run.generation,"native-spawn",this.now().toISOString());
     });
     for(const profile of config.agentProfiles.filter(profile=>profile.enabled!==false&&config.runners.some(runner=>runner.id===profile.runnerId&&runner.mode==="remote"))){
-      if(retainedNativeAdapters.has(profile.id))continue;
+      if(retainedAdapters.has(profile.id))continue;
       const manifest=manifestForProvider(profile.provider);
       if(!manifest||!(profile.provider==="codex"||profile.provider==="cursor"||profile.provider==="kiro"||isNativeCliProvider(profile.provider)))continue;
       this.agentAdapters.set(profile.id,new RemoteNativeAdapter({profileId:profile.id,runnerId:profile.runnerId,manifest,
@@ -1020,12 +1037,12 @@ export class ControllerService {
         reserveStart:(run,commandHash)=>{const previous=this.database.getEntity<JsonValue>("remote-native-start",run.id) as {commandHash?:string}|undefined;if(previous&&previous.commandHash!==commandHash)throw new AdapterContractError("EXECUTION_CONFLICT","Remote Run start is already bound to a different descriptor");this.database.saveEntity("remote-native-start",run.id,json({runId:run.id,runnerId:run.runnerId,generation:run.generation,leaseId:run.leaseId,commandHash}));},
         active:()=>this.database.listEntities<JsonValue>("run").some(value=>{const run=value as unknown as Run;return run.profileId===profile.id&&!isTerminalRunState(run.state);}),
       }));
-      this.nativeProfileConfigurations.set(profile.id,structuredClone(profile));
+      this.profileAdapterConfigurations.set(profile.id, adapterConfiguration(profile));
     }
     const enabledProfiles = config.agentProfiles.filter((profile) => profile.enabled !== false && !config.runners.some(runner => runner.id === profile.runnerId && runner.mode === "remote"));
     const resolveProviderCredential = (reference: string): Promise<string> => this.secrets.resolve(reference, { principal: "controller", purpose: "provider" });
     for (const profile of enabledProfiles) {
-      if (retainedNativeAdapters.has(profile.id)) continue;
+      if (retainedAdapters.has(profile.id)) continue;
       const adapter = createNativeProfileAdapter(profile, {
         store, resolveCredential: resolveProviderCredential,
         ...(this.options.codexBackendFactory ? { codexBackendFactory: this.options.codexBackendFactory } : {}),
@@ -1034,10 +1051,11 @@ export class ControllerService {
       });
       if (adapter) {
         this.agentAdapters.set(profile.id, adapter);
-        this.nativeProfileConfigurations.set(profile.id, structuredClone(profile));
+        this.profileAdapterConfigurations.set(profile.id, adapterConfiguration(profile));
       }
     }
     for (const profile of enabledProfiles.filter((entry) => entry.provider === "qoder")) {
+      if (retainedAdapters.has(profile.id)) continue;
       const adapterProfile: QoderProfileConfig = {
         id: profile.id,
         alias: profile.alias,
@@ -1048,6 +1066,7 @@ export class ControllerService {
       this.agentAdapters.set(profile.id, new QoderAdapter(adapterProfile, this.options.qoderBackendFactory?.(adapterProfile), store));
     }
     for (const profile of enabledProfiles.filter((entry) => entry.provider === "devin")) {
+      if (retainedAdapters.has(profile.id)) continue;
       const organizationId = stringSetting(profile.settings?.organizationId);
       if (!organizationId || !profile.credentialRef) continue;
       const adapterProfile: DevinProfileConfig = {
@@ -1061,6 +1080,7 @@ export class ControllerService {
       this.agentAdapters.set(profile.id, new DevinAdapter(adapterProfile, this.options.devinBackendFactory?.(adapterProfile), store, resolveProviderCredential, this.options.integrationFetch as typeof fetch | undefined));
     }
     for (const profile of enabledProfiles.filter((entry) => entry.provider === "workbuddy" || entry.provider === "codebuddy")) {
+      if (retainedAdapters.has(profile.id)) continue;
       const settings = profile.settings;
       const required = ["baseUrl", "healthPath", "startPath", "statusPath", "inputPath", "cancelPath"] as const;
       if (required.some((key) => !stringSetting(settings?.[key]))) continue;
@@ -1080,6 +1100,7 @@ export class ControllerService {
       this.agentAdapters.set(profile.id, new LocalServiceAdapter(adapterProfile, resolveProviderCredential, this.options.integrationFetch as typeof fetch | undefined, store));
     }
     for (const profile of enabledProfiles.filter((entry) => entry.provider === "generic-cli")) {
+      if (retainedAdapters.has(profile.id)) continue;
       const executable = stringSetting(profile.settings?.executable);
       const args = stringArraySetting(profile.settings?.args);
       if (!executable || !args) continue;
@@ -1088,6 +1109,9 @@ export class ControllerService {
         args,
         ...(profile.settings?.mode === "pty" || profile.settings?.mode === "headless" ? { mode: profile.settings.mode } : {}),
       }, store, profile.id));
+    }
+    for (const profile of enabledProfiles) {
+      if (this.agentAdapters.has(profile.id)) this.profileAdapterConfigurations.set(profile.id, adapterConfiguration(profile));
     }
   }
 
@@ -3067,8 +3091,16 @@ export class ControllerService {
       if (!this.workspaces.get(request.body.workspacePath)) return reply.code(400).send({ code: "UNMANAGED_WORKSPACE", message: "Agent runs must use a Dispatcher-managed worktree" });
       const adapter = this.agentAdapters.get(request.params.id);
       if (!adapter) return reply.code(404).send({ code: "PROFILE_NOT_FOUND" });
-      const session = await adapter.start({ runId: randomUUID(), workspacePath: request.body.workspacePath, prompt: request.body.prompt });
-      return reply.code(201).send({ session: this.sessionView(session) });
+      const profileId = request.params.id;
+      this.pendingProfileStarts.set(profileId, (this.pendingProfileStarts.get(profileId) ?? 0) + 1);
+      try {
+        const session = await adapter.start({ runId: randomUUID(), workspacePath: request.body.workspacePath, prompt: request.body.prompt });
+        return reply.code(201).send({ session: this.sessionView(session) });
+      } finally {
+        const pending = (this.pendingProfileStarts.get(profileId) ?? 1) - 1;
+        if (pending) this.pendingProfileStarts.set(profileId, pending);
+        else this.pendingProfileStarts.delete(profileId);
+      }
     });
     this.app.get<{ Params: { profileId: string; sessionId: string } }>("/api/agents/profiles/:profileId/sessions/:sessionId", async (request, reply) => {
       const storedSession = this.database.getEntity<JsonValue>("adapter-session", request.params.sessionId) as unknown as AdapterSession | undefined;

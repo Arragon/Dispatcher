@@ -79,10 +79,14 @@
 - Unix child `close` does not prove its process group exited. A tool descendant
   can ignore SIGTERM with detached stdio; retain SIGKILL escalation until the
   group has stopped. Awaited cancellation also fences profile replacement.
-- ConfigPlan apply must preserve unchanged native adapter instances: replacing
+- ConfigPlan apply must preserve unchanged adapter instances for every provider: replacing
   them drops live process handles. Reject replacement/removal while startup,
   follow-up or cancellation is pending, and keep the typed runtime rejection
   after transaction rollback so operators know to finish or cancel first.
+  Legacy SDK/HTTP starts need a Controller reservation before their first await,
+  since no session row exists until the provider responds. Bind retention to the
+  owning Runner mode/credential reference too; display labels and capacity are
+  independent. A completed native turn does not release a verifying canonical Run.
 - Grok's `--session-id` creates a new conversation; `--resume` continues one.
   A prompt starting with `-` requires the `--single=<prompt>` argv form. On
   Grok 1.0.46, `acceptEdits` and scoped Write/Edit allow rules did not approve
