@@ -34,8 +34,9 @@ export interface ConfigResponse<T = Record<string, unknown>> {
 }
 
 export interface ConfigurationPlan {id:string;risk:string;requiresConfirmation:boolean;changes:Array<{path:string}>}
-export function createConfigurationPlan<T>(baseline:Pick<ConfigResponse<T>,"revision"|"config">,proposed:T):Promise<{plan:ConfigurationPlan}>{
-  return api("/api/config/plans",{method:"POST",body:JSON.stringify({baseRevision:baseline.revision,edits:configurationEdits(baseline.config,proposed)})});
+export function rememberConfigurationPlan(id:string):void{try{sessionStorage.setItem("dispatcher-config-plan:all",id);}catch{/* Plan state remains authoritative on Controller. */}}
+export async function createConfigurationPlan<T>(baseline:Pick<ConfigResponse<T>,"revision"|"config">,proposed:T):Promise<{plan:ConfigurationPlan}>{
+  const result=await api<{plan:ConfigurationPlan}>("/api/config/plans",{method:"POST",body:JSON.stringify({baseRevision:baseline.revision,edits:configurationEdits(baseline.config,proposed)})});rememberConfigurationPlan(result.plan.id);return result;
 }
 
 export const AUTH_REQUIRED_EVENT = "dispatcher:auth-required";

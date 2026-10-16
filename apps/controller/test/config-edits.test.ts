@@ -26,12 +26,22 @@ it("adds and removes identified entities and validates the final complete config
   expect(applyConfigEdits(c,[{op:"add",path:"/agentProfiles/-",value:{id:"second",alias:"Second",provider:"codex",runnerId:"local",settings:{codexHome:"/new"}}}]).agentProfiles).toHaveLength(2);
 });
 
+it("requires explicit account replacement instead of silently renaming persisted account identity",()=>{
+ const c=config();c.agentProfiles[0]!.provider="cursor";c.agentProfiles[0]!.settings={model:"native"};for(const edit of [
+ {op:"replace",path:"/agentProfiles/0/id",entityId:"account",value:"renamed"},
+ {op:"replace",path:"/agentProfiles/0",entityId:"account",value:{...c.agentProfiles[0],id:"renamed"}},
+ {op:"replace",path:"/agentProfiles",value:[{...c.agentProfiles[0],id:"renamed"}]},
+ ])expect(()=>applyConfigEdits(c,[edit])).toThrow(expect.objectContaining({code:"CONFIG_ACCOUNT_ID_IMMUTABLE"}));
+ expect(applyConfigEdits(c,[{op:"remove",path:"/agentProfiles/0",entityId:"account"},{op:"add",path:"/agentProfiles/-",value:{...c.agentProfiles[0],id:"new-account"}}]).agentProfiles[0]!.id).toBe("new-account");
+});
+
 it("builds revision-bound console edits through ConfigPlan and recovers safe plan status after reload",async()=>{
   const {mkdtempSync,rmSync}=await import("node:fs"),{tmpdir}=await import("node:os"),{join}=await import("node:path"),{ControllerService}=await import("../src/service.js");const directory=mkdtempSync(join(tmpdir(),"console-edits-"));
   const service=new ControllerService({dataDirectory:directory,ownerToken:"config-console-owner",secretStore:{test:async()=>false} as never});const headers={authorization:"Bearer config-console-owner"};
   try{
     service.configuration.applyPlan(service.configuration.buildPlan(config(),"test","cli").id,{confirmed:true});await service.start({listen:false});
     const read=(await service.app.inject({headers,url:"/api/config?view=console"})).json();expect(JSON.stringify(read)).not.toContain("/private/");expect(read.protectedPaths).toContain("/agentProfiles/0/settings/codexHome");
+    expect((await service.app.inject({headers,method:"POST",url:"/api/agents/profiles/account/enabled",payload:{enabled:false,baseRevision:read.revision-1}})).statusCode).toBe(409);expect(service.configuration.current().config.agentProfiles[0]!.enabled).toBeUndefined();
     expect(JSON.stringify((await service.app.inject({headers,url:"/api/setup?view=console"})).json())).not.toContain("/private/");
     const preview=await service.app.inject({headers,method:"POST",url:"/api/agents/codex/profiles",payload:{id:"new",alias:"New",codexHome:"/private/new",baseRevision:read.revision,previewOnly:true}});expect(preview.statusCode).toBe(201);expect(JSON.stringify(preview.json())).not.toContain("/private/");
     const edit={op:"replace",path:"/agentProfiles/0/alias",value:"Safe alias",entityId:"account"};

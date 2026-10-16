@@ -48,10 +48,13 @@ describe("Dashboard shell", () => {
     expect(await screen.findByText(/Authentication remains unverified/)).toBeTruthy();
     expect(screen.queryByText(/health check passed/)).toBeNull();
   });
-  it("shows a reserved account but excludes it from dispatch and enables it through the profile API", async () => {
+  it("reviews a revision-bound configuration plan before changing account dispatch", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       if (input === "/api/adapters/manifests") return new Response(JSON.stringify({ manifests: [{ id: "codex", displayName: "Codex", platforms: ["darwin"], configSchema: { type: "object", properties: {} }, uiSchema: {}, secretFields: [], backends: [], capabilities: {} }] }));
       if (input === "/api/agents/profiles") return new Response(JSON.stringify({ profiles: [{ id: "kite", alias: "kite", provider: "codex", runnerId: "local", state: "DISABLED" }], sessions: [] }));
+      if(input==="/api/config?view=console")return new Response(JSON.stringify({revision:3,config:{agentProfiles:[{id:"kite",enabled:false}]}}));
+      if(input==="/api/config/plans")return new Response(JSON.stringify({plan:{id:"activation",risk:"sensitive",requiresConfirmation:true,changes:[{path:"agentProfiles.kite.enabled"}]}}));
+      if(String(input).includes("/apply"))return new Response(JSON.stringify({revision:4}));
       return new Response(JSON.stringify({ matrix: [] }));
     });
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -60,7 +63,9 @@ describe("Dashboard shell", () => {
     expect(screen.queryByRole("option", { name: "kite (codex)" })).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: "kite 详情" }));
     await userEvent.click(screen.getByRole("button", { name: "Enable dispatch for kite" }));
-    expect(fetchMock.mock.calls).toContainEqual(["/api/agents/profiles/kite/enabled", expect.objectContaining({ method: "POST", body: JSON.stringify({ enabled: true }) })]);
+    await screen.findByRole("heading",{name:"审阅派发状态变更"});expect(fetchMock.mock.calls.some(([path])=>String(path).includes("/apply")||String(path).endsWith("/enabled"))).toBe(false);
+    const planned=fetchMock.mock.calls.find(([path])=>path==="/api/config/plans");expect(JSON.parse(String(planned?.[1]?.body))).toEqual({baseRevision:3,edits:[{op:"replace",path:"/agentProfiles/0/enabled",entityId:"kite",value:true}]});
+    await userEvent.click(screen.getByRole("button",{name:"确认并应用派发变更"}));expect(fetchMock.mock.calls).toContainEqual(["/api/config/plans/activation/apply?view=console",expect.objectContaining({method:"POST",body:JSON.stringify({confirmed:true})})]);
   });
   it("exposes every M1 navigation surface", () => {
     render(<MemoryRouter><Navigation /></MemoryRouter>);

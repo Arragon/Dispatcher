@@ -495,6 +495,12 @@
   without adding a default to form data. Otherwise a harmless edit can appear to
   disable an account or manufacture an untouched configuration change.
 
+- Preserve only reviewed configuration plan IDs in browser recovery state;
+  re-read canonical plan lifecycle and the applied revision before restoring
+  actions. An applied plan with later configuration changes is historical,
+  not an available rollback target. Ordinary account edits preserve stable IDs;
+  removal/creation stays explicit so historical ownership is not silently renamed.
+
 - Account installation, native flag compatibility and login are independent
   evidence. Cursor's login-success/unable-to-fetch-details output is not a
   qualified identity. Qoder CN version/help/status probes must all use the

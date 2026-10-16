@@ -9,7 +9,7 @@ import { SecureInput } from "./App.js";
 import { Drawer } from "./Drawer.js";
 import { stateLabel } from "./task-view.js";
 import { EmptyState, Icon, Notice, Tabs, ProviderMark } from "./ui.js";
-import { api, refreshConfiguration, subscribeToEvents } from "./api.js";
+import { api, createConfigurationPlan,rememberConfigurationPlan,refreshConfiguration, subscribeToEvents,type ConfigResponse } from "./api.js";
 import { Link } from "react-router-dom";
 const SettingsPage=lazy(()=>import("./SettingsPage.js"));
 interface ProfilePlan {id:string;risk:string;requiresConfirmation:boolean;changes:Array<{path:string}>}
@@ -63,6 +63,7 @@ const validator = customizeValidator({ AjvClass: Ajv2020 });
 export default function AgentsPage(): React.JSX.Element {
   const client=useQueryClient();
   const [plan,setPlan]=useState<ProfilePlan>();
+  const [activation,setActivation]=useState<{plan:ProfilePlan;profileId:string;alias:string;enabled:boolean}>();
   const [editor,setEditor]=useState(false);
   const query = useQuery({ queryKey: ["adapter-manifests"], queryFn: () => api<{ manifests: Manifest[] }>("/api/adapters/manifests"), retry: false });
   const profiles = useQuery({ queryKey: ["agent-profiles"], queryFn: () => api<{ revision?:number; profiles: ProfileView[]; sessions: SessionView[] }>("/api/agents/profiles"), retry: false });
@@ -99,7 +100,7 @@ export default function AgentsPage(): React.JSX.Element {
     if (busy) return; setBusy(true); setPlan(undefined);
     try {
       const result=await api<{plan:ProfilePlan}>(`/api/agents/${activeManifest.id}/profiles`,{method:"POST",body:JSON.stringify({...draft,runnerId:String(draft.runnerId??"local"),previewOnly:true,baseRevision:profiles.data?.revision})});
-      setPlan(result.plan);setConfirmSave(true);setMessage("计划已生成，确认后才会保存账号。");
+      rememberConfigurationPlan(result.plan.id);setPlan(result.plan);setConfirmSave(true);setMessage("计划已生成，确认后才会保存账号。");
     } catch(error){setMessage(error instanceof Error?error.message:"账号计划生成失败");} finally{setBusy(false);}
   }
   async function applyProfile():Promise<void>{
@@ -112,11 +113,18 @@ export default function AgentsPage(): React.JSX.Element {
     setPendingProfiles((current) => new Set(current).add(profile.id));
     const enabled = profile.state === "DISABLED";
     try {
-      await api(`/api/agents/profiles/${profile.id}/enabled`, { method: "POST", body: JSON.stringify({ enabled }) });
-      if (!enabled && runProfileId === profile.id) setRunProfileId("");
-      await refreshConfiguration(client);
-      setMessage(`${profile.alias} dispatch ${enabled ? "enabled. Test login before running a task." : "disabled."}`);
+      const current=await api<ConfigResponse<{agentProfiles:Array<{id:string;enabled?:boolean}>}>>("/api/config?view=console");
+      if(profiles.data?.revision!==undefined&&current.revision!==profiles.data.revision)throw new Error("配置版本已改变，请刷新账号后重新审阅。");
+      const proposed=structuredClone(current.config),account=proposed.agentProfiles.find(account=>account.id===profile.id);
+      if(!account||(account.enabled!==false)===enabled)throw new Error("账号状态已改变，请刷新后重新审阅。");
+      account.enabled=enabled;const result=await createConfigurationPlan(current,proposed);
+      setActivation({plan:result.plan,profileId:profile.id,alias:profile.alias,enabled});setMessage("派发状态尚未改变，请审阅计划后确认应用。");
     } catch (error) { setMessage(error instanceof Error ? error.message : "Profile could not be updated."); } finally { setPendingProfiles((current) => { const next = new Set(current); next.delete(profile.id); return next; }); }
+  }
+  async function applyActivation():Promise<void>{
+    if(!activation||busy)return;setBusy(true);
+    try{await api(`/api/config/plans/${encodeURIComponent(activation.plan.id)}/apply?view=console`,{method:"POST",body:JSON.stringify({confirmed:activation.plan.requiresConfirmation})});if(!activation.enabled&&runProfileId===activation.profileId)setRunProfileId("");await refreshConfiguration(client);setMessage(`${activation.alias} 已${activation.enabled?"启用":"停用"}派发。`);setActivation(undefined);}
+    catch(error){setMessage(error instanceof Error?error.message:"应用失败，当前派发状态保留。");}finally{setBusy(false);}
   }
   async function testProfile(id: string): Promise<void> {
     if (pendingProfiles.has(id)) return;
@@ -160,6 +168,7 @@ export default function AgentsPage(): React.JSX.Element {
       {selected.id !== "generic-mock" && <div className="secure-actions"><button disabled={busy} type="button" onClick={() => void discover()}>扫描并检查</button><button disabled={busy} type="button" className="primary" onClick={() => void saveProfile()}>生成账号配置计划</button></div>}</div>{confirmSave && plan && <div className="workflow-card"><h3>确认账号配置</h3><p>风险：{plan.risk} · {plan.changes.length} 项变更</p><ul className="plan-changes">{plan.changes.map((change,index)=><li key={index}>{change.path}</li>)}</ul><p>工具：{selected.displayName} · 账号：{String(draft.alias ?? draft.id ?? "未命名")} · 设备：{String(draft.runnerId ?? "local")}</p><p>保存后通过 ConfigPlan 生效；原生登录状态仍需单独测试。</p><button disabled={busy} className="primary" onClick={() => void applyProfile()}>确认保存账号</button><button disabled={busy} onClick={() => setConfirmSave(false)}>返回编辑</button></div>}<details><summary>能力与兼容性</summary><p>{selected.platforms.join(" · ")}</p><p>{selected.backends.map((backend) => `${backend.kind}: ${backend.capabilities.join(", ")}`).join("; ")}</p>{selectedCompatibility.map((row) => <p key={row.backendId}>{row.backendId}: {Object.values(row.unsupportedReasons).join(" · ") || "已声明能力均支持"}</p>)}</details><p role="status">{message}</p></Drawer>}
     {drawer === "trial" && <Drawer title="发布试运行任务" onClose={()=>setDrawer(undefined)}><Notice>试运行使用统一任务发布：选择已登记仓库、填写验收条件，通过预检并确认后才会启动。执行记录、模型选择和验证结果保存在任务页。</Notice><label>Harness 账号<select value={runProfileId} onChange={event=>setRunProfileId(event.target.value)}><option value="">在发布页选择</option>{configuredProfiles.filter(profile=>profile.state==="CONFIGURED").map(profile=><option key={profile.id} value={profile.id}>{profile.alias} · {profile.provider}</option>)}</select></label><Link className="button-link primary" to={`/publish${runProfileId?`?profile=${encodeURIComponent(runProfileId)}`:""}`}>前往发布并预检</Link></Drawer>}
     {detailProfile && <Drawer title={`${detailProfile.alias} · 账号详情`} onClose={() => setDrawer(undefined)}><dl className="details-grid"><div><dt>Agent</dt><dd>{detailProfile.provider}</dd></div><div><dt>设备</dt><dd>{detailProfile.runnerId}</dd></div><div><dt>派发状态</dt><dd>{stateLabel(configuredProfiles.find((profile) => profile.id === detailProfile.id)?.state ?? detailProfile.state)}</dd></div><div><dt>安装检查</dt><dd>{evidenceText(detailProfile.installation,"installation")}</dd></div><div><dt>兼容性检查</dt><dd>{evidenceText(detailProfile.compatibility,"compatibility")}</dd></div><div><dt>最近登录检查</dt><dd>{loginResults[detailProfile.id] ?? evidenceText(detailProfile.authentication)}</dd></div></dl><div className="secure-actions"><Link className="button-link" to={`/models?profile=${encodeURIComponent(detailProfile.id)}`}>原生模型与默认配置</Link><button onClick={()=>setEditor(true)}>编辑账号配置</button></div><details><summary>能力</summary><p>{detailProfile.capabilities?.join(" · ") || "未提供"}</p></details><div className="secure-actions"><button disabled={pendingProfiles.has(detailProfile.id)||detailProfile.actions?.test?.allowed===false} onClick={() => void testProfile(detailProfile.id)}>测试登录</button><button disabled={pendingProfiles.has(detailProfile.id)} aria-label={`${(configuredProfiles.find((profile) => profile.id === detailProfile.id) ?? detailProfile).state === "DISABLED" ? "Enable" : "Disable"} dispatch for ${detailProfile.alias}`} onClick={() => void setProfileEnabled(configuredProfiles.find((profile) => profile.id === detailProfile.id) ?? detailProfile)}>{(configuredProfiles.find((profile) => profile.id === detailProfile.id) ?? detailProfile).state === "DISABLED" ? "启用派发" : "停用派发"}</button></div>{detailProfile.actions?.test?.message&&<p>{detailProfile.actions.test.message}</p>}<Notice>检查结果仅代表所示时间的原生状态。外部切换账号或升级工具后，请重新检查。账号私有配置目录与原生凭据保留在服务端。原生目录按账号和项目读取；目录不证明模型访问权限或费用。</Notice><p role="status">{message}</p></Drawer>}
+    {activation&&<Drawer title="审阅派发状态变更" onClose={()=>setActivation(undefined)}><p>{activation.alias} · {activation.enabled?"启用派发":"停用派发"}</p><p>风险：{activation.plan.risk} · {activation.plan.changes.length} 项变更</p><ul>{activation.plan.changes.map((change,index)=><li key={index}>{change.path}</li>)}</ul><Notice>确认后通过配置计划生效。活动账号若无法安全变更，服务端会拒绝本次应用。</Notice><button className="primary" disabled={busy} onClick={()=>void applyActivation()}>确认并应用派发变更</button><p role="status">{message}</p></Drawer>}
     {editor&&<Drawer title="Agent 账号配置" onClose={()=>setEditor(false)}><Suspense fallback={<p>正在读取配置…</p>}><SettingsPage sectionId="agentProfiles" embedded/></Suspense></Drawer>}
   </section>;
 }

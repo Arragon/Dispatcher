@@ -48,6 +48,7 @@ export function applyConfigEdits(config:DispatcherConfig,edits:unknown):Dispatch
     else if(object(parent)){exists=own(parent,key);previous=parent[key];}
     else return fail("CONFIG_EDIT_PATH","Config edit parent is not a container");
     if(edit.op!=="add"&&!exists)return fail("CONFIG_EDIT_PATH","Config edit target does not exist");
+    if(parts[0]==="agentProfiles"&&(parts.length===1||parts.length===3&&key==="id"&&object(parent)&&config.agentProfiles.some(profile=>profile.id===parent.id)||parts.length===2&&edit.op!=="remove"&&edit.op!=="add"&&object(previous)&&object(edit.value)&&previous.id!==edit.value.id))return fail("CONFIG_ACCOUNT_ID_IMMUTABLE","Existing account IDs cannot be renamed in ordinary edits; remove and create accounts explicitly");
     const deletingEntity=edit.op==="remove"&&Array.isArray(parent)&&object(previous)&&typeof previous.id==="string";
     if(!deletingEntity&&!(Array.isArray(parent)&&edit.op==="add")&&consoleConfig(next as unknown as DispatcherConfig).protectedPaths.some(path=>path.startsWith(`${edit.path}/`)))return fail("CONFIG_PROTECTED_PARENT","Expand parent replacements into precise leaf edits to preserve private fields");
     if(edit.op!=="remove"&&typeof edit.value==="string"&&/^(?:\[REDACTED\]|<redacted>|\*{3,})$/iu.test(edit.value))return fail("CONFIG_EDIT_PLACEHOLDER","Redaction placeholders are not configuration values");

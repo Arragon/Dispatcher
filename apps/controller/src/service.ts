@@ -3016,8 +3016,9 @@ export class ControllerService {
       const applied = await this.applyConfigurationPlan(plan.id, { confirmed: true });
       return reply.code(201).send({ profile: { id: body.id, provider, alias: body.alias, runnerId: body.runnerId ?? "local", state: body.enabled === false ? "DISABLED" : this.agentAdapters.has(body.id) ? "CONFIGURED" : "UNAVAILABLE" }, revision: applied.revision });
     });
-    this.app.post<{ Params: { id: string }; Body: { enabled: boolean } }>("/api/agents/profiles/:id/enabled", async (request, reply) => {
+    this.app.post<{ Params: { id: string }; Body: { enabled: boolean;baseRevision?:number } }>("/api/agents/profiles/:id/enabled", async (request, reply) => {
       if (typeof request.body?.enabled !== "boolean") return reply.code(400).send({ code: "INVALID_PROFILE_ACTIVATION" });
+      if(request.body.baseRevision!==undefined){if(!Number.isInteger(request.body.baseRevision))return reply.code(400).send({code:"INVALID_CONFIG_REVISION"});const actual=this.configuration.current().revision;if(request.body.baseRevision!==actual)throw new RevisionConflictError(request.body.baseRevision,actual);}
       const next = structuredClone(this.configuration.current().config);
       const profile = next.agentProfiles.find((entry) => entry.id === request.params.id);
       if (!profile) return reply.code(404).send({ code: "PROFILE_NOT_FOUND" });

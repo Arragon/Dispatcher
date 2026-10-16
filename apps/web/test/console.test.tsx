@@ -67,6 +67,7 @@ it("retains hidden settings and invalidates a reviewed plan after the draft chan
   await userEvent.type(id,"2");
   expect(screen.queryByRole("button", {name:"确认并应用"})).toBeNull();
   await userEvent.click(screen.getByRole("button", {name:"Agent 账号"}));
+  expect((screen.getByDisplayValue("kite") as HTMLInputElement).readOnly).toBe(true);
   await userEvent.click(screen.getByRole("button", {name:"控制台"}));
   expect((screen.getByLabelText("Controller ID") as HTMLInputElement).value).toBe("changed2");
   expect(fetchMock.mock.calls.some(([path]) => String(path).includes("/apply"))).toBe(false);
@@ -149,6 +150,20 @@ it("does not upgrade an old decision answer to a newer waiting episode", async (
   await userEvent.click(screen.getByRole("button",{name:"发送回复并继续"}));
   expect(await screen.findByText("当前运行已改变，请刷新后重新回复。")).toBeTruthy();
   expect(fetchMock).toHaveBeenCalledOnce();
+});
+
+it("recovers the original config plan after remount and resolves a lost apply acknowledgement from server state",async()=>{
+ const {default:SettingsPage}=await import("../src/SettingsPage.js");sessionStorage.setItem("dispatcher-config-plan:all","recover-plan");let applied=false,applies=0;
+ vi.spyOn(globalThis,"fetch").mockImplementation(async(input)=>{
+  if(input==="/api/config?view=console")return new Response(JSON.stringify({revision:applied?2:1,config:{controller:{id:applied?"changed":"original"}}}));
+  if(input==="/api/config/schema")return new Response(JSON.stringify({schema:{type:"object",properties:{controller:{type:"object",properties:{id:{type:"string",title:"Controller ID"}}}}},uiSchema:{}}));
+  if(input==="/api/config/plans/recover-plan")return new Response(JSON.stringify({plan:{id:"recover-plan",state:applied?"APPLIED":"PLANNED",baseRevision:1,risk:"safe",requiresConfirmation:false,changes:[{path:"controller.id",before:"original",after:"changed"}]},currentRevision:applied?2:1,...(applied?{appliedRevision:2}:{})}));
+  if(input==="/api/config/plans/recover-plan/apply?view=console"){applies++;applied=true;throw new TypeError("apply acknowledgement lost");}
+  return new Response(null,{status:404});
+ });
+ const mount=()=>render(<QueryClientProvider client={new QueryClient({defaultOptions:{queries:{retry:false}}})}><SettingsPage/></QueryClientProvider>);
+ const first=mount();await userEvent.click(await screen.findByRole("button",{name:"核对上次配置计划"}));expect(await screen.findByText('controller.id → "changed"')).toBeTruthy();await userEvent.click(screen.getByRole("button",{name:"应用计划"}));expect(await screen.findByText("apply acknowledgement lost")).toBeTruthy();first.unmount();
+ mount();await userEvent.click(await screen.findByRole("button",{name:"核对上次配置计划"}));expect(await screen.findByText("服务端确认此计划已应用，无需再次提交。")).toBeTruthy();expect(await screen.findByRole("button",{name:"回滚上次计划"})).toBeTruthy();expect(applies).toBe(1);
 });
 
 it("offers recovery instead of a blank console after a page render failure", async () => {
