@@ -348,6 +348,14 @@
   bypass preview expiry while a changed payload on the same key conflicts.
   Reserve receipt/task/contract/intent atomically; native I/O stays outside SQLite
   transactions. Preserve taskId after startup failure or uncertainty.
+- Automatic routing normalizes text only for keyword matching. Approval binds
+  the untouched draft; original evidence spans must remain valid through NFKC
+  expansion, emoji and collapsed whitespace. A winning invalid project rule
+  blocks execution rather than allowing a lower/global/default model to win.
+  Keep the decision immutable and store confirmation in the publication/Run
+  snapshot. Refresh catalogs at commit/start, but never rerun classification as
+  part of approval or receipt replay. Native-default reasoning means omission,
+  even when the catalog advertises a default such as medium.
 - A source-checkout scope check is insufficient when executing another commit.
   Recheck physical scope roots in the created worktree before native queries or
   execution. Workspace-bound contracts cannot accept another repository through

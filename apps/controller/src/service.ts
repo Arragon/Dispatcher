@@ -1,3 +1,4 @@
+import { ModelRoutingService } from "./model-routing.js";
 import type { WorkspaceHandle } from "@dispatcher/workspace";
 import { PublicationService, PublicationError, contentHash, assertPublicationScope, type PublicationRecord } from "./task-publications.js";
 import { publishDraftSchema, type PublishDraftV1, type ExecutionSelection, type AccountModelCatalog, type ModelCatalogContext } from "@dispatcher/domain";
@@ -72,6 +73,7 @@ import {
   ConfigValidationError,
   createDefaultSecretStore,
   dispatcherConfigSchema,
+  validateConfig,
   dispatcherConfigUiSchema,
   requiredSecretReferences,
   SecretStoreError,
@@ -606,8 +608,9 @@ export class ControllerService {
     });
     if (worker.enabled) modules.push({ name: "background-worker", start: () => this.background.start(), stop: () => this.background.stop() });
     this.lifecycle = new LifecycleManager(modules);
+    this.modelRouting = new ModelRoutingService(this.database,()=>this.now());
     this.publications = new PublicationService(this.database, this.configuration, this.tasks, this.workspaces, () => this.now(), {
-      prepare: (draft,repository,workspacePath) => this.preparePublication(draft,repository,workspacePath),
+      prepare: (draft,repository,workspacePath,context) => this.preparePublication(draft,repository,workspacePath,context),
       dispatch: async (record,taskId) => (await this.dispatchTask(taskId,{profileId:record.selection!.profileId,repositoryId:record.repository!.id},`publication:${record.preview.publicationId}`,record)).run,
     });
     this.publications.reconcile();
@@ -1519,16 +1522,28 @@ export class ControllerService {
     if(this.catalogGenerations.get(key)!==generation)throw new PublicationError("CATALOG_SUPERSEDED",409,"A newer catalog request superseded this response");
     this.database.saveEntity("model-catalog",key,json(catalog));return catalog;
   }
-  private async preparePublication(draft:PublishDraftV1,repository:RepositoryConfig,_workspacePath?:string):Promise<ExecutionSelection> {
+  private async preparePublication(draft:PublishDraftV1,repository:RepositoryConfig,_workspacePath?:string,context?:{owner:string;reviewed?:ExecutionSelection}):Promise<ExecutionSelection> {
     const snapshot=this.configuration.current();const profile=snapshot.config.agentProfiles.find(p=>p.id===draft.execution.profileId);
     if(!profile)throw new PublicationError("PROFILE_REQUIRED",409,"Choose a configured native account");
     if(profile.runnerId!==this.embeddedRunner?.runner.id)throw new PublicationError("REMOTE_EXECUTION_UNSUPPORTED",409,"This publication path requires the local embedded runner");
     const catalog=await this.modelCatalog(profile.id,repository.id,_workspacePath?"before-start":"preflight",_workspacePath);
     if(catalog.selectionSupport==="unsupported")throw new PublicationError("NATIVE_SELECTION_UNSUPPORTED",409,"This native backend does not expose qualified per-run model selection");
     if(catalog.failure?.code==="NATIVE_AUTH_REQUIRED"||catalog.failure?.code==="PROFILE_DISABLED"||catalog.failure?.code==="NATIVE_CONTEXT_CHANGED")throw new PublicationError(catalog.failure.code,409,catalog.failure.message);
-    const explicit=draft.execution.selectionType==="explicit-model";
+    const automatic=draft.execution.selectionMode==="policy-auto";
+    let routingDecision:ExecutionSelection["routingDecision"];
+    if(automatic){
+      if(!context)throw new PublicationError("ROUTING_REVIEW_REQUIRED",409,"Automatic dispatch requires an authenticated routing review");
+      if(draft.execution.selectionType||draft.execution.nativeModelId||Object.keys(draft.execution.nativeParameters??{}).length)throw new PublicationError("INVALID_AUTO_SELECTION",400,"Automatic routing cannot accept manual model parameters");
+      if(context.reviewed){
+        if(!context.reviewed.routingDecision)throw new PublicationError("ROUTING_REVIEW_REQUIRED",409,"Routing decision is required");
+        routingDecision=context.reviewed.routingDecision;this.modelRouting.revalidate(context.owner,draft,snapshot.revision,catalog,routingDecision);
+      }else routingDecision=this.modelRouting.preview(context.owner,draft,snapshot.config,snapshot.revision,catalog);
+      if(routingDecision.status!=="ready")throw new PublicationError(routingDecision.error!.code,409,routingDecision.error!.message,routingDecision);
+    }
+    const explicit=automatic||draft.execution.selectionType==="explicit-model";
     let nativeParameters:ExecutionSelection["nativeParameters"]={};
-    if(explicit){
+    if(automatic)nativeParameters={...routingDecision!.target!.nativeParameters};
+    else if(explicit){
       if(catalog.freshness!=="native-fresh"||catalog.selectionSupport!=="explicit")throw new PublicationError("CATALOG_UNAVAILABLE",409,"A fresh native catalog is required for explicit selection");
       if(catalog.revision!==draft.execution.catalogRevision||catalog.contextFingerprint!==draft.execution.contextFingerprint)throw new PublicationError("SELECTION_CHANGED",409,"Model catalog or account/project context changed; review again");
       const entry=catalog.entries.find(e=>e.id===draft.execution.nativeModelId);
@@ -1542,7 +1557,7 @@ export class ControllerService {
     const decision=routeDeterministically({capabilities:["code","git"]},candidates);
     if(!decision.selected)throw new PublicationError("EXECUTION_UNAVAILABLE",409,decision.explanation);
     const backendId=decision.selected.adapter.manifest.backends[0]!.id;
-    return {version:1,mode:"manual",source:explicit?"explicit":"native-default",selectionType:explicit?"explicit-model":"native-default",...(explicit?{requestedModel:draft.execution.nativeModelId!,catalogRevision:catalog.revision}:{}),profileId:profile.id,runnerId:profile.runnerId,providerId:profile.provider,backendId,nativeParameters,contextFingerprint:catalog.contextFingerprint,configRevision:snapshot.revision,selectedAt:this.now().toISOString()};
+    return {version:1,mode:automatic?"policy-auto":"manual",source:automatic?"policy":explicit?"explicit":"native-default",selectionType:explicit?"explicit-model":"native-default",...(explicit?{requestedModel:automatic?routingDecision!.target!.modelId:draft.execution.nativeModelId!,catalogRevision:catalog.revision}:{}),profileId:profile.id,runnerId:profile.runnerId,providerId:profile.provider,backendId,nativeParameters,...(routingDecision?{routingDecision}:{}),contextFingerprint:catalog.contextFingerprint,configRevision:snapshot.revision,selectedAt:this.now().toISOString()};
   }
 
   private async validateRunSelection(run:Run):Promise<void> {
@@ -1588,7 +1603,7 @@ export class ControllerService {
         const original=this.database.getEntity<JsonValue>("task-publication",intent.publicationId) as unknown as PublicationRecord|undefined;
         if(!original)throw new PublicationError("PUBLICATION_NOT_FOUND",409,"Task publication context is unavailable");
         const execution=body.execution??intent.execution;
-        if(execution.selectionMode!=="manual")throw new PublicationError("POLICY_UNSUPPORTED",409,"Policy selection is not implemented");
+        if(execution.selectionMode!=="manual")throw new PublicationError("ROUTING_REVIEW_REQUIRED",409,"Automatic routing requires a fresh publication review before dispatch");
         if(!body.execution&&execution.selectionType==="explicit-model"&&body.profileId&&body.profileId!==execution.profileId)throw new PublicationError("SELECTION_CHANGED",409,"Changing the account requires a fresh explicit model selection");
         const profileId=body.profileId??execution.profileId;
         const draft:PublishDraftV1={...original.draft,startMode:"dispatch",execution:{...execution,...(profileId?{profileId}:{})}};
@@ -1629,7 +1644,7 @@ export class ControllerService {
         beforeStart:async()=>{
           for(const scope of workspace.scopePaths)await this.workspaces.assertPathAllowed(workspace,scope);
           if(publication?.selection){
-            const selection=await this.preparePublication(publication.draft,repositoryConfig,workspace.path);
+            const selection=await this.preparePublication(publication.draft,repositoryConfig,workspace.path,{owner:publication.owner,reviewed:publication.selection});
             if(contentHash({...selection,selectedAt:undefined})!==contentHash({...publication.selection,selectedAt:undefined}))throw new PublicationError("SELECTION_CHANGED",409,"Selection changed before native startup");
             if(this.configuration.current().revision!==publication.configRevision)throw new PublicationError("SELECTION_CHANGED",409,"Configuration changed before native startup");
           }
@@ -2435,6 +2450,7 @@ export class ControllerService {
     this.database.saveEntity("runner-identity", runnerId, json({ runnerId, ...(credentialRef ? { credentialRef } : {}), revokedAt: this.now().toISOString() }));
   }
 
+  private readonly modelRouting: ModelRoutingService;
   private readonly publications: PublicationService;
 
   private registerRoutes(): void {
@@ -2989,6 +3005,24 @@ export class ControllerService {
     this.app.get<{Params:{id:string};Querystring:{repositoryId?:string}}>("/api/agents/profiles/:id/models",async request=>{
       if(!request.query.repositoryId)throw new PublicationError("CATALOG_CONTEXT_REQUIRED",400,"repositoryId is required");
       return this.modelCatalog(request.params.id,request.query.repositoryId,"open");
+    });
+    this.app.get<{Params:{id:string}}>("/api/model-routing/decisions/:id",async request=>this.modelRouting.read(this.principalFor(request).id,request.params.id));
+    this.app.post<{Body:PublishDraftV1}>("/api/model-routing/preview",{schema:{body:publishDraftSchema}},async request=>{
+      const principal=this.principalFor(request);if(!principal.roles.includes("operator"))throw new PublicationError("FORBIDDEN",403,"Operator role required");
+      const snapshot=this.configuration.current();const draft=request.body;
+      if(draft.execution.selectionMode!=="policy-auto")throw new PublicationError("INVALID_AUTO_SELECTION",400,"Routing preview requires automatic mode");
+      const catalog=await this.modelCatalog(draft.execution.profileId??"",draft.repositoryId,"preflight");
+      if(this.configuration.current().revision!==snapshot.revision)throw new PublicationError("SELECTION_CHANGED",409,"Configuration changed during routing preview");
+      return this.modelRouting.preview(principal.id,draft,snapshot.config,snapshot.revision,catalog);
+    });
+    this.app.post<{Body:{draft:PublishDraftV1;policy?:NonNullable<DispatcherConfig["policies"]["modelRouting"]>}}>("/api/model-routing/test",{schema:{body:{type:"object",additionalProperties:false,required:["draft"],properties:{draft:publishDraftSchema,policy:dispatcherConfigSchema.properties.policies.properties.modelRouting}}}},async request=>{
+      const principal=this.principalFor(request);if(!principal.roles.includes("operator"))throw new PublicationError("FORBIDDEN",403,"Operator role required");
+      const snapshot=this.configuration.current();const {draft,policy}=request.body;
+      // Draft rules use the same schema/reference validation as ConfigPlan and cannot authorize a Run.
+      if(policy){if(!principal.roles.includes("admin"))throw new PublicationError("FORBIDDEN",403,"Configuration editing permission required for draft policy trials");validateConfig({...snapshot.config,policies:{...snapshot.config.policies,modelRouting:policy}});}
+      const catalog=await this.modelCatalog(draft.execution.profileId??"",draft.repositoryId,"preflight");
+      if(this.configuration.current().revision!==snapshot.revision)throw new PublicationError("SELECTION_CHANGED",409,"Configuration changed during routing trial");
+      return {trial:true,source:policy?"draft":"applied",decision:this.modelRouting.preview(principal.id,draft,snapshot.config,snapshot.revision,catalog,{trial:true,...(policy?{policy}:{})})};
     });
     this.app.get("/api/task-publications/capabilities", async () => ({ schemaVersion: 1, startModes: ["create-only","dispatch"], deliveryTypes: ["none"], projects: this.configuration.current().config.repositories.map(r => ({ id: `local:${r.id}`, repositoryId: r.id })) }));
     this.app.post<{ Body: PublishDraftV1 }>("/api/task-publications/preview", { schema: { body: publishDraftSchema } }, async request => {

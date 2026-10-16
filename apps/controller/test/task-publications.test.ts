@@ -37,6 +37,53 @@ async function setup() {
   return {service,root,clock,make,draft,preview,commit,starts,cliStarts,control};
 }
 describe("task publication receipts", () => {
+  async function policyFixture() {
+    const f=await setup(),config=f.service.configuration.current().config;
+    config.policies.modelRouting={enabled:true,requireConfirmation:true,classificationMode:"keyword",semanticFailureMode:"stop",taskTypes:[{id:"fix",name:"修复",definition:"修复问题",enabled:true,keywordGroups:[{any:["修复"],all:[],exclude:[]}]}],rules:[{id:"fix-local",name:"修复规则",enabled:true,taskTypeId:"fix",profileId:"codex-local",repositoryId:"repo",priority:1,target:{modelSelectionId:"catalog-model",reasoning:{mode:"native-default"}}}]};
+    const plan=f.service.configuration.buildPlan(config,"owner","web");await f.service.configuration.applyPlan(plan.id,{confirmed:true});
+    const draft={...f.draft,title:"修复问题",startMode:"dispatch",execution:{profileId:"codex-local",selectionMode:"policy-auto",allowUnconfirmedModelAccess:true}};
+    return {...f,autoDraft:draft};
+  }
+  it("freezes keyword policy selection, requires routing approval and never substitutes a native effort default",async()=>{
+    const f=await policyFixture(),create=vi.spyOn(f.service.workspaces,"create");
+    const p=(await f.preview(f.autoDraft)).json();expect(p.canCommit).toBe(true);
+    expect(p.routingDecision).toMatchObject({status:"ready",classification:{source:"keyword",taskTypeId:"fix"},ruleResult:{ruleIds:["fix-local"]},target:{modelId:"catalog-model",nativeParameters:{}},confirmation:{required:true,mode:"pending"}});
+    expect(create).not.toHaveBeenCalled();expect(f.starts).toHaveLength(0);
+    const again=(await f.preview(f.autoDraft)).json();expect(again.publicationId).toBe(p.publicationId);expect(again.routingDecision.id).toBe(p.routingDecision.id);
+    expect((await f.commit(p)).json().code).toBe("ROUTING_CONFIRMATION_REQUIRED");
+    const receipt=(await f.commit(p,"approved",f.service,{confirmation:{accepted:true,routingAccepted:true}})).json();expect(receipt.state).toBe("STARTED");
+    expect(f.starts[0]).toMatchObject({model:"catalog-model"});expect(f.starts[0]?.reasoningEffort).toBeUndefined();
+    expect(f.service.database.getEntity("run",receipt.runId)).toMatchObject({executionSelection:{mode:"policy-auto",source:"policy",routingDecision:{id:p.routingDecision.id,confirmation:{mode:"user-confirmed",actorId:expect.any(String)}}}});
+    f.clock.now=new Date(f.clock.now.getTime()+600001);expect((await f.commit(p,"approved",f.service,{confirmation:{accepted:true,routingAccepted:true}})).json().runId).toBe(receipt.runId);expect(f.starts).toHaveLength(1);
+  });
+  it("blocks no-match, ambiguous rules, invalid winning models and unsupported effort without fallback",async()=>{
+    const f=await policyFixture();
+    let p=(await f.preview({...f.autoDraft,title:"unclassified"})).json();expect(p.canCommit).toBe(false);expect(p.routingDecision.error.code).toBe("TASK_TYPE_UNCLASSIFIED");
+    for(const target of [{modelSelectionId:"missing-model",reasoning:{mode:"native-default"}},{modelSelectionId:"catalog-model",reasoning:{mode:"explicit",value:"unsupported"}}]){
+      const config=f.service.configuration.current().config;config.policies.modelRouting!.rules[0]!.target=target as NonNullable<DispatcherConfig["policies"]["modelRouting"]>["rules"][number]["target"];
+      config.policies.modelRouting!.rules.push({id:`fallback-${config.policies.modelRouting!.rules.length}`,name:"global fallback",enabled:true,profileId:"codex-local",taskTypeId:"fix",priority:100,target:{modelSelectionId:"catalog-model",reasoning:{mode:"native-default"}}});
+      const plan=f.service.configuration.buildPlan(config,"owner","web");await f.service.configuration.applyPlan(plan.id,{confirmed:true});
+      p=(await f.preview(f.autoDraft)).json();expect(p.canCommit).toBe(false);expect(p.routingDecision.ruleResult.ruleIds).toEqual(["fix-local"]);expect(p.routingDecision.target).toBeUndefined();
+    }
+    expect(f.starts).toHaveLength(0);expect(f.service.database.listCanonicalTasks()).toHaveLength(0);
+  });
+  it("rejects catalog drift at policy commit and preserves read-only applied/draft trial distinction",async()=>{
+    const f=await policyFixture();const p=(await f.preview(f.autoDraft)).json();
+    const read=await f.service.app.inject({headers:OWNER,url:`/api/model-routing/decisions/${p.routingDecision.id}`});expect(read.statusCode).toBe(200);
+    const trial=await f.service.app.inject({headers:OWNER,method:"POST",url:"/api/model-routing/test",payload:{draft:f.autoDraft}});expect(trial.json()).toMatchObject({trial:true,source:"applied",decision:{status:"ready"}});
+    f.control.modelId="different";expect((await f.commit(p,"drift",f.service,{confirmation:{accepted:true,routingAccepted:true}})).json().code).toBe("ROUTING_DECISION_STALE");expect(f.starts).toHaveLength(0);expect(f.service.database.listCanonicalTasks()).toHaveLength(0);
+  });
+  it("uses explicit native effort with an audited policy exemption and blocks create-only auto dispatch bypass",async()=>{
+    const f=await policyFixture(),config=f.service.configuration.current().config;
+    config.policies.modelRouting!.requireConfirmation=false;config.policies.modelRouting!.rules[0]!.target.reasoning={mode:"explicit",value:"low"};
+    const plan=f.service.configuration.buildPlan(config,"owner","web");await f.service.configuration.applyPlan(plan.id,{confirmed:true});
+    const p=(await f.preview(f.autoDraft)).json(),receipt=(await f.commit(p)).json();expect(receipt.state).toBe("STARTED");expect(f.starts[0]).toMatchObject({model:"catalog-model",reasoningEffort:"low"});
+    expect(f.service.database.getEntity("run",receipt.runId)).toMatchObject({executionSelection:{routingDecision:{confirmation:{mode:"policy-exempt",actorId:"owner"}}}});
+    f.control.completed=true;await f.service.app.inject({headers:OWNER,method:"POST",url:`/api/runs/${receipt.runId}/advance`});
+    const deferred=(await f.preview({...f.autoDraft,clientDraftId:"deferred-auto",startMode:"create-only"})).json();expect(deferred.routingDecision).toBeUndefined();
+    const task=(await f.commit(deferred,"deferred")).json();
+    const bypass=await f.service.app.inject({headers:OWNER,method:"POST",url:`/api/tasks/${task.taskId}/dispatch`,payload:{profileId:"codex-local"}});expect(bypass.json().code).toBe("ROUTING_REVIEW_REQUIRED");expect(f.starts).toHaveLength(1);
+  });
   it("blocks native-default OpenCode publication when the installed account schema is incompatible", async () => {
     const f = await setup(), data = join(f.root,"native-data"); mkdirSync(data); mkdirSync(join(data,"opencode"));
     new DatabaseSync(join(data,"opencode","opencode.db")).close();

@@ -1,3 +1,4 @@
+import type { ModelRoutingDecision } from "./model-routing.js";
 export type NativeParameter = string | number | boolean;
 export interface ExecutionSelection {
   version: 1;
@@ -8,18 +9,20 @@ export interface ExecutionSelection {
   requestedModel?: string;
   nativeParameters: Record<string, NativeParameter>;
   catalogRevision?: string; contextFingerprint: string; configRevision: number; selectedAt: string;
+  routingDecision?: ModelRoutingDecision;
 }
 export interface PublishDraftV1 {
   schemaVersion: 1; clientDraftId: string; title?: string; description: string;
   projectId: string; repositoryId: string; baseRef?: string; targetBranch?: string;
   scopePaths?: string[]; acceptanceCriteria: string[]; referenceLinks?: string[]; verificationCommandIds?: string[];
   startMode: "create-only" | "dispatch";
-  execution: { profileId?: string; selectionMode: "manual" | "policy-auto"; selectionType?: "explicit-model" | "native-default"; selectionSource?: "explicit" | "account-default" | "policy" | "native-default"; nativeModelId?: string; nativeParameters?: Record<string, NativeParameter>; catalogRevision?: string; contextFingerprint?: string; allowUnconfirmedModelAccess?: boolean };
+  execution: { profileId?: string; selectionMode: "manual" | "policy-auto"; taskTypeId?:string; selectionType?: "explicit-model" | "native-default"; selectionSource?: "explicit" | "account-default" | "policy" | "native-default"; nativeModelId?: string; nativeParameters?: Record<string, NativeParameter>; catalogRevision?: string; contextFingerprint?: string; allowUnconfirmedModelAccess?: boolean };
   delivery: { type: "none" | "commit" | "pull-request"; scmConnectorId?: string; targetRepository?: string; baseBranch?: string };
 }
 export interface PublicationPreview {
   publicationId: string; revision: number; state: "PREVIEW" | "NEEDS_INPUT" | "NEEDS_REVIEW";
   expiresAt: string; inputHash: string;
+  routingDecision?:ModelRoutingDecision;
   effectiveTask: { title: string; description: string; contractState: "READY" | "NEEDS_SPEC"; missing: string[] };
   effectiveExecution?: Omit<ExecutionSelection, "version" | "mode" | "source" | "requestedModel" | "selectedAt"> & { nativeModelId?: string; selectionSource: ExecutionSelection["source"]; repositoryBaseCommit: string };
   checks: Array<{ id: string; status: "passed" | "warning" | "blocked" | "not-required"; code?: string; message: string }>;
@@ -37,7 +40,7 @@ export const publishDraftSchema = {
     schemaVersion: { const: 1 }, clientDraftId: { type: "string", minLength: 1, maxLength: 200 }, title: {type:"string",maxLength:160}, description: {type:"string",minLength:1,maxLength:20000}, projectId: short, repositoryId: short,
     baseRef: short, targetBranch: short, scopePaths: strings, acceptanceCriteria: strings, referenceLinks: strings, verificationCommandIds: strings,
     startMode: { enum: ["create-only","dispatch"] },
-    execution: {type:"object",additionalProperties:false,required:["selectionMode"],properties:{profileId:short,selectionMode:{enum:["manual","policy-auto"]},selectionType:{enum:["explicit-model","native-default"]},selectionSource:{enum:["explicit","account-default","policy","native-default"]},nativeModelId:short,nativeParameters:{type:"object",maxProperties:20,additionalProperties:{anyOf:[{type:"string"},{type:"number"},{type:"boolean"}]}},catalogRevision:short,contextFingerprint:short,allowUnconfirmedModelAccess:{type:"boolean"}},allOf:[{if:{required:["selectionType"],properties:{selectionType:{const:"explicit-model"}}},then:{required:["nativeModelId","catalogRevision","contextFingerprint"]}}]},
+    execution: {type:"object",additionalProperties:false,required:["selectionMode"],properties:{profileId:short,taskTypeId:short,selectionMode:{enum:["manual","policy-auto"]},selectionType:{enum:["explicit-model","native-default"]},selectionSource:{enum:["explicit","account-default","policy","native-default"]},nativeModelId:short,nativeParameters:{type:"object",maxProperties:20,additionalProperties:{anyOf:[{type:"string"},{type:"number"},{type:"boolean"}]}},catalogRevision:short,contextFingerprint:short,allowUnconfirmedModelAccess:{type:"boolean"}},allOf:[{if:{required:["selectionType"],properties:{selectionType:{const:"explicit-model"}}},then:{required:["nativeModelId","catalogRevision","contextFingerprint"]}}]},
     delivery: {type:"object",additionalProperties:false,required:["type"],properties:{type:{enum:["none","commit","pull-request"]},scmConnectorId:short,targetRepository:short,baseBranch:short}},
   },
 } as const;

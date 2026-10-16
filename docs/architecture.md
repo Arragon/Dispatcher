@@ -229,13 +229,25 @@ Publication validates again at commit and in the actual worktree before startup.
 Per-session model/effort selection is frozen and reused on continuation without
 changing account defaults. Native listing is unconfirmed access; missing prices
 and numeric quota remain unknown. Definitive authentication failures block both
-explicit models and native defaults. Unqualified native providers, publication
-policy routing and remote publication execution are explicitly unsupported. Per-run selection capability is declared
+explicit models and native defaults. Unqualified native providers and remote
+publication execution are explicitly unsupported. Per-run selection capability is declared
 by the adapter; publication does not infer it from a generic CLI model flag.
 Known authentication failures and account changes block both selection modes;
 cache fallback cannot authorize explicit selection. Native model IDs can encode
 effort or auto-routing without exposing separate parameter metadata. Missing
 per-model parameters and account prices remain unknown.
+
+Policy routing is opt-in and confined to the selected account/project. Domain
+owns its strict configuration and decision types; scheduler evaluates bounded
+keyword groups and project/global rule precedence without I/O. Controller stores
+actor/raw-draft/config/catalog-bound immutable decisions and consumes them in the
+publication receipt transaction. Preview and trial never start an agent or create
+a worktree; draft trials cannot authorize execution. Commit and startup refresh
+the native catalog against the reviewed decision without reclassifying or selecting
+a substitute. Automatic confirmation is separate from task execution approval;
+the Run records its final approval facts. Native-default reasoning omits the
+parameter instead of copying a catalog default. Hybrid classification remains
+blocked until the optional tool-free classifier is configured and qualified.
 
 Persisted ACTIVE native sessions are not physical process evidence after a
 Controller restart. Interrupted publication starts and detached active executions

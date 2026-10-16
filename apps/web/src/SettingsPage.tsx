@@ -13,7 +13,7 @@ interface ConfigDocument extends Record<string, unknown> { integrations?: { line
 const validator = customizeValidator({ AjvClass: Ajv2020 });
 const sectionNames: Record<string, string> = { controller: "控制台", runners: "运行设备", integrations: "兼容集成", connectors: "集成连接", repositories: "项目仓库", agentProfiles: "Agent 账号", internalLlm: "内部模型", policies: "策略" };
 const schemaTitles:Record<string,string>={"Controller": "控制台", "Runners": "运行设备", "Integrations": "兼容集成", "Connectors": "集成连接", "Repositories": "项目仓库", "Internal LLM": "内部模型", "Agent profiles": "Agent 账号", "Policies": "策略"};
-const fieldLabels: Record<string,string> = { ...sectionNames, id:"标识", displayName:"显示名称", mode:"运行模式", capacity:"并发槽位", tags:"标签", root:"仓库目录", remote:"Git 远端", defaultBaseRef:"基准分支", scopePaths:"允许修改的目录", verificationCommands:"验证命令", file:"可执行文件", args:"参数", required:"必须通过", timeoutMs:"超时（毫秒）", outputLimitBytes:"输出上限（字节）", enabled:"启用", provider:"提供方", alias:"别名", runnerId:"执行设备", settings:"工具设置", credentialRef:"凭据引用", endpoints:"服务连接", profiles:"模型配置", pools:"模型池", roleBindings:"用途绑定", defaultPoolId:"默认模型池", profileIds:"模型顺序", endpointId:"服务连接", model:"模型 ID", protocol:"协议", baseUrl:"服务地址", poolId:"模型池", role:"用途", configured:"启用内部模型", definitionId:"连接器类型", kind:"类型", highRiskRequiresConfirmation:"高风险操作需要确认", rawShellDefault:"原始 Shell 默认策略", listen:"监听地址", port:"端口", deploymentMode:"部署模式", adminStrategy:"管理策略" };
+const fieldLabels: Record<string,string> = { modelRouting:"模型自动路由", requireConfirmation:"自动路由需要独立确认",classificationMode:"分类方式",semanticFailureMode:"语义分类失败策略",taskTypes:"任务类型",definition:"分类定义",keywordGroups:"关键词组",any:"任一命中",all:"全部命中",exclude:"排除关键词",rules:"路由规则",taskTypeId:"任务类型标识",profileId:"账号标识",repositoryId:"项目标识（留空为全局）",priority:"优先级",target:"执行目标",modelSelectionId:"原生具体模型 ID",reasoning:"原生思考强度",value:"原生参数值",name:"名称", ...sectionNames, id:"标识", displayName:"显示名称", mode:"运行模式", capacity:"并发槽位", tags:"标签", root:"仓库目录", remote:"Git 远端", defaultBaseRef:"基准分支", scopePaths:"允许修改的目录", verificationCommands:"验证命令", file:"可执行文件", args:"参数", required:"必须通过", timeoutMs:"超时（毫秒）", outputLimitBytes:"输出上限（字节）", enabled:"启用", provider:"提供方", alias:"别名", runnerId:"执行设备", settings:"工具设置", credentialRef:"凭据引用", endpoints:"服务连接", profiles:"模型配置", pools:"模型池", roleBindings:"用途绑定", defaultPoolId:"默认模型池", profileIds:"模型顺序", endpointId:"服务连接", model:"模型 ID", protocol:"协议", baseUrl:"服务地址", poolId:"模型池", role:"用途", configured:"启用内部模型", definitionId:"连接器类型", kind:"类型", highRiskRequiresConfirmation:"高风险操作需要确认", rawShellDefault:"原始 Shell 默认策略", listen:"监听地址", port:"端口", deploymentMode:"部署模式", adminStrategy:"管理策略" };
 function displaySchema(schema:RJSFSchema):RJSFSchema {
   const result={...schema};
   if(schema.properties) result.properties=Object.fromEntries(Object.entries(schema.properties).map(([key,value])=>[key,typeof value === "object" ? {...displaySchema(value),title:(value.title?schemaTitles[value.title]??value.title:fieldLabels[key]??key)} : value]));
@@ -42,7 +42,7 @@ function OwnerPasswordSettings(): React.JSX.Element {
     <small role="status">{message}</small>
   </form>;
 }
-export default function SettingsPage({sectionId, embedded = false}: {sectionId?: string; embedded?: boolean} = {}): React.JSX.Element {
+export default function SettingsPage({sectionId, embedded = false,onDraftChange}: {sectionId?: string; embedded?: boolean;onDraftChange?:(draft:Record<string,unknown>)=>void} = {}): React.JSX.Element {
   const client = useQueryClient();
   const configQuery = useQuery({ queryKey: ["config"], queryFn: () => api<ConfigResponse<ConfigDocument>>("/api/config") });
   const schemaQuery = useQuery({ queryKey: ["config-schema"], queryFn: () => api<SchemaResponse>("/api/config/schema") });
@@ -56,6 +56,7 @@ export default function SettingsPage({sectionId, embedded = false}: {sectionId?:
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   useEffect(() => { if (configQuery.data && !dirty.current) { setDraft(structuredClone(configQuery.data.config)); baseRevision.current = configQuery.data.revision; } }, [configQuery.data]);
+  useEffect(()=>{if(draft)onDraftChange?.(draft);},[draft,onDraftChange]);
   function edit(changes: Record<string, unknown>): void {
     dirty.current = true; setPlan(undefined); setMessage("草稿已修改，需要重新生成计划。");
     setDraft((previous) => ({ ...(previous ?? configQuery.data?.config), ...changes }));

@@ -41,9 +41,9 @@ Interfaces: TaskModelRoutingConfig, TaskClassification, ModelRoutingDecision; cl
 ### 2. Policy publication and keyword UI loop
 
 Files: apps/controller/src/model-routing.ts, service.ts, task-publications.ts; domain publication; PoliciesPage, PublishPage, TaskDetail and regressions.
-- [ ] Persist deterministic decision snapshots, applied/draft test distinction and explicit preview/read APIs; all previews remain zero-worktree/zero-agent-start.
-- [ ] Bind decision/confirmation to actor, raw input, config and final selection; revalidate native catalog and winning target at commit/start without reclassification; preserve immutable history and idempotency.
-- [ ] Add ConfigPlan-backed policy editor/test and manual/auto publication flow with no implicit override.
+- [x] Persist deterministic decision snapshots, applied/draft test distinction and explicit preview/read APIs; all previews remain zero-worktree/zero-agent-start.
+- [x] Bind decision/confirmation to actor, raw input, config and final selection; revalidate native catalog and winning target at commit/start without reclassification; preserve immutable history and idempotency.
+- [x] Add ConfigPlan-backed policy editor/test and manual/auto publication flow with no implicit override.
 - [ ] Test frozen actual adapter parameters, failure cases, dropped-response replay and old entry behavior; full gate, native read/controlled execution evidence where available, commit/check quota.
 
 ### 3. Optional semantic classification
@@ -73,3 +73,5 @@ Files: protocol commands, runner command handlers/runtime, Controller remote ada
 - Remaining scope is not reduced to Policy/remote: unit5 retains all document requirements and external Gates for the final audit.
 
 - Unit 1: opt-in schema, bounded references/keywords and deterministic keyword/rule evaluation implemented. Domain/config/scheduler builds, 40 config+scheduler regression tests, lint and diff check passed. Official remaining74%; no external inference used.
+
+- Unit 2 implementation checkpoint: publication decision/approval/catalog fences and ConfigPlan-backed policy UI/trials are implemented; full gate passed50 files/388 tests. Official remaining73%. Real Cursor policy execution is running in a disposable repository; native completion/browser evidence and deferred-task fresh review remain tracked, not claimed complete.

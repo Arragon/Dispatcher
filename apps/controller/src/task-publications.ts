@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { posix } from "node:path";
 import type { ConfigurationEngine, RepositoryConfig } from "@dispatcher/config";
-import type { PublishDraftV1, PublicationPreview, PublicationReceipt, Task, TaskContract, ExecutionSelection, Run } from "@dispatcher/domain";
+import type { PublishDraftV1, PublicationPreview, PublicationReceipt, Task, TaskContract, ExecutionSelection, Run, ModelRoutingDecision } from "@dispatcher/domain";
 import type { CanonicalTaskService } from "@dispatcher/integrations";
 import type { DispatcherDatabase, JsonValue } from "@dispatcher/persistence";
 import { TaskContractCompiler } from "@dispatcher/semantic";
@@ -12,7 +12,7 @@ export function contentHash(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(stable(value))).digest("hex");
 }
 export class PublicationError extends Error {
-  constructor(readonly code: string, readonly statusCode: number, message: string) { super(message); }
+  constructor(readonly code: string, readonly statusCode: number, message: string,readonly routingDecision?:ModelRoutingDecision) { super(message); }
 }
 export interface PublicationRecord {
   owner: string; draft: PublishDraftV1; preview: PublicationPreview; configRevision: number;
@@ -24,7 +24,7 @@ export function assertPublicationScope(scopes:string[],allowed:string[]):void {
 export class PublicationService {
   private readonly pending = new Map<string, Promise<PublicationReceipt>>();
   constructor(private readonly db: DispatcherDatabase, private readonly config: ConfigurationEngine, private readonly tasks: CanonicalTaskService, private readonly workspaces: WorkspaceManager, private readonly now: () => Date, private readonly runtime: {
-    prepare(draft: PublishDraftV1, repository: RepositoryConfig, workspacePath?: string): Promise<ExecutionSelection>;
+    prepare(draft: PublishDraftV1, repository: RepositoryConfig, workspacePath?: string,context?:{owner:string;reviewed?:ExecutionSelection}): Promise<ExecutionSelection>;
     dispatch(record: PublicationRecord, taskId: string): Promise<Run>;
   }) {}
   reconcile(): void {
@@ -84,16 +84,16 @@ export class PublicationService {
     const compiled=new TaskContractCompiler().compile({externalId:draft.clientDraftId,title,description:draft.description,labels:[],dependencies:[],...(repository?{repository:repository.id}:{}),scope:scopes,acceptanceCriteria:draft.acceptanceCriteria.filter(s=>s.trim()),verification,constraints:[],delivery:{type:draft.delivery.type},extensions:{}},1,repository?{workspace:{repositoryId:repository.id,baseRef,...(baseCommit?{baseCommit}:{}),...(draft.targetBranch?{targetBranch:draft.targetBranch}:{})},...(draft.referenceLinks?{referenceLinks:draft.referenceLinks}:{})}:undefined);
     const checks:PublicationPreview["checks"]=[{id:"workspace",status:repository?"passed":"warning",message:repository?"Registered physical Git root and base commit verified":"No repository; task needs specification"}];
     if (draft.delivery.type!=="none") checks.push({id:"delivery",status:"blocked",code:"DELIVERY_UNSUPPORTED",message:"Publication currently supports local results only"});
-    if (draft.execution.selectionMode!=="manual") checks.push({id:"selection",status:"blocked",code:"POLICY_UNSUPPORTED",message:"Policy selection is not implemented"});
     let selection:ExecutionSelection|undefined;
+    let routingDecision:ModelRoutingDecision|undefined;
     if(draft.startMode==="dispatch") {
       if(compiled.state!=="READY"||!repository)checks.push({id:"contract",status:"blocked",code:"NEEDS_SPEC",message:"Complete the task contract before dispatch"});
-      else try {selection=await this.runtime.prepare(draft,repository);checks.push({id:"dispatch",status:"passed",message:"Local routing and native selection passed"});checks.push({id:"model-evidence",status:"warning",message:selection.selectionType==="native-default"?"Native configuration will choose the model; access, remaining quota and price are not confirmed":"Native catalog listing does not prove model access; remaining quota and price are not reported"});} catch(error){checks.push({id:"dispatch",status:"blocked",code:error instanceof PublicationError?error.code:"DISPATCH_UNAVAILABLE",message:error instanceof Error?error.message:"Dispatch unavailable"});}
+      else try {selection=await this.runtime.prepare(draft,repository,undefined,{owner});routingDecision=selection.routingDecision;checks.push({id:"dispatch",status:"passed",message:"Routing and native selection passed"});checks.push({id:"model-evidence",status:"warning",message:selection.selectionType==="native-default"?"Native configuration will choose the model; access, remaining quota and price are not confirmed":"Native catalog listing does not prove model access; remaining quota and price are not reported"});} catch(error){if(error instanceof PublicationError)routingDecision=error.routingDecision;checks.push({id:"dispatch",status:"blocked",code:error instanceof PublicationError?error.code:"DISPATCH_UNAVAILABLE",message:error instanceof Error?error.message:"Dispatch unavailable"});}
     }
     const publicationId=randomUUID(); const inputHash=contentHash(draft); const expiresAt=new Date(this.now().getTime()+600000).toISOString();
     const reviewHash=contentHash({draft,configRevision:snapshot.revision,baseCommit,contract:compiled.contract,checks,selection:selection?{...selection,selectedAt:undefined}:undefined});
     const canCommit=!checks.some(c=>c.status==="blocked");
-    const preview:PublicationPreview={publicationId,revision:1,state:canCommit?"PREVIEW":"NEEDS_INPUT",expiresAt,inputHash,effectiveTask:{title,description:draft.description,contractState:compiled.state,missing:compiled.missing},...(selection&&baseCommit?{effectiveExecution:{profileId:selection.profileId,runnerId:selection.runnerId,providerId:selection.providerId,backendId:selection.backendId,selectionType:selection.selectionType,nativeParameters:selection.nativeParameters,selectionSource:selection.source,configRevision:selection.configRevision,contextFingerprint:selection.contextFingerprint,repositoryBaseCommit:baseCommit,...(selection.requestedModel?{nativeModelId:selection.requestedModel}:{}),...(selection.catalogRevision?{catalogRevision:selection.catalogRevision}:{})}}:{}),checks,confirmation:{required:true,reviewHash,reasons:[draft.startMode==="dispatch"?"Start a native agent in a managed worktree":"Create a canonical task"]},canCommit};
+    const preview:PublicationPreview={publicationId,revision:1,state:canCommit?"PREVIEW":"NEEDS_INPUT",expiresAt,inputHash,...(routingDecision?{routingDecision}:{}),effectiveTask:{title,description:draft.description,contractState:compiled.state,missing:compiled.missing},...(selection&&baseCommit?{effectiveExecution:{profileId:selection.profileId,runnerId:selection.runnerId,providerId:selection.providerId,backendId:selection.backendId,selectionType:selection.selectionType,nativeParameters:selection.nativeParameters,selectionSource:selection.source,configRevision:selection.configRevision,contextFingerprint:selection.contextFingerprint,repositoryBaseCommit:baseCommit,...(selection.requestedModel?{nativeModelId:selection.requestedModel}:{}),...(selection.catalogRevision?{catalogRevision:selection.catalogRevision}:{})}}:{}),checks,confirmation:{required:true,reviewHash,reasons:[draft.startMode==="dispatch"?"Start a native agent in a managed worktree":"Create a canonical task"]},canCommit};
     const record:PublicationRecord={owner,draft:structuredClone(draft),preview,configRevision:snapshot.revision,...(selection?{selection}:{}),...(compiled.contract?{contract:compiled.contract}:{}),...(repository?{repository}:{}),...(baseCommit?{baseCommit}:{})};
     return this.db.transaction(()=>{
       const draftIdentity=contentHash({owner,clientDraftId:draft.clientDraftId,inputHash});
@@ -107,37 +107,45 @@ export class PublicationService {
   async commit(owner: string,id: string,key: string|undefined,body: unknown): Promise<PublicationReceipt> {
     if(!key || key.length>200) throw new PublicationError("IDEMPOTENCY_KEY_REQUIRED",400,"Supply a stable Idempotency-Key");
     if(!body || typeof body!=="object") throw new PublicationError("INVALID_COMMIT",400,"Commit body is required");
-    const input=body as {revision?:number;reviewHash?:string;confirmation?:{accepted?:boolean}};
+    const input=body as {revision?:number;reviewHash?:string;confirmation?:{accepted?:boolean;routingAccepted?:boolean}};
     const receiptId=contentHash({owner,key});const requestHash=contentHash({id,body});
     const replay=()=>{const r=this.db.getEntity<JsonValue>("operation-receipt",receiptId) as unknown as {requestHash:string;publicationId:string}|undefined;if(r){if(r.requestHash!==requestHash)throw new PublicationError("IDEMPOTENCY_CONFLICT",409,"Key was used for a different commit");return this.record(owner,r.publicationId).receipt;}return undefined;};
     const existing=replay();if(existing)return existing;
     const pending=this.pending.get(id);if(pending){await pending;return this.commit(owner,id,key,body);}
     const operation=this.commitOnce(owner,id,input,receiptId,requestHash);this.pending.set(id,operation);
     try{return await operation;}catch(error){
-      if(error instanceof PublicationError&&!["CONFIRMATION_REQUIRED","STALE_REVIEW","IDEMPOTENCY_CONFLICT"].includes(error.code)){
+      if(error instanceof PublicationError&&!["CONFIRMATION_REQUIRED","ROUTING_CONFIRMATION_REQUIRED","STALE_REVIEW","IDEMPOTENCY_CONFLICT"].includes(error.code)){
         const record=this.record(owner,id);
         if(!record.receipt){record.preview.state="NEEDS_REVIEW";record.preview.canCommit=false;record.preview.checks.push({id:"commit-review",status:"blocked",code:error.code,message:error.message});this.db.saveEntity("task-publication",id,json(record));}
       }
       throw error;
     }finally{this.pending.delete(id);}
   }
-  private async commitOnce(owner:string,id:string,input:{revision?:number;reviewHash?:string;confirmation?:{accepted?:boolean}},receiptId:string,requestHash:string):Promise<PublicationReceipt>{
+  private async commitOnce(owner:string,id:string,input:{revision?:number;reviewHash?:string;confirmation?:{accepted?:boolean;routingAccepted?:boolean}},receiptId:string,requestHash:string):Promise<PublicationReceipt>{
     let r=this.record(owner,id);
     if(input.confirmation?.accepted!==true)throw new PublicationError("CONFIRMATION_REQUIRED",400,"Review and confirm the publication");
     if(input.revision!==r.preview.revision||input.reviewHash!==r.preview.confirmation.reviewHash)throw new PublicationError("STALE_REVIEW",409,"Review revision changed");
     if(r.receipt){this.db.createEntityIfAbsent("operation-receipt",receiptId,json({requestHash,publicationId:id}));return r.receipt;}
+    if(r.selection?.routingDecision?.confirmation.required&&input.confirmation?.routingAccepted!==true)throw new PublicationError("ROUTING_CONFIRMATION_REQUIRED",400,"Review and approve the automatic model routing separately");
     if(this.now().getTime()>=Date.parse(r.preview.expiresAt))throw new PublicationError("PREVIEW_EXPIRED",409,"Preview expired; review again");
     if(!r.preview.canCommit)throw new PublicationError("PRECHECK_BLOCKED",409,"Resolve blocked preflight checks");
     if(this.config.current().revision!==r.configRevision)throw new PublicationError("SELECTION_CHANGED",409,"Configuration changed; review again");
     if(r.repository){const current=await this.workspaces.inspect({repositoryId:r.repository.id,baseRef:r.contract?.workspace?.baseRef??r.draft.baseRef??r.repository.defaultBaseRef,scopePaths:r.draft.scopePaths??r.repository.scopePaths,...(r.draft.targetBranch?{targetBranch:r.draft.targetBranch}:{})});if(current.baseCommit!==r.baseCommit)throw new PublicationError("SELECTION_CHANGED",409,"Repository baseline changed; review again");}
     if(r.selection&&r.repository) {
-      const selection=await this.runtime.prepare(r.draft,r.repository);
+      const selection=await this.runtime.prepare(r.draft,r.repository,undefined,{owner,reviewed:r.selection});
       if(contentHash({...selection,selectedAt:undefined})!==contentHash({...r.selection,selectedAt:undefined}))throw new PublicationError("SELECTION_CHANGED",409,"Execution selection changed; review again");
     }
     const receipt=this.db.transaction(()=>{
       r=this.record(owner,id);if(r.receipt)return r.receipt;
       if(this.now().getTime()>=Date.parse(r.preview.expiresAt))throw new PublicationError("PREVIEW_EXPIRED",409,"Preview expired during preflight");
       if(this.config.current().revision!==r.configRevision)throw new PublicationError("SELECTION_CHANGED",409,"Configuration changed during preflight");
+      if(r.selection?.routingDecision){
+        const decision=r.selection.routingDecision;
+        const use=this.db.getEntity<JsonValue>("model-routing-use",decision.id) as {publicationId:string}|undefined;
+        if(use&&use.publicationId!==id)throw new PublicationError("ROUTING_DECISION_CONSUMED",409,"Routing decision was already used by another publication");
+        this.db.saveEntity("model-routing-use",decision.id,json({publicationId:id}));
+        decision.confirmation={required:decision.confirmation.required,mode:decision.confirmation.required?"user-confirmed":"policy-exempt",actorId:owner,confirmedAt:this.now().toISOString()};
+      }
       if(!this.db.createEntityIfAbsent("operation-receipt",receiptId,json({requestHash,publicationId:id})))throw new PublicationError("IDEMPOTENCY_CONFLICT",409,"Commit already reserved");
       const taskId=randomUUID(),now=this.now().toISOString();const task:Task={id:taskId,projectId:r.draft.projectId,title:r.preview.effectiveTask.title,description:r.draft.description,state:r.preview.effectiveTask.contractState,createdAt:now,updatedAt:now};
       this.tasks.execute({id:`publication:${id}`,taskId,baseRevision:0,actor:owner,command:{type:"task.create",task}});
