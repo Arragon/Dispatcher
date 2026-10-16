@@ -44,14 +44,14 @@ Files: apps/controller/src/model-routing.ts, service.ts, task-publications.ts; d
 - [x] Persist deterministic decision snapshots, applied/draft test distinction and explicit preview/read APIs; all previews remain zero-worktree/zero-agent-start.
 - [x] Bind decision/confirmation to actor, raw input, config and final selection; revalidate native catalog and winning target at commit/start without reclassification; preserve immutable history and idempotency.
 - [x] Add ConfigPlan-backed policy editor/test and manual/auto publication flow with no implicit override.
-- [ ] Test frozen actual adapter parameters, failure cases, dropped-response replay and old entry behavior; full gate, native read/controlled execution evidence where available, commit/check quota.
+- [x] Test frozen actual adapter parameters, failure cases, dropped-response replay and old entry behavior; full gate, native read/controlled execution evidence where available, commit/check quota.
 
 ### 3. Optional semantic classification
 
 Files: llm-runtime contracts/runtime, config roles, Controller model-routing, web internal roles and tests.
 - [x] Add task_classifier only when requested, strict type/evidence schema, tool-free bounded input, 20s total cancellation, <=700 output tokens, 16000 Unicode input characters.
 - [x] Per-call provenance/usage/fallback trace, keyed deduplication and stored classification; native refresh never re-bills classifier. Test complete hybrid arbitration matrix and configured unique-keyword downgrade.
-- [ ] Full gate and controlled endpoint evidence; commit/check quota.
+- [x] Full gate and controlled endpoint evidence; commit/check quota.
 
 ### 4. Remote native execution
 
@@ -80,3 +80,18 @@ Files: protocol commands, runner command handlers/runtime, Controller remote ada
 - Unit 3: optional task_classifier, strict type/evidence validation, complete hybrid arbitration, per-call fallback provenance/observed usage, shared deadline/cancellation, analysis deduplication and explicit reanalysis implemented. Full gate passed52 files/403 tests; official remaining72%. Controlled injected endpoint only for classifier tests; real paid semantic-provider acceptance is not claimed.
 
 - Policy follow-up unit 2b: create-only tasks reuse the same publication composer, task-bound preview and receipt. Canonical revision/contract/hash/frozen commit fences prevent duplicate Task creation and stale starts; empty manual overrides cannot bypass auto intent. Full gate52 files/406 tests passed. Real deferred Cursor execution is in progress; result not yet claimed.
+
+- Unit 2b native completion: deferred Cursor Run25e75cfb-5949-479c-bedb-baa5a107e691 and native session6e70769f-39dd-48b6-8220-221ceef1b9b6 reached COMPLETE/PASSED and Task REVIEW, with exactly one canonical Task064c1aba-75d6-4409-b037-144c600b897f. Cursor installed version2026.10.01-e373342. Agent-side shell refusal was separate from the passing Controller verification command.
+- Unit 2c: schema-backed routing editor uses real concrete native catalog choices, parameter omission and ConfigPlan; enabled routing changes qualify native targets at plan and apply with revision/evidence fences. Account/project contexts must be applied first. Fixed getPlan lifecycle projection from the persisted row so successful apply replay stays idempotent. Full gate52 files/412 tests; official remaining70%. Browser editor acceptance is being checked before the remote unit.
+
+### Remote unit execution detail
+
+- Preserve Controller/Runner authentication and journal transport. Negotiate native-execution capability; older health-only connections cannot start native work.
+- Add a versioned normalized command contract for owning-Runner repository inspection/planning, catalog/probe, lease-bound workspace preparation, native start/status/input/cancel/result, verification and changed-file evidence. No executable strings, native tokens or Controller filesystem paths authorize a remote native start.
+- Runner owns its registered profile/repository configuration, native adapters, managed workspaces, command registry, durable execution reservations and current lease/generation fences. Duplicate or uncertain starts never respawn after restart/replay.
+- Controller uses a remote AgentAdapter facade and workspace inspection port. Reserve canonical Run/task/lease before remote filesystem mutation; prepare the worktree and re-query the actual native context before start. Remote results and verification return through the same authority and receipt path.
+- Add optional repository runnerId, defaulting old registrations to local. Never register remote paths in Controller's local RepositoryRegistry or construct local native adapters for remote profiles.
+- Extend Runner CLI serve to load its local registrations and expose only qualified inventory/capabilities. Probe/catalog/verification execute on that Runner. Persist process/native-session/workspace evidence and keep disconnect/revocation/recovery explicit.
+- Validate with transport/unit negatives (stale payload, generation, lease, unsupported capability, Controller-zero-local-run), process-separated integration and a real native CLI on the owning Runner. Distinct-device acceptance remains pending a target: current primary config has only local Runner; an async clarification was sent while implementation continues.
+
+- Unit 2c final acceptance: full gate52 files/413 tests passed after a live Cursor status-progress false-conflict fix. Real native refresh returned native-fresh/explicit with265 candidates. Browser4178 selected the actual gpt-5.4-nano-low target and generated a privileged /policies ConfigPlan from a priority edit; no apply or execution occurred in this UI check. Account switches, unknown/contradictory markers, auth expiry and native configuration fences remain covered. Official remaining69%. Policy local implementation units complete; paid semantic-provider and distinct-device formal Gates remain explicit final-audit items.

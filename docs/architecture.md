@@ -260,6 +260,14 @@ from the canonical contract, binds task revision plus contract hash, and commits
 an execution intent for that existing Task. It never creates a second Task or
 rewrites its contract. Startup rechecks the approved contract; source branch
 movement does not replace an existing task's frozen base commit.
+Enabled routing changes qualify concrete native targets before ConfigPlan creation
+and compare fresh catalog evidence again before apply. This I/O remains outside
+the synchronous configuration transaction; configuration revision fences protect
+the gap. Accounts/projects must already be applied to qualify their native context.
+The schema-backed policy editor reuses native catalog selection and the existing
+ConfigPlan writer. Disabled routing can retain an unqualified draft; enabling it
+requires current native evidence. Catalog defaults are display metadata; omitted
+execution parameters remain omitted at the adapter boundary.
 
 Persisted ACTIVE native sessions are not physical process evidence after a
 Controller restart. Interrupted publication starts and detached active executions

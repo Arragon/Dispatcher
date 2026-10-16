@@ -21,3 +21,10 @@ it("shows native choices without an empty effort selector when native metadata h
   render(<QueryClientProvider client={client}><NativeModelPicker profileId="account" repositoryId="repo" value={{modelId:"native-high",effort:"",catalogRevision:data.revision,contextFingerprint:data.contextFingerprint,allowUnconfirmed:false}} onChange={()=>undefined}/></QueryClientProvider>);
   expect(await screen.findByRole("option",{name:/native-high/})).toBeTruthy();expect(screen.queryByLabelText("思考强度")).toBeNull();
 });
+it("keeps policy targets concrete and represents native-default reasoning by omission",async()=>{
+  const data={...catalog("concrete"),selectionSupport:"explicit",entries:[{...catalog("concrete").entries[0]!,kind:"model"},{...catalog("tier").entries[0]!,kind:"native-auto"}]};
+  vi.spyOn(globalThis,"fetch").mockResolvedValue(new Response(JSON.stringify(data)));const change=vi.fn();
+  render(<QueryClientProvider client={new QueryClient({defaultOptions:{queries:{retry:false}}})}><NativeModelPicker purpose="policy" profileId="account" repositoryId="repo" value={nativeDefaultChoice} onChange={change}/></QueryClientProvider>);
+  expect(await screen.findByRole("option",{name:/concrete · concrete/})).toBeTruthy();expect((screen.getByRole("option",{name:/tier · tier/}) as HTMLOptionElement).disabled).toBe(true);
+  await userEvent.selectOptions(screen.getByLabelText("原生模型"),"concrete");expect(change).toHaveBeenCalledWith(expect.objectContaining({modelId:"concrete",effort:""}));
+});

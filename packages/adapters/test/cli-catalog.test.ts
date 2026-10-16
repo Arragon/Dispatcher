@@ -46,6 +46,13 @@ describe("native CLI catalogs", () => {
     let accounts = 0;
     await expect(readNativeCliCatalog({ provider: "cursor", profile: { id: "account", alias: "A" }, executable: "native", context, workspacePath: "/tmp", read: async input => ({ stdout: input.args[0] === "status" ? `Logged in as account-${accounts++}` : "Available models\nmodel - Native\n", stderr: "", exitCode: 0 }) })).rejects.toMatchObject({ code: "NATIVE_CONTEXT_CHANGED" });
   });
+  it("fences Cursor's parsed login identity rather than volatile progress rendering",async()=>{
+    let reads=0;
+    const catalog=await readNativeCliCatalog({provider:"cursor",profile:{id:"account",alias:"A"},executable:"native",context,workspacePath:"/tmp",read:async input=>({stdout:input.args[0]==="status"?reads++===0?"Checking status…\r\n✓ Logged in as stable@example.invalid\n":"⠸ \r✓ Logged in as stable@example.invalid\n":"Available models\nmodel - Native\n",stderr:"",exitCode:0})});
+    expect(catalog.freshness).toBe("native-fresh");expect(JSON.stringify(catalog)).not.toContain("stable@example.invalid");
+    for(const status of ["Status format changed", "Logged in as first\nLogged in as second","Logged in as first second"]){await expect(readNativeCliCatalog({provider:"cursor",profile:{id:"account",alias:"A"},executable:"native",context,workspacePath:"/tmp",read:async input=>({stdout:input.args[0]==="status"?status:"Available models\nmodel - Native\n",stderr:"",exitCode:0})})).rejects.toMatchObject({code:"INVALID_MODEL_CATALOG"});}
+    expect(await readNativeCliCatalog({provider:"cursor",profile:{id:"account",alias:"A"},executable:"native",context,workspacePath:"/tmp",read:async input=>({stdout:input.args[0]==="status"?"Session has expired":"Available models\nmodel - Native\n",stderr:"",exitCode:0})})).toMatchObject({failure:{code:"NATIVE_AUTH_REQUIRED"},entries:[]});
+  });
   it("reaps an owned OpenCode host after read-only model queries and unsupported versions", async () => {
     const directory = mkdtempSync(join(tmpdir(), "opencode-catalog-")), data = join(directory, "opencode"), executable = join(directory, "native"), marker = join(directory, "closed"); mkdirSync(data);
     const db = new DatabaseSync(join(data, "opencode.db")); db.exec("CREATE TABLE account_state(id TEXT,active_account_id TEXT,active_org_id TEXT);CREATE TABLE account(id TEXT,url TEXT);CREATE TABLE credential(id TEXT,integration_id TEXT,connector_id TEXT,method_id TEXT,active INTEGER,time_updated INTEGER);CREATE TABLE control_account(email TEXT,url TEXT,active INTEGER,time_updated INTEGER)"); db.close();

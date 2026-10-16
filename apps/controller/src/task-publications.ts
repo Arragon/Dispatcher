@@ -9,7 +9,7 @@ import type { WorkspaceManager } from "@dispatcher/workspace";
 const json = (value: unknown): JsonValue => JSON.parse(JSON.stringify(value)) as JsonValue;
 export function contentHash(value: unknown): string {
   const stable = (v: unknown): unknown => Array.isArray(v) ? v.map(stable) : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).sort(([a],[b])=>a.localeCompare(b)).map(([k,x])=>[k,stable(x)])) : v;
-  return createHash("sha256").update(JSON.stringify(stable(value))).digest("hex");
+  return createHash("sha256").update(JSON.stringify(stable(value))??"undefined").digest("hex");
 }
 export class PublicationError extends Error {
   constructor(readonly code: string, readonly statusCode: number, message: string,readonly routingDecision?:ModelRoutingDecision) { super(message); }

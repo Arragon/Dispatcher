@@ -368,6 +368,11 @@
   browser receipt identities separate per Task. Reconstruct task text on the
   server and use the contract's frozen commit when inspecting its workspace;
   the current source branch may have advanced since create-only publication.
+- Native rule qualification belongs before ConfigPlan creation/apply, outside its
+  synchronous SQLite transaction. Bind fresh evidence and revision, and keep
+  successful plan replay independent of later native availability. Read ConfigPlan
+  lifecycle state from the canonical stored row, not its original embedded plan
+  document, which captured PLANNED at creation.
 - A source-checkout scope check is insufficient when executing another commit.
   Recheck physical scope roots in the created worktree before native queries or
   execution. Workspace-bound contracts cannot accept another repository through
@@ -393,6 +398,10 @@
 - Native `models` exit zero does not prove fresh or authenticated results. Grok
   returned expired OAuth diagnostics and its old model list with exit zero;
   inspect both streams and block native-default as well as explicit selection.
+- Cursor status can render different progress/spinner lines for the same login.
+  Fence the qualified `Logged in as` identity marker, together with native
+  account/configuration hashes; do not compare whole terminal progress output.
+  Unknown or contradictory login markers remain unqualified.
 - Plain CLI model IDs may already encode effort, fast mode, tiers or routing.
   Preserve the native selector exactly; never derive supported parameter ranges
   from its suffix or from a CLI-wide effort flag. OpenCode variant overlays and

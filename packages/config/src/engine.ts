@@ -156,7 +156,7 @@ export class ConfigurationEngine {
 
   getPlan(id: string): ConfigPlan | undefined {
     const stored = this.database.getConfigPlan(id);
-    return stored ? (stored.plan as unknown as ConfigPlan) : undefined;
+    return stored ? {...(stored.plan as unknown as ConfigPlan),state:stored.state as ConfigPlanState,updatedAt:stored.updatedAt} : undefined;
   }
 
   proposedConfig(id: string): DispatcherConfig {

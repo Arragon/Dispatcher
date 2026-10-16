@@ -1,3 +1,4 @@
+import {qualifyRoutingPolicy,type PolicyConfigEvidence} from "./policy-config.js";
 import {TaskClassifier} from "./task-classifier.js";
 import { ModelRoutingService } from "./model-routing.js";
 import type { WorkspaceHandle } from "@dispatcher/workspace";
@@ -756,6 +757,31 @@ export class ControllerService {
         };
       },
     };
+  }
+
+  private async planConfiguration(proposed:unknown,actor:string,source:Parameters<ConfigurationEngine["buildPlan"]>[2]) {
+    const snapshot=this.configuration.current(),next=validateConfig(proposed);
+    const evidence=await qualifyRoutingPolicy(snapshot.config,next,(profileId,repositoryId)=>this.modelCatalog(profileId,repositoryId,"selection-change"));
+    if(this.configuration.current().revision!==snapshot.revision)throw new RevisionConflictError(snapshot.revision,this.configuration.current().revision);
+    const plan=this.configuration.buildPlan(next,actor,source);
+    if(evidence)this.database.saveEntity("policy-plan-evidence",plan.id,json(evidence));
+    return plan;
+  }
+  private async applyConfigurationPlan(id:string,options:{confirmed?:boolean}={}) {
+    const plan=this.configuration.getPlan(id);if(plan&&plan.state!=="PLANNED")return this.configuration.applyPlan(id,options);
+    const snapshot=this.configuration.current();if(plan&&snapshot.revision!==plan.baseRevision)throw new RevisionConflictError(plan.baseRevision,snapshot.revision);
+    const next=this.configuration.proposedConfig(id);
+    const evidence=await qualifyRoutingPolicy(snapshot.config,next,(profileId,repositoryId)=>this.modelCatalog(profileId,repositoryId,"selection-change"));
+    if(evidence){const reviewed=this.database.getEntity<JsonValue>("policy-plan-evidence",id) as unknown as PolicyConfigEvidence|undefined;if(!reviewed||contentHash(reviewed)!==contentHash(evidence))throw new ConfigPlanError("ROUTING_PLAN_STALE","Native routing evidence changed; build and review a new ConfigPlan");}
+    await assertRequiredSecretsAvailable(next,this.secrets);
+    return this.configuration.applyPlan(id,options);
+  }
+  private async rollbackConfigurationPlan(id:string) {
+    const stored=this.database.getConfigPlan(id),snapshot=this.configuration.current();
+    if(stored?.state!=="APPLIED")return this.configuration.rollbackPlan(id);
+    if(stored)await qualifyRoutingPolicy(snapshot.config,validateConfig(stored.before),(profileId,repositoryId)=>this.modelCatalog(profileId,repositoryId,"selection-change"));
+    if(this.configuration.current().revision!==snapshot.revision)throw new RevisionConflictError(snapshot.revision,this.configuration.current().revision);
+    return this.configuration.rollbackPlan(id);
   }
 
   private applyRuntimeConfiguration(config: DispatcherConfig): void {
@@ -1552,7 +1578,7 @@ export class ControllerService {
       if(!entry?.selectable||entry.access==="denied")throw new PublicationError("MODEL_UNAVAILABLE",409,"Selected native model is not selectable");
       if(entry.access==="unconfirmed"&&!draft.execution.allowUnconfirmedModelAccess)throw new PublicationError("MODEL_ACCESS_UNCONFIRMED",409,"Acknowledge that native catalog listing does not prove account access");
       for(const [key,value] of Object.entries(draft.execution.nativeParameters??{}))if(!entry.parameterOptions[key]?.includes(value))throw new PublicationError("INVALID_NATIVE_PARAMETERS",400,"Native parameter is not supported by the selected model");
-      nativeParameters={...entry.parameterDefaults,...draft.execution.nativeParameters};
+      nativeParameters={...draft.execution.nativeParameters};
     }else if(Object.keys(draft.execution.nativeParameters??{}).length)throw new PublicationError("INVALID_NATIVE_PARAMETERS",400,"Native defaults do not accept model parameters");
     const candidates=this.dispatchCandidates(profile.id);
     if(_workspacePath)for(const candidate of candidates) candidate.activeRuns-=this.database.listEntities<JsonValue>("run").filter(v=>{const r=v as unknown as Run;return r.worktree===_workspacePath&&r.state==="STARTING"&&r.profileId===candidate.profileId;}).length;
@@ -1953,29 +1979,27 @@ export class ControllerService {
     });
     this.semanticTools.register({
       name: "config.plan", description: "Build a ConfigPlan without applying it", risk: "write", input: { required: ["config"], properties: { config: "object" }, additionalProperties: false },
-      execute: async ({ config }, context) => this.configuration.buildPlan(config, context.principal.id, "assistant"),
+      execute: async ({ config }, context) => this.planConfiguration(config, context.principal.id, "assistant"),
     });
     this.semanticTools.register({
       name: "config.build_plan", description: "Build a ConfigPlan without applying it", risk: "write", input: { required: ["config"], properties: { config: "object" }, additionalProperties: false },
-      execute: async ({ config }, context) => this.configuration.buildPlan(config, context.principal.id, "assistant"),
+      execute: async ({ config }, context) => this.planConfiguration(config, context.principal.id, "assistant"),
     });
     this.semanticTools.register({
       name: "config.apply", description: "Apply a confirmed ConfigPlan", risk: "privileged", requiredRoles: ["admin"], input: { required: ["planId"], properties: { planId: "string" }, additionalProperties: false },
       execute: async ({ planId }) => {
-        await assertRequiredSecretsAvailable(this.configuration.proposedConfig(String(planId)), this.secrets);
-        return this.configuration.applyPlan(String(planId), { confirmed: true });
+        return this.applyConfigurationPlan(String(planId), { confirmed: true });
       },
     });
     this.semanticTools.register({
       name: "config.apply_plan", description: "Apply a confirmed ConfigPlan", risk: "privileged", requiredRoles: ["admin"], input: { required: ["planId"], properties: { planId: "string" }, additionalProperties: false },
       execute: async ({ planId }) => {
-        await assertRequiredSecretsAvailable(this.configuration.proposedConfig(String(planId)), this.secrets);
-        return this.configuration.applyPlan(String(planId), { confirmed: true });
+        return this.applyConfigurationPlan(String(planId), { confirmed: true });
       },
     });
     this.semanticTools.register({
       name: "config.rollback", description: "Rollback an applied ConfigPlan", risk: "privileged", requiredRoles: ["admin"], input: { required: ["planId"], properties: { planId: "string" }, additionalProperties: false },
-      execute: async ({ planId }) => this.configuration.rollbackPlan(String(planId)),
+      execute: async ({ planId }) => this.rollbackConfigurationPlan(String(planId)),
     });
     this.semanticTools.register({
       name: "secret.request", description: "Request secure input without reading a secret", risk: "write", input: { required: ["namespace", "name"], properties: { namespace: "string", name: "string" }, additionalProperties: false },
@@ -2652,9 +2676,9 @@ export class ControllerService {
         const actual=this.configuration.current().revision;
         if(body.baseRevision!==actual) throw new RevisionConflictError(body.baseRevision,actual);
       }
-      const plan = this.configuration.buildPlan(next, this.principalFor(request).id, "web");
+      const plan = await this.planConfiguration(next, this.principalFor(request).id, "web");
       if(body.previewOnly === true) return reply.code(201).send({plan});
-      const applied = this.configuration.applyPlan(plan.id, { confirmed: true });
+      const applied = await this.applyConfigurationPlan(plan.id, { confirmed: true });
       return reply.code(201).send({ profile: { id: body.id, provider: "codex", alias: body.alias, runnerId: body.runnerId ?? "local", state: body.enabled === false ? "DISABLED" : "CONFIGURED" }, revision: applied.revision });
     });
     this.app.post<{ Body: QoderProfileBody }>("/api/agents/qoder/discover", async (request, reply) => {
@@ -2688,9 +2712,9 @@ export class ControllerService {
         const actual=this.configuration.current().revision;
         if(body.baseRevision!==actual) throw new RevisionConflictError(body.baseRevision,actual);
       }
-      const plan = this.configuration.buildPlan(next, this.principalFor(request).id, "web");
+      const plan = await this.planConfiguration(next, this.principalFor(request).id, "web");
       if(body.previewOnly === true) return reply.code(201).send({plan});
-      const applied = this.configuration.applyPlan(plan.id, { confirmed: true });
+      const applied = await this.applyConfigurationPlan(plan.id, { confirmed: true });
       return reply.code(201).send({ profile: { id: body.id, provider: "qoder", alias: body.alias, runnerId: body.runnerId ?? "local", state: "CONFIGURED" }, discovery: discovery.selected, revision: applied.revision });
     });
     this.app.post<{ Params: { provider: string }; Body: EcosystemProfileBody }>("/api/agents/:provider/discover", async (request, reply) => {
@@ -2757,9 +2781,9 @@ export class ControllerService {
         const actual=this.configuration.current().revision;
         if(body.baseRevision!==actual) throw new RevisionConflictError(body.baseRevision,actual);
       }
-      const plan = this.configuration.buildPlan(next, this.principalFor(request).id, "web");
+      const plan = await this.planConfiguration(next, this.principalFor(request).id, "web");
       if(body.previewOnly === true) return reply.code(201).send({plan});
-      const applied = this.configuration.applyPlan(plan.id, { confirmed: true });
+      const applied = await this.applyConfigurationPlan(plan.id, { confirmed: true });
       return reply.code(201).send({ profile: { id: body.id, provider, alias: body.alias, runnerId: body.runnerId ?? "local", state: body.enabled === false ? "DISABLED" : this.agentAdapters.has(body.id) ? "CONFIGURED" : "UNAVAILABLE" }, revision: applied.revision });
     });
     this.app.post<{ Params: { id: string }; Body: { enabled: boolean } }>("/api/agents/profiles/:id/enabled", async (request, reply) => {
@@ -2768,8 +2792,8 @@ export class ControllerService {
       const profile = next.agentProfiles.find((entry) => entry.id === request.params.id);
       if (!profile) return reply.code(404).send({ code: "PROFILE_NOT_FOUND" });
       profile.enabled = request.body.enabled;
-      const plan = this.configuration.buildPlan(next, "local-web", "web");
-      const applied = this.configuration.applyPlan(plan.id, { confirmed: true });
+      const plan = await this.planConfiguration(next, this.principalFor(request).id, "web");
+      const applied = await this.applyConfigurationPlan(plan.id, { confirmed: true });
       return { revision: applied.revision, profile: { id: profile.id, alias: profile.alias, enabled: profile.enabled } };
     });
     this.app.post<{ Params: { id: string } }>("/api/agents/profiles/:id/test", async (request, reply) => {
@@ -3119,9 +3143,9 @@ export class ControllerService {
       if (!request.body?.config) return reply.code(400).send({ code: "LLM_CONFIG_REQUIRED" });
       const current = this.configuration.current();
       const next: DispatcherConfig = { ...structuredClone(current.config), internalLlm: structuredClone(request.body.config) };
-      const plan = this.configuration.buildPlan(next, this.principalFor(request).id, "web");
+      const plan = await this.planConfiguration(next, this.principalFor(request).id, "web");
       await assertRequiredSecretsAvailable(next, this.secrets);
-      const applied = this.configuration.applyPlan(plan.id, { confirmed: request.body.confirmed ?? true });
+      const applied = await this.applyConfigurationPlan(plan.id, { confirmed: request.body.confirmed ?? true });
       return { plan, revision: applied.revision, config: applied.config.internalLlm, state: this.llm.snapshot().state };
     });
     this.app.post<{ Params: { profileId: string } }>("/api/llm/profiles/:profileId/test", async (request) => ({
@@ -3206,16 +3230,15 @@ export class ControllerService {
         const actual=this.configuration.current().revision;
         if(request.body.baseRevision!==actual) throw new RevisionConflictError(request.body.baseRevision,actual);
       }
-      const plan = this.configuration.buildPlan(request.body.config, this.principalFor(request).id, "web");
+      const plan = await this.planConfiguration(request.body.config, this.principalFor(request).id, "web");
       return reply.code(201).send({ plan });
     });
     this.app.post<{ Params: { id: string }; Body: ApplyPlanBody }>("/api/config/plans/:id/apply", async (request) => {
       const confirmed = request.body?.confirmed;
-      await assertRequiredSecretsAvailable(this.configuration.proposedConfig(request.params.id), this.secrets);
-      return this.configuration.applyPlan(request.params.id, confirmed === undefined ? {} : { confirmed });
+      return this.applyConfigurationPlan(request.params.id, confirmed === undefined ? {} : { confirmed });
     });
     this.app.post<{ Params: { id: string } }>("/api/config/plans/:id/rollback", async (request) =>
-      this.configuration.rollbackPlan(request.params.id),
+      this.rollbackConfigurationPlan(request.params.id),
     );
 
     this.app.get("/api/setup", async () => ({

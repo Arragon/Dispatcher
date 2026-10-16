@@ -13,6 +13,7 @@ export interface NativeCliReadResult { stdout: string; stderr: string; exitCode:
 const digest = (value: unknown) => createHash("sha256").update(JSON.stringify(value) ?? "null").digest("hex");
 const clean = (value: string) => value.replace(new RegExp(`${String.fromCharCode(27)}\\[[0-?]*[ -/]*[@-~]`, "g"), "");
 const invalid = () => new AdapterContractError("INVALID_MODEL_CATALOG", "Native model catalog format is unsupported");
+const nativeAuthFailure=/not authenticated|not logged in|authentication failed|invalid.grant|expired credentials|session has expired|login required|please.*log.?in|unauthorized|forbidden|no auth credentials/i;
 
 /** Only the adapter's fixed read-only commands reach this private subprocess boundary. */
 export function readNativeCli(input: NativeCliReadRequest): Promise<NativeCliReadResult> {
@@ -41,7 +42,7 @@ export function normalizeNativeCliCatalog(provider: CatalogCliProvider, stdout: 
   const output = clean(stdout), diagnostics = clean(stderr), combined = `${output}\n${diagnostics}`;
   const base = { profileId: context.profileId, runnerId: context.runnerId, providerId: provider, backendId: provider === "cursor" ? "cursor-local-cli" : `${provider}-cli-json`, contextFingerprint, fetchedAt, source: "cli-query" as const };
   const failed = (code: string, message: string): AccountModelCatalog => ({ ...base, revision: digest({ contextFingerprint, code }), freshness: "unverified", selectionSupport: "native-default-only", entries: [], failure: { code, message } });
-  if (/not authenticated|not logged in|authentication failed|invalid.grant|expired credentials|session has expired|login required|please.*log.?in|unauthorized|forbidden|no auth credentials/i.test(combined)) return failed("NATIVE_AUTH_REQUIRED", "Native authentication is missing or expired; sign in through the native application");
+  if (nativeAuthFailure.test(combined)) return failed("NATIVE_AUTH_REQUIRED", "Native authentication is missing or expired; sign in through the native application");
   if (/failed to (?:fetch|load)|fetch.*failed|refresh.*failed|using cach|cached models|existing models unchanged/i.test(combined)) {
     const cached = failed("NATIVE_CATALOG_STALE", "Native query returned a cached or failed model refresh");
     cached.freshness = "native-cache"; return cached;
@@ -73,6 +74,15 @@ export async function readNativeCliCatalog(input: { provider: CatalogCliProvider
   const accountArgs = input.provider === "cursor" ? ["status"] : qoder ? ["--config-dir", configDir, "status", "--output", "json"] : undefined;
   const identity = (account: NativeCliReadResult | undefined): unknown => {
     if (!account) return undefined;
+    if (input.provider==="cursor") {
+      const output=clean(account.stdout);
+      if(nativeAuthFailure.test(output+clean(account.stderr)))return {authenticated:false};
+      // Status progress/spinner lines vary with network timing. Only the qualified
+      // login marker identifies the account; unknown/contradictory formats fail closed.
+      const accounts=[...new Set([...output.matchAll(/^[^\p{L}\p{N}\r\n]*Logged in as[ \t]+(\S+)[ \t]*$/gimu)].map(match=>match[1]!))];
+      if(accounts.length!==1)throw invalid();
+      return {authenticated:true,accountId:accounts[0]};
+    }
     if (!qoder) return clean(account.stdout).trim();
     const value = JSON.parse(account.stdout) as Record<string, unknown>;
     if (typeof value.logged_in !== "boolean" || value.logged_in && (typeof value.username !== "string" || !value.username)) throw invalid();

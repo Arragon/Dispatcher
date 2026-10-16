@@ -116,6 +116,7 @@ describe("ConfigurationEngine", () => {
     const plan = engine.buildPlan(configured({ id: "controller-two" }), "tester", "cli");
     expect(plan.risk).toBe("safe");
     const applied = engine.applyPlan(plan.id);
+    expect(engine.getPlan(plan.id)?.state).toBe("APPLIED");
     expect(applied.config.controller.id).toBe("controller-two");
     expect(database.listAudit().map((entry) => entry.action)).toContain("apply");
     expect(runtime.apply).toHaveBeenCalled();
@@ -146,6 +147,7 @@ describe("ConfigurationEngine", () => {
     );
     expect(engine.current()).toEqual(before);
     expect(runtime.apply).toHaveBeenLastCalledWith(before.config);
+    expect(engine.getPlan(plan.id)?.state).toBe("FAILED");
     database.close();
   });
 
@@ -186,6 +188,7 @@ describe("ConfigurationEngine", () => {
     const plan = engine.buildPlan(configured({ id: "temporary" }), "tester", "cli");
     const applied = engine.applyPlan(plan.id);
     const rolledBack = engine.rollbackPlan(plan.id);
+    expect(engine.getPlan(plan.id)?.state).toBe("ROLLED_BACK");
     expect(rolledBack.revision).toBe(applied.revision + 1);
     expect(rolledBack.config).toEqual(original.config);
     expect(database.listAudit().find((entry) => entry.action === "rollback" && entry.status === "committed")).toBeDefined();
