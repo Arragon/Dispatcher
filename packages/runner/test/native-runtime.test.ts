@@ -1,0 +1,164 @@
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, expect, it, vi } from "vitest";
+import { CodexAdapter, type SessionStore } from "@dispatcher/adapters";
+import { defaultDispatcherConfig } from "@dispatcher/config";
+import type { AccountModelCatalog, ExecutionSelection } from "@dispatcher/domain";
+import { createEnvelope, type CommandPayload } from "@dispatcher/protocol";
+import { NativeRunnerRuntime } from "../src/native-runtime.js";
+
+const cleanups: Array<() => void> = [];
+afterEach(() => { for (const cleanup of cleanups.splice(0).reverse()) cleanup(); });
+function fixture() {
+  const directory = mkdtempSync(join(tmpdir(), "runner-native-"));
+  cleanups.push(() => rmSync(directory, { recursive: true, force: true }));
+  const root = join(directory, "repo");
+  execFileSync("git", ["init", "-b", "main", root], { stdio: "ignore" });
+  execFileSync("git", ["-C", root, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "--allow-empty", "-m", "base"], { stdio: "ignore" });
+  let starts = 0, cancellations = 0, sequence = 0;
+  let now = new Date("2026-10-16T12:00:00Z");
+  let completed = false;
+  const catalog: AccountModelCatalog = { profileId: "p", runnerId: "remote", providerId: "codex", backendId: "codex-exec-json", contextFingerprint: "context", revision: "catalog", fetchedAt: now.toISOString(), freshness: "native-fresh", source: "native-rpc", selectionSupport: "explicit", entries: [{ id: "model", displayName: "Model", kind: "model", selectable: true, access: "account-listed", parameterOptions: { reasoningEffort: ["low"] } }] };
+  const options = { runnerId: "remote", dataDirectory: join(directory, "data"), monitorIntervalMs: 0, now: () => now, createAdapter: (_profile: unknown, store: SessionStore) => {
+    const adapter = new CodexAdapter({ id: "p", alias: "P", codexHome: directory }, { start: input => {
+      starts++; writeFileSync(join(input.workspacePath, "result.txt"), "runner-ok\n");
+      return { processId: 1234, status: () => completed ? "completed" : "running", cancel: async () => { cancellations++; completed = true; }, result: async () => ({ state: completed ? "completed" : "waiting", summary: "done", providerSessionId: "native-session", events: [] }) };
+    } }, store);
+    adapter.modelCatalog = async () => structuredClone(catalog);
+    return adapter;
+  } };
+  const runtime = new NativeRunnerRuntime(options);
+  cleanups.push(() => runtime.close());
+  const config = structuredClone(defaultDispatcherConfig);
+  config.runners = [{ id: "remote", displayName: "Remote", mode: "remote", capacity: 1, tags: [], credentialRef: "secret://runner/fixture/remote" }];
+  config.agentProfiles = [{ id: "p", alias: "P", provider: "codex", runnerId: "remote", settings: { codexHome: directory } }];
+  config.repositories = [{ id: "repo", root, defaultBaseRef: "main", scopePaths: ["."], verificationCommands: [{ id: "check", file: process.execPath, args: ["-e", "if(require('node:fs').readFileSync('result.txt','utf8')!=='runner-ok\\n')process.exit(1)"], required: true, timeoutMs: 3000, outputLimitBytes: 1000 }] }];
+  const apply = () => runtime.configuration.applyPlan(runtime.configuration.buildPlan(config, "fixture", "cli").id, { confirmed: true });
+  const plan = { repositoryId: "repo", taskId: "task", runId: "run", attempt: 1, baseRef: "main", scopePaths: ["."] };
+  const selection: ExecutionSelection = { version: 1, mode: "manual", source: "explicit", profileId: "p", runnerId: "remote", providerId: "codex", backendId: "codex-exec-json", selectionType: "explicit-model", requestedModel: "model", nativeParameters: {}, catalogRevision: "catalog", contextFingerprint: "context", configRevision: 1, selectedAt: now.toISOString() };
+  const call = async (payload: CommandPayload, messageId = `command-${++sequence}`, overrides = {}) => runtime.handle(payload, createEnvelope({ kind: "command", runnerId: "remote", traceId: "trace", messageId, sequence: ++sequence, leaseId: "lease", generation: 1, leaseExpiresAt: "2026-10-16T12:01:00Z", ...overrides, payload }));
+  const prepare = () => call({ type: "native.workspace_prepare", runId: "run", profileId: "p", plan, verificationCommandIds: ["check"] });
+  const start = () => call({ type: "run.start", runId: "run", execution: { version: 1, profileId: "p", workspaceId: "run", prompt: "write result", selection } });
+  return { runtime, options, config, apply, plan, selection, catalog, call, prepare, start, directory, root, starts: () => starts, cancellations: () => cancellations, complete: () => { completed = true; }, expire: () => { now = new Date("2026-10-16T12:02:00Z"); } };
+}
+
+it("requires applied owning registrations, plans without mutation, executes and verifies only in its managed worktree", async () => {
+  const f = fixture();
+  await expect(f.call({ type: "native.workspace_plan", profileId: "p", plan: f.plan })).rejects.toMatchObject({ code: "PROFILE_UNAVAILABLE" });
+  f.apply();
+  const planned = await f.call({ type: "native.workspace_plan", profileId: "p", plan: f.plan }) as { path: string };
+  expect(existsSync(planned.path)).toBe(false);
+  const workspace = await f.prepare() as { path: string };
+  expect(workspace.path).toBe(planned.path);
+  expect(await f.start()).toMatchObject({ processId: 1234, state: "RUNNING", workspacePath: workspace.path });
+  expect(await f.start()).toMatchObject({ processId: 1234 });
+  expect(f.starts()).toBe(1);
+  expect(existsSync(join(f.root, "result.txt"))).toBe(false);
+  expect(readFileSync(join(workspace.path, "result.txt"), "utf8")).toBe("runner-ok\n");
+  f.complete();
+  expect(await f.call({ type: "native.run", runId: "run", action: "status" })).toMatchObject({ state: "COMPLETED", providerSessionId: "native-session" });
+  expect(await f.call({ type: "native.run_verify", runId: "run" })).toMatchObject([{ commandId: "check", status: "passed" }]);
+  expect(await f.call({ type: "native.run_files", runId: "run" })).toEqual(["result.txt"]);
+  expect(await f.call({ type: "native.run", runId: "run", action: "result" })).toMatchObject({ state: "COMPLETED", summary: "done" });
+});
+
+it("rejects foreign runners, unsafe scopes, missing commands and stale concrete selections before native start", async () => {
+  const f = fixture(); f.apply();
+  await expect(f.call({ type: "native.workspace_plan", profileId: "p", plan: f.plan }, undefined, { runnerId: "other" })).rejects.toMatchObject({ code: "RUNNER_MISMATCH" });
+  await expect(f.call({ type: "native.workspace_plan", profileId: "p", plan: { ...f.plan, scopePaths: ["../outside"] } })).rejects.toBeDefined();
+  await expect(f.call({ type: "native.workspace_prepare", runId: "run", profileId: "p", plan: f.plan, verificationCommandIds: ["foreign-command"] })).rejects.toMatchObject({ code: "VERIFICATION_COMMAND_UNAVAILABLE" });
+  await f.prepare(); f.catalog.revision = "changed";
+  await expect(f.start()).rejects.toMatchObject({ code: "SELECTION_CHANGED" });
+  expect(f.starts()).toBe(0);
+});
+
+it("preserves start and input receipts across changed-message retries and restart without respawning", async () => {
+  const f = fixture(); f.apply(); await f.prepare(); await f.start(); f.complete();
+  await f.call({ type: "native.run", runId: "run", action: "status" });
+  await f.call({ type: "native.run", runId: "run", action: "send", message: "continue" }, "input-1");
+  expect(f.starts()).toBe(2);
+  await f.call({ type: "native.run", runId: "run", action: "send", message: "continue" }, "input-1");
+  await expect(f.call({ type: "native.run", runId: "run", action: "send", message: "changed" }, "input-1")).rejects.toMatchObject({ code: "COMMAND_IDEMPOTENCY_CONFLICT" });
+  f.runtime.close();
+  const restored = new NativeRunnerRuntime(f.options); cleanups.push(() => restored.close());
+  const input: CommandPayload = { type: "native.run", runId: "run", action: "send", message: "continue" };
+  expect(await restored.handle(input, createEnvelope({ kind: "command", runnerId: "remote", traceId: "trace", messageId: "input-1", sequence: 99, leaseId: "lease", generation: 1, leaseExpiresAt: "2026-10-16T12:01:00Z", payload: input }))).toMatchObject({ type: "session.message" });
+  const payload: CommandPayload = { type: "run.start", runId: "run", execution: { version: 1, profileId: "p", workspaceId: "run", prompt: "write result", selection: f.selection } };
+  await expect(restored.handle(payload, createEnvelope({ kind: "command", runnerId: "remote", traceId: "trace", messageId: "restart-start", sequence: 100, leaseId: "lease", generation: 1, leaseExpiresAt: "2026-10-16T12:01:00Z", payload }))).rejects.toMatchObject({ code: "COMMAND_OUTCOME_UNKNOWN" });
+  expect(f.starts()).toBe(2);
+});
+
+it("persists revocation and stops expired native processes without reviving their generation", async () => {
+  const f = fixture(); f.apply(); await f.prepare(); await f.start(); f.expire();
+  await f.runtime.expireLeases();
+  expect(f.cancellations()).toBe(1);
+  await expect(f.start()).rejects.toMatchObject({ code: "LEASE_REVOKED" });
+  await expect(f.call({ type: "lease.renew", leaseId: "lease", generation: 1, expiresAt: "2026-10-16T12:05:00Z" })).rejects.toMatchObject({ code: "LEASE_REVOKED" });
+  expect(f.starts()).toBe(1);
+});
+
+it("restores an unstarted prepared workspace while blocking active registration replacement", async () => {
+  const f = fixture(); f.apply(); const prepared = await f.prepare();
+  const changed = structuredClone(f.config); changed.agentProfiles[0]!.settings = { codexHome: "/different-account" };
+  const plan = f.runtime.configuration.buildPlan(changed, "fixture", "cli");
+  expect(() => f.runtime.configuration.applyPlan(plan.id, { confirmed: true })).toThrow(expect.objectContaining({ cause: expect.objectContaining({ code: "RUNNER_CONFIGURATION_BUSY" }) }));
+  expect(f.runtime.configuration.getPlan(plan.id)?.state).toBe("FAILED");
+  expect(f.runtime.configuration.current().config.agentProfiles).toEqual(f.config.agentProfiles);
+  f.runtime.close();
+  const restored = new NativeRunnerRuntime(f.options); cleanups.push(() => restored.close());
+  const payload: CommandPayload = { type: "run.start", runId: "run", execution: { version: 1, profileId: "p", workspaceId: "run", prompt: "write result", selection: f.selection } };
+  const session = await restored.handle(payload, createEnvelope({ kind: "command", runnerId: "remote", traceId: "trace", messageId: "prepared-restart", sequence: 100, leaseId: "lease", generation: 1, leaseExpiresAt: "2026-10-16T12:01:00Z", payload }));
+  expect(session).toMatchObject({ workspacePath: (prepared as { path: string }).path }); expect(f.starts()).toBe(1);
+});
+
+it("fences expiry after an async adapter preparation before the native spawn", async () => {
+  const f = fixture();
+  let release!: () => void, entered!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; }), waiting = new Promise<void>(resolve => { entered = resolve; });
+  f.runtime.close();
+  const runtime = new NativeRunnerRuntime({ ...f.options, createAdapter: (profile, store) => {
+    const adapter = f.options.createAdapter(profile, store), start = adapter.start.bind(adapter);
+    adapter.start = async input => { entered(); await gate; return start(input); }; return adapter;
+  } }); cleanups.push(() => runtime.close());
+  runtime.configuration.applyPlan(runtime.configuration.buildPlan(f.config, "fixture", "cli").id, { confirmed: true });
+  const send = (payload: CommandPayload, messageId: string) => runtime.handle(payload, createEnvelope({ kind: "command", runnerId: "remote", traceId: "trace", messageId, sequence: 1, leaseId: "lease", generation: 1, leaseExpiresAt: "2026-10-16T12:01:00Z", payload }));
+  await send({ type: "native.workspace_prepare", runId: "run", profileId: "p", plan: f.plan, verificationCommandIds: ["check"] }, "prepare");
+  const pending = send({ type: "run.start", runId: "run", execution: { version: 1, profileId: "p", workspaceId: "run", prompt: "write result", selection: f.selection } }, "start");
+  await waiting; f.expire(); await runtime.expireLeases(); release();
+  await expect(pending).rejects.toMatchObject({ code: "LEASE_REVOKED" }); expect(f.starts()).toBe(0);
+});
+
+it("reserves capacity before workspace effects and never gives a second Run an existing command id", async () => {
+  const f = fixture(); f.apply(); await f.prepare();
+  const other = { ...f.plan, runId: "other", taskId: "other" };
+  await expect(f.call({ type: "native.workspace_prepare", runId: "other", profileId: "p", plan: other, verificationCommandIds: ["check"] }, undefined, { leaseId: "other-lease" })).rejects.toMatchObject({ code: "RUNNER_CAPACITY" });
+  await f.start();
+  await expect(f.call({ type: "run.start", runId: "other", execution: { version: 1, profileId: "p", workspaceId: "other", prompt: "write result", selection: f.selection } }, "shared-command")).rejects.toMatchObject({ code: "EXECUTION_NOT_FOUND" });
+  await expect(f.call({ type: "run.start", runId: "run", execution: { version: 1, profileId: "p", workspaceId: "run", prompt: "write result", selection: f.selection } }, "shared-command")).rejects.toMatchObject({ code: "COMMAND_IDEMPOTENCY_CONFLICT" });
+  expect(f.starts()).toBe(1);
+});
+
+it("renews authority without changing the frozen start descriptor and persists revocation across restart", async () => {
+  const f = fixture(); f.apply(); await f.prepare(); await f.start();
+  await f.call({ type: "lease.renew", leaseId: "lease", generation: 1, expiresAt: "2026-10-16T12:05:00Z" }); f.expire();
+  expect(await f.start()).toMatchObject({ processId: 1234 }); expect(f.starts()).toBe(1);
+  await f.call({ type: "lease.revoke", leaseId: "lease", generation: 1, reason: "operator cancelled" });
+  f.runtime.close(); const restored = new NativeRunnerRuntime(f.options); cleanups.push(() => restored.close());
+  const payload: CommandPayload = { type: "lease.renew", leaseId: "lease", generation: 1, expiresAt: "2026-10-16T12:10:00Z" };
+  await expect(restored.handle(payload, createEnvelope({ kind: "command", runnerId: "remote", traceId: "trace", messageId: "late-renew", sequence: 100, payload }))).rejects.toMatchObject({ code: "LEASE_REVOKED" });
+  expect(f.cancellations()).toBe(1);
+});
+
+it("aborts a running verification child when its lease expires", async () => {
+  const f = fixture();
+  f.config.repositories[0]!.verificationCommands[0]!.args = ["-e", "require('node:fs').writeFileSync('check-started.txt','started');setTimeout(()=>require('node:fs').writeFileSync('late-write.txt','unsafe'),10000)"];
+  f.apply(); const workspace = await f.prepare() as { path: string }; await f.start(); f.complete(); await f.call({ type: "native.run", runId: "run", action: "status" });
+  const verifying = f.call({ type: "native.run_verify", runId: "run" }, "long-verification");
+  // Attach rejection handling before revocation aborts the child.
+  const rejected = expect(verifying).rejects.toMatchObject({ code: "LEASE_REVOKED" });
+  await vi.waitFor(() => expect(existsSync(join(workspace.path, "check-started.txt"))).toBe(true));
+  f.expire(); await f.runtime.expireLeases(); await rejected;
+  expect(existsSync(join(workspace.path, "late-write.txt"))).toBe(false);
+});

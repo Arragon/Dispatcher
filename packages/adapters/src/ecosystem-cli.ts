@@ -51,6 +51,7 @@ export interface CliTurnResult {
 }
 
 export interface CliTurn {
+  readonly processId?: number | undefined;
   cancel(): Promise<void>;
   status(): "running" | "completed";
   result(): Promise<CliTurnResult>;
@@ -85,6 +86,7 @@ export class SpawnCliAgentBackend implements CliAgentBackend {
 }
 
 class SpawnedCliTurn implements CliTurn {
+  get processId(): number | undefined { return this.child.pid; }
   private completed = false;
   private cancelled = false;
   private cancellation: Promise<void> | undefined;
@@ -302,7 +304,7 @@ export class StructuredCliAdapter implements AgentAdapter {
         runId: input.runId,
         backendId: input.backendId ?? this.manifest.backends[0]!.id,
         workspacePath: input.workspacePath,
-        state: "RUNNING",
+        state: "STARTING",
         profileId: this.profile.id,
         ...(input.executionSelection ? { executionSelection: structuredClone(input.executionSelection) } : {}),
         ...(this.definition.newSessionId ? { providerSessionId: this.definition.newSessionId() } : {}),
@@ -310,15 +312,20 @@ export class StructuredCliAdapter implements AgentAdapter {
         updatedAt: now,
       };
       const environment = await this.environment();
-      this.turns.set(session.id, this.backend.start({
-        executable: await this.executable(),
+      const executable = await this.executable();
+      this.store.save(session);
+      const turn = this.backend.start({
+        executable,
         args: this.definition.startArgs({ prompt: input.prompt ?? "Inspect the task and report readiness.", newSession: true, approveTools: this.profile.approveTools === true, trustWorkspace: this.profile.trustWorkspace === true, ...(this.profile.configDir ? { configDir: this.profile.configDir } : {}), ...(session.providerSessionId ? { providerSessionId: session.providerSessionId } : {}), ...this.selectionArgs(session) }),
         workspacePath: input.workspacePath,
         ...(this.definition.normalizeLine ? { normalizeLine: this.definition.normalizeLine } : {}),
         ...(this.definition.requireExecutionEvidence ? { requireExecutionEvidence: true } : {}),
         ...(environment ? { environment } : {}),
-      }));
-      this.store.save(session);
+      });
+      this.turns.set(session.id, turn);
+      session.state = "RUNNING";
+      if (turn.processId !== undefined) session.processId = turn.processId;
+      try { this.store.save(session); } catch (error) { await turn.cancel(); throw error; }
       return structuredClone(session);
     } finally { this.starting--; }
   }
@@ -339,15 +346,19 @@ export class StructuredCliAdapter implements AgentAdapter {
       const environment = await this.environment();
       const executable = await this.executable();
       if (this.require(sessionId).state === "CANCELLED") throw new AdapterContractError("SESSION_CANCELLED", "Session was cancelled before the next turn started");
-      this.turns.set(sessionId, this.backend.start({
+      this.store.save({ ...session, state: "STARTING", updatedAt: new Date().toISOString() });
+      const turn = this.backend.start({
         executable,
         args: this.definition.startArgs({ prompt: message, providerSessionId: session.providerSessionId, approveTools: this.profile.approveTools === true, trustWorkspace: this.profile.trustWorkspace === true, ...(this.profile.configDir ? { configDir: this.profile.configDir } : {}), ...this.selectionArgs(session) }),
         workspacePath: session.workspacePath,
         ...(this.definition.normalizeLine ? { normalizeLine: this.definition.normalizeLine } : {}),
         ...(this.definition.requireExecutionEvidence ? { requireExecutionEvidence: true } : {}),
         ...(environment ? { environment } : {}),
-      }));
-      this.store.save({ ...session, state: "RUNNING", updatedAt: new Date().toISOString() });
+      });
+      this.turns.set(sessionId, turn);
+      const persisted = { ...session }; delete persisted.processId;
+      try { this.store.save({ ...persisted, state: "RUNNING", ...(turn.processId !== undefined ? { processId: turn.processId } : {}), updatedAt: new Date().toISOString() }); }
+      catch (error) { await turn.cancel(); throw error; }
       return { type: "session.message", sessionId, occurredAt: new Date().toISOString(), data: { acceptedCharacters: message.length, providerSessionId: session.providerSessionId } };
     } finally { this.sending.delete(sessionId); }
   }

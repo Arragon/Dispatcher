@@ -1,7 +1,22 @@
 import { describe, expect, it } from "vitest";
-import { CodexAdapter, normalizeCodexError, normalizeCodexEvent, type CodexBackend } from "../src/index.js";
+import { CodexAdapter, normalizeCodexError, normalizeCodexEvent, type CodexBackend, type AdapterSession } from "../src/index.js";
 
 describe("Codex adapter", () => {
+  it("persists a STARTING session before spawning and retains the real process identity", async () => {
+    const saved: AdapterSession[] = [];
+    let starts = 0;
+    const store = { load: (id: string) => saved.findLast(s => s.id === id), save: (session: AdapterSession) => { saved.push(structuredClone(session)); } };
+    const backend: CodexBackend = { start: () => {
+      expect(saved.at(-1)?.state).toBe("STARTING"); starts++;
+      return { processId: 4321, cancel: async () => undefined, status: () => "running", result: async () => ({ state: "completed", summary: "done", events: [] }) };
+    } };
+    const profile = { id: "p", alias: "P", codexHome: "/profiles/p" };
+    const session = await new CodexAdapter(profile, backend, store).start({ runId: "r", workspacePath: "/work" });
+    expect(session).toMatchObject({ state: "RUNNING", processId: 4321 });
+    await expect(new CodexAdapter(profile, backend, { load: () => undefined, save: () => { throw new Error("disk full"); } }).start({ runId: "r2", workspacePath: "/work" })).rejects.toThrow("disk full");
+    expect(starts).toBe(1);
+  });
+
   it("persists provider sessions and resumes the same session", async () => {
     const starts: Array<{ providerSessionId?: string; prompt: string }> = [];
     const backend: CodexBackend = {
@@ -20,6 +35,15 @@ describe("Codex adapter", () => {
     expect(starts).toEqual([{ prompt: "first" }, { providerSessionId: "thread-1", prompt: "second" }]);
     expect(await adapter.diagnostics(session.id)).toMatchObject({ alias: "Orion", profileId: "orion", resumable: true });
     expect(JSON.stringify(await adapter.diagnostics(session.id))).not.toContain("/profiles/orion");
+  });
+
+  it("cancels the owned turn if its post-spawn persistence fails", async () => {
+    let cancelled = 0; const saved: AdapterSession[] = [];
+    const adapter = new CodexAdapter({ id: "p", alias: "P", codexHome: "/profiles/p" }, { start: () => ({ processId: 42, cancel: async () => { cancelled++; }, status: () => "running", result: async () => ({ state: "completed", summary: "done", events: [] }) }) }, {
+      load: id => saved.find(s => s.id === id), save: s => { if (s.state === "RUNNING") throw new Error("disk full"); saved.push(structuredClone(s)); },
+    });
+    await expect(adapter.start({ runId: "r", workspacePath: "/work" })).rejects.toThrow("disk full");
+    expect(saved).toMatchObject([{ state: "STARTING", runId: "r" }]); expect(cancelled).toBe(1);
   });
 
   it("normalizes documented turn tokens without turning them into account quota", async () => {

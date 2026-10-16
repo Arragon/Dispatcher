@@ -203,12 +203,27 @@ importers:
 
   packages/runner:
     dependencies:
+      '@dispatcher/adapters':
+        specifier: workspace:*
+        version: link:../adapters
+      '@dispatcher/config':
+        specifier: workspace:*
+        version: link:../config
       '@dispatcher/domain':
         specifier: workspace:*
         version: link:../domain
+      '@dispatcher/observability':
+        specifier: workspace:*
+        version: link:../observability
+      '@dispatcher/persistence':
+        specifier: workspace:*
+        version: link:../persistence
       '@dispatcher/protocol':
         specifier: workspace:*
         version: link:../protocol
+      '@dispatcher/workspace':
+        specifier: workspace:*
+        version: link:../workspace
       node-pty:
         specifier: 1.1.0
         version: 1.1.0
@@ -216,12 +231,6 @@ importers:
         specifier: 8.21.3
         version: 8.21.3
     devDependencies:
-      '@dispatcher/adapters':
-        specifier: workspace:*
-        version: link:../adapters
-      '@dispatcher/workspace':
-        specifier: workspace:*
-        version: link:../workspace
       '@types/ws':
         specifier: 8.18.1
         version: 8.18.1

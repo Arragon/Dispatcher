@@ -2,5 +2,5 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": { "rootDir": "src", "outDir": "dist", "composite": true },
   "include": ["src/**/*.ts"],
-  "references": [{ "path": "../domain" }, { "path": "../protocol" }]
+  "references": [{ "path": "../domain" }, { "path": "../protocol" }, { "path": "../adapters" }, { "path": "../config" }, { "path": "../persistence" }, { "path": "../observability" }, { "path": "../workspace" }]
 }

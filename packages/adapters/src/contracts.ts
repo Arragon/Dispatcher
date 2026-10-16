@@ -40,6 +40,7 @@ export interface AdapterSession {
   state: AdapterSessionState;
   profileId?: string;
   providerSessionId?: string;
+  processId?: number;
   createdAt: string;
   updatedAt: string;
 }

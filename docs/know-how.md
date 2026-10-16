@@ -145,6 +145,13 @@
   must be attached to a TLS server. Runner journal entries are checksummed and
   replayed by sequence, while delivery authority is re-fenced before branch,
   push, pull-request, and completion mutations.
+- A transport response cache is not native execution authority. The owning
+  Runner persists Run reservations and operation receipts separately, before
+  side effects. Lost process handles after restart remain OUTCOME_UNKNOWN;
+  a stored PID must never be treated as an attached or resumable process.
+  Native adapters must save STARTING after asynchronous credential preparation
+  and before spawn, so the SessionStore can recheck the current lease at that
+  final boundary. Verification children also need abort signals on revocation.
 - Native PTY uses Microsoft `node-pty` (MIT, pinned at 1.1.0) for Unix PTY and
   Windows ConPTY. pnpm must explicitly allow its native build; some pnpm
   installations lose the executable bit on the packaged Unix `spawn-helper`,

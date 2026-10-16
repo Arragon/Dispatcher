@@ -15,6 +15,7 @@ import {
   normalizeCliLine,
   runAdapterContract,
   type CliAgentBackend,
+  type AdapterSession,
   type CliTurn,
   type CliTurnResult,
   type DevinBackend,
@@ -33,11 +34,31 @@ class FakeCliTurn implements CliTurn {
 const cliBackend: CliAgentBackend = { start: vi.fn(() => new FakeCliTurn()) };
 
 describe("Cursor and Kiro adapters", () => {
+  it("persists STARTING before native spawn and records only an actual backend PID", async () => {
+    const saved: AdapterSession[] = [];
+    let starts = 0;
+    const store = { load: (id: string) => saved.findLast(s => s.id === id), save: (s: AdapterSession) => { saved.push(structuredClone(s)); } };
+    const backend: CliAgentBackend = { start: () => { expect(saved.at(-1)?.state).toBe("STARTING"); starts++; return { processId: 1234, cancel: async () => undefined, status: () => "running", result: async () => ({ state: "completed", summary: "done", events: [] }) }; } };
+    const profile = { id: "cursor", alias: "Cursor", executable: process.execPath };
+    expect(await new CursorAdapter(profile, backend, store).start({ runId: "r", workspacePath: "/work" })).toMatchObject({ state: "RUNNING", processId: 1234 });
+    await expect(new CursorAdapter(profile, backend, { load: () => undefined, save: () => { throw new Error("disk full"); } }).start({ runId: "r2", workspacePath: "/work" })).rejects.toThrow("disk full");
+    expect(starts).toBe(1);
+  });
+
   it("declare verified backends and pass the capability-aware contract", async () => {
     expect(await runAdapterContract(new CursorAdapter({ id: "cursor-main", alias: "Cursor" }, cliBackend))).toEqual([]);
     expect(await runAdapterContract(new KiroAdapter({ id: "kiro-main", alias: "Kiro" }, cliBackend))).toEqual([]);
     expect(cursorManifest.backends[0]?.capabilities).toContain("structured-events");
     expect(kiroManifest.backends.map((entry) => entry.kind)).toEqual(["headless-cli"]);
+  });
+
+  it("cancels a spawned CLI turn when its RUNNING record cannot be saved", async () => {
+    let cancelled = 0; const saved: AdapterSession[] = [];
+    const adapter = new CursorAdapter({ id: "p", alias: "P", executable: process.execPath }, { start: () => ({ processId: 42, cancel: async () => { cancelled++; }, status: () => "running", result: async () => ({ state: "completed", summary: "done", events: [] }) }) }, {
+      load: id => saved.find(s => s.id === id), save: s => { if (s.state === "RUNNING") throw new Error("disk full"); saved.push(structuredClone(s)); },
+    });
+    await expect(adapter.start({ runId: "r", workspacePath: "/work" })).rejects.toThrow("disk full");
+    expect(saved).toMatchObject([{ state: "STARTING", runId: "r" }]); expect(cancelled).toBe(1);
   });
 
   it("normalizes session, quota, auth and failure output inside the adapter boundary", () => {

@@ -30,12 +30,12 @@ export class VerificationRegistry {
   }
   list(): VerificationCommand[] { return [...this.commands.values()].map((value) => structuredClone(value)); }
 
-  async run(commandId: string, cwd: string): Promise<VerificationResult> {
+  async run(commandId: string, cwd: string, signal?: AbortSignal): Promise<VerificationResult> {
     const command = this.commands.get(commandId);
     if (!command) throw new Error(`Verification command is not registered: ${commandId}`);
     const started = Date.now();
     try {
-      const result = await execute(command.file, command.args, { cwd, timeout: command.timeoutMs, maxBuffer: command.outputLimitBytes * 2, encoding: "utf8" });
+      const result = await execute(command.file, command.args, { cwd, timeout: command.timeoutMs, maxBuffer: command.outputLimitBytes * 2, encoding: "utf8", ...(signal ? { signal } : {}) });
       const combined = `${result.stdout}${result.stderr}`;
       return this.result(command, "passed", 0, combined, started);
     } catch (error) {

@@ -76,6 +76,7 @@ interface CodexTurnResult {
 }
 
 interface CodexTurn {
+  readonly processId?: number | undefined;
   cancel(): Promise<void>;
   status(): "running" | "completed";
   result(): Promise<CodexTurnResult>;
@@ -103,6 +104,7 @@ export class CodexCliBackend implements CodexBackend {
 }
 
 class SpawnedCodexTurn implements CodexTurn {
+  get processId(): number | undefined { return this.child.pid; }
   private completed = false;
   private cancelled = false;
   private readonly outcome: Promise<CodexTurnResult>;
@@ -190,12 +192,13 @@ export class CodexAdapter implements AgentAdapter {
       runId: input.runId,
       backendId: input.backendId ?? "codex-exec-json",
       workspacePath: input.workspacePath,
-      state: "RUNNING",
+      state: "STARTING",
       profileId: this.profile.id,
       ...(input.executionSelection ? { executionSelection: structuredClone(input.executionSelection) } : {}),
       createdAt: now,
       updatedAt: now,
     };
+    this.store.save(session);
     const turn = this.backend.start({
       executable: this.profile.executable ?? "codex",
       codexHome: this.profile.codexHome,
@@ -205,7 +208,9 @@ export class CodexAdapter implements AgentAdapter {
       ...(input.executionSelection ? input.executionSelection.requestedModel ? {model:input.executionSelection.requestedModel} : {} : this.profile.model ? {model:this.profile.model} : {}),
     });
     this.turns.set(session.id, turn);
-    this.store.save(session);
+    session.state = "RUNNING";
+    if (turn.processId !== undefined) session.processId = turn.processId;
+    try { this.store.save(session); } catch (error) { await turn.cancel(); throw error; }
     return structuredClone(session);
   }
 
@@ -217,6 +222,7 @@ export class CodexAdapter implements AgentAdapter {
     const session = await this.finishCurrentTurn(sessionId);
     if (this.require(sessionId).state === "CANCELLED") throw new AdapterContractError("SESSION_CANCELLED", "A cancelled Codex session cannot accept input");
     if (!session.providerSessionId) throw new AdapterContractError("SESSION_NOT_RESUMABLE", "Codex did not return a provider session id");
+    this.store.save({ ...session, state: "STARTING", updatedAt: new Date().toISOString() });
     const turn = this.backend.start({
       executable: this.profile.executable ?? "codex",
       codexHome: this.profile.codexHome,
@@ -227,7 +233,9 @@ export class CodexAdapter implements AgentAdapter {
       ...(session.executionSelection ? session.executionSelection.requestedModel ? {model:session.executionSelection.requestedModel} : {} : this.profile.model ? {model:this.profile.model} : {}),
     });
     this.turns.set(sessionId, turn);
-    this.store.save({ ...session, state: "RUNNING", updatedAt: new Date().toISOString() });
+    const persisted = { ...session }; delete persisted.processId;
+    try { this.store.save({ ...persisted, state: "RUNNING", ...(turn.processId !== undefined ? { processId: turn.processId } : {}), updatedAt: new Date().toISOString() }); }
+    catch (error) { await turn.cancel(); throw error; }
     return { type: "session.message", sessionId, occurredAt: new Date().toISOString(), data: { acceptedCharacters: message.length } };
     } finally { this.sending.delete(sessionId); }
   }

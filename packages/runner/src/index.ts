@@ -13,6 +13,7 @@ export * from "./journal.js";
 export * from "./lease.js";
 export * from "./reconcile.js";
 export * from "./remote.js";
+export * from "./native-runtime.js";
 export * from "./platform.js";
 export * from "./enrollment.js";
 

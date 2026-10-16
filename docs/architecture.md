@@ -365,8 +365,19 @@ Remote RPC coalesces matching in-flight retries, durably binds command identitie
 and associates responses with the exact request hash using envelope idempotencyKey.
 Changed-payload errors cannot replace successful receipts, including after reconnect.
 Workspace planning resolves the owning node's managed path without creating a
-branch or worktree. Native owning-Runner orchestration remains a separate delivery
-unit from these protocol/transport foundations.
+branch or worktree.
+`NativeRunnerRuntime` owns a separate ConfigPlan-backed registration database,
+native session store, managed workspaces, frozen verification commands and
+durable execution reservations. It records PREPARING/STARTING before external
+effects; uncertain outcomes never authorize another spawn. Command bindings and
+input/verification receipts survive transport journal compaction. Restarted
+process ownership is unknown even when a stored PID exists; an unstarted
+PREPARED workspace can be restored and started with its original descriptor.
+Native adapters persist STARTING immediately before spawn and record the actual
+backend PID only when provided. Lease expiry/revocation stops owned native
+handles and aborts active verification. Registration replacement is blocked
+while an active or uncertain execution owns it. Runtime handlers are implemented;
+production CLI wiring and Controller remote orchestration remain separate units.
 
 Linear webhook ingress verifies the HMAC against the exact request bytes,
 enforces payload and timestamp limits, normalizes the event, and deduplicates it

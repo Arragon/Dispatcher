@@ -18,14 +18,17 @@
     "test": "vitest run test"
   },
   "dependencies": {
+    "@dispatcher/adapters": "workspace:*",
+    "@dispatcher/config": "workspace:*",
     "@dispatcher/domain": "workspace:*",
+    "@dispatcher/observability": "workspace:*",
+    "@dispatcher/persistence": "workspace:*",
     "@dispatcher/protocol": "workspace:*",
+    "@dispatcher/workspace": "workspace:*",
     "node-pty": "1.1.0",
     "ws": "8.21.3"
   },
   "devDependencies": {
-    "@dispatcher/adapters": "workspace:*",
-    "@dispatcher/workspace": "workspace:*",
     "@types/ws": "8.18.1"
   }
 }
