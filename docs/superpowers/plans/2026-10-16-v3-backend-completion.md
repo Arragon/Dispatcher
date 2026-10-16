@@ -1,0 +1,75 @@
+# v3 Backend Completion Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox syntax for tracking.
+
+**Goal:** Complete all frontend/backend adaptation in the supplied implementation document; Policy routing first, real Remote Runner execution second, then close the remaining requirement gaps.
+
+**Architecture:** Reuse canonical publication receipts and frozen ExecutionSelection. Pure keyword/rule evaluation belongs in scheduler with pure types in domain; Controller owns classification I/O, persisted decisions and authenticated approval. Remote execution must use the existing authenticated protocol and owning Runner workspace/adapter, never Controller impersonation.
+
+**Tech Stack:** Existing TypeScript, AJV, SQLite entity store, ConfigPlan, Vitest, React Query, native adapters; no new package. The approved routing design explicitly chooses bounded pure rules rather than a third-party engine, so no third-party rule code or license dependency is introduced.
+
+**Spec:** /Users/wangdongxin/Downloads/Dispatcher-v3-Backend-Implementation-2026-10-15.md; docs/superpowers/specs/2026-10-06-task-routing-policy-design.md; frozen architecture roadmap.
+
+## Global Constraints
+
+- Latest user goal controls quota: read official limits after every completed unit; stop when any readable window has remaining <=10%.
+- Keep complete goal active until requirement-by-requirement evidence proves it. Passing local fixtures does not prove native/remote/provider/account Gates.
+- Config writes use ConfigPlan; domain/protocol remain I/O-free; secrets remain opaque references.
+- Policy is opt-in, selected account/project only; no model/effort/account/Runner fallback on no match, conflict, stale catalog, invalid effort, denial or semantic failure unless the configured unique-keyword classification downgrade applies.
+- Preserve legacy HTTP/Slack and explicit selections. Freeze original raw-input hash, applied config/rule/type versions, classification, native catalog, selected parameters and confirmation facts per Run.
+- Remote catalog/probe/start/verification/result execute on the owning Runner and registered workspace; revocation, generations, leases and currentRunId fence all writes.
+- No native login/network/global configuration mutation. Actual external-provider execution is separate evidence and may require a configured available Runner/account.
+
+## Review Focus
+
+1. Text normalization versus original instruction identity: NFKC/word boundaries must not normalize approval hashes.
+2. Repeated preview/commit or dropped responses must not classify twice, change choice or start duplicate Runs.
+3. Invalid winning project rule must not fall through to a global/default target.
+4. Config/account/native-directory changes during async classification or startup must invalidate old authorization.
+5. Remote transport reconnect/replay/revocation must never execute stale or Controller-local work.
+
+## Units
+
+### 1. Policy data and deterministic evaluation
+
+Files: packages/domain/src/model-routing.ts, packages/config/src/schema.ts, packages/scheduler/src/model-routing.ts and their tests.
+Interfaces: TaskModelRoutingConfig, TaskClassification, ModelRoutingDecision; classifyKeywords(input, types), selectModelRoutingRule(config, context, classification).
+- [x] Add failing tests for backward-compatible config, limits/references, Unicode/word boundaries, any/all/exclude, original evidence spans, no-match/ambiguity, project/account isolation, priority, same-target merge/conflict.
+- [x] Implement pure types/schema/functions, retaining existing scheduler eligibility.
+- [x] Run targeted checks, commit, check quota.
+
+### 2. Policy publication and keyword UI loop
+
+Files: apps/controller/src/model-routing.ts, service.ts, task-publications.ts; domain publication; PoliciesPage, PublishPage, TaskDetail and regressions.
+- [ ] Persist deterministic decision snapshots, applied/draft test distinction and explicit preview/read APIs; all previews remain zero-worktree/zero-agent-start.
+- [ ] Bind decision/confirmation to actor, raw input, config and final selection; revalidate native catalog and winning target at commit/start without reclassification; preserve immutable history and idempotency.
+- [ ] Add ConfigPlan-backed policy editor/test and manual/auto publication flow with no implicit override.
+- [ ] Test frozen actual adapter parameters, failure cases, dropped-response replay and old entry behavior; full gate, native read/controlled execution evidence where available, commit/check quota.
+
+### 3. Optional semantic classification
+
+Files: llm-runtime contracts/runtime, config roles, Controller model-routing, web internal roles and tests.
+- [ ] Add task_classifier only when requested, strict type/evidence schema, tool-free bounded input, 20s total cancellation, <=700 output tokens, 16000 Unicode input characters.
+- [ ] Per-call provenance/usage/fallback trace, keyed deduplication and stored classification; native refresh never re-bills classifier. Test complete hybrid arbitration matrix and configured unique-keyword downgrade.
+- [ ] Full gate and controlled endpoint evidence; commit/check quota.
+
+### 4. Remote native execution
+
+Files: protocol commands, runner command handlers/runtime, Controller remote adapter/context/workspace/verification orchestration and tests.
+- [ ] Audit existing remote envelope/journal/lease boundaries; extend typed commands for owning Runner inspect/catalog/session/workspace/verification/result.
+- [ ] Preserve repository IDs and Runner paths, remote PID/native identity, frozen selection, trusted result/usage events, disconnect/manual recovery and revocation fences.
+- [ ] Controller-zero-local-run negative tests and process-separated Runner end-to-end evidence, then real distinct-device evidence if available. Full gate, commit/check quota.
+
+### 5. Remaining document gaps and final audit
+
+- [ ] Audit BE-01..BE-35 and every section/button against current source and authoritative evidence; retain delivered work, identify partial/unverified requirements explicitly.
+- [ ] Complete safe console config leaf patches/protected fields, durable account/context probes, local picker/context/refs, durable input receipts, usage dedup/ranges, diagnostic process/window measurements, explicit commit/PR delivery and event coverage as the audit requires.
+- [ ] Full gate plus desktop/mobile end-to-end, independent fresh-context final review (executing-plans skill), repair with regressions and final acceptance map. Close goal only when all required scope is proven.
+
+## Execution ledger
+
+- Initial state: clean codex/dispatcher-v3-console at 8bd5892; official remaining75%. Previous interrupted turn completed read-only preflight; no product mutation or live job was left running by it.
+- Existing v3 and 2026-10-06 routing documents are the user-selected implementation inputs; no new approval round is needed to execute that authorized scope. New boundary conflicts will be reported before widening scope.
+- Remaining scope is not reduced to Policy/remote: unit5 retains all document requirements and external Gates for the final audit.
+
+- Unit 1: opt-in schema, bounded references/keywords and deterministic keyword/rule evaluation implemented. Domain/config/scheduler builds, 40 config+scheduler regression tests, lint and diff check passed. Official remaining74%; no external inference used.

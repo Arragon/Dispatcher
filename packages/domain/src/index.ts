@@ -1,5 +1,6 @@
 import type { ExecutionSelection } from "./publication.js";
 export * from "./publication.js";
+export * from "./model-routing.js";
 export const TASK_STATES = [
   "BACKLOG",
   "NEEDS_SPEC",

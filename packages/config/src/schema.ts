@@ -1,3 +1,4 @@
+import {taskModelRoutingSchema,type TaskModelRoutingConfig} from "@dispatcher/domain";
 import type { ErrorObject } from "ajv";
 import Ajv2020Module, { type Ajv2020 as Ajv2020Instance, type Options } from "ajv/dist/2020.js";
 import type { JsonValue } from "@dispatcher/persistence";
@@ -111,6 +112,7 @@ export interface DispatcherConfig {
   policies: {
     highRiskRequiresConfirmation: boolean;
     rawShellDefault: "deny";
+    modelRouting?: TaskModelRoutingConfig;
   };
 }
 
@@ -311,6 +313,7 @@ export const dispatcherConfigSchema = {
       properties: {
         highRiskRequiresConfirmation: { type: "boolean" },
         rawShellDefault: { const: "deny" },
+        modelRouting: taskModelRoutingSchema,
       },
     },
   },
@@ -493,6 +496,18 @@ export function validateConfig(input: unknown): DispatcherConfig {
     }
     const commandIds = new Set(repository.verificationCommands.map((command) => command.id));
     if (commandIds.size !== repository.verificationCommands.length) throw new ConfigValidationError([`/repositories/${repository.id}/verificationCommands contains duplicate id`]);
+  }
+  if(config.policies.modelRouting){
+    const routing=config.policies.modelRouting;
+    const typeIds=new Set(routing.taskTypes.map(type=>type.id)),ruleIds=new Set(routing.rules.map(rule=>rule.id));
+    if(typeIds.size!==routing.taskTypes.length)throw new ConfigValidationError(["/policies/modelRouting/taskTypes contains duplicate id"]);
+    if(ruleIds.size!==routing.rules.length)throw new ConfigValidationError(["/policies/modelRouting/rules contains duplicate id"]);
+    if(routing.taskTypes.reduce((count,type)=>count+type.keywordGroups.length,0)>100)throw new ConfigValidationError(["/policies/modelRouting allows at most 100 keyword groups"]);
+    for(const rule of routing.rules){
+      if(!typeIds.has(rule.taskTypeId))throw new ConfigValidationError([`/policies/modelRouting/rules/${rule.id} references unknown task type`]);
+      if(!profileIds.has(rule.profileId))throw new ConfigValidationError([`/policies/modelRouting/rules/${rule.id} references unknown profile`]);
+      if(rule.repositoryId&&!repositoryIds.has(rule.repositoryId))throw new ConfigValidationError([`/policies/modelRouting/rules/${rule.id} references unknown repository`]);
+    }
   }
   const endpointIds = new Set<string>();
   for (const endpoint of config.internalLlm.endpoints) {

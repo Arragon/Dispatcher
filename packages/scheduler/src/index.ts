@@ -128,3 +128,5 @@ export function renderTaskContract(contract: TaskContract): string {
     ...(contract.referenceLinks?.length ? [`References:\n${contract.referenceLinks.join("\n")}`] : []),
   ].join("\n\n");
 }
+
+export * from "./model-routing.js";

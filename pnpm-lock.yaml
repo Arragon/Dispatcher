@@ -147,6 +147,9 @@ importers:
 
   packages/config:
     dependencies:
+      '@dispatcher/domain':
+        specifier: workspace:*
+        version: link:../domain
       '@dispatcher/observability':
         specifier: workspace:*
         version: link:../observability

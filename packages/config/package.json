@@ -10,6 +10,7 @@
     "test": "vitest run test"
   },
   "dependencies": {
+    "@dispatcher/domain": "workspace:*",
     "@dispatcher/observability": "workspace:*",
     "@dispatcher/persistence": "workspace:*",
     "ajv": "8.20.0"
