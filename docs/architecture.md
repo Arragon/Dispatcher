@@ -254,6 +254,12 @@ configured failure policy precede pure rule selection. Call-local provenance and
 observed usage survive fallback independently of mutable role preferences. Trials
 default to keywords; semantic trials require an explicit action. Reanalysis creates
 new evidence and supersedes the old publication review without changing a Run.
+Create-only local tasks re-enter the same publication composer and receipt service
+through a task-bound preview. The server reconstructs instructions and workspace
+from the canonical contract, binds task revision plus contract hash, and commits
+an execution intent for that existing Task. It never creates a second Task or
+rewrites its contract. Startup rechecks the approved contract; source branch
+movement does not replace an existing task's frozen base commit.
 
 Persisted ACTIVE native sessions are not physical process evidence after a
 Controller restart. Interrupted publication starts and detached active executions

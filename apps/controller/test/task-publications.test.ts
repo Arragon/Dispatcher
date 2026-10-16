@@ -99,6 +99,23 @@ describe("task publication receipts", () => {
     expect((await f.commit(p,"old",f.service,{confirmation:{accepted:true,routingAccepted:true}})).json().code).toBe("STALE_REVIEW");
     const receipt=(await f.commit(updated,"new",f.service,{confirmation:{accepted:true,routingAccepted:true}})).json();expect(receipt.state).toBe("STARTED");expect(f.classificationRequests).toHaveLength(2);expect(f.starts).toHaveLength(1);
   });
+  it("reviews and dispatches a create-only policy task through the same publication receipt without creating another task",async()=>{
+    const f=await policyFixture(),created=(await f.commit((await f.preview({...f.autoDraft,startMode:"create-only"})).json())).json();
+    const frozen=f.service.database.getTaskContract<JsonValue>(created.taskId) as {workspace:{baseCommit:string}};
+    writeFileSync(join(f.root,"new-source-file"),"Later source commit\n");execFileSync("git",["-C",f.root,"add","."]);execFileSync("git",["-C",f.root,"commit","-m","source advanced after task creation"]);
+    const current=f.service.database.getCanonicalTask(created.taskId)!;
+    const preview=await f.service.app.inject({headers:OWNER,method:"POST",url:`/api/tasks/${created.taskId}/publications/preview`,payload:{expectedRevision:current.revision,execution:f.autoDraft.execution}});expect(preview.statusCode).toBe(200);const p=preview.json();expect(p).toMatchObject({canCommit:true,taskBinding:{taskId:created.taskId,taskRevision:current.revision}});expect(f.starts).toHaveLength(0);
+    expect(p.effectiveExecution.repositoryBaseCommit).toBe(frozen.workspace.baseCommit);
+    const receipt=(await f.commit(p,"dispatch-existing",f.service,{confirmation:{accepted:true,routingAccepted:true}})).json();expect(receipt).toMatchObject({state:"STARTED",taskId:created.taskId});expect(f.service.database.listCanonicalTasks()).toHaveLength(1);expect(f.starts).toHaveLength(1);
+    expect((await f.commit(p,"dispatch-existing",f.service,{confirmation:{accepted:true,routingAccepted:true}})).json().runId).toBe(receipt.runId);expect(f.starts).toHaveLength(1);
+  });
+  it("rejects stale existing-task routing reviews and empty manual overrides of a policy intent",async()=>{
+    const f=await policyFixture(),created=(await f.commit((await f.preview({...f.autoDraft,startMode:"create-only"})).json())).json();const current=f.service.database.getCanonicalTask(created.taskId)!;
+    const bypass=await f.service.app.inject({headers:OWNER,method:"POST",url:`/api/tasks/${created.taskId}/dispatch`,payload:{execution:{profileId:"codex-local",selectionMode:"manual",selectionType:"native-default"}}});expect(bypass.json().code).toBe("MANUAL_SELECTION_REQUIRED");
+    const p=(await f.service.app.inject({headers:OWNER,method:"POST",url:`/api/tasks/${created.taskId}/publications/preview`,payload:{expectedRevision:current.revision,execution:f.autoDraft.execution}})).json();
+    const contract=f.service.database.getTaskContract<JsonValue>(created.taskId) as Record<string,JsonValue>;f.service.database.saveTaskContract(created.taskId,{...contract,instructions:"Changed after review"});
+    expect((await f.commit(p,"changed-task",f.service,{confirmation:{accepted:true,routingAccepted:true}})).json().code).toBe("TASK_CHANGED");expect(f.starts).toHaveLength(0);expect(f.service.database.listCanonicalTasks()).toHaveLength(1);
+  });
   it("blocks native-default OpenCode publication when the installed account schema is incompatible", async () => {
     const f = await setup(), data = join(f.root,"native-data"); mkdirSync(data); mkdirSync(join(data,"opencode"));
     new DatabaseSync(join(data,"opencode","opencode.db")).close();

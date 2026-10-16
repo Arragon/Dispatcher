@@ -17,6 +17,7 @@ export class PublicationError extends Error {
 export interface PublicationRecord {
   owner: string; draft: PublishDraftV1; preview: PublicationPreview; configRevision: number;
   selection?: ExecutionSelection; contract?: TaskContract; baseCommit?: string; repository?: RepositoryConfig; receipt?: PublicationReceipt;
+  taskBinding?:{taskId:string;taskRevision:number;contractHash:string};
 }
 export function assertPublicationScope(scopes:string[],allowed:string[]):void {
   if(allowed.length && scopes.some(scope=>!allowed.some(parent=>{const rel=posix.relative(parent,scope);return rel===""||(!rel.startsWith("../")&&rel!==".."&&!posix.isAbsolute(rel));})))throw new PublicationError("INVALID_SCOPE",400,"Requested scope exceeds registered scope");
@@ -68,7 +69,21 @@ export class PublicationService {
     const binding=this.db.getEntity<JsonValue>("publication-draft",identity) as {publicationId:string}|undefined;
     if(binding?.publicationId!==record.preview.publicationId)throw new PublicationError("STALE_REVIEW",409,"A newer review superseded this draft publication");
   }
-  async preview(owner: string, draft: PublishDraftV1): Promise<PublicationPreview> {
+  private assertTaskBinding(binding:NonNullable<PublicationRecord["taskBinding"]>):void {
+    const stored=this.db.getCanonicalTask<JsonValue>(binding.taskId),task=stored?.document as unknown as Task|undefined;
+    if(!stored||stored.revision!==binding.taskRevision||task?.state!=="READY"||contentHash(this.db.getTaskContract(binding.taskId))!==binding.contractHash)throw new PublicationError("TASK_CHANGED",409,"Task or contract changed; review this task again");
+  }
+  async previewTask(owner:string,taskId:string,expectedRevision:number,execution:PublishDraftV1["execution"]):Promise<PublicationPreview>{
+    const stored=this.db.getCanonicalTask<JsonValue>(taskId),task=stored?.document as unknown as Task|undefined;
+    const contract=this.db.getTaskContract<JsonValue>(taskId) as unknown as TaskContract|undefined;
+    const intent=this.db.getEntity<JsonValue>("task-execution-intent",taskId) as {publicationId:string}|undefined;
+    if(!stored||!task||!contract?.workspace||!intent)throw new PublicationError("TASK_REVIEW_UNAVAILABLE",409,"Task does not have a local publication workspace contract");
+    this.record(owner,intent.publicationId);
+    const taskBinding={taskId,taskRevision:expectedRevision,contractHash:contentHash(contract)};this.assertTaskBinding(taskBinding);
+    const draft:PublishDraftV1={schemaVersion:1,clientDraftId:`task:${taskId}:${expectedRevision}`,title:task.title,description:contract.instructions??task.description??"",projectId:task.projectId,repositoryId:contract.workspace.repositoryId,baseRef:contract.workspace.baseRef,...(contract.workspace.targetBranch?{targetBranch:contract.workspace.targetBranch}:{}),scopePaths:contract.scope,acceptanceCriteria:contract.acceptanceCriteria,referenceLinks:contract.referenceLinks??[],verificationCommandIds:contract.verification,startMode:"dispatch",execution:structuredClone(execution),delivery:{type:contract.delivery.type,...(contract.delivery.repository?{targetRepository:contract.delivery.repository}:{}),...(contract.delivery.baseBranch?{baseBranch:contract.delivery.baseBranch}:{})}};
+    return this.preview(owner,draft,{taskBinding,contract});
+  }
+  async preview(owner: string, draft: PublishDraftV1,existing?:{taskBinding:NonNullable<PublicationRecord["taskBinding"]>;contract:TaskContract}): Promise<PublicationPreview> {
     if (!draft.description.trim()) throw new PublicationError("INVALID_DRAFT",400,"Task description must not be blank");
     for (const [values,max] of [[draft.acceptanceCriteria,8000],[draft.referenceLinks??[],2000],[draft.scopePaths??[],4000]] as const) if (Array.from(values.join("\n")).length > max) throw new PublicationError("INVALID_DRAFT",400,"Draft field exceeds its length limit");
     for (const link of draft.referenceLinks??[]) { let url: URL; try {url=new URL(link);} catch {throw new PublicationError("INVALID_LINK",400,"Invalid reference link");} if (!["http:","https:"].includes(url.protocol)||url.username||url.password) throw new PublicationError("INVALID_LINK",400,"References require http(s) without credentials"); }
@@ -83,10 +98,11 @@ export class PublicationService {
     if (verification.some(id=>!repository?.verificationCommands.some(c=>c.id===id)) || repository?.verificationCommands.some(c=>c.required&&!verification.includes(c.id))) throw new PublicationError("INVALID_VERIFICATION",400,"Select registered verification commands, including every required command");
     const baseRef=draft.baseRef??repository?.defaultBaseRef??"";
     let baseCommit: string|undefined;
-    if(repository) { try { baseCommit=(await this.workspaces.inspect({repositoryId:repository.id,baseRef,scopePaths:scopes,...(draft.targetBranch?{targetBranch:draft.targetBranch}:{})})).baseCommit; } catch(error) { throw new PublicationError("INVALID_WORKSPACE",400,error instanceof Error?error.message:"Repository cannot be inspected"); } }
+    if(repository) { try { baseCommit=(await this.workspaces.inspect({repositoryId:repository.id,baseRef:existing?.contract.workspace?.baseCommit??baseRef,scopePaths:scopes,...(draft.targetBranch?{targetBranch:draft.targetBranch}:{})})).baseCommit; } catch(error) { throw new PublicationError("INVALID_WORKSPACE",400,error instanceof Error?error.message:"Repository cannot be inspected"); } }
     const first=draft.description.split(/\r?\n/).find(line=>line.trim())?.trim()??"Task";
     const chars=Array.from(first); const title=draft.title?.trim() || chars.slice(0,80).join("")+(chars.length>80?"…":"");
     const compiled=new TaskContractCompiler().compile({externalId:draft.clientDraftId,title,description:draft.description,labels:[],dependencies:[],...(repository?{repository:repository.id}:{}),scope:scopes,acceptanceCriteria:draft.acceptanceCriteria.filter(s=>s.trim()),verification,constraints:[],delivery:{type:draft.delivery.type},extensions:{}},1,repository?{workspace:{repositoryId:repository.id,baseRef,...(baseCommit?{baseCommit}:{}),...(draft.targetBranch?{targetBranch:draft.targetBranch}:{})},...(draft.referenceLinks?{referenceLinks:draft.referenceLinks}:{})}:undefined);
+    if(existing){this.assertTaskBinding(existing.taskBinding);compiled.contract=structuredClone(existing.contract);}
     const checks:PublicationPreview["checks"]=[{id:"workspace",status:repository?"passed":"warning",message:repository?"Registered physical Git root and base commit verified":"No repository; task needs specification"}];
     if (draft.delivery.type!=="none") checks.push({id:"delivery",status:"blocked",code:"DELIVERY_UNSUPPORTED",message:"Publication currently supports local results only"});
     let selection:ExecutionSelection|undefined;
@@ -96,10 +112,12 @@ export class PublicationService {
       else try {selection=await this.runtime.prepare(draft,repository,undefined,{owner});routingDecision=selection.routingDecision;checks.push({id:"dispatch",status:"passed",message:"Routing and native selection passed"});checks.push({id:"model-evidence",status:"warning",message:selection.selectionType==="native-default"?"Native configuration will choose the model; access, remaining quota and price are not confirmed":"Native catalog listing does not prove model access; remaining quota and price are not reported"});} catch(error){if(error instanceof PublicationError)routingDecision=error.routingDecision;checks.push({id:"dispatch",status:"blocked",code:error instanceof PublicationError?error.code:"DISPATCH_UNAVAILABLE",message:error instanceof Error?error.message:"Dispatch unavailable"});}
     }
     const publicationId=randomUUID(); const inputHash=contentHash(draft); const expiresAt=new Date(this.now().getTime()+600000).toISOString();
-    const reviewHash=contentHash({draft,configRevision:snapshot.revision,baseCommit,contract:compiled.contract,checks,selection:selection?{...selection,selectedAt:undefined}:undefined});
+    if(existing)this.assertTaskBinding(existing.taskBinding);
+    const reviewHash=contentHash({draft,taskBinding:existing?.taskBinding,configRevision:snapshot.revision,baseCommit,contract:compiled.contract,checks,selection:selection?{...selection,selectedAt:undefined}:undefined});
     const canCommit=!checks.some(c=>c.status==="blocked");
     const preview:PublicationPreview={publicationId,revision:1,state:canCommit?"PREVIEW":"NEEDS_INPUT",expiresAt,inputHash,...(routingDecision?{routingDecision}:{}),effectiveTask:{title,description:draft.description,contractState:compiled.state,missing:compiled.missing},...(selection&&baseCommit?{effectiveExecution:{profileId:selection.profileId,runnerId:selection.runnerId,providerId:selection.providerId,backendId:selection.backendId,selectionType:selection.selectionType,nativeParameters:selection.nativeParameters,selectionSource:selection.source,configRevision:selection.configRevision,contextFingerprint:selection.contextFingerprint,repositoryBaseCommit:baseCommit,...(selection.requestedModel?{nativeModelId:selection.requestedModel}:{}),...(selection.catalogRevision?{catalogRevision:selection.catalogRevision}:{})}}:{}),checks,confirmation:{required:true,reviewHash,reasons:[draft.startMode==="dispatch"?"Start a native agent in a managed worktree":"Create a canonical task"]},canCommit};
-    const record:PublicationRecord={owner,draft:structuredClone(draft),preview,configRevision:snapshot.revision,...(selection?{selection}:{}),...(compiled.contract?{contract:compiled.contract}:{}),...(repository?{repository}:{}),...(baseCommit?{baseCommit}:{})};
+    if(existing)preview.taskBinding={taskId:existing.taskBinding.taskId,taskRevision:existing.taskBinding.taskRevision};
+    const record:PublicationRecord={owner,draft:structuredClone(draft),preview,configRevision:snapshot.revision,...(existing?{taskBinding:existing.taskBinding}:{}),...(selection?{selection}:{}),...(compiled.contract?{contract:compiled.contract}:{}),...(repository?{repository}:{}),...(baseCommit?{baseCommit}:{})};
     return this.db.transaction(()=>{
       const draftIdentity=contentHash({owner,clientDraftId:draft.clientDraftId,inputHash});
       const binding=this.db.getEntity<JsonValue>("publication-draft",draftIdentity) as {publicationId:string}|undefined;
@@ -132,11 +150,12 @@ export class PublicationService {
     if(input.revision!==r.preview.revision||input.reviewHash!==r.preview.confirmation.reviewHash)throw new PublicationError("STALE_REVIEW",409,"Review revision changed");
     if(r.receipt){this.db.createEntityIfAbsent("operation-receipt",receiptId,json({requestHash,publicationId:id}));return r.receipt;}
     this.assertCurrentDraft(r);
+    if(r.taskBinding)this.assertTaskBinding(r.taskBinding);
     if(r.selection?.routingDecision?.confirmation.required&&input.confirmation?.routingAccepted!==true)throw new PublicationError("ROUTING_CONFIRMATION_REQUIRED",400,"Review and approve the automatic model routing separately");
     if(this.now().getTime()>=Date.parse(r.preview.expiresAt))throw new PublicationError("PREVIEW_EXPIRED",409,"Preview expired; review again");
     if(!r.preview.canCommit)throw new PublicationError("PRECHECK_BLOCKED",409,"Resolve blocked preflight checks");
     if(this.config.current().revision!==r.configRevision)throw new PublicationError("SELECTION_CHANGED",409,"Configuration changed; review again");
-    if(r.repository){const current=await this.workspaces.inspect({repositoryId:r.repository.id,baseRef:r.contract?.workspace?.baseRef??r.draft.baseRef??r.repository.defaultBaseRef,scopePaths:r.draft.scopePaths??r.repository.scopePaths,...(r.draft.targetBranch?{targetBranch:r.draft.targetBranch}:{})});if(current.baseCommit!==r.baseCommit)throw new PublicationError("SELECTION_CHANGED",409,"Repository baseline changed; review again");}
+    if(r.repository){const current=await this.workspaces.inspect({repositoryId:r.repository.id,baseRef:(r.taskBinding?r.contract?.workspace?.baseCommit:undefined)??r.contract?.workspace?.baseRef??r.draft.baseRef??r.repository.defaultBaseRef,scopePaths:r.draft.scopePaths??r.repository.scopePaths,...(r.draft.targetBranch?{targetBranch:r.draft.targetBranch}:{})});if(current.baseCommit!==r.baseCommit)throw new PublicationError("SELECTION_CHANGED",409,"Repository baseline changed; review again");}
     if(r.selection&&r.repository) {
       const selection=await this.runtime.prepare(r.draft,r.repository,undefined,{owner,reviewed:r.selection});
       if(contentHash({...selection,selectedAt:undefined})!==contentHash({...r.selection,selectedAt:undefined}))throw new PublicationError("SELECTION_CHANGED",409,"Execution selection changed; review again");
@@ -144,6 +163,7 @@ export class PublicationService {
     const receipt=this.db.transaction(()=>{
       r=this.record(owner,id);if(r.receipt)return r.receipt;
       this.assertCurrentDraft(r);
+      if(r.taskBinding)this.assertTaskBinding(r.taskBinding);
       if(this.now().getTime()>=Date.parse(r.preview.expiresAt))throw new PublicationError("PREVIEW_EXPIRED",409,"Preview expired during preflight");
       if(this.config.current().revision!==r.configRevision)throw new PublicationError("SELECTION_CHANGED",409,"Configuration changed during preflight");
       if(r.selection?.routingDecision){
@@ -154,9 +174,11 @@ export class PublicationService {
         decision.confirmation={required:decision.confirmation.required,mode:decision.confirmation.required?"user-confirmed":"policy-exempt",actorId:owner,confirmedAt:this.now().toISOString()};
       }
       if(!this.db.createEntityIfAbsent("operation-receipt",receiptId,json({requestHash,publicationId:id})))throw new PublicationError("IDEMPOTENCY_CONFLICT",409,"Commit already reserved");
-      const taskId=randomUUID(),now=this.now().toISOString();const task:Task={id:taskId,projectId:r.draft.projectId,title:r.preview.effectiveTask.title,description:r.draft.description,state:r.preview.effectiveTask.contractState,createdAt:now,updatedAt:now};
-      this.tasks.execute({id:`publication:${id}`,taskId,baseRevision:0,actor:owner,command:{type:"task.create",task}});
-      if(r.contract)this.db.saveTaskContract(taskId,json(r.contract));
+      const taskId=r.taskBinding?.taskId??randomUUID();
+      if(!r.taskBinding){const now=this.now().toISOString();const task:Task={id:taskId,projectId:r.draft.projectId,title:r.preview.effectiveTask.title,description:r.draft.description,state:r.preview.effectiveTask.contractState,createdAt:now,updatedAt:now};
+        this.tasks.execute({id:`publication:${id}`,taskId,baseRevision:0,actor:owner,command:{type:"task.create",task}});
+        if(r.contract)this.db.saveTaskContract(taskId,json(r.contract));
+      }
       this.db.saveEntity("task-execution-intent",taskId,json({publicationId:id,execution:r.draft.execution}));
       r.receipt={publicationId:id,revision:r.preview.revision,state:"TASK_CREATED",taskId};this.db.saveEntity("task-publication",id,json(r));return r.receipt;
     });

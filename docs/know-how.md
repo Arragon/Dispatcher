@@ -363,6 +363,11 @@
   used by another concurrent call; use the response's per-attempt provenance.
   A new analysis for unchanged input must supersede its prior publication review
   so two outstanding reviews cannot independently create two tasks.
+- Reusing a publication review for an existing Task must bind both canonical
+  revision and contract content, including the gap before adapter startup. Keep
+  browser receipt identities separate per Task. Reconstruct task text on the
+  server and use the contract's frozen commit when inspecting its workspace;
+  the current source branch may have advanced since create-only publication.
 - A source-checkout scope check is insufficient when executing another commit.
   Recheck physical scope roots in the created worktree before native queries or
   execution. Workspace-bound contracts cannot accept another repository through

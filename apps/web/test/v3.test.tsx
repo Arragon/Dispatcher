@@ -37,6 +37,14 @@ it("sends trial text to the classifier only after an explicit semantic trial act
   await userEvent.click(screen.getByRole("button",{name:"运行路由试算"}));expect(posts[0]).toMatchObject({semantic:false});
   await userEvent.click(screen.getByLabelText("语义试算：将示例标题和任务发送给内部分类模型"));expect(posts).toHaveLength(1);await userEvent.click(screen.getByRole("button",{name:"发送到内部模型并试算"}));expect(posts[1]).toMatchObject({semantic:true});
 });
+it("reuses the publication composer to review an existing task without resending editable task text",async()=>{
+  const posts:Array<{path:string;body:Record<string,unknown>}>=[];
+  const task={revision:5,document:{id:"existing",projectId:"local:repo",title:"Canonical title",description:"Canonical body",state:"READY"},contract:{revision:2,instructions:"Canonical body",acceptanceCriteria:["Original criteria"],referenceLinks:[],workspace:{repositoryId:"repo",baseRef:"main"},scope:["src"],verification:[],delivery:{type:"none"}},executionIntent:{execution:{selectionMode:"manual",selectionType:"native-default",profileId:"codex"}}};
+  const preview={publicationId:"task-review",revision:1,state:"PREVIEW",canCommit:true,taskBinding:{taskId:"existing",taskRevision:5},effectiveTask:{title:"Canonical title",description:"Canonical body",contractState:"READY",missing:[]},checks:[],confirmation:{required:true,reviewHash:"existing-hash",reasons:[]}};
+  vi.spyOn(globalThis,"fetch").mockImplementation(async(input,init)=>{const path=String(input);if(init?.method==="POST"){posts.push({path,body:JSON.parse(String(init.body))});return new Response(JSON.stringify(path.endsWith("/preview")?preview:{publicationId:"task-review",revision:1,state:"TASK_CREATED",taskId:"existing"}));}return new Response(JSON.stringify(path==="/api/tasks/existing"?task:config));});
+  mount(<PublishPage/>,"/publish?task=existing");await screen.findByRole("heading",{name:"审阅现有任务"});expect((screen.getByLabelText("任务说明") as HTMLTextAreaElement).readOnly).toBe(true);expect((screen.getByLabelText("任务说明") as HTMLTextAreaElement).value).toBe("Canonical body");
+  await userEvent.click(screen.getByRole("button",{name:"检查并审阅"}));await userEvent.click(await screen.findByRole("button",{name:"确认并启动执行"}));expect(posts[0]).toMatchObject({path:"/api/tasks/existing/publications/preview",body:{expectedRevision:5,execution:{profileId:"codex",selectionMode:"manual",selectionType:"native-default"}}});expect(posts[0]?.body).not.toHaveProperty("description");expect(posts[1]?.path).toBe("/api/task-publications/task-review/commit");
+});
 it("keeps publication drafts across reloads without creating tasks or invoking a model", async () => {
   const fetchMock = vi.spyOn(globalThis,"fetch").mockResolvedValue(new Response(JSON.stringify(config)));
   const first = mount(<PublishPage/>);

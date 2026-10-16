@@ -1,3 +1,4 @@
+import {Link} from "react-router-dom";
 import { useState, type FormEvent } from "react";
 import type { FleetTaskInput, FleetRunInput, FleetProfileInput } from "@dispatcher/fleet";
 import { api } from "./api.js";
@@ -5,7 +6,7 @@ import { terminalStates } from "./task-view.js";
 interface Workflow { id: string; revision: number; state: string; toolName: string; questions: string[] }
 
 /** Mutations use existing Controller commands and durable approval revisions. */
-export function TaskActions({ task, run, profiles, refresh }: { task: FleetTaskInput; run?: FleetRunInput; profiles: FleetProfileInput[]; refresh: () => Promise<unknown> }): React.JSX.Element {
+export function TaskActions({ task, run, profiles, refresh, publicationTask }: { task: FleetTaskInput; run?: FleetRunInput; profiles: FleetProfileInput[]; refresh: () => Promise<unknown>;publicationTask?:boolean }): React.JSX.Element {
   const [busy, setBusy] = useState(false);
   const [profileId, setProfileId] = useState("");
   const [message, setMessage] = useState("");
@@ -45,7 +46,7 @@ export function TaskActions({ task, run, profiles, refresh }: { task: FleetTaskI
     finally { setBusy(false); }
   }
   return <div className="workflow-card"><h3>任务操作</h3>
-    {task.state === "READY" && !task.archivedAt && <><label>执行账号<select disabled={busy} value={profileId} onChange={(event) => {setProfileId(event.target.value); setWorkflow(undefined);}}><option value="">自动选择可用账号</option>{profiles.filter((profile) => profile.state === "CONFIGURED").map((profile) => <option key={profile.id} value={profile.id}>{profile.alias} · {profile.provider}</option>)}</select></label><button disabled={busy} onClick={() => void prepare("task.dispatch", task.id, "task")}>派发任务</button></>}
+    {task.state === "READY" && !task.archivedAt && (publicationTask?<Link className="button-link" to={`/publish?task=${encodeURIComponent(task.id)}`}>审阅并派发现有任务</Link>:<><label>执行账号<select disabled={busy} value={profileId} onChange={(event) => {setProfileId(event.target.value); setWorkflow(undefined);}}><option value="">自动选择可用账号</option>{profiles.filter((profile) => profile.state === "CONFIGURED").map((profile) => <option key={profile.id} value={profile.id}>{profile.alias} · {profile.provider}</option>)}</select></label><button disabled={busy} onClick={() => void prepare("task.dispatch", task.id, "task")}>派发任务</button></>)}
     {run && !terminalStates.has(run.state) && <div className="secure-actions"><button disabled={busy} onClick={() => void prepare("task.cancel", task.id, "task")}>取消任务…</button>{["RESOURCE_BLOCKED", "RUNNER_UNAVAILABLE", "SUSPECTED_STALL"].includes(run.state) && <button disabled={busy} onClick={() => void prepare("run.resume", run.id, "run")}>恢复运行…</button>}</div>}
     {run?.state === "WAITING_USER" && <form onSubmit={(event) => void reply(event)}><label>回复 Agent 的决策请求<textarea disabled={busy} value={answer} onChange={(event) => setAnswer(event.target.value)} required /></label><button className="primary" disabled={busy || !answer.trim()} type="submit">发送回复并继续</button></form>}
     {workflow && <div className="workflow-card"><strong>{workflow.toolName}</strong><small>目标：{task.title} · {task.id}</small>{workflow.questions.map((question) => <p key={question}>{question}</p>)}{workflow.state === "NEEDS_APPROVAL" && <button disabled={busy} onClick={() => void act("approve")}>确认本次操作</button>}{workflow.state === "READY" && <button disabled={busy} className="primary" onClick={() => void act("execute")}>执行已确认操作</button>}<small>{workflow.state}</small></div>}
