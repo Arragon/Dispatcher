@@ -415,8 +415,19 @@ execution. Admission uses the lower of configured and reported capacity.
 Lost start responses retain RUNNER_UNAVAILABLE/OUTCOME_UNKNOWN and immutable
 start identity rather than releasing capacity as a known failure. Remote
 delivery currently supports results on the owning device (`none`); remote
-commit/PR delivery, reconnect reconciliation and real-process/device acceptance
-remain distinct follow-up units.
+commit/PR delivery and real-process/device acceptance remain distinct follow-up
+units. Reconnection reconciles the canonical current Run against immutable start
+hash, native session, workspace and lease/generation evidence. A Controller
+restart can reattach an owned Runner session; a Runner restart with lost process
+handles stays unknown. Temporary disconnection preserves the interrupted phase,
+including verification/delivery, and never authorizes a new native start.
+Inventory snapshots only apply to Run identities present when the query began.
+Lease renewal is persisted by Controller only after a matching Runner response
+and a fresh canonical fence. Revoked authority is durable on the Run. Operator
+cancellation uses the lease even when a start response lost its session ID;
+unconfirmed termination remains unavailable. Credential revocation fences local
+authority, closes the authenticated connection and blocks old-token registration.
+Runner shutdown revokes all admitted leases before awaiting any cancellation.
 
 Linear webhook ingress verifies the HMAC against the exact request bytes,
 enforces payload and timestamp limits, normalizes the event, and deduplicates it

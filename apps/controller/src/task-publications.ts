@@ -40,7 +40,8 @@ export class PublicationService {
       r.receipt.state=!detached && run && !run.sessionId.startsWith("unstarted:") ? run.state==="FAILED"?"START_FAILED":"STARTED" : "OUTCOME_UNKNOWN";
       r.receipt.message="Recovered after interruption; execution is never automatically retried";
       if(r.receipt.state==="OUTCOME_UNKNOWN"&&run&&["STARTING","ACTIVE"].includes(run.state)){
-        run.state="RUNNER_UNAVAILABLE";run.resumePolicy="manual";run.recoveryReason="NATIVE_OUTCOME_UNKNOWN";run.activitySummary="Native process liveness is unknown after Controller restart; inspect the original native session and worktree before further execution";
+        const remote=this.config.current().config.runners.some(runner=>runner.id===run.runnerId&&runner.mode==="remote");
+        run.recoveryState=run.state;run.state="RUNNER_UNAVAILABLE";run.resumePolicy="manual";run.recoveryReason=remote?"REMOTE_RECONCILE_REQUIRED":"NATIVE_OUTCOME_UNKNOWN";if(!remote)run.activitySummary="Native process liveness is unknown after Controller restart; inspect the original native session and worktree before further execution";
         this.db.transaction(()=>{
           this.db.saveEntity("run",run.id,json(run));
           const current=this.db.getCanonicalTask<JsonValue>(run.taskId);const task=current?.document as unknown as Task|undefined;
@@ -56,6 +57,7 @@ export class PublicationService {
   }
   markOutcome(owner:string,id:string,run:Run):void {
     const r=this.record(owner,id);if(r.receipt?.runId!==run.id)throw new PublicationError("PUBLICATION_CHANGED",409,"Run is not the publication startup");
+    if(!run.failureReason)delete r.receipt.message;
     r.receipt={...r.receipt,state:startupState(run),...(run.failureReason?{message:run.failureReason}:{})};this.db.saveEntity("task-publication",id,json(r));
   }
   get(owner: string, id: string): PublicationPreview | PublicationReceipt {

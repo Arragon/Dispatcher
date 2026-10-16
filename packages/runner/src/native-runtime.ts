@@ -54,6 +54,8 @@ export class NativeRunnerRuntime {
   private readonly now: () => Date;
   private timer?: ReturnType<typeof setInterval>;
   private closed = false;
+  private shuttingDown = false;
+  private shutdownPromise?: Promise<void>;
   private readonly writerToken = randomUUID();
   private writerClaimed = false;
 
@@ -189,7 +191,7 @@ export class NativeRunnerRuntime {
   }
 
   async handle(payload: CommandPayload, envelope: ProtocolEnvelope<CommandPayload>): Promise<unknown> {
-    if (this.closed) throw new NativeRunnerError("RUNNER_CLOSED", "Runner is shutting down");
+    if (this.closed||this.shuttingDown) throw new NativeRunnerError("RUNNER_CLOSED", "Runner is shutting down");
     if (envelope.runnerId !== this.options.runnerId) throw new NativeRunnerError("RUNNER_MISMATCH", "Command targets a different Runner");
     parseEnvelope(envelope);
     if (hash(envelope.payload) !== hash(payload)) throw new NativeRunnerError("COMMAND_IDEMPOTENCY_CONFLICT", "Envelope and command disagree");
@@ -378,9 +380,11 @@ export class NativeRunnerRuntime {
   private async updateLease(payload: Extract<CommandPayload, { type: "lease.renew" | "lease.revoke" }>): Promise<RunnerLease> {
     const record = [...this.records.values()].find(r => r.lease.leaseId === payload.leaseId);
     if (!record) throw new NativeRunnerError("LEASE_MISSING", "No execution owns this lease");
+    if(payload.type==="lease.renew")this.authority.fence(record.runId,payload.leaseId,payload.generation,"renew-native-ownership",this.now().toISOString());
+    if(payload.type==="lease.renew"&&record.state==="OUTCOME_UNKNOWN")throw new NativeRunnerError("COMMAND_OUTCOME_UNKNOWN","Unknown native ownership cannot be renewed automatically");
     record.lease = payload.type === "lease.renew" ? this.authority.renew(record.runId, payload.leaseId, payload.generation, payload.expiresAt, this.now().toISOString()) : this.authority.revoke(record.runId, payload.leaseId, payload.generation, payload.reason, this.now().toISOString());
     this.save(record);
-    if (payload.type === "lease.revoke") await this.stopOwned(record);
+    if (payload.type === "lease.revoke") {await this.stopOwned(record);if(record.state==="OUTCOME_UNKNOWN")throw new NativeRunnerError("COMMAND_OUTCOME_UNKNOWN","Lease was revoked but native process termination is unconfirmed");}
     return structuredClone(record.lease);
   }
   private async stopOwned(record: ExecutionRecord): Promise<void> {
@@ -403,13 +407,14 @@ export class NativeRunnerRuntime {
     return { runnerId: this.options.runnerId, runId: record.runId, profileId: record.profileId, state: record.state, attached: this.attached.has(record.runId), sessionId: record.session?.id, providerSessionId: record.session?.providerSessionId, processId: record.session?.processId, workspace: record.workspace?.path, generation: record.lease.generation, leaseId: record.lease.leaseId, lease: structuredClone(record.lease), startCommandHash: record.startCommandHash, settledAt: record.settledAt, resultAvailable:record.result!==undefined };
   }
   reconcile(): unknown { return { runnerId: this.options.runnerId, runs: [...this.records.values()].map(record => this.diagnostics(record)) }; }
-  async shutdown(): Promise<void> {
+  shutdown(): Promise<void> {return this.shutdownPromise??=this.performShutdown();}
+  private async performShutdown(): Promise<void> {
     if (this.closed) return;
-    for (const record of this.records.values()) {
-      if (!occupies(record) && !this.verificationAborts.has(record.runId)) continue;
-      if (!record.lease.revokedAt) { record.lease = this.authority.revoke(record.runId, record.lease.leaseId, record.lease.generation, "runner shutdown", this.now().toISOString()); this.save(record); }
-      await this.stopOwned(record);
-    }
+    this.shuttingDown=true;
+    const admitted=[...this.records.values()].filter(record=>occupies(record)||this.verificationAborts.has(record.runId));
+    for(const record of admitted)if(!record.lease.revokedAt)record.lease=this.authority.revoke(record.runId,record.lease.leaseId,record.lease.generation,"runner shutdown",this.now().toISOString());
+    for(const record of admitted)try{this.save(record);}catch{/* In-memory revocation still fences pending native spawns. */}
+    await Promise.allSettled(admitted.map(record=>this.stopOwned(record)));
     await Promise.allSettled([...this.locks.values()]); this.close();
   }
   /** Closes storage after shutdown, or simulates abrupt process loss in recovery tests. */

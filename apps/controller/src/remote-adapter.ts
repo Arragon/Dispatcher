@@ -30,9 +30,13 @@ export class RemoteNativeAdapter implements AgentAdapter {
     return run;
   }
   private session(value: unknown, run: Run, starting = false): AdapterSession {
-    if (!object(value) || !text(value.id) || value.runId !== run.id || value.profileId !== run.profileId || value.backendId !== run.executionSelection?.backendId || value.workspacePath !== run.worktree || !["STARTING", "RUNNING", "PAUSED", "CANCELLED", "COMPLETED", "FAILED"].includes(String(value.state)) || !date(value.createdAt) || !date(value.updatedAt) || !starting && value.id !== run.sessionId || value.providerSessionId !== undefined && !text(value.providerSessionId) || value.processId !== undefined && (!Number.isSafeInteger(value.processId) || Number(value.processId) <= 0) || !run.executionSelection || !isDeepStrictEqual(value.executionSelection, nativeSelection(run.executionSelection))) throw new AdapterContractError("COMMAND_OUTCOME_UNKNOWN", "Owning Runner response does not prove the reserved native session identity");
+    if (!object(value) || !text(value.id) || value.runId !== run.id || value.profileId !== run.profileId || value.backendId !== run.executionSelection?.backendId || value.workspacePath !== run.worktree || !["STARTING", "RUNNING", "PAUSED", "CANCELLED", "COMPLETED", "FAILED"].includes(String(value.state)) || !date(value.createdAt) || !date(value.updatedAt) || !starting && value.id !== run.sessionId || value.providerSessionId !== undefined && !text(value.providerSessionId) || run.providerSessionId!==undefined&&value.providerSessionId!==run.providerSessionId || value.processId !== undefined && (!Number.isSafeInteger(value.processId) || Number(value.processId) <= 0) || !run.executionSelection || !isDeepStrictEqual(value.executionSelection, nativeSelection(run.executionSelection))) throw new AdapterContractError("COMMAND_OUTCOME_UNKNOWN", "Owning Runner response does not prove the reserved native session identity");
     const session: AdapterSession = { id: value.id, runId: run.id, profileId: run.profileId, backendId: String(value.backendId), workspacePath: run.worktree!, state: value.state as AdapterSession["state"], createdAt: value.createdAt, updatedAt: value.updatedAt, executionSelection: structuredClone(run.executionSelection), ...(value.providerSessionId ? { providerSessionId: String(value.providerSessionId) } : {}), ...(value.processId !== undefined ? { processId: Number(value.processId) } : {}) };
     this.options.saveSession(session); return session;
+  }
+  reconcileSession(value:unknown,run:Run):AdapterSession {
+    if(!run.sessionId.startsWith("unstarted:")&&(!object(value)||value.id!==run.sessionId))throw new AdapterContractError("COMMAND_OUTCOME_UNKNOWN","Reconciliation cannot replace the original native session");
+    return this.session(value,run,true);
   }
   private async mutation(payload: CommandPayload, run: Run, messageId: string): Promise<unknown> {
     try { return await this.options.request(payload, run, messageId); }

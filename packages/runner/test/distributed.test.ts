@@ -135,6 +135,13 @@ describe("remote runner control plane", () => {
     await server.close();
   });
 
+  it("settles a registration closed before acknowledgement without leaking authentication errors",async()=>{
+    const server=new RemoteRunnerServer({registry:new RunnerRegistry(),port:0,authenticate:()=>{throw new Error("private credential-store failure");}});await server.ready();
+    const client=new RemoteRunnerClient({url:`ws://127.0.0.1:${server.address()!.port}`,bearerToken:"wrong",runner:runner()});
+    try{await expect(Promise.race([client.start().then(()=>"accepted",error=>String(error)),new Promise(resolve=>setTimeout(()=>resolve("hung"),300))])).resolves.toBe("Error: Remote runner registration closed");}
+    finally{await client.stop();await server.close();}
+  });
+
   it("drains an in-flight command on shutdown and replays its durable response after restart", async () => {
     const directory = mkdtempSync(join(tmpdir(), "dispatcher-remote-shutdown-"));
     tempDirectories.push(directory);

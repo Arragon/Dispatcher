@@ -1,6 +1,6 @@
 import {qualifyRoutingPolicy,type PolicyConfigEvidence} from "./policy-config.js";
 import {TaskClassifier} from "./task-classifier.js";
-import { remoteCatalog } from "./remote-results.js";
+import { remoteCatalog, remoteRunInventory } from "./remote-results.js";
 import { RemoteNativeAdapter } from "./remote-adapter.js";
 import { NATIVE_EXECUTION_CAPABILITY, type CommandPayload } from "@dispatcher/protocol";
 import { ModelRoutingService } from "./model-routing.js";
@@ -138,7 +138,7 @@ import {
 import { LlmRuntime, LlmRuntimeError, type FetchLike, type LlmConfiguration, type LlmRole } from "@dispatcher/llm-runtime";
 import { createLogger, redactValue } from "@dispatcher/observability";
 import { DispatcherDatabase, RevisionConflictError, type JsonValue } from "@dispatcher/persistence";
-import { EmbeddedRunner, EventBus, LeaseFenceError, ProcessManager, RemoteRunnerServer, RunnerEnrollmentAuthority, RunnerLeaseAuthority, RunnerRegistry, VerificationRegistry, type RunnerEnrollmentRecord, type RunnerEvents } from "@dispatcher/runner";
+import { EmbeddedRunner, EventBus, LeaseFenceError, ProcessManager, RemoteRunnerServer, RunnerEnrollmentAuthority, RunnerLeaseAuthority, RunnerRegistry, VerificationRegistry, reconcileRunnerState, type RunnerEnrollmentRecord, type RunnerEvents } from "@dispatcher/runner";
 import {
   SemanticPolicyError,
   SemanticToolRegistry,
@@ -483,6 +483,9 @@ export class ControllerService {
   private readonly background: BackgroundLoop;
   private dispatchQueue: Promise<void> = Promise.resolve();
   private readonly runAdvances = new Map<string, Promise<AdvanceResult>>();
+  private readonly dispatchingRuns = new Set<string>();
+  private readonly remoteLifecycleJobs = new Map<string,Promise<void>>();
+  private readonly remoteLifecycleQueued = new Set<string>();
   private readonly runRetries = new Map<string, { failures: number; nextAttemptAt: number }>();
   private projectionDrain: Promise<unknown> | undefined;
   private ownerToken: Promise<string> | undefined;
@@ -540,12 +543,15 @@ export class ControllerService {
       this.database.saveEntity("runner", runner.id, json(runner));
     });
     for (const runner of this.database.listEntities<JsonValue>("runner")) {
-      this.runners.register(runner as unknown as Runner);
+      const stored=runner as unknown as Runner;
+      this.runners.register({...stored,...(this.configuration.current().config.runners.some(runner=>runner.id===stored.id&&runner.mode==="remote")?{state:"OFFLINE" as const}:{})});
     }
     this.events.subscribe("runnerChanged", async (runner) => {
       this.database.saveEntity("runner", runner.id, json(runner));
       this.fleetEvents.publish("runner.changed", runner.id, redactValue(runner));
       if (this.embeddedRunner?.runner.id === runner.id && runner.state === "ONLINE") await this.renewEmbeddedLeases();
+      if(this.configuration.current().config.runners.some(configured=>configured.id===runner.id&&configured.mode==="remote")&&this.remoteRunnerServer.isConnected(runner.id)&&runner.capabilities.includes(NATIVE_EXECUTION_CAPABILITY))await this.reconcileRemoteLifecycle(runner.id);
+      else if(!this.stopping&&this.configuration.current().config.runners.some(configured=>configured.id===runner.id&&configured.mode==="remote")&&["DEGRADED","OFFLINE"].includes(runner.state))for(const value of this.database.listEntities<JsonValue>("run")){const run=value as unknown as Run;if(run.runnerId===runner.id&&!isTerminalRunState(run.state))this.markRemoteUnavailable(run.id,"Awaiting owning Runner reconnection","REMOTE_RECONCILE_REQUIRED");}
       if (runner.state === "OFFLINE") await this.notifyOperationalAttention({ key: runner.id, state: "RUNNER_OFFLINE", subject: `Runner offline: ${runner.displayName}`, body: `${runner.id} stopped reporting capacity.` });
     });
     this.remoteRunnerServer = new RemoteRunnerServer({
@@ -556,7 +562,7 @@ export class ControllerService {
         if (!bearerToken) return false;
         const configured = this.configuration.current().config.runners.find((runner) => runner.id === runnerId && runner.mode === "remote");
         if (!configured?.credentialRef) return false;
-        const expected = await this.secrets.resolve(configured.credentialRef, { principal: "controller", purpose: "provider" });
+        let expected:string;try{expected=await this.secrets.resolve(configured.credentialRef, { principal: "controller", purpose: "provider" });}catch{return false;}
         const suppliedBytes = Buffer.from(bearerToken);
         const expectedBytes = Buffer.from(expected);
         return suppliedBytes.length === expectedBytes.length && timingSafeEqual(suppliedBytes, expectedBytes);
@@ -630,6 +636,10 @@ export class ControllerService {
 
   async start(input: { listen?: boolean } = {}): Promise<void> {
     for (const value of this.database.listEntities<JsonValue>("workspace-handle")) {
+      const handle=value as unknown as WorkspaceHandle;
+      const config=this.configuration.current().config,repository=config.repositories.find(repository=>repository.id===handle.repositoryId);
+      const recordedOwner=(value as Record<string,JsonValue>).runnerId;if(typeof recordedOwner==="string"&&recordedOwner!==(config.runners.find(runner=>runner.mode==="embedded")?.id??"local"))continue;
+      if(repository&&config.runners.some(runner=>runner.id===repositoryRunnerId(config,repository)&&runner.mode==="remote"))continue;
       try { await this.workspaces.restore(value as unknown as WorkspaceHandle); }
       catch (error) { this.app.log.warn({error:redactValue(error)},"worktree restoration requires operator inspection"); }
     }
@@ -642,6 +652,7 @@ export class ControllerService {
       }
     } catch (error) {
       await this.lifecycle.stop();
+      await Promise.allSettled([...this.remoteLifecycleJobs.values()]);
       throw error;
     }
   }
@@ -650,6 +661,7 @@ export class ControllerService {
     if (this.stopping) return this.stopping;
     this.stopping = (async () => {
       await this.lifecycle.stop();
+      await Promise.allSettled([...this.remoteLifecycleJobs.values()]);
       if (this.listening) await this.app.close();
       else await this.app.close();
       this.events.close();
@@ -664,6 +676,7 @@ export class ControllerService {
     if (this.leaseAuthority.current(run.id)) return;
     const expiresAt = run.leaseExpiresAt ?? new Date(this.now().getTime() + 15 * 60_000).toISOString();
     this.leaseAuthority.issue({ runId: run.id, runnerId: run.runnerId, leaseId: run.leaseId, generation: run.generation, expiresAt });
+    if(run.revokedLeaseIds?.includes(run.leaseId))this.leaseAuthority.revoke(run.id,run.leaseId,run.generation,"Persisted authority revocation",this.now().toISOString());
     this.persistLatestLeaseAudit(run.id);
   }
 
@@ -688,6 +701,7 @@ export class ControllerService {
     const record = audit.at(-1);
     if (!record) return;
     this.database.saveEntity("lease-audit", `${runId}:${audit.length}`, json(record), record.occurredAt);
+    if(this.leaseAuthority.current(runId)?.revokedAt){const run=this.database.getEntity<JsonValue>("run",runId) as unknown as Run|undefined;if(run&&record.leaseId===run.leaseId&&record.generation===run.generation&&!run.revokedLeaseIds?.includes(run.leaseId)){run.revokedLeaseIds=[...(run.revokedLeaseIds??[]),run.leaseId];this.database.saveEntity("run",run.id,json(run));}}
   }
 
   private async failRun(run: Run, reason: string): Promise<void> {
@@ -731,6 +745,102 @@ export class ControllerService {
         this.persistLatestLeaseAudit(run.id);
         if (!(error instanceof LeaseFenceError)) throw error;
         await this.failRun(run, `Embedded Runner ${error.message}`);
+      }
+    }
+  }
+
+  private markRemoteUnavailable(runId:string,reason:string,code="NATIVE_OUTCOME_UNKNOWN",expected?:Pick<Run,"leaseId"|"generation">):void {
+    if(this.dispatchingRuns.has(runId))return;
+    let changed=false;
+    this.database.transaction(()=>{
+      const run=this.database.getEntity<JsonValue>("run",runId) as unknown as Run|undefined;
+      if(!run||isTerminalRunState(run.state)||run.state==="CREATED")return;
+      if(expected&&(run.leaseId!==expected.leaseId||run.generation!==expected.generation))return;
+      if(run.state!=="RUNNER_UNAVAILABLE"){run.recoveryState=run.state;assertRunTransition(run.state,"RUNNER_UNAVAILABLE");run.state="RUNNER_UNAVAILABLE";}
+      run.recoveryReason=code;run.resumePolicy="manual";this.database.saveEntity("run",run.id,json(run));
+      changed=true;
+      const stored=this.database.getCanonicalTask<JsonValue>(run.taskId),task=stored?.document as unknown as Task|undefined;
+      if(stored&&task?.currentRunId===run.id&&["RUNNING","QUEUED"].includes(task.state))this.tasks.execute({id:`remote-unavailable:${run.id}:${stored.revision}`,taskId:run.taskId,baseRevision:stored.revision,actor:"remote-reconciliation",command:{type:"task.transition",state:task.state==="QUEUED"?"WAITING_RESOURCE":"WAITING_USER"}});
+      for(const value of this.database.listEntities<JsonValue>("task-publication")){
+        const publication=value as unknown as PublicationRecord;
+        if(publication.receipt?.runId===run.id){publication.receipt={...publication.receipt,state:"OUTCOME_UNKNOWN",message:reason};this.database.saveEntity("task-publication",publication.preview.publicationId,json(publication));}
+      }
+    });
+    if(changed)this.fleetEvents.publish("run.changed",runId,{id:runId,state:"RUNNER_UNAVAILABLE",recoveryReason:code});
+  }
+  private reconcileRemoteLifecycle(runnerId:string):Promise<void> {
+    if(this.stopping)return Promise.resolve();
+    const active=this.remoteLifecycleJobs.get(runnerId);if(active){this.remoteLifecycleQueued.add(runnerId);return active;}
+    const work=Promise.resolve().then(async()=>{
+      do{
+        this.remoteLifecycleQueued.delete(runnerId);if(this.stopping)return;
+        try{await this.reconcileRemoteRunner(runnerId);await this.renewRemoteLeases(runnerId);}
+        catch(error){this.app.log.warn({runnerId,error:redactValue(error)},"remote ownership reconciliation is unconfirmed");}
+      }while(this.remoteLifecycleQueued.has(runnerId));
+    });
+    this.remoteLifecycleJobs.set(runnerId,work);
+    void work.finally(()=>{if(this.remoteLifecycleJobs.get(runnerId)===work)this.remoteLifecycleJobs.delete(runnerId);});
+    return work;
+  }
+  private async reconcileRemoteRunner(runnerId:string):Promise<void> {
+    const before=new Set(this.database.listEntities<JsonValue>("run").map(value=>value as unknown as Run).filter(run=>run.runnerId===runnerId&&!isTerminalRunState(run.state)).map(run=>contentHash({id:run.id,generation:run.generation,leaseId:run.leaseId})));
+    const actual=remoteRunInventory(await this.remoteRequest(runnerId,{type:"runner.reconcile"}),runnerId);
+    const runs=this.database.listEntities<JsonValue>("run").map(value=>value as unknown as Run).filter(run=>run.runnerId===runnerId&&!isTerminalRunState(run.state)&&before.has(contentHash({id:run.id,generation:run.generation,leaseId:run.leaseId})));
+    const owned=runs.filter(run=>(this.database.getCanonicalTask<JsonValue>(run.taskId)?.document as unknown as Task|undefined)?.currentRunId===run.id);
+    const expected=owned.map(run=>{
+      const start=this.database.getEntity<JsonValue>("remote-native-start",run.id) as {commandHash?:string}|undefined;
+      return {runId:run.id,runnerId,generation:run.generation,leaseId:run.leaseId,...(run.worktree?{workspace:run.worktree}:{}),...(!run.sessionId.startsWith("unstarted:")?{sessionId:run.sessionId}:{}),...(start?.commandHash?{startCommandHash:start.commandHash}:{}),requiresNativeOwnership:true};
+    });
+    for(const decision of reconcileRunnerState(runnerId,expected,actual)){
+      if(this.stopping||this.dispatchingRuns.has(decision.runId))continue;
+      const observed=actual.find(row=>row.runId===decision.runId),run=runs.find(run=>run.id===decision.runId);
+      if(decision.action==="STOP_STALE"&&observed){const current=this.database.getEntity<JsonValue>("run",decision.runId) as unknown as Run|undefined;if(current&&!isTerminalRunState(current.state)&&current.generation===observed.generation&&current.leaseId===observed.leaseId&&(this.database.getCanonicalTask<JsonValue>(current.taskId)?.document as unknown as Task|undefined)?.currentRunId===current.id)continue;}
+      this.database.saveEntity("remote-reconciliation",decision.runId,json({runnerId,...decision,observedAt:this.now().toISOString(),...(observed?{observation:observed}:{})}));
+      if(decision.action==="STOP_STALE"){
+        if(observed&&!observed.settledAt&&observed.nativeState!=="CANCELLED")await this.remoteRequest(runnerId,{type:"lease.revoke",leaseId:observed.leaseId,generation:observed.generation,reason:decision.reason});
+        continue;
+      }
+      if(!run)continue;
+      const start=this.database.getEntity<JsonValue>("remote-native-start",run.id) as {commandHash?:string;runnerId?:string;generation?:number;leaseId?:string}|undefined;
+      if(decision.action!=="KEEP"||!observed||!start?.commandHash||start.runnerId!==runnerId||start.generation!==run.generation||start.leaseId!==run.leaseId||observed.profileId!==run.profileId){this.markRemoteUnavailable(run.id,decision.reason,"NATIVE_OUTCOME_UNKNOWN",run);continue;}
+      this.restoreLeaseAuthority(run);
+      const canonical=this.leaseAuthority.current(run.id)!;
+      if(canonical.revokedAt||observed.lease.revokedAt||Date.parse(observed.lease.expiresAt)<=this.now().getTime()||!run.leaseExpiresAt||Date.parse(run.leaseExpiresAt)<=this.now().getTime()){
+        if(!observed.lease.revokedAt)await this.remoteRequest(runnerId,{type:"lease.revoke",leaseId:run.leaseId,generation:run.generation,reason:"Canonical authority expired or was revoked"});
+        this.markRemoteUnavailable(run.id,"Remote authority requires operator inspection","REMOTE_LEASE_INVALID",run);continue;
+      }
+      if(run.state!=="RUNNER_UNAVAILABLE"&&run.state!=="STARTING")continue;
+      const adapter=this.agentAdapters.get(run.profileId);if(!(adapter instanceof RemoteNativeAdapter)){this.markRemoteUnavailable(run.id,"Remote native backend is unavailable","NATIVE_OUTCOME_UNKNOWN",run);continue;}
+      const session=adapter.reconcileSession(await this.remoteRequest(runnerId,{type:"native.run",runId:run.id,action:"status"},run),run);
+      this.database.transaction(()=>{
+        const current=this.database.getEntity<JsonValue>("run",run.id) as unknown as Run|undefined,stored=this.database.getCanonicalTask<JsonValue>(run.taskId),task=stored?.document as unknown as Task|undefined;
+        if(!current||isTerminalRunState(current.state)||current.generation!==run.generation||current.leaseId!==run.leaseId||task?.currentRunId!==run.id||!["RUNNER_UNAVAILABLE","STARTING"].includes(current.state))return;
+        const restored:Run["state"]=current.recoveryState&&["ACTIVE","WAITING_USER","RESOURCE_BLOCKED","SUSPECTED_STALL","VERIFYING","DELIVERING"].includes(current.recoveryState)?current.recoveryState:"ACTIVE";
+        assertRunTransition(current.state,restored);current.state=restored;current.sessionId=session.id;if(session.providerSessionId)current.providerSessionId=session.providerSessionId;
+        delete current.recoveryReason;delete current.recoveryState;delete current.failureReason;current.resumePolicy=session.providerSessionId||adapter.manifest.capabilities.resume?"same-session":"controlled-reroute";
+        this.database.saveEntity("run",current.id,json(current));
+        if(stored&&restored==="ACTIVE"&&["WAITING_USER","WAITING_RESOURCE","QUEUED"].includes(task.state))this.tasks.execute({id:`remote-reattach:${current.id}:${stored.revision}`,taskId:current.taskId,baseRevision:stored.revision,actor:"remote-reconciliation",command:{type:"task.transition",state:"RUNNING"}});
+        for(const value of this.database.listEntities<JsonValue>("task-publication")){const publication=value as unknown as PublicationRecord;if(publication.receipt?.runId===current.id)this.publications.markOutcome(publication.owner,publication.preview.publicationId,current);}
+      });
+      this.fleetEvents.publish("run.changed",run.id,{id:run.id,source:"remote-reconciliation"});
+    }
+  }
+  private async renewRemoteLeases(runnerId:string):Promise<void> {
+    for(const value of this.database.listEntities<JsonValue>("run")){
+      const run=value as unknown as Run;if(run.runnerId!==runnerId||isTerminalRunState(run.state)||run.state==="RUNNER_UNAVAILABLE"||this.dispatchingRuns.has(run.id)||!run.leaseExpiresAt||Date.parse(run.leaseExpiresAt)-this.now().getTime()>5*60_000)continue;
+      this.restoreLeaseAuthority(run);
+      try{
+        this.leaseAuthority.fence(run.id,run.leaseId,run.generation,"remote-renew",this.now().toISOString());
+        const expiresAt=new Date(this.now().getTime()+15*60_000).toISOString();
+        const acknowledged=await this.remoteRequest(runnerId,{type:"lease.renew",leaseId:run.leaseId,generation:run.generation,expiresAt},run,`native-renew:${run.id}:${run.generation}:${Date.parse(expiresAt)}`) as {runId?:unknown;runnerId?:unknown;leaseId?:unknown;generation?:unknown;expiresAt?:unknown;revokedAt?:unknown};
+        if(!acknowledged||acknowledged.runId!==run.id||acknowledged.runnerId!==runnerId||acknowledged.leaseId!==run.leaseId||acknowledged.generation!==run.generation||acknowledged.expiresAt!==expiresAt||acknowledged.revokedAt)throw new AdapterContractError("REMOTE_RESULT_INVALID","Remote lease renewal acknowledgement does not match canonical authority");
+        const current=this.database.getEntity<JsonValue>("run",run.id) as unknown as Run|undefined;
+        if(!current||isTerminalRunState(current.state)||current.state==="RUNNER_UNAVAILABLE"||current.generation!==run.generation||current.leaseId!==run.leaseId)throw new AdapterContractError("RUN_CHANGED","Canonical authority changed while renewing its remote lease");
+        const renewed=this.leaseAuthority.renew(run.id,run.leaseId,run.generation,expiresAt,this.now().toISOString());current.leaseExpiresAt=renewed.expiresAt;this.database.saveEntity("run",current.id,json(current));this.persistLatestLeaseAudit(run.id);
+      }catch(error){
+        try{await this.remoteRequest(runnerId,{type:"lease.revoke",leaseId:run.leaseId,generation:run.generation,reason:"Canonical renewal was not confirmed"},run);}catch(cleanup){this.app.log.warn({runId:run.id,error:redactValue(cleanup)},"remote renewal cleanup is unconfirmed");}
+        try{this.leaseAuthority.revoke(run.id,run.leaseId,run.generation,"Canonical renewal was not confirmed",this.now().toISOString());}catch{/* A newer generation remains authoritative. */}
+        this.persistLatestLeaseAudit(run.id);this.markRemoteUnavailable(run.id,"Remote lease renewal could not be confirmed","REMOTE_LEASE_INVALID",run);this.app.log.warn({runId:run.id,error:redactValue(error)},"remote lease renewal failed");
       }
     }
   }
@@ -880,7 +990,7 @@ export class ControllerService {
       const manifest=manifestForProvider(profile.provider);
       if(!manifest||!(profile.provider==="codex"||profile.provider==="cursor"||profile.provider==="kiro"||isNativeCliProvider(profile.provider)))continue;
       this.agentAdapters.set(profile.id,new RemoteNativeAdapter({profileId:profile.id,runnerId:profile.runnerId,manifest,
-        run:id=>this.database.getEntity<JsonValue>("run",id) as unknown as Run|undefined,
+        run:id=>{const run=this.database.getEntity<JsonValue>("run",id) as unknown as Run|undefined;if(!run)return;const task=this.database.getCanonicalTask<JsonValue>(run.taskId)?.document as unknown as Task|undefined;if(task?.currentRunId!==id||task.state!=="QUEUED")return;this.restoreLeaseAuthority(run);this.leaseAuthority.fence(run.id,run.leaseId,run.generation,"native-start",this.now().toISOString());return run;},
         sessionRun:id=>{const session=store.load(id);const run=session?this.database.getEntity<JsonValue>("run",session.runId) as unknown as Run|undefined:undefined;return run?.sessionId.startsWith("unstarted:")?{...run,sessionId:id}:run;},
         request:(payload,run,messageId)=>this.remoteRequest(profile.runnerId,payload,run,messageId),
         saveSession:session=>{const previous=store.load(session.id);if(previous&&(previous.runId!==session.runId||previous.profileId!==session.profileId))throw new AdapterContractError("COMMAND_OUTCOME_UNKNOWN","Remote session identity collides with another Run");store.save(session);},
@@ -1535,6 +1645,23 @@ export class ControllerService {
     const result=await this.remoteRequest(run.runnerId,{type:"native.run_finalize",runId:run.id},run,`native-finalize:${run.id}:${run.generation}`) as {runId?:unknown;settledAt?:unknown}|undefined;
     if(!result||result.runId!==run.id||typeof result.settledAt!=="string"||!Number.isFinite(Date.parse(result.settledAt)))throw new AdapterContractError("REMOTE_RESULT_INVALID","Owning Runner did not confirm execution finalization");
   }
+  private async cancelRunExecution(run:Run):Promise<Run> {
+    if(isTerminalRunState(run.state))return run;
+    const remote=this.configuration.current().config.runners.some(runner=>runner.id===run.runnerId&&runner.mode==="remote");
+    if(remote){
+      this.restoreLeaseAuthority(run);
+      this.leaseAuthority.revoke(run.id,run.leaseId,run.generation,"Cancelled by operator",this.now().toISOString());
+      this.persistLatestLeaseAudit(run.id);
+      try{
+        const stopped=await this.remoteRequest(run.runnerId,{type:"lease.revoke",leaseId:run.leaseId,generation:run.generation,reason:"Cancelled by operator"},run,`native-cancel-lease:${run.id}:${run.generation}`) as {runId?:unknown;leaseId?:unknown;generation?:unknown;revokedAt?:unknown}|undefined;
+        if(!stopped||stopped.runId!==run.id||stopped.leaseId!==run.leaseId||stopped.generation!==run.generation||typeof stopped.revokedAt!=="string"||!Number.isFinite(Date.parse(stopped.revokedAt)))throw new AdapterContractError("REMOTE_RESULT_INVALID","Owning Runner did not confirm cancellation");
+      }catch(error){this.markRemoteUnavailable(run.id,"Cancellation has fenced authority; native termination is unconfirmed","REMOTE_LEASE_INVALID",run);throw error;}
+    }else await this.agentAdapters.get(run.profileId)?.cancel(run.sessionId);
+    const current=this.database.getEntity<JsonValue>("run",run.id) as unknown as Run|undefined;
+    if(!current||current.leaseId!==run.leaseId||current.generation!==run.generation)throw new SemanticPolicyError("INVALID_INPUT","Run authority changed during cancellation");
+    if(!isTerminalRunState(current.state)){assertRunTransition(current.state,"CANCELLED");current.state="CANCELLED";current.endedAt=this.now().toISOString();delete current.recoveryState;delete current.recoveryReason;this.database.saveEntity("run",current.id,json(current));this.fleetEvents.publish("run.changed",current.id,{id:current.id,state:current.state});}
+    return current;
+  }
   private async inspectRepository(plan:Parameters<WorkspaceManager["inspect"]>[0]):Promise<{baseCommit:string;root:string}> {
     const config=this.configuration.current().config,repository=config.repositories.find(repository=>repository.id===plan.repositoryId);
     if(!repository)throw new PublicationError("REPOSITORY_NOT_FOUND",404,"Repository is not registered");
@@ -1690,6 +1817,7 @@ export class ControllerService {
     const workspace=remote?this.remoteWorkspace(await this.remoteRequest(repositoryRunner,{type:"native.workspace_plan",profileId:publication!.selection!.profileId,plan:workspacePlan}),workspacePlan):await this.workspaces.create(workspacePlan);
     if(!remote)this.database.transaction(()=>{this.database.saveEntity("workspace-handle",runId,json(workspace));this.database.saveEntity("workspace-intent",runId,json({...workspacePlan,state:"CREATED",path:workspace.path}));});
     let dispatched: Awaited<ReturnType<CanonicalScheduler["dispatch"]>>;
+    this.dispatchingRuns.add(runId);
     try {
       dispatched = await scheduler.dispatch({
         task: stored.document as unknown as Task,
@@ -1751,7 +1879,7 @@ export class ControllerService {
       if(!remote){const cleanup = await this.workspaces.cleanupPlan(workspace);if (cleanup.safe) await this.workspaces.cleanup(cleanup);}
       if (error instanceof TaskDispatchError || error instanceof ConnectorError) throw error;
       throw new TaskDispatchError("DISPATCH_UNAVAILABLE", 409, error instanceof Error ? error.message : "Dispatch is unavailable");
-    }
+    }finally{this.dispatchingRuns.delete(runId);}
     const reserved = this.database.getEntity<JsonValue>("run", dispatched.run.id) as unknown as Run | undefined;
     if (reserved?.model) dispatched.run.model = reserved.model;
     dispatched.run.branch = workspace.branch;
@@ -1840,15 +1968,10 @@ export class ControllerService {
         const task = stored.document as unknown as Task;
         if (task.state === "DONE" || task.state === "FAILED") throw new SemanticPolicyError("INVALID_INPUT", `Task ${taskId} cannot be cancelled from ${task.state}`);
         const run = task.currentRunId ? this.database.getEntity<JsonValue>("run", task.currentRunId) as unknown as Run | undefined : undefined;
-        if (run && !isTerminalRunState(run.state)) {
-          await this.agentAdapters.get(run.profileId)?.cancel(run.sessionId);
-          assertRunTransition(run.state, "CANCELLED");
-          run.state = "CANCELLED";
-          run.endedAt = new Date().toISOString();
-          this.database.saveEntity("run", run.id, json(run));
-          this.fleetEvents.publish("run.changed", run.id, { id: run.id, state: run.state });
-        }
-        if (task.state !== "CANCELLED") this.tasks.execute({ id: `semantic:${context.workflowId}`, taskId, baseRevision: stored.revision, actor: context.principal.id, command: { type: "task.transition", state: "CANCELLED" } });
+        if (run && !isTerminalRunState(run.state)) await this.cancelRunExecution(run);
+        const current=this.database.getCanonicalTask<JsonValue>(taskId),latest=current?.document as unknown as Task|undefined;
+        if(!current||!latest||latest.currentRunId!==task.currentRunId)throw new SemanticPolicyError("INVALID_INPUT","Task authority changed during cancellation");
+        if (latest.state !== "CANCELLED") this.tasks.execute({ id: `semantic:${context.workflowId}`, taskId, baseRevision: current.revision, actor: context.principal.id, command: { type: "task.transition", state: "CANCELLED" } });
         return { taskId, state: "CANCELLED", runId: run?.id };
       },
     });
@@ -1870,18 +1993,10 @@ export class ControllerService {
         const runId = String(target);
         const run = this.database.getEntity<JsonValue>("run", runId) as unknown as Run | undefined;
         if (!run) throw new SemanticPolicyError("INVALID_INPUT", `Unknown run ${runId}`);
-        if (!isTerminalRunState(run.state)) {
-          await this.agentAdapters.get(run.profileId)?.cancel(run.sessionId);
-          assertRunTransition(run.state, "CANCELLED");
-          run.state = "CANCELLED";
-          run.endedAt = new Date().toISOString();
-          this.database.saveEntity("run", run.id, json(run));
-          const stored = this.database.getCanonicalTask<JsonValue>(run.taskId);
-          const task = stored?.document as unknown as Task | undefined;
-          if (stored && task && !["DONE", "FAILED", "CANCELLED"].includes(task.state)) this.tasks.execute({ id: `semantic:${context.workflowId}`, taskId: run.taskId, baseRevision: stored.revision, actor: context.principal.id, command: { type: "task.transition", state: "CANCELLED" } });
-          this.fleetEvents.publish("run.changed", run.id, { id: run.id, state: run.state });
-        }
-        return run;
+        const cancelled=await this.cancelRunExecution(run);
+        const stored = this.database.getCanonicalTask<JsonValue>(run.taskId),task = stored?.document as unknown as Task | undefined;
+        if (cancelled.state==="CANCELLED"&&stored && task?.currentRunId===run.id && !["DONE", "FAILED", "CANCELLED"].includes(task.state)) this.tasks.execute({ id: `semantic:${context.workflowId}`, taskId: run.taskId, baseRevision: stored.revision, actor: context.principal.id, command: { type: "task.transition", state: "CANCELLED" } });
+        return cancelled;
       },
     });
     this.semanticTools.register({
@@ -1911,6 +2026,7 @@ export class ControllerService {
         const runId = String(target);
         const run = this.database.getEntity<JsonValue>("run", runId) as unknown as Run | undefined;
         if (!run || !["WAITING_USER", "RESOURCE_BLOCKED", "RUNNER_UNAVAILABLE", "SUSPECTED_STALL"].includes(run.state)) throw new SemanticPolicyError("INVALID_INPUT", `Run ${runId} is not resumable`);
+        if(run.state==="RUNNER_UNAVAILABLE"&&this.configuration.current().config.runners.some(runner=>runner.id===run.runnerId&&runner.mode==="remote"))throw new SemanticPolicyError("INVALID_INPUT","Owning Runner must reconcile native ownership before resuming");
         if(run.recoveryReason==="NATIVE_OUTCOME_UNKNOWN")throw new SemanticPolicyError("INVALID_INPUT","Native execution outcome is unknown; inspect the original session before resuming");
         const adapter = this.agentAdapters.get(run.profileId);
         if (!adapter) throw new SemanticPolicyError("INVALID_INPUT", `Profile ${run.profileId} is unavailable`);
@@ -1939,6 +2055,7 @@ export class ControllerService {
         const contract = run ? this.database.getTaskContract<JsonValue>(run.taskId) as unknown as TaskContract | undefined : undefined;
         if (!run || isTerminalRunState(run.state) || !run.worktree || !profile || !nextAdapter || !previousAdapter || !contract) throw new SemanticPolicyError("INVALID_INPUT", `Run ${runId} cannot be rerouted to ${nextProfileId}`);
         if(run.executionSelection)throw new SemanticPolicyError("INVALID_INPUT","Publication reroute requires a fresh account/model/workspace review and is not supported by the legacy reroute command");
+        if(profile.runnerId!==run.runnerId||previousAdapter instanceof RemoteNativeAdapter||nextAdapter instanceof RemoteNativeAdapter)throw new SemanticPolicyError("INVALID_INPUT","Rerouting an existing workspace across Runner authority requires a new reviewed publication");
         const capabilityAssessment = assessManifestCapabilities(nextAdapter.manifest, run.requiredCapabilities ?? ["code", "git"]);
         if (!capabilityAssessment.supported) throw new SemanticPolicyError("INVALID_INPUT", capabilityAssessment.explanation);
         const session = await nextAdapter.start({ runId: randomUUID(), workspacePath: run.worktree, prompt: contract.goal });
@@ -2515,6 +2632,11 @@ export class ControllerService {
 
   private async revokeRunnerCredential(runnerId: string, credentialRef: string | undefined): Promise<void> {
     this.enrollments.revoke(runnerId, this.now());
+    for(const value of this.database.listEntities<JsonValue>("run")){
+      const run=value as unknown as Run;if(run.runnerId!==runnerId||isTerminalRunState(run.state))continue;
+      this.restoreLeaseAuthority(run);this.leaseAuthority.revoke(run.id,run.leaseId,run.generation,"Runner credential revoked",this.now().toISOString());this.persistLatestLeaseAudit(run.id);
+      this.markRemoteUnavailable(run.id,"Runner credentials revoked; owning process termination requires confirmation","REMOTE_LEASE_INVALID",run);
+    }
     if (credentialRef && (await this.secrets.metadata(credentialRef)).exists) await this.secrets.delete(credentialRef);
     this.remoteRunnerServer.disconnect(runnerId, "credential revoked");
     this.database.saveEntity("runner-identity", runnerId, json({ runnerId, ...(credentialRef ? { credentialRef } : {}), revokedAt: this.now().toISOString() }));

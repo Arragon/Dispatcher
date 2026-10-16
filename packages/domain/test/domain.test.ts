@@ -10,6 +10,11 @@ import {
 } from "../src/index.js";
 
 describe("domain state contracts", () => {
+  it.each(["WAITING_USER","RESOURCE_BLOCKED","SUSPECTED_STALL","VERIFYING","DELIVERING"] as const)("can retain and restore %s around Runner unavailability",state=>{
+    expect(()=>assertRunTransition(state,"RUNNER_UNAVAILABLE")).not.toThrow();
+    expect(()=>assertRunTransition("RUNNER_UNAVAILABLE",state)).not.toThrow();
+    expect(()=>assertRunTransition("RUNNER_UNAVAILABLE","STARTING")).toThrow(InvalidStateTransitionError);
+  });
   it.each([
     ["READY", "QUEUED"],
     ["RUNNING", "WAITING_RESOURCE"],

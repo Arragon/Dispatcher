@@ -209,3 +209,14 @@ it("preserves completed native result evidence across Runner restart without cla
   const result=await restored.handle(payload,createEnvelope({kind:"command",runnerId:"remote",traceId:"trace",messageId:"completed-result",sequence:100,leaseId:"lease",generation:1,leaseExpiresAt:"2026-10-16T12:01:00Z",payload}));
   expect(result).toMatchObject({state:"COMPLETED",summary:"done"});expect(restored.reconcile()).toMatchObject({runs:[{attached:false,state:"COMPLETE",resultAvailable:true}]});expect(f.starts()).toBe(1);
 });
+
+it("revokes every admitted lease before awaiting any shutdown cancellation",async()=>{
+  const f=fixture();f.runtime.close();f.config.runners[0]!.capacity=2;
+  const entered=Promise.withResolvers<void>(),release=Promise.withResolvers<void>();let cancelling=0;
+  const runtime=new NativeRunnerRuntime({...f.options,createAdapter:(profile,store)=>{const adapter=f.options.createAdapter(profile,store),cancel=adapter.cancel.bind(adapter);adapter.cancel=async id=>{if(++cancelling===1){entered.resolve();await release.promise;}return cancel(id);};return adapter;}});cleanups.push(()=>runtime.close());
+  runtime.configuration.applyPlan(runtime.configuration.buildPlan(f.config,"fixture","cli").id,{confirmed:true});
+  const call=(payload:CommandPayload,leaseId:string)=>runtime.handle(payload,createEnvelope({kind:"command",runnerId:"remote",traceId:"trace",messageId:Math.random().toString(),sequence:1,leaseId,generation:1,leaseExpiresAt:"2026-10-16T12:01:00Z",payload}));
+  for(const runId of ["one","two"]){await call({type:"native.workspace_prepare",runId,profileId:"p",plan:{...f.plan,runId,taskId:runId},verificationCommandIds:["check"]},runId);await call({type:"run.start",runId,execution:{version:1,profileId:"p",workspaceId:runId,prompt:"start",selection:f.selection}},runId);}
+  const shutdown=runtime.shutdown();await entered.promise;
+  try{for(const id of ["one","two"])expect(runtime.database.getEntity("native-execution",id)).toMatchObject({lease:{revokedAt:expect.any(String)}});}finally{release.resolve();await shutdown;}
+});

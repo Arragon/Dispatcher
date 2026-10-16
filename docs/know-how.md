@@ -468,3 +468,13 @@
 - Scroll wrappers containing absolutely positioned screen-reader text need a
   positioning context: clipped hidden table headings can otherwise expand the
   document on narrow viewports even while the table itself scrolls correctly.
+
+- Remote reconnect must match the native start hash and current lease/session/
+  workspace before adopting ownership. Do not update lastActivityAt just for
+  reattachment: it participates in native-input retry identity. Bound inventory
+  application to identities present before the query, and coalesce a later
+  heartbeat so a slow empty snapshot cannot hide a newly started Run.
+- Remote cancellation cannot depend on a received native session ID: a dropped
+  start acknowledgement leaves only the reserved lease. Persist revocation,
+  require owning-Runner stop acknowledgement, and keep uncertainty visible.
+  Shutdown revokes all leases synchronously before awaiting the first adapter.

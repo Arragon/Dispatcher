@@ -25,6 +25,8 @@ it("keeps dropped or mismatched start responses unknown and never reports a diff
   f.request.mockResolvedValueOnce({ ...f.session, runId: "other" });
   await expect(f.adapter.start({ runId: "run", workspacePath: f.run.worktree!, executionSelection: f.selection })).rejects.toMatchObject({ code: "COMMAND_OUTCOME_UNKNOWN" });
   expect(f.save).not.toHaveBeenCalled();
+  f.run.providerSessionId="original";f.request.mockResolvedValueOnce({...f.session,providerSessionId:"different-native-session"});
+  await expect(f.adapter.start({runId:"run",workspacePath:f.run.worktree!,executionSelection:f.selection})).rejects.toMatchObject({code:"COMMAND_OUTCOME_UNKNOWN"});
 });
 it("binds input retries to the same raw message and intervention without reusing them for a later intervention", async () => {
   const f = fixture(); f.run.sessionId = "session"; f.run.state = "WAITING_USER";

@@ -184,7 +184,7 @@ export class RemoteRunnerServer {
       clearTimeout(registrationTimer);
       try {
         const frame = decode(data) as Partial<RegistrationFrame>;
-        if (frame.type !== "runner.register" || frame.protocolVersion !== PROTOCOL_VERSION || !frame.runner || !Array.isArray(frame.profileInventory) || !Number.isSafeInteger(frame.lastAcknowledgedSequence) || Number(frame.lastAcknowledgedSequence) < 0 || typeof frame.runnerVersion !== "string") {
+        if (frame.type !== "runner.register" || frame.protocolVersion !== PROTOCOL_VERSION || !frame.runner || !Array.isArray(frame.profileInventory) || frame.profileInventory.length>1000 || !frame.profileInventory.every(id=>typeof id==="string"&&id.length>0&&id.length<=200) || new Set(frame.profileInventory).size!==frame.profileInventory.length || !Number.isSafeInteger(frame.lastAcknowledgedSequence) || Number(frame.lastAcknowledgedSequence) < 0 || typeof frame.runnerVersion !== "string") {
           sendJson(socket, { type: "runner.rejected", reason: "unsupported registration or protocol version" } satisfies RegistrationResult, this.maxBufferedBytes);
           socket.close(1002, "invalid registration");
           return;
@@ -203,13 +203,13 @@ export class RemoteRunnerServer {
         const runner = this.options.registry.register({ ...frame.runner, state: "ONLINE", lastSeenAt: new Date().toISOString() });
         const existing = this.connections.get(runner.id);
         if (existing) existing.socket.close(1012, "runner reconnected");
-        const connection: ServerConnection = { socket, runner, profileInventory: frame.profileInventory.filter((id):id is string=>typeof id==="string"&&id.length<=200).slice(0,1000), nextSequence: 1, lastReceivedSequence: Number(frame.lastAcknowledgedSequence), lastSeenAt: Date.now(), pending: new Map() };
+        const connection: ServerConnection = { socket, runner, profileInventory: [...frame.profileInventory], nextSequence: 1, lastReceivedSequence: Number(frame.lastAcknowledgedSequence), lastSeenAt: Date.now(), pending: new Map() };
         this.connections.set(runner.id, connection);
         sendJson(socket, { type: "runner.registered" } satisfies RegistrationResult, this.maxBufferedBytes);
         socket.on("message", (message) => this.receive(connection, message));
         void this.options.onRunnerChanged?.(runner);
-      } catch (error) {
-        socket.close(1002, error instanceof Error ? error.message.slice(0, 100) : "registration failed");
+      } catch {
+        socket.close(1002, "registration failed");
       }
     });
     socket.on("close", () => {
@@ -327,25 +327,29 @@ export class RemoteRunnerClient {
     this.socket = socket;
     try {
       await new Promise<void>((resolve, reject) => {
-        const fail = (error: Error) => reject(error);
-        socket.once("error", fail);
+        const cleanup=()=>{clearTimeout(timer);socket.off("error",fail);socket.off("close",closed);};
+        const fail = (error: Error) => {cleanup();reject(error);};
+        const closed=(code:number)=>{cleanup();if(code===1008)this.handleDisconnect(socket,code);reject(new Error("Remote runner registration closed"));};
+        const timer=setTimeout(()=>fail(new Error("Remote runner registration timed out")),10_000);timer.unref();
+        socket.once("error", fail);socket.once("close",closed);
         socket.once("open", () => {
-          sendJson(socket, {
+          try{sendJson(socket, {
             type: "runner.register",
             protocolVersion: PROTOCOL_VERSION,
             runner: this.options.runner,
             profileInventory: this.options.profileInventory ?? [],
             lastAcknowledgedSequence: this.options.journal?.acknowledgedSequence() ?? this.memoryAcknowledgedSequence,
             runnerVersion: this.options.runnerVersion ?? RUNNER_VERSION,
-          } satisfies RegistrationFrame, this.options.maxBufferedBytes ?? 1_048_576);
+          } satisfies RegistrationFrame, this.options.maxBufferedBytes ?? 1_048_576);}catch(error){fail(error instanceof Error?error:new Error("Registration failed"));}
         });
         socket.once("message", (data) => {
-          const result = decode(data) as RegistrationResult;
+          let result:RegistrationResult;try{result=decode(data) as RegistrationResult;if(!result||typeof result!=="object")throw new Error("Invalid registration");}catch{fail(new Error("Invalid remote runner registration response"));return;}
           if (result.type !== "runner.registered") {
-            reject(new Error(result.reason ?? "Remote runner registration rejected"));
+            if(result.reason==="unauthorized")this.handleDisconnect(socket,1008);
+            fail(new Error(result.reason ?? "Remote runner registration rejected"));
             return;
           }
-          socket.off("error", fail);
+          cleanup();
           this.registeredSocket=socket;
           // Send retained frames synchronously before an immediate post-registration RPC can respond.
           try{this.flushOutgoing(socket);}catch(error){this.registeredSocket=undefined;reject(error);return;}
@@ -385,7 +389,7 @@ export class RemoteRunnerClient {
     const socket = this.socket;
     this.socket = undefined;
     this.registeredSocket=undefined;
-    if (socket) await new Promise<void>((resolve) => {
+    if (socket && socket.readyState !== WebSocket.CLOSED) await new Promise<void>((resolve) => {
       socket.once("close", () => resolve());
       socket.close(1000, "runner shutdown");
     });
