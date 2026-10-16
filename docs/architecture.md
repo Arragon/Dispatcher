@@ -422,8 +422,9 @@ execution. Admission uses the lower of configured and reported capacity.
 Lost start responses retain RUNNER_UNAVAILABLE/OUTCOME_UNKNOWN and immutable
 start identity rather than releasing capacity as a known failure. Remote
 delivery currently supports results on the owning device (`none`); remote
-commit/PR delivery and real-process/device acceptance remain distinct follow-up
-units. Reconnection reconciles the canonical current Run against immutable start
+commit/PR delivery and distinct-device acceptance remain follow-up units. The
+local acceptance evidence includes an actual Codex child owned by a separate
+Runner process, frozen native parameters, Runner verification and finalization. Reconnection reconciles the canonical current Run against immutable start
 hash, native session, workspace and lease/generation evidence. A Controller
 restart can reattach an owned Runner session; a Runner restart with lost process
 handles stays unknown. Temporary disconnection preserves the interrupted phase,
