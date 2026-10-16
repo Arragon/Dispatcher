@@ -386,7 +386,17 @@ using these configuration commands. An atomic SQLite writer claim prevents a
 second live process from interpreting active sessions as restart recovery;
 dead-owner takeover remains serialized and PID reuse conservatively blocks it.
 An authenticated policy close stops reconnect attempts and shuts down owned
-execution. Controller remote orchestration remains a separate unit.
+execution.
+RepositoryConfig.runnerId is optional; omission keeps the configured embedded
+Runner (or legacy local) ownership without rewriting persisted registrations.
+Remote paths remain opaque on Controller, including foreign OS path syntax.
+Controller never registers those paths locally or constructs their native
+adapters. Applied-profile tests and model catalogs use the same owning Runner
+RPC; publication inspection compares its registered root and verification
+commands before freezing a base commit. Catalog results are bounded normalized
+DTOs with matching account/Runner/provider identity. Global Policy qualification
+uses only repositories on the selected account's Runner. Controller remote
+start/result orchestration remains a separate unit.
 
 Linear webhook ingress verifies the HMAC against the exact request bytes,
 enforces payload and timestamp limits, normalizes the event, and deduplicates it

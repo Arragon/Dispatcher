@@ -159,7 +159,7 @@ export class RemoteRunnerServer {
     return await promise;
   }
 
-  isConnected(runnerId:string):boolean{return this.connections.has(runnerId);}
+  isConnected(runnerId:string):boolean{return this.connections.get(runnerId)?.socket.readyState===WebSocket.OPEN;}
 
   disconnect(runnerId: string, reason: string): boolean {
     const connection = this.connections.get(runnerId);

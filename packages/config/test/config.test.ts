@@ -22,6 +22,16 @@ function configured(overrides: Partial<DispatcherConfig["controller"]> = {}): Di
 }
 
 describe("configuration schema", () => {
+  it("binds repositories to known Runners while preserving legacy local registrations and foreign native path syntax", () => {
+    const input = structuredClone(defaultDispatcherConfig);
+    input.runners.push({ id: "windows", displayName: "Windows", mode: "remote", capacity: 1, tags: [], credentialRef: "secret://runner/fixture/windows" });
+    const repository = { id: "repo", root: "C:\\code\\repo", runnerId: "windows", defaultBaseRef: "main", scopePaths: ["."], verificationCommands: [] };
+    expect(validateConfig({ ...input, repositories: [repository] }).repositories[0]).toEqual(repository);
+    expect(() => validateConfig({ ...input, repositories: [{ ...repository, runnerId: "missing" }] })).toThrow(/unknown runner/);
+    expect(() => validateConfig({ ...input, repositories: [{ ...repository, root: "relative/repo" }] })).toThrow(/absolute/);
+    const legacy = { id: "legacy", root: "/local/repo", defaultBaseRef: "main", scopePaths: ["."], verificationCommands: [] };
+    expect(validateConfig({ ...input, repositories: [legacy] }).repositories[0]).toEqual(legacy);
+  });
   it("validates explicit native tool approval and native credential ownership", () => {
     const input = structuredClone(defaultDispatcherConfig);
     input.agentProfiles = [{ id: "grok", provider: "grok", alias: "Grok", runnerId: "local", settings: { approveTools: "true" } }];

@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import type { Runner } from "@dispatcher/domain";
 import { createNativeProfileAdapter, probeNativeProfile } from "@dispatcher/adapters";
-import { validateConfig, type DispatcherConfig } from "@dispatcher/config";
+import { validateConfig, repositoryRunnerId, type DispatcherConfig } from "@dispatcher/config";
 import { NATIVE_EXECUTION_CAPABILITY } from "@dispatcher/protocol";
 import { NativeRunnerRuntime, NativeRunnerError } from "./native-runtime.js";
 import { RunnerJournal } from "./journal.js";
@@ -132,7 +132,7 @@ function nativeRuntime(runnerId: string, dataDirectory: string, credentials: Nat
   });
 }
 function assertOwningRegistration(config: DispatcherConfig, runnerId: string): void {
-  if (!config.runners.some(r => r.id === runnerId) || config.agentProfiles.some(p => p.runnerId !== runnerId)) throw new NativeRunnerError("RUNNER_REGISTRATION_MISMATCH", "Registration must name this Runner and contain only its own native profiles");
+  if (!config.runners.some(r => r.id === runnerId) || config.agentProfiles.some(p => p.runnerId !== runnerId) || config.repositories.some(r => repositoryRunnerId(config, r) !== runnerId)) throw new NativeRunnerError("RUNNER_REGISTRATION_MISMATCH", "Registration must name this Runner and contain only its own native profiles and repository bindings");
 }
 async function configure(args: string[]): Promise<void> {
   const dataDirectory = resolve(flag(args, "--data-dir", ".dispatcher-runner")!);

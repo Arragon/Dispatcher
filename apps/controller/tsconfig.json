@@ -9,6 +9,7 @@
     { "path": "../../packages/integrations" },
     { "path": "../../packages/observability" },
     { "path": "../../packages/persistence" },
+    { "path": "../../packages/protocol" },
     { "path": "../../packages/runner" },
     { "path": "../../packages/scheduler" },
     { "path": "../../packages/semantic" },

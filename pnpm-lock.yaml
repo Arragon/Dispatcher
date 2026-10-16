@@ -62,6 +62,9 @@ importers:
       '@dispatcher/persistence':
         specifier: workspace:*
         version: link:../../packages/persistence
+      '@dispatcher/protocol':
+        specifier: workspace:*
+        version: link:../../packages/protocol
       '@dispatcher/runner':
         specifier: workspace:*
         version: link:../../packages/runner

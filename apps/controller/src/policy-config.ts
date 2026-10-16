@@ -1,4 +1,4 @@
-import {ConfigPlanError,type DispatcherConfig} from "@dispatcher/config";
+import {ConfigPlanError,repositoryRunnerId,type DispatcherConfig} from "@dispatcher/config";
 import type {AccountModelCatalog} from "@dispatcher/domain";
 import {contentHash} from "./task-publications.js";
 export interface PolicyConfigEvidence {policyHash:string;catalogs:Array<{ruleId:string;profileId:string;repositoryId:string;hash:string}>}
@@ -12,10 +12,11 @@ export async function qualifyRoutingPolicy(current:DispatcherConfig,next:Dispatc
     const context=(value:typeof profile)=>({provider:value.provider,runnerId:value.runnerId,settings:value.settings,enabled:value.enabled!==false});
     if(!appliedProfile||contentHash(context(profile))!==contentHash(context(appliedProfile)))throw new ConfigPlanError("ROUTING_CONTEXT_NOT_APPLIED","Apply account settings before qualifying enabled routing rules");
     if(profile.enabled===false)throw new ConfigPlanError("ROUTING_RULE_UNAVAILABLE",`Routing rule ${rule.id} references a disabled account`);
-    const repositories=rule.repositoryId?next.repositories.filter(repository=>repository.id===rule.repositoryId):next.repositories;
+    const repositories=rule.repositoryId?next.repositories.filter(repository=>repository.id===rule.repositoryId):next.repositories.filter(repository=>repositoryRunnerId(next,repository)===profile.runnerId);
     if(!repositories.length)throw new ConfigPlanError("ROUTING_CONTEXT_NOT_APPLIED","Register a project before qualifying enabled routing rules");
     for(const repository of repositories){
-      if(!current.repositories.some(applied=>applied.id===repository.id&&applied.root===repository.root))throw new ConfigPlanError("ROUTING_CONTEXT_NOT_APPLIED","Apply project registration before qualifying enabled routing rules");
+      if(repositoryRunnerId(next,repository)!==profile.runnerId)throw new ConfigPlanError("ROUTING_CONTEXT_MISMATCH","Routing account and project must belong to the same Runner");
+      if(!current.repositories.some(applied=>applied.id===repository.id&&contentHash(applied)===contentHash(repository)))throw new ConfigPlanError("ROUTING_CONTEXT_NOT_APPLIED","Apply project registration before qualifying enabled routing rules");
       const key=contentHash([profile.id,repository.id]);let catalog=cache.get(key);if(!catalog){catalog=await readCatalog(profile.id,repository.id);cache.set(key,catalog);}
       const entry=catalog.entries.find(entry=>entry.id===rule.target.modelSelectionId);
       if(catalog.failure||catalog.freshness!=="native-fresh"||catalog.selectionSupport!=="explicit"||!entry?.selectable||entry.kind!=="model"||entry.access==="denied"||rule.target.reasoning.mode==="explicit"&&!entry.parameterOptions.reasoningEffort?.includes(rule.target.reasoning.value))throw new ConfigPlanError("ROUTING_RULE_UNAVAILABLE",`Routing rule ${rule.id} does not select a qualified native model and reasoning value for project ${repository.id}`);

@@ -2,7 +2,7 @@ import {taskModelRoutingSchema,type TaskModelRoutingConfig} from "@dispatcher/do
 import type { ErrorObject } from "ajv";
 import Ajv2020Module, { type Ajv2020 as Ajv2020Instance, type Options } from "ajv/dist/2020.js";
 import type { JsonValue } from "@dispatcher/persistence";
-import { isAbsolute } from "node:path";
+import { isAbsolute, posix, win32 } from "node:path";
 
 export interface RunnerConfig {
   id: string;
@@ -40,6 +40,7 @@ export interface AgentProfileConfig {
 
 export interface RepositoryConfig {
   id: string;
+  runnerId?: string;
   root: string;
   remote?: string;
   defaultBaseRef: string;
@@ -200,6 +201,7 @@ export const dispatcherConfigSchema = {
         properties: {
           id: { type: "string", minLength: 1, pattern: "^[a-z0-9][a-z0-9._/-]*$" },
           root: { type: "string", minLength: 1 },
+          runnerId: { type: "string", minLength: 1 },
           remote: { type: "string", minLength: 1 },
           defaultBaseRef: { type: "string", minLength: 1 },
           scopePaths: { type: "array", uniqueItems: true, items: { type: "string", minLength: 1 } },
@@ -333,6 +335,10 @@ export const dispatcherConfigUiSchema = {
   },
   agentProfiles: { items: { credentialRef: { "ui:widget": "hidden" } } },
 } as const;
+
+export function repositoryRunnerId(config: Pick<DispatcherConfig, "runners">, repository: Pick<RepositoryConfig, "runnerId">): string {
+  return repository.runnerId ?? config.runners.find(runner => runner.mode === "embedded")?.id ?? "local";
+}
 
 export const defaultDispatcherConfig: DispatcherConfig = {
   schemaVersion: 1,
@@ -490,7 +496,10 @@ export function validateConfig(input: unknown): DispatcherConfig {
   for (const repository of config.repositories) {
     if (repositoryIds.has(repository.id)) throw new ConfigValidationError(["/repositories contains duplicate id"]);
     repositoryIds.add(repository.id);
-    if (!isAbsolute(repository.root)) throw new ConfigValidationError([`/repositories/${repository.id}/root must be absolute`]);
+    const ownerId = repositoryRunnerId(config, repository);
+    if (repository.runnerId && !runnerIds.has(ownerId)) throw new ConfigValidationError([`/repositories/${repository.id} references unknown runner ${ownerId}`]);
+    const remote = config.runners.some(runner => runner.id === ownerId && runner.mode === "remote");
+    if (!(remote ? posix.isAbsolute(repository.root) || win32.isAbsolute(repository.root) && /^(?:[a-z]:[\\/]|[\\/]{2}[^\\/]+[\\/][^\\/]+)/i.test(repository.root) : isAbsolute(repository.root))) throw new ConfigValidationError([`/repositories/${repository.id}/root must be absolute`]);
     if (repository.scopePaths.some((path) => isAbsolute(path) || path.split(/[\\/]/).includes(".."))) {
       throw new ConfigValidationError([`/repositories/${repository.id}/scopePaths must stay relative to the worktree`]);
     }

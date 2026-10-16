@@ -21,6 +21,7 @@
     "@dispatcher/llm-runtime": "workspace:*",
     "@dispatcher/observability": "workspace:*",
     "@dispatcher/persistence": "workspace:*",
+    "@dispatcher/protocol": "workspace:*",
     "@dispatcher/runner": "workspace:*",
     "@dispatcher/scheduler": "workspace:*",
     "@dispatcher/semantic": "workspace:*",

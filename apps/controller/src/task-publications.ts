@@ -24,7 +24,7 @@ export function assertPublicationScope(scopes:string[],allowed:string[]):void {
 }
 export class PublicationService {
   private readonly pending = new Map<string, Promise<PublicationReceipt>>();
-  constructor(private readonly db: DispatcherDatabase, private readonly config: ConfigurationEngine, private readonly tasks: CanonicalTaskService, private readonly workspaces: WorkspaceManager, private readonly now: () => Date, private readonly runtime: {
+  constructor(private readonly db: DispatcherDatabase, private readonly config: ConfigurationEngine, private readonly tasks: CanonicalTaskService, private readonly workspaces: Pick<WorkspaceManager,"inspect">, private readonly now: () => Date, private readonly runtime: {
     prepare(draft: PublishDraftV1, repository: RepositoryConfig, workspacePath?: string,context?:{owner:string;reviewed?:ExecutionSelection}): Promise<ExecutionSelection>;
     dispatch(record: PublicationRecord, taskId: string): Promise<Run>;
   }) {}

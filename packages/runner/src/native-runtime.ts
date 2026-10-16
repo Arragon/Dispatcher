@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { join } from "node:path";
 import type { AdapterSession, AgentAdapter, SessionStore } from "@dispatcher/adapters";
-import { ConfigurationEngine, type AgentProfileConfig, type DispatcherConfig, type RepositoryConfig } from "@dispatcher/config";
+import { ConfigurationEngine, repositoryRunnerId, type AgentProfileConfig, type DispatcherConfig, type RepositoryConfig } from "@dispatcher/config";
 import type { AccountModelCatalog, ExecutionSelection, ModelCatalogContext } from "@dispatcher/domain";
 import { redactValue } from "@dispatcher/observability";
 import { DispatcherDatabase, type JsonValue } from "@dispatcher/persistence";
@@ -102,11 +102,11 @@ export class NativeRunnerRuntime {
     const profiles = config.agentProfiles.filter(profile => profile.runnerId === this.options.runnerId && profile.enabled !== false);
     for (const record of this.records.values()) {
       if (terminal(record.state) && !this.verificationAborts.has(record.runId)) continue;
-      const profile = profiles.find(p => p.id === record.profileId), repository = config.repositories.find(r => r.id === record.plan.repositoryId);
+      const profile = profiles.find(p => p.id === record.profileId), repository = config.repositories.find(r => r.id === record.plan.repositoryId && repositoryRunnerId(config, r) === this.options.runnerId);
       if (!profile || !repository || this.registration(profile, repository) !== record.registrationHash) throw new NativeRunnerError("RUNNER_CONFIGURATION_BUSY", "An active or uncertain execution still owns this registration");
     }
     const registry = new RepositoryRegistry();
-    for (const repository of config.repositories) registry.register(repository);
+    for (const repository of config.repositories.filter(r => repositoryRunnerId(config, r) === this.options.runnerId)) registry.register(repository);
     const next = new Map<string, AgentAdapter>();
     for (const profile of profiles) {
       const previous = this.config?.agentProfiles.find(p => p.id === profile.id);
@@ -150,15 +150,18 @@ export class NativeRunnerRuntime {
     return { profile, adapter };
   }
   private repository(id: string): RepositoryConfig {
-    const repository = this.config.repositories.find(r => r.id === id);
+    const repository = this.config.repositories.find(r => r.id === id && repositoryRunnerId(this.config, r) === this.options.runnerId);
     if (!repository) throw new NativeRunnerError("REPOSITORY_UNAVAILABLE", "Repository is not registered on this Runner");
     return repository;
   }
   private validatePlan(profileId: string, plan: NativeWorkspacePlan): { profile: AgentProfileConfig; repository: RepositoryConfig } {
     const { profile } = this.profile(profileId), repository = this.repository(plan.repositoryId);
-    const within = (allowed: string, requested: string) => allowed === "." || requested === allowed || requested.startsWith(`${allowed.replace(/\/$/, "")}/`);
-    if (!plan.scopePaths.length || !plan.scopePaths.every(scope => repository.scopePaths.some(allowed => within(allowed, scope)))) throw new NativeRunnerError("SCOPE_NOT_REGISTERED", "Task scope exceeds the Runner registration");
+    this.assertScopes(repository, plan.scopePaths);
     return { profile, repository };
+  }
+  private assertScopes(repository: RepositoryConfig, requested: string[]): void {
+    const within = (allowed: string, path: string) => allowed === "." || path === allowed || path.startsWith(`${allowed.replace(/\/$/, "")}/`);
+    if (repository.scopePaths.length && (!requested.length && !repository.scopePaths.includes(".") || !requested.every(scope => repository.scopePaths.some(allowed => within(allowed, scope))))) throw new NativeRunnerError("SCOPE_NOT_REGISTERED", "Task scope exceeds the Runner registration");
   }
   private save(record: ExecutionRecord): void { this.database.saveEntity("native-execution", record.runId, json(record), this.now().toISOString()); }
   private require(runId: string): ExecutionRecord {
@@ -199,8 +202,8 @@ export class NativeRunnerRuntime {
     return this.serialize(runId ?? "registration-reads", async () => {
       if (payload.type === "native.repository") {
         const repository = this.repository(payload.repositoryId);
-        if (!payload.scopePaths.every(scope => repository.scopePaths.some(allowed => allowed === "." || scope === allowed || scope.startsWith(`${allowed}/`)))) throw new NativeRunnerError("SCOPE_NOT_REGISTERED", "Task scope exceeds the Runner registration");
-        return { ...await this.workspaces.inspect(payload), verificationCommands: structuredClone(repository.verificationCommands), registrationHash: hash(repository) };
+        this.assertScopes(repository, payload.scopePaths);
+        return { ...await this.workspaces.inspect(payload), registeredRoot: repository.root, verificationCommands: structuredClone(repository.verificationCommands), registrationHash: hash(repository) };
       }
       if (payload.type === "native.workspace_plan") { this.validatePlan(payload.profileId, payload.plan); return this.workspaces.plan(payload.plan); }
       if (payload.type === "native.profile_probe") {
@@ -276,6 +279,7 @@ export class NativeRunnerRuntime {
   }
   private async prepare(payload: Extract<CommandPayload, { type: "native.workspace_prepare" }>, envelope: ProtocolEnvelope<CommandPayload>): Promise<WorkspaceHandle> {
     const { profile, repository } = this.validatePlan(payload.profileId, payload.plan);
+    if (repository.verificationCommands.some(command => command.required && !payload.verificationCommandIds.includes(command.id))) throw new NativeRunnerError("VERIFICATION_COMMAND_REQUIRED", "Every required registered verification command must be selected");
     const verificationCommands = payload.verificationCommandIds.map(id => {
       const command = repository.verificationCommands.find(c => c.id === id);
       if (!command) throw new NativeRunnerError("VERIFICATION_COMMAND_UNAVAILABLE", "Verification command is not registered on this Runner");

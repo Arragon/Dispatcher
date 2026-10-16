@@ -34,7 +34,7 @@ function fixture() {
   const config = structuredClone(defaultDispatcherConfig);
   config.runners = [{ id: "remote", displayName: "Remote", mode: "remote", capacity: 1, tags: [], credentialRef: "secret://runner/fixture/remote" }];
   config.agentProfiles = [{ id: "p", alias: "P", provider: "codex", runnerId: "remote", settings: { codexHome: directory } }];
-  config.repositories = [{ id: "repo", root, defaultBaseRef: "main", scopePaths: ["."], verificationCommands: [{ id: "check", file: process.execPath, args: ["-e", "if(require('node:fs').readFileSync('result.txt','utf8')!=='runner-ok\\n')process.exit(1)"], required: true, timeoutMs: 3000, outputLimitBytes: 1000 }] }];
+  config.repositories = [{ id: "repo", runnerId: "remote", root, defaultBaseRef: "main", scopePaths: ["."], verificationCommands: [{ id: "check", file: process.execPath, args: ["-e", "if(require('node:fs').readFileSync('result.txt','utf8')!=='runner-ok\\n')process.exit(1)"], required: true, timeoutMs: 3000, outputLimitBytes: 1000 }] }];
   const apply = () => runtime.configuration.applyPlan(runtime.configuration.buildPlan(config, "fixture", "cli").id, { confirmed: true });
   const plan = { repositoryId: "repo", taskId: "task", runId: "run", attempt: 1, baseRef: "main", scopePaths: ["."] };
   const selection: ExecutionSelection = { version: 1, mode: "manual", source: "explicit", profileId: "p", runnerId: "remote", providerId: "codex", backendId: "codex-exec-json", selectionType: "explicit-model", requestedModel: "model", nativeParameters: {}, catalogRevision: "catalog", contextFingerprint: "context", configRevision: 1, selectedAt: now.toISOString() };
@@ -68,7 +68,8 @@ it("rejects foreign runners, unsafe scopes, missing commands and stale concrete 
   const f = fixture(); f.apply();
   await expect(f.call({ type: "native.workspace_plan", profileId: "p", plan: f.plan }, undefined, { runnerId: "other" })).rejects.toMatchObject({ code: "RUNNER_MISMATCH" });
   await expect(f.call({ type: "native.workspace_plan", profileId: "p", plan: { ...f.plan, scopePaths: ["../outside"] } })).rejects.toBeDefined();
-  await expect(f.call({ type: "native.workspace_prepare", runId: "run", profileId: "p", plan: f.plan, verificationCommandIds: ["foreign-command"] })).rejects.toMatchObject({ code: "VERIFICATION_COMMAND_UNAVAILABLE" });
+  await expect(f.call({ type: "native.workspace_prepare", runId: "run", profileId: "p", plan: f.plan, verificationCommandIds: ["check", "foreign-command"] })).rejects.toMatchObject({ code: "VERIFICATION_COMMAND_UNAVAILABLE" });
+  await expect(f.call({ type: "native.workspace_prepare", runId: "run", profileId: "p", plan: f.plan, verificationCommandIds: [] })).rejects.toMatchObject({ code: "VERIFICATION_COMMAND_REQUIRED" });
   await f.prepare(); f.catalog.revision = "changed";
   await expect(f.start()).rejects.toMatchObject({ code: "SELECTION_CHANGED" });
   expect(f.starts()).toBe(0);
@@ -179,4 +180,14 @@ it("rechecks expiry after durable STARTING storage returns and before the backen
   });
   try { await expect(f.start()).rejects.toMatchObject({ code: "LEASE_EXPIRED" }); expect(f.starts()).toBe(0); }
   finally { delayed.mockRestore(); }
+});
+
+it("ignores foreign native paths and rejects cross-device repository use and scope widening", async () => {
+  const f = fixture();
+  f.config.runners.push({ id: "windows", displayName: "Windows", mode: "remote", capacity: 1, tags: [], credentialRef: "secret://runner/fixture/windows" });
+  f.config.repositories.push({ id: "foreign", runnerId: "windows", root: "C:\\code\\repo", defaultBaseRef: "main", scopePaths: ["."], verificationCommands: [] });
+  f.config.repositories[0]!.scopePaths = ["src"]; f.apply();
+  await expect(f.call({ type: "native.workspace_plan", profileId: "p", plan: { ...f.plan, repositoryId: "foreign" } })).rejects.toMatchObject({ code: "REPOSITORY_UNAVAILABLE" });
+  for (const scopePaths of [[], ["."], ["src-other"]]) await expect(f.call({ type: "native.workspace_plan", profileId: "p", plan: { ...f.plan, scopePaths } })).rejects.toMatchObject({ code: "SCOPE_NOT_REGISTERED" });
+  expect(f.starts()).toBe(0);
 });

@@ -158,6 +158,12 @@
   Local configuration commands run while the service is stopped. Controller
   authorization loss (WebSocket1008) ends reconnect attempts and cancels owned
   execution; ordinary connection loss stays bounded by the existing lease.
+- A repository and selected account must resolve to the same owning Runner.
+  Remote root syntax is validated without interpreting it on Controller;
+  actual Git/root/scope checks run on that device. Comparing only a repository
+  ID is insufficient: publication inspection must also match the owning root
+  registration and frozen verification commands. Global Policy qualification
+  excludes repositories on other Runners.
 - Native PTY uses Microsoft `node-pty` (MIT, pinned at 1.1.0) for Unix PTY and
   Windows ConPTY. pnpm must explicitly allow its native build; some pnpm
   installations lose the executable bit on the packaged Unix `spawn-helper`,

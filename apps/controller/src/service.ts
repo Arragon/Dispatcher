@@ -1,5 +1,7 @@
 import {qualifyRoutingPolicy,type PolicyConfigEvidence} from "./policy-config.js";
 import {TaskClassifier} from "./task-classifier.js";
+import { remoteCatalog } from "./remote-results.js";
+import { NATIVE_EXECUTION_CAPABILITY, type CommandPayload } from "@dispatcher/protocol";
 import { ModelRoutingService } from "./model-routing.js";
 import type { WorkspaceHandle } from "@dispatcher/workspace";
 import { PublicationService, PublicationError, contentHash, assertPublicationScope, type PublicationRecord } from "./task-publications.js";
@@ -66,6 +68,7 @@ import {
 import {
   assertRequiredSecretsAvailable,
   ConfigurationEngine,
+  repositoryRunnerId,
   ConfigPlanError,
   ConfigValidationError,
   createDefaultSecretStore,
@@ -606,7 +609,7 @@ export class ControllerService {
     if (worker.enabled) modules.push({ name: "background-worker", start: () => this.background.start(), stop: () => this.background.stop() });
     this.lifecycle = new LifecycleManager(modules);
     this.modelRouting = new ModelRoutingService(this.database,()=>this.now(),new TaskClassifier(this.database,this.llm,()=>this.now()));
-    this.publications = new PublicationService(this.database, this.configuration, this.tasks, this.workspaces, () => this.now(), {
+    this.publications = new PublicationService(this.database, this.configuration, this.tasks, { inspect: plan => this.inspectRepository(plan) }, () => this.now(), {
       prepare: (draft,repository,workspacePath,context) => this.preparePublication(draft,repository,workspacePath,context),
       dispatch: async (record,taskId) => (await this.dispatchTask(taskId,{profileId:record.selection!.profileId,repositoryId:record.repository!.id},`publication:${record.preview.publicationId}`,record)).run,
     });
@@ -784,7 +787,8 @@ export class ControllerService {
     for (const [id, previous] of this.nativeProfileConfigurations) {
       const adapter = this.agentAdapters.get(id);
       const next = config.agentProfiles.find((profile) => profile.id === id && profile.enabled !== false);
-      if (adapter && isDeepStrictEqual(previous, next)) retainedNativeAdapters.set(id, adapter);
+      const local = next && !config.runners.some(runner => runner.id === next.runnerId && runner.mode === "remote");
+      if (adapter && local && isDeepStrictEqual(previous, next)) retainedNativeAdapters.set(id, adapter);
       else if ((adapter instanceof StructuredCliAdapter || adapter instanceof CodexAdapter) && adapter.hasActiveOperations()) {
         throw new ConfigPlanError("ACTIVE_AGENT_PROFILE", `Finish or cancel active harness operations before changing or removing profile ${id}`);
       }
@@ -792,6 +796,7 @@ export class ControllerService {
     this.llm.configure(llmConfiguration(config.internalLlm));
     this.repositories.clear();
     for (const repository of config.repositories) {
+      if (config.runners.some(runner => runner.id === repositoryRunnerId(config,repository) && runner.mode === "remote")) continue;
       this.repositories.register({
         id: repository.id,
         root: repository.root,
@@ -869,7 +874,7 @@ export class ControllerService {
       if (!retainedNativeAdapters.has(id)) this.nativeProfileConfigurations.delete(id);
     }
     const store = new DatabaseSessionStore(this.database);
-    const enabledProfiles = config.agentProfiles.filter((profile) => profile.enabled !== false);
+    const enabledProfiles = config.agentProfiles.filter((profile) => profile.enabled !== false && !config.runners.some(runner => runner.id === profile.runnerId && runner.mode === "remote"));
     const resolveProviderCredential = (reference: string): Promise<string> => this.secrets.resolve(reference, { principal: "controller", purpose: "provider" });
     for (const profile of enabledProfiles) {
       if (retainedNativeAdapters.has(profile.id)) continue;
@@ -1487,20 +1492,38 @@ export class ControllerService {
     });
   }
   private readonly catalogGenerations=new Map<string,number>();
+  private async remoteRequest(runnerId:string,payload:CommandPayload,run?:Run,messageId?:string):Promise<unknown> {
+    const configured=this.configuration.current().config.runners.find(runner=>runner.id===runnerId&&runner.mode==="remote"),runner=this.runners.list().find(runner=>runner.id===runnerId);
+    if(!configured||!runner||!["ONLINE","DEGRADED","DRAINING"].includes(runner.state)||!runner.capabilities.includes(NATIVE_EXECUTION_CAPABILITY)||!this.remoteRunnerServer.isConnected(runnerId))throw new AdapterContractError("REMOTE_EXECUTION_UNAVAILABLE","Owning Runner is offline or has no qualified native execution capability");
+    const response=await this.remoteRunnerServer.sendCommand(runnerId,payload,{...(run?{leaseId:run.leaseId,generation:run.generation,...(run.leaseExpiresAt?{leaseExpiresAt:run.leaseExpiresAt}:{})}:{}),...(messageId?{messageId}:{})});
+    if(response.payload.type==="rpc.error")throw new AdapterContractError(response.payload.code,"Owning Runner rejected the native operation");
+    return response.payload.result;
+  }
+  private async inspectRepository(plan:Parameters<WorkspaceManager["inspect"]>[0]):Promise<{baseCommit:string;root:string}> {
+    const config=this.configuration.current().config,repository=config.repositories.find(repository=>repository.id===plan.repositoryId);
+    if(!repository)throw new PublicationError("REPOSITORY_NOT_FOUND",404,"Repository is not registered");
+    const owner=repositoryRunnerId(config,repository);
+    if(!config.runners.some(runner=>runner.id===owner&&runner.mode==="remote"))return this.workspaces.inspect(plan);
+    const inspected=await this.remoteRequest(owner,{type:"native.repository",...plan}) as {baseCommit?:unknown;root?:unknown;registeredRoot?:unknown;verificationCommands?:unknown};
+    if(!inspected||typeof inspected.baseCommit!=="string"||!/^[a-f0-9]{40,64}$/i.test(inspected.baseCommit)||typeof inspected.root!=="string"||inspected.root.length>4000||inspected.registeredRoot!==repository.root||contentHash(inspected.verificationCommands)!==contentHash(repository.verificationCommands))throw new PublicationError("REMOTE_REPOSITORY_MISMATCH",409,"Owning Runner repository or verification registration differs; review both registrations");
+    return {baseCommit:inspected.baseCommit,root:inspected.root};
+  }
   private async modelCatalog(profileId:string,repositoryId:string,reason:ModelCatalogContext["reason"]="open",workspacePath?:string):Promise<AccountModelCatalog> {
     const snapshot=this.configuration.current();const profile=snapshot.config.agentProfiles.find(p=>p.id===profileId),repository=snapshot.config.repositories.find(r=>r.id===repositoryId);
     if(!profile||!repository)throw new PublicationError("CATALOG_CONTEXT_REQUIRED",400,"Choose a registered account and repository");
     const context:ModelCatalogContext={profileId,runnerId:profile.runnerId,repositoryId,executionContextRef:contentHash({repositoryId,root:repository.root}),reason};
     const fallback=(code:string,message:string):AccountModelCatalog=>({profileId,runnerId:profile.runnerId,providerId:profile.provider,backendId:this.agentAdapters.get(profileId)?.manifest.backends[0]?.id??"unsupported",contextFingerprint:contentHash({profile,repositoryId,root:repository.root}),revision:"unverified",fetchedAt:this.now().toISOString(),freshness:"unverified",source:"native-rpc",selectionSupport:this.agentAdapters.get(profileId)?.supportsExecutionSelection?"native-default-only":"unsupported",entries:[],failure:{code,message}});
     if(profile.enabled===false)return fallback("PROFILE_DISABLED","Account is disabled");
-    if(profile.runnerId!==this.embeddedRunner?.runner.id)return fallback("REMOTE_CATALOG_UNSUPPORTED","Native catalogs must be queried on the owning local runner");
+    if(repositoryRunnerId(snapshot.config,repository)!==profile.runnerId)return fallback("RUNNER_REPOSITORY_MISMATCH","Account and repository belong to different Runners");
+    const remote=snapshot.config.runners.some(runner=>runner.id===profile.runnerId&&runner.mode==="remote");
+    if(!remote&&profile.runnerId!==this.embeddedRunner?.runner.id)return fallback("REMOTE_EXECUTION_UNAVAILABLE","Owning local Runner is unavailable");
     const adapter=this.agentAdapters.get(profileId);
-    if(!adapter?.modelCatalog)return fallback("MODEL_CATALOG_UNSUPPORTED","This native adapter does not expose a model catalog");
+    if(!remote&&!adapter?.modelCatalog)return fallback("MODEL_CATALOG_UNSUPPORTED","This native adapter does not expose a model catalog");
     const key=contentHash({profileId,repositoryId});const generation=(this.catalogGenerations.get(key)??0)+1;this.catalogGenerations.set(key,generation);
     let catalog:AccountModelCatalog;
-    try {catalog=await adapter.modelCatalog({...context,workspacePath:workspacePath??repository.root});}
+    try {catalog=remote?remoteCatalog(await this.remoteRequest(profile.runnerId,{type:"native.model_catalog",profileId,repositoryId,reason}),{profileId,runnerId:profile.runnerId,providerId:profile.provider}):await adapter!.modelCatalog!({...context,workspacePath:workspacePath??repository.root});}
     catch (error) {
-      catalog=error instanceof AdapterContractError && error.code==="NATIVE_VERSION_UNSUPPORTED" ? {...fallback(error.code,"Installed native version does not support the qualified catalog interface"),selectionSupport:"unsupported"} : error instanceof AdapterContractError && error.code==="NATIVE_CONTEXT_CHANGED" ? fallback(error.code,"Native account or configuration changed during the query; refresh before reviewing") : fallback("NATIVE_CATALOG_UNAVAILABLE","Native catalog could not be read; explicit selection is unavailable");
+      catalog=error instanceof AdapterContractError&&(remote||error.code==="REMOTE_RESULT_INVALID")?fallback(error.code,error.message):error instanceof AdapterContractError && error.code==="NATIVE_VERSION_UNSUPPORTED" ? {...fallback(error.code,"Installed native version does not support the qualified catalog interface"),selectionSupport:"unsupported"} : error instanceof AdapterContractError && error.code==="NATIVE_CONTEXT_CHANGED" ? fallback(error.code,"Native account or configuration changed during the query; refresh before reviewing") : fallback("NATIVE_CATALOG_UNAVAILABLE","Native catalog could not be read; explicit selection is unavailable");
     }
     if(this.configuration.current().revision!==snapshot.revision)throw new PublicationError("SELECTION_CHANGED",409,"Configuration changed during native catalog query");
     if(this.catalogGenerations.get(key)!==generation)throw new PublicationError("CATALOG_SUPERSEDED",409,"A newer catalog request superseded this response");
@@ -1720,6 +1743,7 @@ export class ControllerService {
       execute: async ({ target }) => {
         const profile = this.configuration.current().config.agentProfiles.find((entry) => entry.id === String(target));
         if (!profile) throw new SemanticPolicyError("INVALID_INPUT", `Unknown profile ${String(target)}`);
+        if(this.configuration.current().config.runners.some(runner=>runner.id===profile.runnerId&&runner.mode==="remote"))return redactValue(await this.remoteRequest(profile.runnerId,{type:"native.profile_probe",profileId:profile.id}));
         if (isNativeCliProvider(profile.provider)) return probeNativeCliProfile(profile.provider, { id: profile.id, alias: profile.alias, ...(stringSetting(profile.settings?.executable) ? { executable: stringSetting(profile.settings?.executable)! } : {}), ...(stringSetting(profile.settings?.model) ? { model: stringSetting(profile.settings?.model)! } : {}) });
         if (profile.provider === "qoder") return probeQoderProfile({ id: profile.id, alias: profile.alias, ...(stringSetting(profile.settings?.executable) ? { executable: stringSetting(profile.settings?.executable)! } : {}), ...(stringSetting(profile.settings?.configDir) ? { configDir: stringSetting(profile.settings?.configDir)! } : {}), ...(stringSetting(profile.settings?.model) ? { model: stringSetting(profile.settings?.model)! } : {}) });
         const codexHome = stringSetting(profile.settings?.codexHome);
@@ -2757,6 +2781,7 @@ export class ControllerService {
       const profile = this.configuration.current().config.agentProfiles.find((entry) => entry.id === request.params.id);
       const codexHome = stringSetting(profile?.settings?.codexHome);
       if (!profile) return reply.code(404).send({ code: "PROFILE_NOT_FOUND" });
+      if(this.configuration.current().config.runners.some(runner=>runner.id===profile.runnerId&&runner.mode==="remote"))return redactValue(await this.remoteRequest(profile.runnerId,{type:"native.profile_probe",profileId:profile.id}));
       if (isNativeCliProvider(profile.provider)) return probeNativeCliProfile(profile.provider, { id: profile.id, alias: profile.alias, ...(stringSetting(profile.settings?.executable) ? { executable: stringSetting(profile.settings?.executable)! } : {}), ...(stringSetting(profile.settings?.model) ? { model: stringSetting(profile.settings?.model)! } : {}) });
       if (profile.provider === "codex" && codexHome) return probeCodexProfile({
         id: profile.id,
