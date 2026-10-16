@@ -67,6 +67,7 @@ async function executable(provider: NativeCliProvider, profile: CliAgentProfile)
 
 const definitions: Record<NativeCliProvider, CliProviderDefinition> = {
   antigravity: {
+    catalogProvider: "antigravity",
     manifest: antigravityManifest, defaultExecutable: "agy", versionArgs: ["--version"], authArgs: [],
     supportsResume: true, strictLifecycle: true, requireExecutionEvidence: true, resolveExecutable: (profile) => executable("antigravity", profile), normalizeLine: normalizeAntigravityLine,
     startArgs: ({ prompt, model, providerSessionId, approveTools }) => ["--output-format", "stream-json", "--mode", "accept-edits", ...(approveTools ? ["--dangerously-skip-permissions"] : []), ...(model ? ["--model", model] : []), ...(providerSessionId ? ["--conversation", providerSessionId] : []), "--print", prompt],
@@ -82,17 +83,20 @@ const definitions: Record<NativeCliProvider, CliProviderDefinition> = {
     startArgs: ({ prompt, model, providerSessionId, newSession }) => ["--print", "--output-format", "stream-json", "--permission-mode", "acceptEdits", ...(model ? ["--model", model] : []), ...(providerSessionId ? [newSession ? "--session-id" : "--resume", providerSessionId] : []), "--", prompt],
   },
   "qoder-cn": {
+    catalogProvider: "qoder-cn",
     manifest: qoderCnManifest, defaultExecutable: "qoderclicn", versionArgs: ["--version"], authArgs: [],
     supportsResume: true, strictLifecycle: true, requireExecutionEvidence: true, newSessionId: randomUUID, resolveExecutable: (profile) => executable("qoder-cn", profile), normalizeLine: normalizeWorkBuddyLine,
     startArgs: ({ prompt, model, providerSessionId, newSession, configDir }) => ["--print", "--output-format", "stream-json", "--permission-mode", "accept_edits", ...(configDir ? ["--config-dir", configDir] : []), ...(model ? ["--model", model] : []), ...(providerSessionId ? [newSession ? "--session-id" : "--resume", providerSessionId] : []), "--", prompt],
   },
   opencode: {
+    catalogProvider: "opencode",
     manifest: opencodeManifest, defaultExecutable: "opencode", versionArgs: ["--version"], authArgs: [],
     supportsResume: true, strictLifecycle: true, requireExecutionEvidence: true, resolveExecutable: (profile) => executable("opencode", profile), normalizeLine: normalizeOpenCodeLine,
     // v2's private server is owned by this child, so cancellation cannot strand a shared-service run.
     startArgs: ({ prompt, model, providerSessionId, approveTools }) => ["run", "--standalone", "--format", "json", ...(approveTools ? ["--auto"] : []), ...(model ? ["--model", model] : []), ...(providerSessionId ? ["--session", providerSessionId] : []), "--", prompt],
   },
   grok: {
+    catalogProvider: "grok",
     manifest: grokManifest, defaultExecutable: "grok", versionArgs: ["--version"], authArgs: [], environmentKey: "XAI_API_KEY",
     supportsResume: true, strictLifecycle: true, requireExecutionEvidence: true, newSessionId: randomUUID, resolveExecutable: (profile) => executable("grok", profile), normalizeLine: normalizeGrokLine,
     startArgs: ({ prompt, model, providerSessionId, newSession, approveTools }) => ["--output-format", "streaming-messages-json", ...(approveTools ? ["--always-approve"] : []), ...(model ? ["--model", model] : []), ...(providerSessionId ? [newSession ? "--session-id" : "--resume", providerSessionId] : []), `--single=${prompt}`],

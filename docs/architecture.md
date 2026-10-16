@@ -204,15 +204,28 @@ verification command descriptions and physical repository roots survive later
 configuration edits. Local workspace repository IDs are separate from remote
 SCM owner/name values.
 
-Codex native catalogs use isolated read-only app-server RPCs in the selected
-account and repository context. Catalog revisions hash content and account,
-native configuration and project fingerprints, excluding retrieval time.
+Native model catalogs stay inside each execution adapter. Codex uses isolated
+read-only app-server RPCs; Cursor, Qoder CN, Grok and Antigravity use fixed,
+bounded native CLI queries. OpenCode uses an owned private v2 service with
+read-only model/location RPCs, native schema/version qualification and mandatory
+process cleanup. OpenCode account binding reads native SQLite metadata without
+credential values; changes to its native schema fail closed. Catalog revisions
+hash content and account, native configuration and project fingerprints,
+excluding retrieval time. CLI reads fence native account/configuration state
+before and after the query. Antigravity lacks a non-interactive account identity
+query, so macOS keyring metadata is a conservative account-change fence; hosts
+without a qualified identity fence expose native default only.
 Publication validates again at commit and in the actual worktree before startup.
 Per-session model/effort selection is frozen and reused on continuation without
 changing account defaults. Native listing is unconfirmed access; missing prices
 and numeric quota remain unknown. Definitive authentication failures block both
-explicit models and native defaults. Other catalog providers, publication policy
-routing and remote publication execution are explicitly unsupported.
+explicit models and native defaults. Unqualified native providers, publication
+policy routing and remote publication execution are explicitly unsupported. Per-run selection capability is declared
+by the adapter; publication does not infer it from a generic CLI model flag.
+Known authentication failures and account changes block both selection modes;
+cache fallback cannot authorize explicit selection. Native model IDs can encode
+effort or auto-routing without exposing separate parameter metadata. Missing
+per-model parameters and account prices remain unknown.
 
 Persisted ACTIVE native sessions are not physical process evidence after a
 Controller restart. Interrupted publication starts and detached active executions

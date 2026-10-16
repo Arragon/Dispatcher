@@ -11,6 +11,9 @@ import {
   type AgentAdapter,
 } from "./contracts.js";
 import { MemorySessionStore, type SessionStore } from "./generic.js";
+import type { AccountModelCatalog, ExecutionSelection, ModelCatalogContext } from "@dispatcher/domain";
+import { readNativeCliCatalog, type CatalogCliProvider } from "./cli-catalog.js";
+import { readOpenCodeCatalog } from "./opencode-catalog.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -178,6 +181,7 @@ class SpawnedCliTurn implements CliTurn {
 }
 
 export interface CliProviderDefinition {
+  catalogProvider?: CatalogCliProvider | "opencode";
   manifest: AdapterManifest;
   defaultExecutable: string;
   versionArgs: string[];
@@ -230,6 +234,7 @@ export const kiroManifest: AdapterManifest = {
 };
 
 const cursorDefinition: CliProviderDefinition = {
+  catalogProvider: "cursor",
   manifest: cursorManifest,
   defaultExecutable: "cursor-agent",
   versionArgs: ["--version"],
@@ -261,6 +266,7 @@ const kiroDefinition: CliProviderDefinition = {
 
 export class StructuredCliAdapter implements AgentAdapter {
   readonly manifest: AdapterManifest;
+  get supportsExecutionSelection(): boolean { return this.definition.catalogProvider !== undefined; }
   private readonly turns = new Map<string, CliTurn>();
   private readonly backend: CliAgentBackend;
   private readonly store: SessionStore;
@@ -280,7 +286,14 @@ export class StructuredCliAdapter implements AgentAdapter {
     this.store = store;
   }
 
-  async start(input: { runId: string; workspacePath: string; backendId?: string; prompt?: string }): Promise<AdapterSession> {
+  async modelCatalog(context: ModelCatalogContext & { workspacePath: string }): Promise<AccountModelCatalog> {
+    if (!this.definition.catalogProvider) return { profileId: context.profileId, runnerId: context.runnerId, providerId: this.manifest.id, backendId: this.manifest.backends[0]!.id, contextFingerprint: "unsupported", revision: "unsupported", fetchedAt: new Date().toISOString(), freshness: "unverified", source: "cli-query", selectionSupport: "unsupported", entries: [], failure: { code: "MODEL_CATALOG_UNSUPPORTED", message: "This native CLI does not expose a qualified model catalog and per-run selection" } };
+    if (this.definition.catalogProvider === "opencode") return readOpenCodeCatalog({ profile: this.profile, executable: await this.executable(), context, workspacePath: context.workspacePath });
+    const environment = await this.environment();
+    return readNativeCliCatalog({ provider: this.definition.catalogProvider, profile: this.profile, executable: await this.executable(), context, workspacePath: context.workspacePath, ...(environment ? { environment } : {}) });
+  }
+
+  async start(input: { runId: string; workspacePath: string; backendId?: string; prompt?: string; executionSelection?: ExecutionSelection }): Promise<AdapterSession> {
     this.starting++;
     try {
       const now = new Date().toISOString();
@@ -291,6 +304,7 @@ export class StructuredCliAdapter implements AgentAdapter {
         workspacePath: input.workspacePath,
         state: "RUNNING",
         profileId: this.profile.id,
+        ...(input.executionSelection ? { executionSelection: structuredClone(input.executionSelection) } : {}),
         ...(this.definition.newSessionId ? { providerSessionId: this.definition.newSessionId() } : {}),
         createdAt: now,
         updatedAt: now,
@@ -298,7 +312,7 @@ export class StructuredCliAdapter implements AgentAdapter {
       const environment = await this.environment();
       this.turns.set(session.id, this.backend.start({
         executable: await this.executable(),
-        args: this.definition.startArgs({ prompt: input.prompt ?? "Inspect the task and report readiness.", newSession: true, approveTools: this.profile.approveTools === true, trustWorkspace: this.profile.trustWorkspace === true, ...(this.profile.configDir ? { configDir: this.profile.configDir } : {}), ...(session.providerSessionId ? { providerSessionId: session.providerSessionId } : {}), ...(this.profile.model ? { model: this.profile.model } : {}) }),
+        args: this.definition.startArgs({ prompt: input.prompt ?? "Inspect the task and report readiness.", newSession: true, approveTools: this.profile.approveTools === true, trustWorkspace: this.profile.trustWorkspace === true, ...(this.profile.configDir ? { configDir: this.profile.configDir } : {}), ...(session.providerSessionId ? { providerSessionId: session.providerSessionId } : {}), ...this.selectionArgs(session) }),
         workspacePath: input.workspacePath,
         ...(this.definition.normalizeLine ? { normalizeLine: this.definition.normalizeLine } : {}),
         ...(this.definition.requireExecutionEvidence ? { requireExecutionEvidence: true } : {}),
@@ -327,7 +341,7 @@ export class StructuredCliAdapter implements AgentAdapter {
       if (this.require(sessionId).state === "CANCELLED") throw new AdapterContractError("SESSION_CANCELLED", "Session was cancelled before the next turn started");
       this.turns.set(sessionId, this.backend.start({
         executable,
-        args: this.definition.startArgs({ prompt: message, providerSessionId: session.providerSessionId, approveTools: this.profile.approveTools === true, trustWorkspace: this.profile.trustWorkspace === true, ...(this.profile.configDir ? { configDir: this.profile.configDir } : {}), ...(this.profile.model ? { model: this.profile.model } : {}) }),
+        args: this.definition.startArgs({ prompt: message, providerSessionId: session.providerSessionId, approveTools: this.profile.approveTools === true, trustWorkspace: this.profile.trustWorkspace === true, ...(this.profile.configDir ? { configDir: this.profile.configDir } : {}), ...this.selectionArgs(session) }),
         workspacePath: session.workspacePath,
         ...(this.definition.normalizeLine ? { normalizeLine: this.definition.normalizeLine } : {}),
         ...(this.definition.requireExecutionEvidence ? { requireExecutionEvidence: true } : {}),
@@ -366,7 +380,8 @@ export class StructuredCliAdapter implements AgentAdapter {
     this.require(sessionId);
     const turn = this.turns.get(sessionId);
     const events = turn?.events ? turn.events() : turn?.status() === "completed" ? (await turn.result()).events : [];
-    return events.filter((event) => event.type === "resource").at(-1) ?? { state: "UNKNOWN", reason: "Provider did not emit a resource signal", source: "probe", confidence: "low" };
+    const completed = turn?.status() === "completed" && (await turn.result()).state === "completed";
+    return events.filter((event) => event.type === "resource").at(-1) ?? (completed ? { state: "AVAILABLE", reason: "Native turn completed; remaining quota was not reported", source: "event", confidence: "medium" } : { state: "UNKNOWN", reason: "Provider did not emit a resource signal", source: "probe", confidence: "low" });
   }
   async diagnostics(sessionId: string): Promise<Record<string, unknown>> {
     const session = this.require(sessionId);
@@ -377,6 +392,10 @@ export class StructuredCliAdapter implements AgentAdapter {
     if (!this.profile.credentialRef) return undefined;
     if (!this.definition.environmentKey || !this.resolveCredential) throw new AdapterContractError("SECRET_RESOLVER_UNAVAILABLE", "Credential references require a SecretStore resolver");
     return { [this.definition.environmentKey]: await this.resolveCredential(this.profile.credentialRef) };
+  }
+  private selectionArgs(session: AdapterSession): { model?: string } {
+    if (session.executionSelection && Object.keys(session.executionSelection.nativeParameters).length) throw new AdapterContractError("UNSUPPORTED_NATIVE_PARAMETERS", "This native catalog does not expose qualified per-model parameters");
+    return session.executionSelection ? session.executionSelection.requestedModel ? { model: session.executionSelection.requestedModel } : {} : this.profile.model ? { model: this.profile.model } : {};
   }
   private executable(): Promise<string> {
     return this.definition.resolveExecutable?.(this.profile) ?? Promise.resolve(this.profile.executable ?? this.definition.defaultExecutable);

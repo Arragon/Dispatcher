@@ -165,6 +165,7 @@ class SpawnedCodexTurn implements CodexTurn {
 }
 
 export class CodexAdapter implements AgentAdapter {
+  readonly supportsExecutionSelection = true;
   readonly manifest = validateManifest(codexManifest);
   private readonly turns = new Map<string, CodexTurn>();
   private pending = 0;

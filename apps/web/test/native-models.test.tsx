@@ -14,3 +14,10 @@ it("keeps late account responses out of the current model selector",async()=>{
   const mounted=render(view("a"));mounted.rerender(view("b"));expect(await screen.findByRole("option",{name:/b-model/})).toBeTruthy();resolveA(new Response(JSON.stringify(catalog("a-model"))));
   await userEvent.selectOptions(screen.getByLabelText("原生模型"),"b-model");expect(change).toHaveBeenCalledWith(expect.objectContaining({modelId:"b-model",catalogRevision:"rev-b-model",allowUnconfirmed:false}));expect(screen.queryByRole("option",{name:/a-model/})).toBeNull();expect(screen.getByText(/价格未提供/)).toBeTruthy();
 });
+it("shows native choices without an empty effort selector when native metadata has no parameters",async()=>{
+  const data=catalog("native-high");data.entries[0]!.parameterOptions={reasoningEffort:[]};
+  vi.spyOn(globalThis,"fetch").mockResolvedValue(new Response(JSON.stringify(data)));
+  const client=new QueryClient({defaultOptions:{queries:{retry:false}}});
+  render(<QueryClientProvider client={client}><NativeModelPicker profileId="account" repositoryId="repo" value={{modelId:"native-high",effort:"",catalogRevision:data.revision,contextFingerprint:data.contextFingerprint,allowUnconfirmed:false}} onChange={()=>undefined}/></QueryClientProvider>);
+  expect(await screen.findByRole("option",{name:/native-high/})).toBeTruthy();expect(screen.queryByLabelText("思考强度")).toBeNull();
+});

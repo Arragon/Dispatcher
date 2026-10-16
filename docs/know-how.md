@@ -367,3 +367,22 @@
 - A persisted RUNNING adapter session with no attached process cannot establish
   liveness after Controller restart. Mark affected publication execution unknown
   and retain the worktree for inspection; do not automatically resume or reroute.
+
+- Native `models` exit zero does not prove fresh or authenticated results. Grok
+  returned expired OAuth diagnostics and its old model list with exit zero;
+  inspect both streams and block native-default as well as explicit selection.
+- Plain CLI model IDs may already encode effort, fast mode, tiers or routing.
+  Preserve the native selector exactly; never derive supported parameter ranges
+  from its suffix or from a CLI-wide effort flag. OpenCode variant overlays and
+  inventory costs likewise do not establish per-model effort or account prices.
+- OpenCode 2.0.26 `models --standalone` can exit zero with empty output while an
+  owned private service exposes enabled text candidates through `/api/model`.
+  Qualify the native response/account metadata schema, bind the physical project,
+  query twice for a stable snapshot, and close the owned process before returning.
+- A successful native turn with no quota number is recent availability evidence,
+  not a numeric balance. Preserve explicit resource/auth failures over completion.
+  Verification commands execute independently through Controller's registry;
+  an agent refusing its own Bash tool does not invalidate a passed Controller check.
+- Controller tests import compiled workspace adapter exports. After adapter edits,
+  rebuild before running targeted Controller tests; a direct targeted rerun can
+  otherwise exercise stale `dist` code. The full `pnpm check` builds first.

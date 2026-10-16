@@ -20,6 +20,7 @@ import {
   cursorManifest,
   KiroAdapter,
   StructuredCliAdapter,
+  AdapterContractError,
   kiroManifest,
   OpenCodeAdapter,
   GrokAdapter,
@@ -1500,7 +1501,7 @@ export class ControllerService {
     const snapshot=this.configuration.current();const profile=snapshot.config.agentProfiles.find(p=>p.id===profileId),repository=snapshot.config.repositories.find(r=>r.id===repositoryId);
     if(!profile||!repository)throw new PublicationError("CATALOG_CONTEXT_REQUIRED",400,"Choose a registered account and repository");
     const context:ModelCatalogContext={profileId,runnerId:profile.runnerId,repositoryId,executionContextRef:contentHash({repositoryId,root:repository.root}),reason};
-    const fallback=(code:string,message:string):AccountModelCatalog=>({profileId,runnerId:profile.runnerId,providerId:profile.provider,backendId:this.agentAdapters.get(profileId)?.manifest.backends[0]?.id??"unsupported",contextFingerprint:contentHash({profile,repositoryId,root:repository.root}),revision:"unverified",fetchedAt:this.now().toISOString(),freshness:"unverified",source:"native-rpc",selectionSupport:profile.provider==="codex"?"native-default-only":"unsupported",entries:[],failure:{code,message}});
+    const fallback=(code:string,message:string):AccountModelCatalog=>({profileId,runnerId:profile.runnerId,providerId:profile.provider,backendId:this.agentAdapters.get(profileId)?.manifest.backends[0]?.id??"unsupported",contextFingerprint:contentHash({profile,repositoryId,root:repository.root}),revision:"unverified",fetchedAt:this.now().toISOString(),freshness:"unverified",source:"native-rpc",selectionSupport:this.agentAdapters.get(profileId)?.supportsExecutionSelection?"native-default-only":"unsupported",entries:[],failure:{code,message}});
     if(profile.enabled===false)return fallback("PROFILE_DISABLED","Account is disabled");
     if(profile.runnerId!==this.embeddedRunner?.runner.id)return fallback("REMOTE_CATALOG_UNSUPPORTED","Native catalogs must be queried on the owning local runner");
     const adapter=this.agentAdapters.get(profileId);
@@ -1508,7 +1509,9 @@ export class ControllerService {
     const key=contentHash({profileId,repositoryId});const generation=(this.catalogGenerations.get(key)??0)+1;this.catalogGenerations.set(key,generation);
     let catalog:AccountModelCatalog;
     try {catalog=await adapter.modelCatalog({...context,workspacePath:workspacePath??repository.root});}
-    catch {catalog=fallback("NATIVE_CATALOG_UNAVAILABLE","Native catalog could not be read; explicit selection is unavailable");}
+    catch (error) {
+      catalog=error instanceof AdapterContractError && error.code==="NATIVE_VERSION_UNSUPPORTED" ? {...fallback(error.code,"Installed native version does not support the qualified catalog interface"),selectionSupport:"unsupported"} : error instanceof AdapterContractError && error.code==="NATIVE_CONTEXT_CHANGED" ? fallback(error.code,"Native account or configuration changed during the query; refresh before reviewing") : fallback("NATIVE_CATALOG_UNAVAILABLE","Native catalog could not be read; explicit selection is unavailable");
+    }
     if(this.configuration.current().revision!==snapshot.revision)throw new PublicationError("SELECTION_CHANGED",409,"Configuration changed during native catalog query");
     if(this.catalogGenerations.get(key)!==generation)throw new PublicationError("CATALOG_SUPERSEDED",409,"A newer catalog request superseded this response");
     this.database.saveEntity("model-catalog",key,json(catalog));return catalog;
@@ -1517,9 +1520,9 @@ export class ControllerService {
     const snapshot=this.configuration.current();const profile=snapshot.config.agentProfiles.find(p=>p.id===draft.execution.profileId);
     if(!profile)throw new PublicationError("PROFILE_REQUIRED",409,"Choose a configured native account");
     if(profile.runnerId!==this.embeddedRunner?.runner.id)throw new PublicationError("REMOTE_EXECUTION_UNSUPPORTED",409,"This publication path requires the local embedded runner");
-    if(profile.provider!=="codex")throw new PublicationError("NATIVE_SELECTION_UNSUPPORTED",409,"Publication model selection currently supports Codex only");
     const catalog=await this.modelCatalog(profile.id,repository.id,_workspacePath?"before-start":"preflight",_workspacePath);
-    if(catalog.failure?.code==="NATIVE_AUTH_REQUIRED"||catalog.failure?.code==="PROFILE_DISABLED")throw new PublicationError(catalog.failure.code,409,catalog.failure.message);
+    if(catalog.selectionSupport==="unsupported")throw new PublicationError("NATIVE_SELECTION_UNSUPPORTED",409,"This native backend does not expose qualified per-run model selection");
+    if(catalog.failure?.code==="NATIVE_AUTH_REQUIRED"||catalog.failure?.code==="PROFILE_DISABLED"||catalog.failure?.code==="NATIVE_CONTEXT_CHANGED")throw new PublicationError(catalog.failure.code,409,catalog.failure.message);
     const explicit=draft.execution.selectionType==="explicit-model";
     let nativeParameters:ExecutionSelection["nativeParameters"]={};
     if(explicit){

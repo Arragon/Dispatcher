@@ -2,8 +2,9 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { CodexBackend } from "@dispatcher/adapters";
+import { StructuredCliAdapter, type CodexBackend, type CliStartInput } from "@dispatcher/adapters";
 import type { JsonValue } from "@dispatcher/persistence";
 import type { DispatcherConfig, SecretStore } from "@dispatcher/config";
 import { ControllerService } from "../src/service.js";
@@ -20,10 +21,11 @@ async function setup() {
   execFileSync("git", ["-C", root, "add", "."]); execFileSync("git", ["-C", root, "commit", "-m", "fixture"]);
   const f = { directory, services: [] as ControllerService[] }; fixtures.push(f);
   const starts: Array<Parameters<CodexBackend["start"]>[0]> = [];
+  const cliStarts: CliStartInput[] = [];
   const control = { failStart: false, completed: false, modelId: "catalog-model", authenticated:true };
   const backend: CodexBackend = { start(input) { if(control.failStart) throw new Error("spawn fixture ENOENT"); starts.push(input); writeFileSync(join(input.workspacePath,"result.txt"),"completed locally\n"); return {status:()=>control.completed?"completed":"running",cancel:async()=>undefined,result:async()=>({state:"completed",summary:"implemented",providerSessionId:"native-fixture-thread",events:[]})}; } };
   const clock = { now: new Date() };
-  const make = async () => { const s = new ControllerService({ dataDirectory: join(directory,"data"), ownerToken: "publication-test-owner", withRunner: true, codexBackendFactory: () => backend, codexNativeReader: async input => input.method==="account/read"?{account:control.authenticated?{type:"chatgpt",email:"fixture@example.invalid"}:null,requiresOpenaiAuth:true}:{data:[{model:control.modelId,displayName:"Catalog model",hidden:false,isDefault:true,defaultReasoningEffort:"medium",supportedReasoningEfforts:[{reasoningEffort:"low"},{reasoningEffort:"medium"}]}],nextCursor:null}, clock: () => clock.now, secretStore: { test: async () => false } as unknown as SecretStore }); f.services.push(s); await s.start({listen:false}); return s; };
+  const make = async () => { const s = new ControllerService({ dataDirectory: join(directory,"data"), ownerToken: "publication-test-owner", withRunner: true, codexBackendFactory: () => backend, cliBackendFactory: () => ({start(input) { cliStarts.push(input); writeFileSync(join(input.workspacePath,"result.txt"),"completed locally\n"); return {status:()=>"completed",cancel:async()=>undefined,result:async()=>({state:"completed",summary:"implemented",providerSessionId:"native-cli-thread",events:[]})}; }}), codexNativeReader: async input => input.method==="account/read"?{account:control.authenticated?{type:"chatgpt",email:"fixture@example.invalid"}:null,requiresOpenaiAuth:true}:{data:[{model:control.modelId,displayName:"Catalog model",hidden:false,isDefault:true,defaultReasoningEffort:"medium",supportedReasoningEfforts:[{reasoningEffort:"low"},{reasoningEffort:"medium"}]}],nextCursor:null}, clock: () => clock.now, secretStore: { test: async () => false } as unknown as SecretStore }); f.services.push(s); await s.start({listen:false}); return s; };
   const service = await make();
   const config = service.configuration.current().config as DispatcherConfig;
   config.agentProfiles = [{id:"codex-local",alias:"Local",provider:"codex",runnerId:"local",settings:{codexHome:join(directory,"native"),model:"profile-default"}}];
@@ -32,9 +34,41 @@ async function setup() {
   const draft = { schemaVersion:1, clientDraftId:"draft-1", description:"\n完整正文  😀\r\n保持原样\n",projectId:"local:repo",repositoryId:"repo",acceptanceCriteria:["works"],scopePaths:["."],verificationCommandIds:["check"],startMode:"create-only",execution:{selectionMode:"manual",selectionType:"native-default"},delivery:{type:"none"} };
   const preview = async (payload: unknown = draft, s = service) => s.app.inject({method:"POST",url:"/api/task-publications/preview",headers:OWNER,payload});
   const commit = (p: {publicationId:string;revision:number;confirmation:{reviewHash:string}}, key="key-1", s=service, extra={}) => s.app.inject({method:"POST",url:`/api/task-publications/${p.publicationId}/commit`,headers:{...OWNER,"idempotency-key":key},payload:{revision:p.revision,reviewHash:p.confirmation.reviewHash,confirmation:{accepted:true},...extra}});
-  return {service,root,clock,make,draft,preview,commit,starts,control};
+  return {service,root,clock,make,draft,preview,commit,starts,cliStarts,control};
 }
 describe("task publication receipts", () => {
+  it("blocks native-default OpenCode publication when the installed account schema is incompatible", async () => {
+    const f = await setup(), data = join(f.root,"native-data"); mkdirSync(data); mkdirSync(join(data,"opencode"));
+    new DatabaseSync(join(data,"opencode","opencode.db")).close();
+    vi.stubEnv("XDG_DATA_HOME",data);
+    try {
+      const config = f.service.configuration.current().config;
+      config.agentProfiles = [{id:"opencode",alias:"OpenCode",provider:"opencode",runnerId:"local",settings:{executable:process.execPath}}];
+      const plan = f.service.configuration.buildPlan(config,"owner","web"); await f.service.configuration.applyPlan(plan.id,{confirmed:true});
+      const preview = (await f.preview({...f.draft,startMode:"dispatch",execution:{profileId:"opencode",selectionMode:"manual",selectionType:"native-default"}})).json();
+      expect(preview.canCommit).toBe(false);
+      expect(preview.checks).toContainEqual(expect.objectContaining({status:"blocked",code:"NATIVE_SELECTION_UNSUPPORTED"}));
+      expect((await f.commit(preview)).statusCode).toBe(409); expect(f.cliStarts).toHaveLength(0); expect(f.service.database.listCanonicalTasks()).toHaveLength(0);
+    } finally { vi.unstubAllEnvs(); }
+  });
+  it("dispatches a supported non-Codex native catalog and blocks authentication and unsupported backends", async () => {
+    const f = await setup();
+    const native = vi.spyOn(StructuredCliAdapter.prototype,"modelCatalog").mockImplementation(async context => ({profileId:context.profileId,runnerId:context.runnerId,providerId:"cursor",backendId:"cursor-local-cli",contextFingerprint:"native-context",revision:"native-revision",fetchedAt:"now",freshness:"native-fresh",source:"cli-query",selectionSupport:"explicit",entries:[{id:"native-choice",displayName:"Native",kind:"model",selectable:true,access:"unconfirmed",parameterOptions:{}}]}));
+    try {
+      const config = f.service.configuration.current().config;
+      config.agentProfiles = [{id:"cursor",alias:"Cursor",provider:"cursor",runnerId:"local",settings:{model:"account-default"}}];
+      const plan = f.service.configuration.buildPlan(config,"owner","web"); await f.service.configuration.applyPlan(plan.id,{confirmed:true});
+      const execution = {profileId:"cursor",selectionMode:"manual",selectionType:"explicit-model",nativeModelId:"native-choice",catalogRevision:"native-revision",contextFingerprint:"native-context",allowUnconfirmedModelAccess:true};
+      const p = (await f.preview({...f.draft,startMode:"dispatch",execution})).json(); expect(p.canCommit).toBe(true);
+      const receipt = (await f.commit(p)).json(); expect(receipt.state).toBe("STARTED"); expect(f.cliStarts[0]?.args).toContain("native-choice"); expect(f.cliStarts[0]?.args).not.toContain("account-default");
+      const result = (await f.service.app.inject({headers:OWNER,method:"POST",url:`/api/runs/${receipt.runId}/advance`})).json(); expect(result).toMatchObject({run:{state:"COMPLETE",executionSelection:{requestedModel:"native-choice"}},task:{state:"REVIEW"}});
+      for (const failure of ["auth","unsupported"]) {
+        native.mockResolvedValueOnce({profileId:"cursor",runnerId:"local",providerId:"cursor",backendId:"cursor-local-cli",contextFingerprint:"native-context",revision:"unavailable",fetchedAt:"now",freshness:"unverified",source:"cli-query",selectionSupport:failure==="auth"?"native-default-only":"unsupported",entries:[],failure:{code:failure==="auth"?"NATIVE_AUTH_REQUIRED":"MODEL_CATALOG_UNSUPPORTED",message:"Native unavailable"}});
+        const denied = (await f.preview({...f.draft,clientDraftId:`blocked-${failure}`,startMode:"dispatch",execution:{profileId:"cursor",selectionMode:"manual",selectionType:"native-default"}})).json(); expect(denied.canCommit).toBe(false);
+      }
+      expect(f.cliStarts).toHaveLength(1);
+    } finally { native.mockRestore(); }
+  });
   it("previews without task/worktree effects, preserves text and atomically creates once across retries and restart", async () => {
     const f=await setup(); const create=vi.spyOn(f.service.workspaces,"create");
     const [response,parallel]=await Promise.all([f.preview(),f.preview()]);expect(parallel.json().publicationId).toBe(response.json().publicationId); expect(response.statusCode).toBe(200); const p=response.json();
