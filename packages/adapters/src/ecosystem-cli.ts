@@ -1,3 +1,4 @@
+import { OwnedProcessGroup } from "./owned-process.js";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { promisify } from "node:util";
@@ -91,10 +92,12 @@ class SpawnedCliTurn implements CliTurn {
   private cancelled = false;
   private cancellation: Promise<void> | undefined;
   private readonly outcome: Promise<CliTurnResult>;
+  private readonly ownership:OwnedProcessGroup;
   private readonly retainedEvents: NormalizedCliEvent[] = [];
   private resourceEvent: Extract<NormalizedCliEvent, { type: "resource" }> | undefined;
 
   constructor(private readonly child: ChildProcess, normalizeLine: (line: string) => NormalizedCliEvent | undefined, requireExecutionEvidence: boolean) {
+    this.ownership=new OwnedProcessGroup(child);
     let stdout = "";
     let stderr = "";
     let droppingLine = false;
@@ -125,9 +128,10 @@ class SpawnedCliTurn implements CliTurn {
       if (stdout.length > 1_048_576) { stdout = ""; droppingLine = true; record({ type: "failure", reason: "CLI output record exceeds 1 MiB" }); }
     });
     this.child.stderr?.on("data", (chunk: Buffer) => { stderr = (stderr + chunk.toString("utf8")).slice(-32_768); });
-    this.outcome = new Promise((resolve) => {
+    this.outcome = new Promise((resolve,reject) => {
       child.on("error", (error) => { stderr = error.message; });
-      child.on("close", (code) => {
+      child.on("close", (code) => {void (async()=>{
+        await this.ownership.stop();
         this.completed = true;
         if (!droppingLine && stdout.trim()) record(normalizeLine(stdout));
         const error = normalizeCliError(stderr);
@@ -139,8 +143,9 @@ class SpawnedCliTurn implements CliTurn {
           events: this.events(),
           ...(providerSessionId ? { providerSessionId } : {}),
         });
-      });
+      })().catch(reject);});
     });
+    void this.outcome.catch(()=>undefined);
   }
 
   cancel(): Promise<void> {
@@ -148,30 +153,8 @@ class SpawnedCliTurn implements CliTurn {
   }
   private async cancelGroup(): Promise<void> {
     if (!this.completed) this.cancelled = true;
-    this.kill("SIGTERM");
-    // Direct child exit does not establish that its tool descendants stopped.
-    if (this.groupAlive()) await new Promise<void>((resolve, reject) => {
-      const finish = (error?: unknown): void => {
-        clearInterval(poll);
-        clearTimeout(escalation);
-        if (error) reject(error); else resolve();
-      };
-      const poll = setInterval(() => { try { if (!this.groupAlive()) finish(); } catch (error) { finish(error); } }, 25);
-      const escalation = setTimeout(() => { try { this.kill("SIGKILL"); finish(); } catch (error) { finish(error); } }, 2_000);
-    });
+    await this.ownership.stop();
     await this.outcome;
-  }
-  private groupAlive(): boolean {
-    if (process.platform === "win32") return !this.completed;
-    if (!this.child.pid) return false;
-    try { process.kill(-this.child.pid, 0); return true; }
-    catch (error) { if ((error as NodeJS.ErrnoException).code === "ESRCH") return false; throw error; }
-  }
-  private kill(signal: NodeJS.Signals): void {
-    try {
-      if (process.platform !== "win32" && this.child.pid) process.kill(-this.child.pid, signal);
-      else this.child.kill(signal);
-    } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error; }
   }
   events(): NormalizedCliEvent[] {
     const events = [...this.retainedEvents];
@@ -275,6 +258,7 @@ export class StructuredCliAdapter implements AgentAdapter {
   private readonly sending = new Set<string>();
   private starting = 0;
   private cancelling = 0;
+  private readonly cancelled=new Set<string>();
 
   constructor(
     private readonly definition: CliProviderDefinition,
@@ -336,16 +320,16 @@ export class StructuredCliAdapter implements AgentAdapter {
 
   async send(sessionId: string, message: string): Promise<AdapterEvent> {
     if (!this.definition.supportsResume) throw new AdapterContractError("UNSUPPORTED_CAPABILITY", `${this.manifest.displayName} headless runs do not accept mid-session input`);
+    if (this.cancelled.has(sessionId)||this.require(sessionId).state === "CANCELLED") throw new AdapterContractError("SESSION_CANCELLED", "Cancelled sessions cannot accept input");
     if (this.definition.strictLifecycle && !this.turns.has(sessionId) && !["COMPLETED", "PAUSED"].includes(this.require(sessionId).state)) throw new AdapterContractError("SESSION_DETACHED", "Active or failed process handles cannot be recovered; use controlled operator recovery");
     if (this.definition.strictLifecycle && (this.turns.get(sessionId)?.status() === "running" || this.sending.has(sessionId))) throw new AdapterContractError("SESSION_BUSY", "Wait for the current CLI turn before sending another message");
-    if (this.require(sessionId).state === "CANCELLED") throw new AdapterContractError("SESSION_CANCELLED", "Cancelled sessions cannot accept input");
     this.sending.add(sessionId);
     try {
       const session = await this.finish(sessionId);
       if (!session.providerSessionId) throw new AdapterContractError("SESSION_NOT_RESUMABLE", `${this.manifest.displayName} did not emit a provider session id`);
       const environment = await this.environment();
       const executable = await this.executable();
-      if (this.require(sessionId).state === "CANCELLED") throw new AdapterContractError("SESSION_CANCELLED", "Session was cancelled before the next turn started");
+      if (this.cancelled.has(sessionId)||this.require(sessionId).state === "CANCELLED") throw new AdapterContractError("SESSION_CANCELLED", "Session was cancelled before the next turn started");
       this.store.save({ ...session, state: "STARTING", updatedAt: new Date().toISOString() });
       const turn = this.backend.start({
         executable,
@@ -371,7 +355,8 @@ export class StructuredCliAdapter implements AgentAdapter {
   async cancel(sessionId: string): Promise<AdapterSession> {
     this.cancelling++;
     try {
-      this.update(sessionId, { state: "CANCELLED" });
+      this.require(sessionId);this.cancelled.add(sessionId);
+      // A failed persistence write must not prevent stopping the owned process.
       await this.turns.get(sessionId)?.cancel();
       return this.update(sessionId, { state: "CANCELLED" });
     } finally { this.cancelling--; }
@@ -417,7 +402,7 @@ export class StructuredCliAdapter implements AgentAdapter {
     const turn = this.turns.get(sessionId);
     if (!turn) return this.definition.strictLifecycle && session.state === "RUNNING" ? this.update(sessionId, { state: "FAILED" }) : structuredClone(session);
     const result = await turn.result();
-    if (this.require(sessionId).state === "CANCELLED") return structuredClone(this.require(sessionId));
+    if (this.cancelled.has(sessionId)||this.require(sessionId).state === "CANCELLED") return structuredClone(this.require(sessionId));
     return this.update(sessionId, {
       state: result.state === "completed" ? "COMPLETED" : result.state === "cancelled" ? "CANCELLED" : result.state === "waiting" ? "PAUSED" : "FAILED",
       ...(result.providerSessionId ? { providerSessionId: result.providerSessionId } : {}),

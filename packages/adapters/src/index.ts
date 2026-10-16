@@ -11,3 +11,5 @@ export * from "./local-service.js";
 export * from "./compatibility.js";
 
 export { readCodexNative, readCodexCatalog, normalizeCodexCatalog, type CodexReadRequest } from "./codex-catalog.js";
+
+export { OwnedProcessGroup } from "./owned-process.js";

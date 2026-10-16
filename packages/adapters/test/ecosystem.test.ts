@@ -61,6 +61,13 @@ describe("Cursor and Kiro adapters", () => {
     expect(saved).toMatchObject([{ state: "STARTING", runId: "r" }]); expect(cancelled).toBe(1);
   });
 
+  it("stops owned execution even when the cancellation record cannot be persisted",async()=>{
+    let saved:AdapterSession|undefined,cancelled=0;
+    const adapter=new CursorAdapter({id:"p",alias:"P"},{start:()=>({status:()=>"running",cancel:async()=>{cancelled++;},result:async()=>({state:"completed",summary:"done",events:[]})})},{load:()=>saved,save:session=>{if(session.state==="CANCELLED")throw new Error("disk full");saved=structuredClone(session);}});
+    const session=await adapter.start({runId:"r",workspacePath:"/work"});await expect(adapter.cancel(session.id)).rejects.toThrow("disk full");expect(cancelled).toBe(1);
+    await expect(adapter.send(session.id,"must not spawn")).rejects.toMatchObject({code:"SESSION_CANCELLED"});
+  });
+
   it("normalizes session, quota, auth and failure output inside the adapter boundary", () => {
     expect(normalizeCliLine('{"type":"assistant","message":"working","session_id":"chat-1"}')).toMatchObject({ type: "activity", providerSessionId: "chat-1" });
     expect(normalizeCliLine('{"type":"quota","remaining":0}')).toMatchObject({ type: "resource", state: "QUOTA_EXHAUSTED" });

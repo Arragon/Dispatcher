@@ -1,7 +1,7 @@
-import { mkdtempSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { BoundedLogWriter, ProcessManager, VerificationRegistry } from "../src/index.js";
 
 const directories: string[] = [];
@@ -58,6 +58,15 @@ describe("ProcessManager", () => {
 });
 
 describe("VerificationRegistry", () => {
+  it("awaits termination of signal-ignoring verification descendants after abort",async()=>{
+    const root=directory(),ready=join(root,"child.pid"),abort=new AbortController(),registry=new VerificationRegistry();let pid:number|undefined;
+    const alive=()=>{try{process.kill(pid!,0);return true;}catch{return false;}};
+    const descendant=`process.on('SIGTERM',()=>{});require('node:fs').writeFileSync(${JSON.stringify(ready)},String(process.pid));setInterval(()=>{},1000)`;
+    const parent=`require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(descendant)}],{stdio:'ignore'});process.on('SIGTERM',()=>{});setInterval(()=>{},1000)`;
+    registry.register({id:"tree",file:process.execPath,args:["-e",parent],required:true,timeoutMs:5000,outputLimitBytes:1000});const verifying=registry.run("tree",root,abort.signal);
+    try{await vi.waitFor(()=>expect(existsSync(ready)).toBe(true));pid=Number(readFileSync(ready,"utf8"));abort.abort();expect(await verifying).toMatchObject({status:"failed"});expect(alive()).toBe(false);}
+    finally{if(pid&&alive())process.kill(pid,"SIGKILL");abort.abort();}
+  });
   it("runs only registered commands, limits output, and blocks delivery only on required failure", async () => {
     const registry = new VerificationRegistry();
     registry.register({ id: "pass", file: process.execPath, args: ["-e", "console.log('ok')"], required: true, timeoutMs: 5_000, outputLimitBytes: 64 });

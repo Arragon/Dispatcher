@@ -220,3 +220,14 @@ it("revokes every admitted lease before awaiting any shutdown cancellation",asyn
   const shutdown=runtime.shutdown();await entered.promise;
   try{for(const id of ["one","two"])expect(runtime.database.getEntity("native-execution",id)).toMatchObject({lease:{revokedAt:expect.any(String)}});}finally{release.resolve();await shutdown;}
 });
+
+it("does not acknowledge revocation until the verification process group has stopped",async()=>{
+  const f=fixture(),ready="verification-child.pid";
+  const descendant=`process.on('SIGTERM',()=>{});require('node:fs').writeFileSync('${ready}',String(process.pid));setInterval(()=>{},1000)`;
+  f.config.repositories[0]!.verificationCommands[0]!.args=["-e",`require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(descendant)}],{stdio:'ignore'});process.on('SIGTERM',()=>{});setInterval(()=>{},1000)`];
+  f.apply();const workspace=await f.prepare() as {path:string};await f.start();f.complete();await f.call({type:"native.run",runId:"run",action:"status"});
+  const verifying=f.call({type:"native.run_verify",runId:"run"},"kill-verification"),rejected=expect(verifying).rejects.toMatchObject({code:"LEASE_REVOKED"});let pid:number|undefined;
+  const alive=()=>{try{process.kill(pid!,0);return true;}catch{return false;}};
+  try{await vi.waitFor(()=>expect(existsSync(join(workspace.path,ready))).toBe(true));pid=Number(readFileSync(join(workspace.path,ready),"utf8"));await f.call({type:"lease.revoke",leaseId:"lease",generation:1,reason:"operator cancellation"});expect(alive()).toBe(false);await rejected;}
+  finally{if(pid&&alive())process.kill(pid,"SIGKILL");}
+});

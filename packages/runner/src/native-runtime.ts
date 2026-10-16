@@ -7,7 +7,7 @@ import { redactValue } from "@dispatcher/observability";
 import { DispatcherDatabase, type JsonValue } from "@dispatcher/persistence";
 import { parseEnvelope, type CommandPayload, type NativeStartDescriptor, type NativeWorkspacePlan, type ProtocolEnvelope } from "@dispatcher/protocol";
 import { RepositoryRegistry, WorkspaceManager, type WorkspaceHandle } from "@dispatcher/workspace";
-import { RunnerLeaseAuthority, type RunnerLease } from "./lease.js";
+import { LeaseFenceError, RunnerLeaseAuthority, type RunnerLease } from "./lease.js";
 import { remoteCommandHash } from "./remote.js";
 import { VerificationRegistry, type VerificationCommand } from "./verification.js";
 
@@ -388,7 +388,8 @@ export class NativeRunnerRuntime {
     return structuredClone(record.lease);
   }
   private async stopOwned(record: ExecutionRecord): Promise<void> {
-    this.verificationAborts.get(record.runId)?.abort();
+    const verification=this.verificationAborts.get(record.runId);verification?.abort();
+    if(verification)try{await this.locks.get(record.runId);}catch(error){if(!(error instanceof LeaseFenceError)){record.state="OUTCOME_UNKNOWN";this.save(record);return;}}
     if (record.settledAt) return;
     if (record.state === "PREPARED" && !record.session) { record.state = "CANCELLED"; record.settledAt = this.now().toISOString(); this.save(record); return; }
     if (!this.attached.has(record.runId) || !record.session) return;

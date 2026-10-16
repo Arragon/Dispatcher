@@ -478,3 +478,9 @@
   start acknowledgement leaves only the reserved lease. Persist revocation,
   require owning-Runner stop acknowledgement, and keep uncertainty visible.
   Shutdown revokes all leases synchronously before awaiting the first adapter.
+
+- A SIGKILL request is not a stop acknowledgement. Shared owned-group cleanup
+  waits for absence after escalation; native status/result stays running until
+  cleanup completes, even on a nominally successful parent exit. Verification
+  revocation awaits its serialized command cleanup before returning a stop ACK.
+  An in-memory cancelled-session fence survives cancellation-record write failure.

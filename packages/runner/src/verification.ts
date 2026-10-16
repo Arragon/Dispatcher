@@ -1,7 +1,5 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-
-const execute = promisify(execFile);
+import { spawn } from "node:child_process";
+import { OwnedProcessGroup } from "@dispatcher/adapters";
 
 export interface VerificationCommand {
   id: string;
@@ -34,14 +32,24 @@ export class VerificationRegistry {
     const command = this.commands.get(commandId);
     if (!command) throw new Error(`Verification command is not registered: ${commandId}`);
     const started = Date.now();
-    try {
-      const result = await execute(command.file, command.args, { cwd, timeout: command.timeoutMs, maxBuffer: command.outputLimitBytes * 2, encoding: "utf8", ...(signal ? { signal } : {}) });
-      const combined = `${result.stdout}${result.stderr}`;
-      return this.result(command, "passed", 0, combined, started);
-    } catch (error) {
-      const detail = error as { stdout?: string; stderr?: string; code?: number | string; killed?: boolean };
-      return this.result(command, detail.killed ? "timeout" : "failed", typeof detail.code === "number" ? detail.code : null, `${detail.stdout ?? ""}${detail.stderr ?? ""}`, started);
-    }
+    if(signal?.aborted)return this.result(command,"failed",null,"",started);
+    const child=spawn(command.file,command.args,{cwd,shell:false,stdio:["ignore","pipe","pipe"],detached:process.platform!=="win32",env:{...process.env,PWD:cwd}});
+    const ownership=new OwnedProcessGroup(child);
+    return new Promise<VerificationResult>((resolve,reject)=>{
+      let output=Buffer.alloc(0),timedOut=false,limited=false,aborted=false;
+      const cleanup=()=>{clearTimeout(timer);signal?.removeEventListener("abort",abort);};
+      const stop=()=>{void ownership.stop().catch(error=>{cleanup();reject(error);});};
+      const abort=()=>{aborted=true;stop();};
+      const timer=setTimeout(()=>{timedOut=true;stop();},command.timeoutMs);
+      signal?.addEventListener("abort",abort,{once:true});
+      const collect=(chunk:Buffer)=>{const room=command.outputLimitBytes*2-output.length;output=Buffer.concat([output,chunk.subarray(0,Math.max(0,room))]);if(chunk.length>room){limited=true;stop();}};
+      child.stdout.on("data",collect);child.stderr.on("data",collect);
+      child.on("error",()=>undefined);
+      child.once("close",code=>{void (async()=>{
+        await ownership.stop();cleanup();
+        resolve(this.result(command,timedOut?"timeout":code===0&&!limited&&!aborted?"passed":"failed",code,output.toString("utf8"),started));
+      })().catch(error=>{cleanup();reject(error);});});
+    });
   }
 
   blocksDelivery(results: VerificationResult[]): boolean { return results.some((result) => result.required && result.status !== "passed"); }

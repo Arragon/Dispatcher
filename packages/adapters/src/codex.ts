@@ -1,3 +1,4 @@
+import { OwnedProcessGroup } from "./owned-process.js";
 import { readCodexCatalog, type CodexReadRequest } from "./codex-catalog.js";
 import type { ExecutionSelection, ModelCatalogContext, AccountModelCatalog } from "@dispatcher/domain";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
@@ -97,6 +98,7 @@ export class CodexCliBackend implements CodexBackend {
     return new SpawnedCodexTurn(spawn(input.executable, args, {
       cwd: input.workspacePath,
       shell: false,
+      detached: process.platform !== "win32",
       stdio: ["ignore", "pipe", "pipe"],
       env: { ...process.env, PWD: input.workspacePath, CODEX_HOME: input.codexHome },
     }));
@@ -108,8 +110,10 @@ class SpawnedCodexTurn implements CodexTurn {
   private completed = false;
   private cancelled = false;
   private readonly outcome: Promise<CodexTurnResult>;
+  private readonly ownership:OwnedProcessGroup;
 
   constructor(private readonly child: ChildProcess) {
+    this.ownership=new OwnedProcessGroup(child);
     let stdout = "";
     let stderr = "";
     let providerSessionId: string | undefined;
@@ -136,11 +140,12 @@ class SpawnedCodexTurn implements CodexTurn {
       }
     });
     child.stderr?.on("data", (chunk: Buffer) => { stderr = (stderr + chunk.toString("utf8")).slice(-16_384); });
-    this.outcome = new Promise((resolve) => {
+    this.outcome = new Promise((resolve,reject) => {
       child.on("error", (error) => {
         stderr = error.message;
       });
-      child.on("close", (code) => {
+      child.on("close", (code) => {void (async()=>{
+        await this.ownership.stop();
         this.completed = true;
         const normalized = code===0 ? undefined : normalizeCodexError(stderr);
         if (normalized) events.push(normalized);
@@ -152,14 +157,15 @@ class SpawnedCodexTurn implements CodexTurn {
           ...(providerSessionId ? { providerSessionId } : {}),
           events,
         });
-      });
+      })().catch(reject);});
     });
+    void this.outcome.catch(()=>undefined);
   }
 
   async cancel(): Promise<void> {
     if (this.completed) return;
     this.cancelled = true;
-    this.child.kill("SIGTERM");
+    await this.ownership.stop();
     await this.outcome;
   }
   status(): "running" | "completed" { return this.completed ? "completed" : "running"; }
@@ -172,6 +178,7 @@ export class CodexAdapter implements AgentAdapter {
   private readonly turns = new Map<string, CodexTurn>();
   private pending = 0;
   private readonly sending = new Set<string>();
+  private readonly cancelled=new Set<string>();
 
   hasActiveOperations(): boolean { return this.pending > 0 || this.sending.size > 0 || [...this.turns.values()].some((turn) => turn.status() === "running"); }
 
@@ -215,12 +222,12 @@ export class CodexAdapter implements AgentAdapter {
   }
 
   async send(sessionId: string, message: string): Promise<AdapterEvent> {
-    if (this.require(sessionId).state === "CANCELLED") throw new AdapterContractError("SESSION_CANCELLED", "A cancelled Codex session cannot accept input");
+    if (this.cancelled.has(sessionId)||this.require(sessionId).state === "CANCELLED") throw new AdapterContractError("SESSION_CANCELLED", "A cancelled Codex session cannot accept input");
     if (this.sending.has(sessionId) || (this.require(sessionId).state === "RUNNING" && this.turns.get(sessionId)?.status() === "running")) throw new AdapterContractError("SESSION_BUSY", "Wait for the active Codex turn before sending another message");
     this.sending.add(sessionId);
     try {
     const session = await this.finishCurrentTurn(sessionId);
-    if (this.require(sessionId).state === "CANCELLED") throw new AdapterContractError("SESSION_CANCELLED", "A cancelled Codex session cannot accept input");
+    if (this.cancelled.has(sessionId)||this.require(sessionId).state === "CANCELLED") throw new AdapterContractError("SESSION_CANCELLED", "A cancelled Codex session cannot accept input");
     if (!session.providerSessionId) throw new AdapterContractError("SESSION_NOT_RESUMABLE", "Codex did not return a provider session id");
     this.store.save({ ...session, state: "STARTING", updatedAt: new Date().toISOString() });
     const turn = this.backend.start({
@@ -247,6 +254,7 @@ export class CodexAdapter implements AgentAdapter {
   async cancel(sessionId: string): Promise<AdapterSession> {
     this.pending++;
     try {
+      this.require(sessionId);this.cancelled.add(sessionId);
       const turn = this.turns.get(sessionId);
       if (turn) await turn.cancel();
       return this.update(sessionId, { state: "CANCELLED" });
@@ -280,7 +288,7 @@ export class CodexAdapter implements AgentAdapter {
     const turn = this.turns.get(sessionId);
     if (!turn || session.state === "CANCELLED") return structuredClone(session);
     const result = await turn.result();
-    if (this.require(sessionId).state === "CANCELLED") return structuredClone(this.require(sessionId));
+    if (this.cancelled.has(sessionId)||this.require(sessionId).state === "CANCELLED") return structuredClone(this.require(sessionId));
     return this.update(sessionId, {
       state: result.state === "completed" ? "COMPLETED" : result.state === "cancelled" ? "CANCELLED" : result.state === "waiting" ? "PAUSED" : "FAILED",
       ...(result.providerSessionId ? { providerSessionId: result.providerSessionId } : {}),

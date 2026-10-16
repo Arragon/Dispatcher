@@ -382,7 +382,14 @@ Terminal native status stores result and observed usage before persisting the
 completed execution state. A restarted Runner can expose that durable completed
 evidence while honestly reporting that no process handle is attached.
 Native adapters persist STARTING immediately before spawn and record the actual
-backend PID only when provided. Lease expiry/revocation stops owned native
+backend PID only when provided. Codex and structured CLI turns share owned
+process-group termination with verification commands. On Unix, cancellation and
+normal parent exit drain owned descendants, escalate after two seconds and only
+resolve after the group is absent; an unconfirmed stop remains an error. Never
+signal a recovered PID, and never reuse a group identity after it was drained.
+Cancellation fences in memory before awaiting termination, so persistence failure
+cannot authorize another turn. Windows uses the native taskkill tree operation;
+its distinct-device process-tree acceptance remains unverified. Lease expiry/revocation stops owned native
 handles and aborts active verification. Registration replacement is blocked
 while an active or uncertain execution owns it. Runtime handlers are implemented;
 `agent-runner serve` loads these applied registrations, advertises native
