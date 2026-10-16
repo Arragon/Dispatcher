@@ -43,7 +43,7 @@ export default function PublishPage():React.JSX.Element {
   const [params]=useSearchParams();return <PublicationComposer key={params.get("task")??"new"}/>;
 }
 function PublicationComposer(): React.JSX.Element {
-  const query = useQuery({queryKey:["config"],queryFn:()=>api<ConfigResponse<Config>>("/api/config")});
+  const query = useQuery({queryKey:["config"],queryFn:()=>api<ConfigResponse<Config>>("/api/config?view=console")});
   const [params] = useSearchParams();
   const existingTaskId=params.get("task")??"";
   const activeReceiptKey=existingTaskId?`${receiptKey}:${existingTaskId}`:receiptKey;

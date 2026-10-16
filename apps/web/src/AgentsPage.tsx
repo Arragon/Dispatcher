@@ -95,7 +95,7 @@ export default function AgentsPage(): React.JSX.Element {
   }
   async function applyProfile():Promise<void>{
     if(!plan||busy)return;setBusy(true);
-    try{await api(`/api/config/plans/${encodeURIComponent(plan.id)}/apply`,{method:"POST",body:JSON.stringify({confirmed:plan.requiresConfirmation})});setRunProfileId(String(draft.id??""));await refreshConfiguration(client);setPlan(undefined);setConfirmSave(false);setDrawer(undefined);setMessage("账号配置已应用，请单独测试原生登录。");}
+    try{await api(`/api/config/plans/${encodeURIComponent(plan.id)}/apply?view=console`,{method:"POST",body:JSON.stringify({confirmed:plan.requiresConfirmation})});setRunProfileId(String(draft.id??""));await refreshConfiguration(client);setPlan(undefined);setConfirmSave(false);setDrawer(undefined);setMessage("账号配置已应用，请单独测试原生登录。");}
     catch(error){setMessage(error instanceof Error?error.message:"应用失败，草稿保留");}finally{setBusy(false);}
   }
   async function setProfileEnabled(profile: ProfileView): Promise<void> {

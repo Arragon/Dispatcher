@@ -24,7 +24,7 @@ export function PolicyRoutingEditor({value,onChange,config,revision,disabled=fal
   </fieldset>;
 }
 export function PolicyRoutingField({formData,onChange,fieldPathId,disabled}:FieldProps):React.JSX.Element {
-  const query=useQuery({queryKey:["config"],queryFn:()=>api<ConfigResponse<CatalogConfig>>("/api/config")});
+  const query=useQuery({queryKey:["config"],queryFn:()=>api<ConfigResponse<CatalogConfig>>("/api/config?view=console")});
   const policy=formData as TaskModelRoutingConfig|undefined;
   return <PolicyRoutingEditor {...(Array.isArray(policy?.taskTypes)&&Array.isArray(policy?.rules)?{value:policy}:{})} onChange={value=>onChange(value,fieldPathId.path)} config={query.data?.config??{agentProfiles:[],repositories:[]}} revision={query.data?.revision??0} disabled={disabled===true}/>;
 }

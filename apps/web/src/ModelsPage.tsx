@@ -2,7 +2,7 @@ import { lazy, Suspense, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useSearchParams } from "react-router-dom";
 import type { AccountModelCatalog } from "@dispatcher/domain";
-import { api, refreshConfiguration, type ConfigResponse } from "./api.js";
+import { api, createConfigurationPlan, refreshConfiguration, type ConfigResponse } from "./api.js";
 import { NativeModelPicker, nativeDefaultChoice } from "./NativeModelPicker.js";
 import { Drawer } from "./Drawer.js";
 import { Notice, Tabs } from "./ui.js";
@@ -18,7 +18,7 @@ export default function ModelsPage():React.JSX.Element {
   const [busy,setBusy]=useState(false),[message,setMessage]=useState("");
   const [plan,setPlan]=useState<Plan>();
   const [reviewTarget,setReviewTarget]=useState("");
-  const query=useQuery({queryKey:["config"],queryFn:()=>api<ConfigResponse<ModelConfig>>("/api/config")});
+  const query=useQuery({queryKey:["config"],queryFn:()=>api<ConfigResponse<ModelConfig>>("/api/config?view=console")});
   const account=query.data?.config.agentProfiles.find(entry=>entry.id===profile);
   async function planDefault(clear=false):Promise<void>{
     if(!query.data||!account||busy)return;setBusy(true);setMessage("");
@@ -32,13 +32,13 @@ export default function ModelsPage():React.JSX.Element {
       const target=next.agentProfiles.find(entry=>entry.id===profile)!;
       target.settings={...target.settings};
       if(clear)delete target.settings.model;else target.settings.model=choice.modelId;
-      const built=await api<{plan:Plan}>("/api/config/plans",{method:"POST",body:JSON.stringify({config:next,baseRevision:query.data.revision})});
+      const built=await createConfigurationPlan(query.data,next);
       setReviewTarget(`${account.alias} · ${clear?"移除覆盖，沿用原生配置":choice.modelId}`);setPlan(built.plan);
     }catch(error){setMessage(error instanceof Error?error.message:"默认模型计划生成失败");}finally{setBusy(false);}
   }
   async function apply():Promise<void>{
     if(!plan||busy)return;setBusy(true);
-    try{await api(`/api/config/plans/${encodeURIComponent(plan.id)}/apply`,{method:"POST",body:JSON.stringify({confirmed:plan.requiresConfirmation})});setPlan(undefined);setChoice({...nativeDefaultChoice});await refreshConfiguration(client);setMessage("账号默认模型已应用，已有 Run 保留原选择。");}
+    try{await api(`/api/config/plans/${encodeURIComponent(plan.id)}/apply?view=console`,{method:"POST",body:JSON.stringify({confirmed:plan.requiresConfirmation})});setPlan(undefined);setChoice({...nativeDefaultChoice});await refreshConfiguration(client);setMessage("账号默认模型已应用，已有 Run 保留原选择。");}
     catch(error){setMessage(error instanceof Error?error.message:"应用失败");}finally{setBusy(false);}
   }
   return <section><header className="page-header"><div><h1>模型管理</h1><p>按账号与项目读取原生模型，或配置 Dispatcher 自身的内部模型。</p></div></header><Tabs label="模型类型" value={view} onChange={tab=>setParams(previous=>{const next=new URLSearchParams(previous);next.set("tab",tab);return next;})} items={[["native","原生模型目录"],["internal","内部模型与路由"]]}/>{view==="internal"?<Suspense fallback={<p>正在读取内部模型…</p>}><LlmPage/></Suspense>:<article className="panel"><Notice>目录读取不启动推理。权限未确认、价格缺失与不支持的账号会按实际情况显示。</Notice>{query.isLoading&&<p role="status">正在读取账号与仓库…</p>}{query.error&&<Notice tone="error">账号与仓库读取失败。<button onClick={()=>void query.refetch()}>重试读取</button></Notice>}

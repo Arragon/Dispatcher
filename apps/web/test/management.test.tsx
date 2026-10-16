@@ -23,10 +23,10 @@ it("edits concrete policy targets through native catalogs and creates only an ex
   mount(<SettingsPage sectionId="policies" embedded/>);await userEvent.click(await screen.findByRole("button",{name:"编辑规则 1"}));await screen.findByRole("option",{name:"model-b · model-b"});expect(plans).toHaveLength(0);
   await userEvent.selectOptions(screen.getByLabelText("原生模型"),"model-b");await userEvent.selectOptions(screen.getByLabelText("思考强度"),"low");await userEvent.selectOptions(screen.getByLabelText("思考强度"),"");
   await userEvent.click(screen.getByRole("button",{name:"刷新原生目录"}));expect(plans).toHaveLength(0);await userEvent.click(screen.getByRole("button",{name:"预览配置变更"}));await screen.findByRole("button",{name:"确认并应用"});
-  expect(plans).toHaveLength(1);expect(plans[0]).toMatchObject({baseRevision:7,config:{policies:{modelRouting:{rules:[{target:{modelSelectionId:"model-b",reasoning:{mode:"native-default"}}}]}}}});
+  expect(plans).toHaveLength(1);expect(plans[0]).toEqual({baseRevision:7,edits:[{op:"replace",path:"/policies/modelRouting/rules/0/target/modelSelectionId",entityId:"rule",value:"model-b"}]});
 });
 it("separates registered devices from heartbeat evidence and does not enroll on read", async () => {
-  const fetchMock=vi.spyOn(globalThis,"fetch").mockImplementation(async (input) => new Response(JSON.stringify(input === "/api/config" ? {revision:1,config:{runners:[{id:"remote",displayName:"Remote workstation",mode:"remote",capacity:2,tags:[]}],agentProfiles:[]}} : {runners:[]})));
+  const fetchMock=vi.spyOn(globalThis,"fetch").mockImplementation(async (input) => new Response(JSON.stringify(input === "/api/config?view=console" ? {revision:1,config:{runners:[{id:"remote",displayName:"Remote workstation",mode:"remote",capacity:2,tags:[]}],agentProfiles:[]}} : {runners:[]})));
   mount(<DevicesPage/>);
   expect(await screen.findByText("Remote workstation")).toBeTruthy();
   expect(screen.getByText("尚未连接")).toBeTruthy();
@@ -47,7 +47,7 @@ it("keeps incomplete diagnostic sections visible and ignores known placeholder m
 it("refuses to build a configuration plan when the editing base revision changed", async () => {
   let reads=0;
   const fetchMock=vi.spyOn(globalThis,"fetch").mockImplementation(async (input) => {
-    if(input === "/api/config") return new Response(JSON.stringify({revision:++reads,config:{controller:{id:"base"}}}));
+    if(input === "/api/config?view=console") return new Response(JSON.stringify({revision:++reads,config:{controller:{id:"base"}}}));
     if(input === "/api/config/schema") return new Response(JSON.stringify({schema:{type:"object",properties:{controller:{type:"object",properties:{id:{type:"string",title:"Controller ID"}}}}},uiSchema:{}}));
     return new Response(JSON.stringify({plan:{id:"unsafe",changes:[{path:"controller.id"}]}}));
   });
@@ -59,7 +59,7 @@ it("refuses to build a configuration plan when the editing base revision changed
   expect(fetchMock.mock.calls.some(([path])=>path === "/api/config/plans")).toBe(false);
 });
 it("keeps a scoped repository editor within the same ConfigPlan review path", async () => {
-  vi.spyOn(globalThis,"fetch").mockImplementation(async (input) => new Response(JSON.stringify(input === "/api/config" ? {revision:1,config:{controller:{id:"base"},repositories:[]}} : {schema:{type:"object",properties:{controller:{type:"object"},repositories:{type:"array",title:"Registered repositories",items:{type:"string"}}}},uiSchema:{}})));
+  vi.spyOn(globalThis,"fetch").mockImplementation(async (input) => new Response(JSON.stringify(input === "/api/config?view=console" ? {revision:1,config:{controller:{id:"base"},repositories:[]}} : {schema:{type:"object",properties:{controller:{type:"object"},repositories:{type:"array",title:"Registered repositories",items:{type:"string"}}}},uiSchema:{}})));
   mount(<SettingsPage sectionId="repositories" embedded/>);
   expect(await screen.findByText("Registered repositories")).toBeTruthy();
   expect(screen.queryByText("控制台登录密码")).toBeNull();
@@ -70,7 +70,7 @@ it("preserves a custom default model pool when adding a model and reviews before
   const llm={configured:true,endpoints:[{id:"endpoint",baseUrl:"https://example.invalid/v1",protocol:"openai-responses",credentialRef:"secret://llm/e"}],profiles:[{id:"first",alias:"first",endpointId:"endpoint",model:"model-first",enabled:true}],pools:[{id:"custom",profileIds:["first"]}],defaultPoolId:"custom",roleBindings:[]};
   const fetchMock=vi.spyOn(globalThis,"fetch").mockImplementation(async (input) => {
     if(input === "/api/llm")return new Response(JSON.stringify({revision:4,config:llm,state:{mode:"ACTIVE",activeProfileByRole:{},healthByProfile:{}}}));
-    if(input === "/api/config")return new Response(JSON.stringify({revision:4,config:{internalLlm:llm,repositories:[{id:"keep"}]}}));
+    if(input === "/api/config?view=console")return new Response(JSON.stringify({revision:4,config:{internalLlm:llm,repositories:[{id:"keep"}]}}));
     return new Response(JSON.stringify({plan:{id:"review",risk:"sensitive",requiresConfirmation:true,changes:[{path:"internalLlm.profiles"}]}}));
   });
   mount(<LlmPage/>);
@@ -82,11 +82,11 @@ it("preserves a custom default model pool when adding a model and reviews before
   await userEvent.click(screen.getByRole("button",{name:"审阅并保存"}));
   expect(await screen.findByRole("dialog",{name:"审阅模型配置"})).toBeTruthy();
   const posted=fetchMock.mock.calls.find(([path])=>path === "/api/config/plans");
-  expect(JSON.parse(String(posted?.[1]?.body))).toMatchObject({config:{repositories:[{id:"keep"}],internalLlm:{defaultPoolId:"custom",pools:[{id:"custom",profileIds:["first","second"]}]}}});
+  const body=JSON.parse(String(posted?.[1]?.body));expect(body).toMatchObject({baseRevision:4,edits:expect.arrayContaining([{op:"replace",path:"/internalLlm/pools/0/profileIds",entityId:"custom",value:["first","second"]}])});expect(body.config).toBeUndefined();expect(body.edits.every((edit:{path:string})=>edit.path.startsWith("/internalLlm/"))).toBe(true);
   expect(fetchMock.mock.calls.some(([path])=>String(path).includes("/apply"))).toBe(false);
 });
 it("requires explicit device credential confirmation and clears the one-time receipt on close", async () => {
-  const fetchMock=vi.spyOn(globalThis,"fetch").mockImplementation(async (input) => new Response(JSON.stringify(input === "/api/config" ? {revision:1,config:{runners:[{id:"remote",displayName:"Remote",mode:"remote",capacity:2,tags:[]}],agentProfiles:[]}} : String(input).endsWith("/enrollment") ? {token:"one-time-token",expiresAt:"2026-10-16"} : {runners:[]})));
+  const fetchMock=vi.spyOn(globalThis,"fetch").mockImplementation(async (input) => new Response(JSON.stringify(input === "/api/config?view=console" ? {revision:1,config:{runners:[{id:"remote",displayName:"Remote",mode:"remote",capacity:2,tags:[]}],agentProfiles:[]}} : String(input).endsWith("/enrollment") ? {token:"one-time-token",expiresAt:"2026-10-16"} : {runners:[]})));
   mount(<DevicesPage/>);
   await userEvent.click(await screen.findByRole("button",{name:"登记令牌"}));
   expect(fetchMock.mock.calls.some(([,init])=>init?.method==="POST")).toBe(false);

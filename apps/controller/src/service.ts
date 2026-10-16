@@ -2842,7 +2842,7 @@ export class ControllerService {
         if(body.baseRevision!==actual) throw new RevisionConflictError(body.baseRevision,actual);
       }
       const plan = await this.planConfiguration(next, this.principalFor(request).id, "web");
-      if(body.previewOnly === true) return reply.code(201).send({plan});
+      if(body.previewOnly === true) return reply.code(201).send({plan:consoleConfigPlan(plan)});
       const applied = await this.applyConfigurationPlan(plan.id, { confirmed: true });
       return reply.code(201).send({ profile: { id: body.id, provider: "codex", alias: body.alias, runnerId: body.runnerId ?? "local", state: body.enabled === false ? "DISABLED" : "CONFIGURED" }, revision: applied.revision });
     });
@@ -2878,7 +2878,7 @@ export class ControllerService {
         if(body.baseRevision!==actual) throw new RevisionConflictError(body.baseRevision,actual);
       }
       const plan = await this.planConfiguration(next, this.principalFor(request).id, "web");
-      if(body.previewOnly === true) return reply.code(201).send({plan});
+      if(body.previewOnly === true) return reply.code(201).send({plan:consoleConfigPlan(plan)});
       const applied = await this.applyConfigurationPlan(plan.id, { confirmed: true });
       return reply.code(201).send({ profile: { id: body.id, provider: "qoder", alias: body.alias, runnerId: body.runnerId ?? "local", state: "CONFIGURED" }, discovery: discovery.selected, revision: applied.revision });
     });
@@ -2947,7 +2947,7 @@ export class ControllerService {
         if(body.baseRevision!==actual) throw new RevisionConflictError(body.baseRevision,actual);
       }
       const plan = await this.planConfiguration(next, this.principalFor(request).id, "web");
-      if(body.previewOnly === true) return reply.code(201).send({plan});
+      if(body.previewOnly === true) return reply.code(201).send({plan:consoleConfigPlan(plan)});
       const applied = await this.applyConfigurationPlan(plan.id, { confirmed: true });
       return reply.code(201).send({ profile: { id: body.id, provider, alias: body.alias, runnerId: body.runnerId ?? "local", state: body.enabled === false ? "DISABLED" : this.agentAdapters.has(body.id) ? "CONFIGURED" : "UNAVAILABLE" }, revision: applied.revision });
     });
@@ -3412,14 +3412,15 @@ export class ControllerService {
       const applied=await this.applyConfigurationPlan(request.params.id, confirmed === undefined ? {} : { confirmed });
       return {...applied,...(request.query.view==="console"?consoleConfig(applied.config):{}),planId:request.params.id,state:this.configuration.getPlan(request.params.id)?.state,currentRevision:applied.revision,...(before?{appliedRevision:before.baseRevision+1,repeated:before.state==="APPLIED"}:{})};
     });
-    this.app.post<{ Params: { id: string } }>("/api/config/plans/:id/rollback", async (request) =>
-      this.rollbackConfigurationPlan(request.params.id),
-    );
+    this.app.post<{ Params: { id: string };Querystring:{view?:string} }>("/api/config/plans/:id/rollback", async (request,reply) => {
+      if(request.query.view!==undefined&&request.query.view!=="console")return reply.code(400).send({code:"CONFIG_VIEW_INVALID"});
+      const result=await this.rollbackConfigurationPlan(request.params.id);return {...result,...(request.query.view==="console"?consoleConfig(result.config):{})};
+    });
 
-    this.app.get("/api/setup", async () => ({
-      state: this.database.getWizardState() ?? { step: 0, configRevision: this.configuration.current().revision, completed: false },
-      config: this.configuration.current(),
-    }));
+    this.app.get<{Querystring:{view?:string}}>("/api/setup", async (request,reply) => {
+      if(request.query.view!==undefined&&request.query.view!=="console")return reply.code(400).send({code:"CONFIG_VIEW_INVALID"});
+      const current=this.configuration.current();return {state:this.database.getWizardState()??{step:0,configRevision:current.revision,completed:false},config:request.query.view==="console"?{...current,...consoleConfig(current.config)}:current};
+    });
     this.app.post<{ Body: WizardBody }>("/api/setup", async (request, reply) => {
       const currentRevision = this.configuration.current().revision;
       const step = request.body?.step;

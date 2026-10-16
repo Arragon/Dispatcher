@@ -46,7 +46,7 @@ it("retains hidden settings and invalidates a reviewed plan after the draft chan
   const { default: SettingsPage } = await import("../src/SettingsPage.js");
   const posted: unknown[] = [];
   const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-    if (input === "/api/config") return new Response(JSON.stringify({ revision: 1, config: { schemaVersion: 1, controller: { id: "original" }, agentProfiles: [{id: "kite", enabled: false}], repositories: [{id: "repo", root: "/private/repo"}] } }));
+    if (input === "/api/config?view=console") return new Response(JSON.stringify({ revision: 1, config: { schemaVersion: 1, controller: { id: "original" }, agentProfiles: [{id: "kite", enabled: false}], repositories: [{id: "repo", root: "/private/repo"}] } }));
     if (input === "/api/config/schema") return new Response(JSON.stringify({
       schema: { type: "object", properties: {
         schemaVersion: { const: 1 },
@@ -63,7 +63,7 @@ it("retains hidden settings and invalidates a reviewed plan after the draft chan
   await userEvent.clear(id); await userEvent.type(id,"changed");
   await userEvent.click(screen.getByRole("button", {name:"预览配置变更"}));
   expect(await screen.findByRole("button", {name:"确认并应用"})).toBeTruthy();
-  expect(posted[0]).toMatchObject({ config: {controller:{id:"changed"},agentProfiles:[{id:"kite",enabled:false}],repositories:[{id:"repo",root:"/private/repo"}]} });
+  expect(posted[0]).toEqual({baseRevision:1,edits:[{op:"replace",path:"/controller/id",value:"changed"}]});
   await userEvent.type(id,"2");
   expect(screen.queryByRole("button", {name:"确认并应用"})).toBeNull();
   await userEvent.click(screen.getByRole("button", {name:"Agent 账号"}));
@@ -145,4 +145,18 @@ it("offers recovery instead of a blank console after a page render failure", asy
   render(<ConsoleBoundary><BrokenPage /></ConsoleBoundary>);
   expect(screen.getByRole("alert").textContent).toContain("页面加载失败");
   expect(screen.getByRole("button",{name:"刷新页面"})).toBeTruthy();
+});
+
+it("shows the native enabled default without adding an untouched enabled edit",async()=>{
+  const {default:SettingsPage}=await import("../src/SettingsPage.js"),posted:Array<{edits:Array<Record<string,unknown>>}>=[];
+  vi.spyOn(globalThis,"fetch").mockImplementation(async(input,init)=>{
+    if(String(input)==="/api/config/schema")return new Response(JSON.stringify({schema:{type:"object",properties:{agentProfiles:{type:"array",items:{type:"object",properties:{id:{type:"string"},alias:{type:"string",title:"Alias"},enabled:{type:"boolean"}}}}}},uiSchema:{}}));
+    if(init?.method==="POST"){posted.push(JSON.parse(String(init.body)));return new Response(JSON.stringify({plan:{id:"safe",risk:"sensitive",requiresConfirmation:true,changes:[{path:"/agentProfiles"}]}}));}
+    return new Response(JSON.stringify({revision:1,config:{agentProfiles:[{id:"a",alias:"Before"}]}}));
+  });
+  render(<QueryClientProvider client={new QueryClient({defaultOptions:{queries:{retry:false}}})}><SettingsPage sectionId="agentProfiles" embedded/></QueryClientProvider>);
+  const field=await screen.findByLabelText("Alias");expect((screen.getByRole("checkbox",{name:"启用"}) as HTMLInputElement).checked).toBe(true);
+  await userEvent.clear(field);await userEvent.type(field,"After");await userEvent.click(screen.getByRole("button",{name:"预览配置变更"}));await screen.findByRole("button",{name:"确认并应用"});
+  expect(posted[0]!.edits).toEqual([{op:"replace",path:"/agentProfiles/0/alias",entityId:"a",value:"After"}]);
+  await userEvent.click(screen.getByRole("checkbox",{name:"启用"}));await userEvent.click(screen.getByRole("button",{name:"预览配置变更"}));await screen.findByRole("button",{name:"确认并应用"});expect(posted[1]!.edits).toContainEqual({op:"add",path:"/agentProfiles/0/enabled",entityId:"a",value:false});
 });

@@ -489,3 +489,8 @@
   values are preserved by applying revision-bound leaf edits to the real server
   document. Bind array edits to entity IDs as well as their same-revision index;
   normalization sorts configured entity arrays after validation.
+
+- Native profile enabled omission means true. RJSF's generic checkbox displays
+  undefined as false; wrap its existing checkbox for that field's presentation,
+  without adding a default to form data. Otherwise a harmless edit can appear to
+  disable an account or manufacture an untouched configuration change.

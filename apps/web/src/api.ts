@@ -1,3 +1,4 @@
+import { configurationEdits } from "./config-edits.js";
 import type { QueryClient } from "@tanstack/react-query";
 
 /** All projections affected by an applied configuration share this refresh boundary. */
@@ -29,6 +30,12 @@ export interface ConfigResponse<T = Record<string, unknown>> {
   revision: number;
   config: T;
   updatedAt: string;
+  protectedPaths?:string[];
+}
+
+export interface ConfigurationPlan {id:string;risk:string;requiresConfirmation:boolean;changes:Array<{path:string}>}
+export function createConfigurationPlan<T>(baseline:Pick<ConfigResponse<T>,"revision"|"config">,proposed:T):Promise<{plan:ConfigurationPlan}>{
+  return api("/api/config/plans",{method:"POST",body:JSON.stringify({baseRevision:baseline.revision,edits:configurationEdits(baseline.config,proposed)})});
 }
 
 export const AUTH_REQUIRED_EVENT = "dispatcher:auth-required";

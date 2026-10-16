@@ -13,7 +13,7 @@ function consoleValue(input:unknown):{value:unknown;protectedPaths:string[]}{
   const visit=(value:unknown,path:string):unknown=>{
     if(Array.isArray(value))return value.map((entry,index)=>visit(entry,`${path}/${index}`));
     if(!object(value))return value;
-    const result:Record<string,unknown>=Object.create(null) as Record<string,unknown>;for(const [key,entry] of Object.entries(value)){const location=`${path}/${pointer(key)}`;if(privateKey(key)||key!=="credentialRef"&&(containsSecretLike({[key]:"config-value"})||typeof entry==="string"&&containsSecretLike(entry))){protectedPaths.push(location);continue;}result[key]=visit(entry,location);}return result;
+    const result:Record<string,unknown>=Object.create(null) as Record<string,unknown>;for(const [key,entry] of Object.entries(value)){const location=`${path}/${pointer(key)}`;if(privateKey(key)||key!=="credentialRef"&&(containsSecretLike({[key]:"config-value"})||typeof entry==="string"&&containsSecretLike(entry)||Array.isArray(entry)&&entry.some(item=>typeof item==="string"&&containsSecretLike(item)))){protectedPaths.push(location);continue;}result[key]=visit(entry,location);}return result;
   };
   return {value:visit(input,""),protectedPaths};
 }

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { api, refreshConfiguration, type ConfigResponse } from "./api.js";
+import { api, createConfigurationPlan, refreshConfiguration, type ConfigResponse } from "./api.js";
 import { Icon, Notice } from "./ui.js";
 
 interface WizardPlan {id:string;requiresConfirmation:boolean;risk:string;changes:Array<{path:string}>}
@@ -22,7 +22,7 @@ const steps = ["控制台身份", "本地管理", "运行设备", "集成", "内
 export default function SetupWizard(): React.JSX.Element {
   const client=useQueryClient();
   const [plan,setPlan]=useState<WizardPlan>();
-  const setup = useQuery({ queryKey: ["setup"], queryFn: () => api<SetupResponse>("/api/setup"), retry: false });
+  const setup = useQuery({ queryKey: ["setup"], queryFn: () => api<SetupResponse>("/api/setup?view=console"), retry: false });
   const [busy, setBusy] = useState(false);
   const [step, setStep] = useState(0);
   const [controllerId, setControllerId] = useState("");
@@ -42,16 +42,16 @@ export default function SetupWizard(): React.JSX.Element {
     try {
       let revision = setup.data.config.revision;
       if (step === 0 || step === 2) {
-        const latest = await api<ConfigResponse>("/api/config");
+        const latest = await api<ConfigResponse>("/api/config?view=console");
         if (latest.revision !== revision) throw new Error("配置版本已改变，请重新打开向导后继续。");
         const next = structuredClone(setup.data.config.config);
         if(step===0)next.controller.id = controllerId;
         if (step===2 && next.runners[0]) next.runners[0].displayName = runnerName;
         if(!plan){
-          const built=await api<{plan:WizardPlan}>("/api/config/plans",{method:"POST",body:JSON.stringify({config:next,baseRevision:revision})});
+          const built=await createConfigurationPlan(latest,next);
           if(built.plan.changes.length){setPlan(built.plan);setMessage("请审阅本步骤的配置计划，确认后才会应用。");return;}
         }else{
-          const applied=await api<{revision:number}>(`/api/config/plans/${plan.id}/apply`,{method:"POST",body:JSON.stringify({confirmed:plan.requiresConfirmation})});
+          const applied=await api<{revision:number}>(`/api/config/plans/${plan.id}/apply?view=console`,{method:"POST",body:JSON.stringify({confirmed:plan.requiresConfirmation})});
           revision=applied.revision;setPlan(undefined);
         }
       }

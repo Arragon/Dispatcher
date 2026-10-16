@@ -3,9 +3,9 @@ import { useEffect, useRef, useState } from "react";
 import Ajv2020 from "ajv/dist/2020.js";
 import Form from "@rjsf/core";
 import { customizeValidator } from "@rjsf/validator-ajv8";
-import type { RJSFSchema, UiSchema } from "@rjsf/utils";
+import type { RJSFSchema, UiSchema, WidgetProps } from "@rjsf/utils";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, ApiError, refreshConfiguration, AUTH_REQUIRED_EVENT, type ConfigResponse } from "./api.js";
+import { api, createConfigurationPlan, ApiError, refreshConfiguration, AUTH_REQUIRED_EVENT, type ConfigResponse } from "./api.js";
 import { Icon, Notice } from "./ui.js";
 import { SecureInput } from "./App.js";
 interface SchemaResponse { schema: RJSFSchema; uiSchema: UiSchema }
@@ -20,6 +20,10 @@ function displaySchema(schema:RJSFSchema):RJSFSchema {
   if(schema.properties) result.properties=Object.fromEntries(Object.entries(schema.properties).map(([key,value])=>[key,typeof value === "object" ? {...displaySchema(value),title:(value.title?schemaTitles[value.title]??value.title:fieldLabels[key]??key)} : value]));
   if(schema.items && typeof schema.items === "object" && !Array.isArray(schema.items)) result.items=displaySchema(schema.items);
   return result;
+}
+function NativeEnabledWidget(props:WidgetProps):React.JSX.Element {
+  const Checkbox=props.registry.widgets.CheckboxWidget!;
+  return <Checkbox {...props} value={props.value??true} hideLabel/>;
 }
 function OwnerPasswordSettings(): React.JSX.Element {
   const input = useRef<HTMLInputElement>(null);
@@ -45,7 +49,7 @@ function OwnerPasswordSettings(): React.JSX.Element {
 }
 export default function SettingsPage({sectionId, embedded = false,onDraftChange}: {sectionId?: string; embedded?: boolean;onDraftChange?:(draft:Record<string,unknown>)=>void} = {}): React.JSX.Element {
   const client = useQueryClient();
-  const configQuery = useQuery({ queryKey: ["config"], queryFn: () => api<ConfigResponse<ConfigDocument>>("/api/config") });
+  const configQuery = useQuery({ queryKey: ["config"], queryFn: () => api<ConfigResponse<ConfigDocument>>("/api/config?view=console") });
   const schemaQuery = useQuery({ queryKey: ["config-schema"], queryFn: () => api<SchemaResponse>("/api/config/schema") });
   const dirty = useRef(false);
   const [section, setSection] = useState(sectionId ?? "");
@@ -73,9 +77,9 @@ export default function SettingsPage({sectionId, embedded = false,onDraftChange}
     if (busy) return;
     setBusy(true); setPlan(undefined); setMessage("正在校验完整配置…");
     try {
-      const latest = await api<ConfigResponse<ConfigDocument>>("/api/config");
+      const latest = await api<ConfigResponse<ConfigDocument>>("/api/config?view=console");
       if (latest.revision !== baseRevision.current) { setConflict(true); throw new Error("配置版本已改变。请重新载入当前配置后再编辑，现有草稿尚未提交。"); }
-      const response = await api<{ plan: Plan }>("/api/config/plans", { method: "POST", body: JSON.stringify({ config: draft ?? configQuery.data?.config, baseRevision: baseRevision.current, actor: "local-web" }) });
+      const response = await createConfigurationPlan(latest,draft??latest.config);
       setPlan(response.plan); setAppliedPlanId(undefined);
       setMessage(response.plan.changes.length === 0 ? "配置与当前版本一致。" : "计划已生成，请审阅变更和风险。");
     } catch (error) { setMessage(error instanceof Error ? error.message : "配置校验失败"); }
@@ -85,7 +89,7 @@ export default function SettingsPage({sectionId, embedded = false,onDraftChange}
     if (!plan || busy) return;
     setBusy(true); setMessage("正在应用并验证…");
     try {
-      await api(`/api/config/plans/${plan.id}/apply`, { method: "POST", body: JSON.stringify({ confirmed: plan.requiresConfirmation }) });
+      await api(`/api/config/plans/${plan.id}/apply?view=console`, { method: "POST", body: JSON.stringify({ confirmed: plan.requiresConfirmation }) });
       setAppliedPlanId(plan.id); setPlan(undefined); dirty.current = false;
       await configQuery.refetch(); await refreshConfiguration(client); setMessage("配置已应用并记录审计。");
     } catch (error) { setMessage(error instanceof Error ? error.message : "应用失败，请检查当前配置版本。"); if(error instanceof ApiError && error.status===409) {setConflict(true);setPlan(undefined);} }
@@ -95,7 +99,7 @@ export default function SettingsPage({sectionId, embedded = false,onDraftChange}
     if (!appliedPlanId || busy) return;
     setBusy(true); setMessage("正在回滚并验证…");
     try {
-      await api(`/api/config/plans/${appliedPlanId}/rollback`, { method: "POST" });
+      await api(`/api/config/plans/${appliedPlanId}/rollback?view=console`, { method: "POST" });
       setAppliedPlanId(undefined); setPlan(undefined); dirty.current = false;
       await configQuery.refetch(); await refreshConfiguration(client); setMessage("配置已回滚并记录审计。");
     } catch (error) { setMessage(error instanceof Error ? error.message : "回滚失败，当前版本保留。"); }
@@ -117,7 +121,7 @@ export default function SettingsPage({sectionId, embedded = false,onDraftChange}
   return <section aria-label={embedded ? `${sectionNames[sectionId ?? ""] ?? "配置"}编辑` : "设置"}>{!embedded && <header className="page-header"><div><h1>设置</h1><p>按分区编辑草稿，审阅变更后再应用。配置版本 {configQuery.data.revision}</p></div><span className="pill"><Icon name="shield" size={12}/>ConfigPlan</span></header>}
     <div className={embedded ? "" : "settings-workspace"}>
     {!sectionId && <nav className="settings-sections" aria-label="设置分区">{sections.map((key) => <button key={key} disabled={busy} aria-pressed={currentSection === key} onClick={() => setSection(key)}>{sectionNames[key] ?? key}</button>)}</nav>}
-    <div className={embedded ? "settings-layout embedded-settings" : "settings-layout"}><div className="panel config-form"><Form key={currentSection ?? "all"} schema={sectionSchema} uiSchema={{...schemaQuery.data.uiSchema,policies:{...schemaQuery.data.uiSchema.policies,modelRouting:{"ui:field":"PolicyRoutingField"}}}} fields={{PolicyRoutingField}} validator={validator} formData={currentSection ? { [currentSection]: currentDraft[currentSection] } : currentDraft} disabled={busy} noHtml5Validate experimental_defaultFormStateBehavior={{ emptyObjectFields: "skipDefaults", arrayMinItems: { populate: "never" }, allOf: "skipDefaults" }} onChange={({ formData }) => edit(formData as Record<string, unknown>)} onSubmit={() => void buildPlan()}><button type="submit" className="primary" disabled={busy}>预览配置变更</button></Form><Notice>其他分区的草稿保留；计划校验完整配置，审阅后才会生效。</Notice></div>
+    <div className={embedded ? "settings-layout embedded-settings" : "settings-layout"}><div className="panel config-form"><Form key={currentSection ?? "all"} schema={sectionSchema} uiSchema={{...schemaQuery.data.uiSchema,agentProfiles:{...schemaQuery.data.uiSchema.agentProfiles,items:{...(schemaQuery.data.uiSchema.agentProfiles?.items as UiSchema),enabled:{"ui:widget":"NativeEnabled"}}},policies:{...schemaQuery.data.uiSchema.policies,modelRouting:{"ui:field":"PolicyRoutingField"}}}} fields={{PolicyRoutingField}} widgets={{NativeEnabled:NativeEnabledWidget}} validator={validator} formData={currentSection ? { [currentSection]: currentDraft[currentSection] } : currentDraft} disabled={busy} noHtml5Validate experimental_defaultFormStateBehavior={{ emptyObjectFields: "skipDefaults", arrayMinItems: { populate: "never" }, allOf: "skipDefaults" }} onChange={({ formData }) => edit(formData as Record<string, unknown>)} onSubmit={() => void buildPlan()}><button type="submit" className="primary" disabled={busy}>预览配置变更</button></Form><Notice>其他分区的草稿保留；私有账号目录已隐藏并保留，修改时需明确重新填写。审阅后才会生效。</Notice></div>
     <aside className="settings-aside"><div className="panel plan-card" aria-live="polite"><h2>{plan ? "审阅配置计划" : appliedPlanId ? "已应用的计划" : "尚无待应用计划"}</h2><p>{message || "编辑字段后生成计划，草稿不会自动生效。"}</p>{conflict && <button disabled={busy} onClick={()=>void reloadCurrent()}>重新载入当前配置</button>}{plan && <><p>风险：{plan.risk} · {plan.changes.length} 项变更</p><ul className="plan-changes">{plan.changes.map((change, index) => <li key={index}>{change.path}</li>)}</ul></>}{plan && plan.changes.length > 0 && <button disabled={busy} className="primary" onClick={() => void applyPlan()}>{plan.requiresConfirmation ? "确认并应用" : "应用计划"}</button>}{appliedPlanId && <button disabled={busy} onClick={() => void rollbackPlan()}>回滚上次计划</button>}</div>
     {!embedded && <OwnerPasswordSettings />}
     {!embedded && currentDraft.integrations?.linear && <fieldset disabled={busy} className="panel"><h2>安全凭据</h2><p>凭据直接存入安全存储，不进入普通配置草稿。</p><SecureInput namespace="linear" name="main" label="Linear credential" onStored={(reference) => updateLinearCredential(reference)} onDeleted={() => updateLinearCredential()} /></fieldset>}</aside></div></div>

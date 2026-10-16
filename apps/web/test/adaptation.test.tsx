@@ -34,7 +34,7 @@ it("reviews a Harness configuration plan and routes trials through canonical pub
   const posted:Array<{path:string;body:Record<string,unknown>}>=[];
   vi.spyOn(globalThis,"fetch").mockImplementation(async(input,init)=>{
     const path=String(input);
-    if(init?.method==="POST"){posted.push({path,body:JSON.parse(String(init.body))});return new Response(JSON.stringify(path.endsWith("/apply")?{revision:2}:{plan:{id:"review",risk:"sensitive",requiresConfirmation:true,changes:[{path:"agentProfiles"}]}}));}
+    if(init?.method==="POST"){posted.push({path,body:JSON.parse(String(init.body))});return new Response(JSON.stringify(path.split("?")[0]!.endsWith("/apply")?{revision:2}:{plan:{id:"review",risk:"sensitive",requiresConfirmation:true,changes:[{path:"agentProfiles"}]}}));}
     return new Response(JSON.stringify(path.includes("manifests")?{manifests:[{id:"codex",displayName:"Codex",platforms:[],configSchema:{type:"object",properties:{id:{type:"string",title:"账号 ID"},alias:{type:"string",title:"别名"},codexHome:{type:"string",title:"配置目录"}}},uiSchema:{},secretFields:[],backends:[],capabilities:{}}]}:path.includes("compatibility")?{matrix:[]}:{revision:1,profiles:[],sessions:[]}));
   });
   mount(<AgentsPage/>);
@@ -44,7 +44,7 @@ it("reviews a Harness configuration plan and routes trials through canonical pub
   expect(await screen.findByRole("button",{name:"确认保存账号"})).toBeTruthy();
   expect(posted).toEqual([{path:"/api/agents/codex/profiles",body:expect.objectContaining({previewOnly:true,baseRevision:1})}]);
   await userEvent.click(screen.getByRole("button",{name:"确认保存账号"}));
-  expect(posted[1]).toMatchObject({path:"/api/config/plans/review/apply",body:{confirmed:true}});
+  expect(posted[1]).toMatchObject({path:"/api/config/plans/review/apply?view=console",body:{confirmed:true}});
   await userEvent.click(screen.getByRole("button",{name:"试运行"}));
   expect(await screen.findByRole("link",{name:"前往发布并预检"})).toHaveProperty("href",expect.stringContaining("/publish"));
   expect(posted.some(entry=>entry.path.endsWith("/runs"))).toBe(false);
@@ -55,7 +55,7 @@ it("previews wizard changes before applying and persists the applied revision",a
   vi.spyOn(globalThis,"fetch").mockImplementation(async(input,init)=>{
     const path=String(input);const config={revision:4,config:{controller:{id:"local",adminStrategy:"local"},runners:[{displayName:"My runner"}]}};
     if(init?.method==="POST"){posts.push({path,body:JSON.parse(String(init.body))});return new Response(JSON.stringify(path.endsWith("/plans")?{plan:{id:"step-plan",requiresConfirmation:true,risk:"sensitive",changes:[{path:"controller.id"}]}}:{revision:5}));}
-    return new Response(JSON.stringify(path==="/api/setup"?{state:{step:0,configRevision:4,completed:false},config}:config));
+    return new Response(JSON.stringify(path==="/api/setup?view=console"?{state:{step:0,configRevision:4,completed:false},config}:config));
   });
   mount(<SetupWizard/>);await userEvent.type(await screen.findByLabelText("Controller ID"),"-new");await userEvent.click(screen.getByRole("button",{name:"保存并继续"}));
   expect(await screen.findByText("审阅本步骤配置")).toBeTruthy();expect(posts).toHaveLength(1);expect(posts[0]?.body.baseRevision).toBe(4);
@@ -70,7 +70,7 @@ it("validates and reviews a native default without applying a one-run selection 
   mount(<ModelsPage/>,"/models?profile=account");await screen.findByRole("option",{name:"repo"});await userEvent.selectOptions(screen.getByLabelText("项目仓库"),"repo");await screen.findByRole("option",{name:/Native model/});await userEvent.selectOptions(screen.getByLabelText("原生模型"),"native-model");
   expect(posts).toHaveLength(0);await userEvent.click(screen.getByRole("button",{name:"将所选模型设为账号默认…"}));
   expect(await screen.findByRole("dialog",{name:"审阅账号默认模型"})).toBeTruthy();
-  expect(posts[0]).toMatchObject({path:"/api/config/plans",body:{baseRevision:8,config:{controller:{id:"keep"},agentProfiles:[{settings:{model:"native-model",codexHome:"/private/keep"}}]}}});
+  expect(posts[0]).toMatchObject({path:"/api/config/plans",body:{baseRevision:8,edits:[{op:"replace",path:"/agentProfiles/0/settings/model",entityId:"account",value:"native-model"}]}});
   expect(posts).toHaveLength(1);
 });
 
@@ -101,7 +101,7 @@ it("reloads conflicted internal-model drafts from a structurally unchanged cache
 });
 it("locks wizard inputs while its reviewed configuration is being prepared",async()=>{
   const {default:SetupWizard}=await import("../src/SetupWizard.js");
-  vi.spyOn(globalThis,"fetch").mockImplementation(async(input,init)=>{if(init?.method==="POST")return new Promise<Response>(()=>undefined);const config={revision:1,config:{controller:{id:"controller",adminStrategy:"local"},runners:[{displayName:"Local"}]}};return new Response(JSON.stringify(String(input)==="/api/setup"?{state:{step:0,completed:false},config}:config));});
+  vi.spyOn(globalThis,"fetch").mockImplementation(async(input,init)=>{if(init?.method==="POST")return new Promise<Response>(()=>undefined);const config={revision:1,config:{controller:{id:"controller",adminStrategy:"local"},runners:[{displayName:"Local"}]}};return new Response(JSON.stringify(String(input)==="/api/setup?view=console"?{state:{step:0,completed:false},config}:config));});
   mount(<SetupWizard/>);const field=await screen.findByLabelText("Controller ID");await userEvent.type(field,"-a");await userEvent.click(screen.getByRole("button",{name:"保存并继续"}));
   expect(field).toHaveProperty("disabled",true);
 });

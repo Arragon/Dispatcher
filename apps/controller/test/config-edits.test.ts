@@ -32,6 +32,8 @@ it("builds revision-bound console edits through ConfigPlan and recovers safe pla
   try{
     service.configuration.applyPlan(service.configuration.buildPlan(config(),"test","cli").id,{confirmed:true});await service.start({listen:false});
     const read=(await service.app.inject({headers,url:"/api/config?view=console"})).json();expect(JSON.stringify(read)).not.toContain("/private/");expect(read.protectedPaths).toContain("/agentProfiles/0/settings/codexHome");
+    expect(JSON.stringify((await service.app.inject({headers,url:"/api/setup?view=console"})).json())).not.toContain("/private/");
+    const preview=await service.app.inject({headers,method:"POST",url:"/api/agents/codex/profiles",payload:{id:"new",alias:"New",codexHome:"/private/new",baseRevision:read.revision,previewOnly:true}});expect(preview.statusCode).toBe(201);expect(JSON.stringify(preview.json())).not.toContain("/private/");
     const edit={op:"replace",path:"/agentProfiles/0/alias",value:"Safe alias",entityId:"account"};
     for(const body of [{edits:[edit]},{baseRevision:0,edits:[edit]},{baseRevision:read.revision,config:read.config,edits:[edit]}])expect((await service.app.inject({method:"POST",url:"/api/config/plans",headers,payload:body})).statusCode).toBeGreaterThanOrEqual(400);
     const built=await service.app.inject({method:"POST",url:"/api/config/plans",headers,payload:{baseRevision:read.revision,edits:[edit]}});expect(built.statusCode).toBe(201);expect(JSON.stringify(built.json())).not.toContain("/private/");
@@ -43,4 +45,8 @@ it("builds revision-bound console edits through ConfigPlan and recovers safe pla
     const replay=await service.app.inject({method:"POST",url:`/api/config/plans/${planId}/apply?view=console`,headers,payload:{confirmed:true}});expect(replay.json()).toMatchObject({repeated:true,appliedRevision:read.revision+1,currentRevision:read.revision+2});expect(JSON.stringify(replay.json())).not.toContain("/private/");
 
   }finally{await service.stop();rmSync(directory,{recursive:true,force:true});}
+});
+
+it("omits secret-like field names and literal secrets inside argument arrays",()=>{
+  const c=config();c.agentProfiles[0]!.settings={api_key:"sk-private-key-12345678",args:["--key","sk-private-key-12345678"],environment:{TOKEN:"private"},model:"native"};const view=consoleConfig(c);expect(view.config.agentProfiles[0]!.settings).toEqual({model:"native"});expect(JSON.stringify(view)).not.toContain("sk-private-key");expect(view.protectedPaths).toContain("/agentProfiles/0/settings/args");
 });

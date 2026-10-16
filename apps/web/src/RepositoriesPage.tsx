@@ -8,7 +8,7 @@ import { safeLink } from "./task-view.js";
 const SettingsPage=lazy(()=>import("./SettingsPage.js"));
 interface Repository {id:string;root:string;remote?:string;defaultBaseRef:string;scopePaths:string[];verificationCommands:Array<{id:string;file:string;args:string[];required:boolean}>}
 export default function RepositoriesPage():React.JSX.Element {
-  const query=useQuery({queryKey:["config"],queryFn:()=>api<ConfigResponse<{repositories:Repository[]}>>("/api/config")});
+  const query=useQuery({queryKey:["config"],queryFn:()=>api<ConfigResponse<{repositories:Repository[]}>>("/api/config?view=console")});
   const [search,setSearch]=useState("");const [editor,setEditor]=useState(false);
   if(query.isLoading)return <div className="page-state" role="status">正在读取项目仓库…</div>;
   if(query.error || !query.data)return <div className="page-state error" role="alert">项目仓库读取失败。<button onClick={()=>void query.refetch()}>重试</button></div>;

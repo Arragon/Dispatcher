@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useRef, useState, type FormEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, ApiError, refreshConfiguration } from "./api.js";
+import { api, createConfigurationPlan, ApiError, refreshConfiguration } from "./api.js";
 import { Drawer } from "./Drawer.js";
 import { SecureInput } from "./App.js";
 import { Icon, Notice, Tabs } from "./ui.js";
@@ -44,9 +44,9 @@ export default function LlmPage(): React.JSX.Element {
     if (!draft || busy) return;
     setBusy(true); setMessage("正在校验模型配置…");
     try {
-      const current = await api<{ revision: number; config: Record<string, unknown> }>("/api/config");
+      const current = await api<{ revision: number; config: Record<string, unknown> }>("/api/config?view=console");
       if (current.revision !== baseRevision.current) throw new Error("配置版本已改变，请重新载入后再编辑。");
-      const result = await api<{ plan: NonNullable<typeof plan> }>("/api/config/plans", { method: "POST", body: JSON.stringify({ config: { ...current.config, internalLlm: draft }, baseRevision:baseRevision.current, actor: "local-web" }) });
+      const result = await createConfigurationPlan(current,{...current.config,internalLlm:draft});
       setPlan(result.plan); setDrawer("review"); setMessage("请审阅变更后确认应用。");
     } catch (error) { setConflict(true);setMessage(error instanceof Error ? error.message : "配置校验失败"); }
     finally { setBusy(false); }
@@ -55,7 +55,7 @@ export default function LlmPage(): React.JSX.Element {
     if (!plan || busy) return;
     setBusy(true);
     try {
-      await api(`/api/config/plans/${plan.id}/apply`, { method: "POST", body: JSON.stringify({ confirmed: plan.requiresConfirmation }) });
+      await api(`/api/config/plans/${plan.id}/apply?view=console`, { method: "POST", body: JSON.stringify({ confirmed: plan.requiresConfirmation }) });
       dirty.current = false; setPlan(undefined); setDrawer(undefined); await query.refetch(); await refreshConfiguration(client); setMessage("模型配置已应用。");
     } catch (error) { setMessage(error instanceof Error ? error.message : "应用失败");if(error instanceof ApiError&&error.status===409){setConflict(true);setPlan(undefined);setDrawer(undefined);} }
     finally { setBusy(false); }

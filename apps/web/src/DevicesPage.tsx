@@ -8,7 +8,7 @@ const SettingsPage = lazy(() => import("./SettingsPage.js"));
 interface RunnerConfig { id:string; displayName:string; mode:string; capacity:number; tags:string[] }
 interface Config {runners:RunnerConfig[];agentProfiles:Array<{id:string;runnerId:string}>}
 export default function DevicesPage(): React.JSX.Element {
-  const config = useQuery({queryKey:["config"],queryFn:()=>api<ConfigResponse<Config>>("/api/config")});
+  const config = useQuery({queryKey:["config"],queryFn:()=>api<ConfigResponse<Config>>("/api/config?view=console")});
   const registry = useQuery({queryKey:["runners"],queryFn:()=>api<{runners:RunnerSummary[]}>("/api/runners")});
   useEffect(()=>subscribeToEvents(()=>void registry.refetch()),[registry.refetch]);
   const [editor, setEditor] = useState(false);

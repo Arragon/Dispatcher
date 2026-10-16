@@ -96,7 +96,7 @@ describe("Dashboard shell", () => {
 
   it("submits the shared Draft 2020-12 schema through RJSF", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-      if (input === "/api/config") {
+      if (input === "/api/config?view=console") {
         return new Response(JSON.stringify({ revision: 0, updatedAt: "2026-09-16T00:00:00.000Z", config: { schemaVersion: 1 } }), { status: 200 });
       }
       if (input === "/api/config/schema") {
