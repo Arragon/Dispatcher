@@ -1,5 +1,6 @@
 import { resolveProfileExecutionContext } from "./execution-context.js";
 import { ProfileProbeService } from "./profile-probes.js";
+import {RunInputReceipts,InputReceiptError,type RunInputIdentity} from "./run-inputs.js";
 import type { ProfileConsoleView } from "@dispatcher/domain";
 import { applyConfigEdits, consoleConfig, consoleConfigPlan } from "./config-edits.js";
 import {qualifyRoutingPolicy,type PolicyConfigEvidence} from "./policy-config.js";
@@ -231,12 +232,13 @@ const CREDENTIAL_PATTERN = /(?:sk-|xox[baprs]-|gh[op]_)[a-z0-9_-]{8,}/i;
 const ADVANCEABLE_RUN_STATES = new Set<Run["state"]>(["ACTIVE", "VERIFYING", "DELIVERING"]);
 
 class DatabaseSessionStore implements SessionStore {
-  constructor(private readonly database: DispatcherDatabase) {}
+  constructor(private readonly database: DispatcherDatabase,private readonly beforeSpawn?:(session:AdapterSession)=>void) {}
   load(id: string): AdapterSession | undefined {
     const value = this.database.getEntity<JsonValue>("adapter-session", id);
     return value as unknown as AdapterSession | undefined;
   }
   save(session: AdapterSession): void {
+    if(session.state==="STARTING")this.beforeSpawn?.(session);
     this.database.saveEntity("adapter-session", session.id, JSON.parse(JSON.stringify(session)) as JsonValue, session.updatedAt);
   }
 }
@@ -469,6 +471,7 @@ export class ControllerService {
   private readonly leaseAuthority = new RunnerLeaseAuthority();
   private readonly pendingConsoleInputs = new Set<string>();
   private readonly profileProbes:ProfileProbeService;
+  private readonly runInputs:RunInputReceipts;
   private readonly secureLinks: SecureDashboardLinkIssuer;
   private readonly messagingChannels = new Map<string, string>();
   private readonly agentAdapters = new Map<string, AgentAdapter>();
@@ -503,6 +506,7 @@ export class ControllerService {
     this.app = fastify({ loggerInstance: logger as unknown as FastifyBaseLogger, ajv: {customOptions:{coerceTypes:false,removeAdditional:false}} });
     this.database = new DispatcherDatabase(join(options.dataDirectory, "dispatcher.sqlite"));
     this.profileProbes=new ProfileProbeService(this.database,()=>this.now());
+    this.runInputs=new RunInputReceipts(this.database,()=>this.now());
     this.agentProcesses = new ProcessManager(join(options.dataDirectory, "agent-logs"));
     this.enrollments = new RunnerEnrollmentAuthority(
       this.database.listEntities<JsonValue>("runner-enrollment") as unknown as RunnerEnrollmentRecord[],
@@ -994,7 +998,12 @@ export class ControllerService {
     for (const id of this.nativeProfileConfigurations.keys()) {
       if (!retainedNativeAdapters.has(id)) this.nativeProfileConfigurations.delete(id);
     }
-    const store = new DatabaseSessionStore(this.database);
+    const store = new DatabaseSessionStore(this.database,session=>{
+      const run=this.database.getEntity<JsonValue>("run",session.runId) as unknown as Run|undefined;if(!run)return;
+      const task=this.database.getCanonicalTask<JsonValue>(run.taskId)?.document as unknown as Task|undefined;
+      if(task?.currentRunId!==run.id||run.profileId!==session.profileId||isTerminalRunState(run.state))throw new AdapterContractError("SESSION_DETACHED","Canonical native startup authority changed");
+      this.restoreLeaseAuthority(run);this.leaseAuthority.fence(run.id,run.leaseId,run.generation,"native-spawn",this.now().toISOString());
+    });
     for(const profile of config.agentProfiles.filter(profile=>profile.enabled!==false&&config.runners.some(runner=>runner.id===profile.runnerId&&runner.mode==="remote"))){
       if(retainedNativeAdapters.has(profile.id))continue;
       const manifest=manifestForProvider(profile.provider);
@@ -1658,15 +1667,18 @@ export class ControllerService {
   private async cancelRunExecution(run:Run):Promise<Run> {
     if(isTerminalRunState(run.state))return run;
     const remote=this.configuration.current().config.runners.some(runner=>runner.id===run.runnerId&&runner.mode==="remote");
+    this.restoreLeaseAuthority(run);
+    this.leaseAuthority.revoke(run.id,run.leaseId,run.generation,"Cancelled by operator",this.now().toISOString());
+    this.persistLatestLeaseAudit(run.id);
     if(remote){
-      this.restoreLeaseAuthority(run);
-      this.leaseAuthority.revoke(run.id,run.leaseId,run.generation,"Cancelled by operator",this.now().toISOString());
-      this.persistLatestLeaseAudit(run.id);
       try{
         const stopped=await this.remoteRequest(run.runnerId,{type:"lease.revoke",leaseId:run.leaseId,generation:run.generation,reason:"Cancelled by operator"},run,`native-cancel-lease:${run.id}:${run.generation}`) as {runId?:unknown;leaseId?:unknown;generation?:unknown;revokedAt?:unknown}|undefined;
         if(!stopped||stopped.runId!==run.id||stopped.leaseId!==run.leaseId||stopped.generation!==run.generation||typeof stopped.revokedAt!=="string"||!Number.isFinite(Date.parse(stopped.revokedAt)))throw new AdapterContractError("REMOTE_RESULT_INVALID","Owning Runner did not confirm cancellation");
       }catch(error){this.markRemoteUnavailable(run.id,"Cancellation has fenced authority; native termination is unconfirmed","REMOTE_LEASE_INVALID",run);throw error;}
-    }else await this.agentAdapters.get(run.profileId)?.cancel(run.sessionId);
+    }else try{
+      const adapter=this.agentAdapters.get(run.profileId);if(!adapter)throw new AdapterContractError("SESSION_DETACHED","Native backend is unavailable");
+      const stopped=await adapter.cancel(run.sessionId);if(stopped.state!=="CANCELLED")throw new AdapterContractError("SESSION_DETACHED","Native termination is unconfirmed");
+    }catch(error){this.markRemoteUnavailable(run.id,"Cancellation has fenced authority; inspect the original native process before continuing","NATIVE_OUTCOME_UNKNOWN",run);throw error;}
     const current=this.database.getEntity<JsonValue>("run",run.id) as unknown as Run|undefined;
     if(!current||current.leaseId!==run.leaseId||current.generation!==run.generation)throw new SemanticPolicyError("INVALID_INPUT","Run authority changed during cancellation");
     if(!isTerminalRunState(current.state)){assertRunTransition(current.state,"CANCELLED");current.state="CANCELLED";current.endedAt=this.now().toISOString();delete current.recoveryState;delete current.recoveryReason;this.database.saveEntity("run",current.id,json(current));this.fleetEvents.publish("run.changed",current.id,{id:current.id,state:current.state});}
@@ -3032,10 +3044,23 @@ export class ControllerService {
       if (!adapter) return reply.code(404).send({ code: "PROFILE_NOT_FOUND" });
       return { session: this.sessionView(await adapter.status(request.params.sessionId)) };
     });
-    this.app.post<{ Params: { profileId: string; sessionId: string }; Body: { message?: string; authority?: { runId: string; generation: number; leaseId: string; taskRevision: number; lastActivityAt?: string } } }>("/api/agents/profiles/:profileId/sessions/:sessionId/input", async (request, reply) => {
-      if (!request.body?.message) return reply.code(400).send({ code: "MESSAGE_REQUIRED" });
+    this.app.get<{Params:{runId:string;inputId:string}}>("/api/runs/:runId/inputs/:inputId",async(request,reply)=>{
+      const receipt=this.runInputs.find(this.principalFor(request).id,request.params.inputId,request.params.runId);return receipt?{receipt}:reply.code(404).send({code:"INPUT_NOT_FOUND"});
+    });
+    this.app.post<{ Params: { profileId: string; sessionId: string }; Body: { message?: string; inputId?:string; authority?: { runId: string; generation: number; leaseId: string; taskRevision: number; lastActivityAt?: string } } }>("/api/agents/profiles/:profileId/sessions/:sessionId/input", async (request, reply) => {
+      if (typeof request.body?.message!=="string"||!request.body.message.trim()) return reply.code(400).send({ code: "MESSAGE_REQUIRED" });
+      if(request.body.inputId!==undefined&&(typeof request.body.inputId!=="string"||!/^[-a-zA-Z0-9_]{8,128}$/.test(request.body.inputId)))return reply.code(400).send({code:"INVALID_INPUT_ID"});
       const storedSession = this.database.getEntity<JsonValue>("adapter-session", request.params.sessionId) as unknown as AdapterSession | undefined;
       if (storedSession?.profileId !== request.params.profileId) return reply.code(404).send({ code: "SESSION_NOT_FOUND" });
+      const expected=request.body.authority;
+      const episode={runId:storedSession.runId,sessionId:request.params.sessionId,generation:expected?.generation??0,authorityHash:contentHash(expected?{runId:expected.runId,generation:expected.generation,leaseId:expected.leaseId,lastActivityAt:expected.lastActivityAt}:null)};
+      const inputId=request.body.inputId??(expected?`legacy-${contentHash({actor:this.principalFor(request).id,sessionId:storedSession.id,message:request.body.message,authority:expected})}`:undefined);
+      const input:RunInputIdentity|undefined=inputId?{...episode,inputId,actorId:this.principalFor(request).id,profileId:request.params.profileId,payloadHash:contentHash({message:request.body.message,authority:expected??null})}:undefined;
+      const existing=input?this.runInputs.read(input):undefined;
+      if(existing){
+        if(existing.state!=="ACCEPTED")return reply.code(409).send({code:existing.state==="RESERVED"?"INPUT_PENDING":existing.state==="REJECTED"?"INPUT_REJECTED":"INPUT_OUTCOME_UNKNOWN",receipt:existing,message:"Inspect the original session before submitting another input"});
+        return {receipt:existing,repeated:true,event:{type:"session.message",sessionId:existing.sessionId,occurredAt:existing.acceptedAt,data:{acceptedCharacters:request.body.message.length}}};
+      }
       const adapter = this.agentAdapters.get(request.params.profileId);
       if (!adapter) return reply.code(404).send({ code: "PROFILE_NOT_FOUND" });
       const run = this.database.listEntities<JsonValue>("run").map((value) => value as unknown as Run).find((entry) => entry.sessionId === request.params.sessionId);
@@ -3055,11 +3080,15 @@ export class ControllerService {
         }
       };
       if (this.pendingConsoleInputs.has(request.params.sessionId)) return reply.code(409).send({ code: "INPUT_PENDING" });
+      this.runInputs.assertAvailable(episode);
       assertAuthority();
       this.pendingConsoleInputs.add(request.params.sessionId);
+      let reserved=false,sent=false;
       try {
         if(run)await this.validateRunSelection(run);
         assertAuthority();
+        if(input){this.runInputs.reserve(input);reserved=true;}
+        sent=true;
         const event = await adapter.send(request.params.sessionId, request.body.message);
         try { assertAuthority(); }
         catch (error) {
@@ -3077,12 +3106,25 @@ export class ControllerService {
             if (binding) this.conversations.resume(binding.id, { expectedRevision: binding.revision, generation: run.generation });
             const current = this.database.getCanonicalTask<JsonValue>(run.taskId)!;
             if ((current.document as unknown as Task).state === "WAITING_USER") this.tasks.execute({ id: `run:${run.id}:user-input:${current.revision}`, taskId: run.taskId, baseRevision: current.revision, actor: "user", command: { type: "task.transition", state: "RUNNING" } });
+            if(input)this.runInputs.finish(input,"ACCEPTED");
           });
           this.attentionNotifications.recover(run.taskId);
           this.fleetEvents.publish("run.changed", run.id, { id: run.id, state: run.state, lastActivityAt: run.lastActivityAt });
         }
-        return { event };
-      } finally { this.pendingConsoleInputs.delete(request.params.sessionId); }
+        if(!run&&input)this.runInputs.finish(input,"ACCEPTED");
+        return { event,...(input?{receipt:this.runInputs.read(input)}:{}) };
+      }catch(error){
+        if(input&&reserved){
+          let receipt;
+          try{receipt=this.runInputs.finish(input,sent?"OUTCOME_UNKNOWN":"REJECTED");}
+          catch(recordError){this.app.log.warn({error:redactValue(recordError)},"input receipt remains unconfirmed");}
+          if(sent&&receipt?.state!=="ACCEPTED"){
+            if(run)this.markRemoteUnavailable(run.id,"Native input outcome is unconfirmed; inspect the original session","NATIVE_OUTCOME_UNKNOWN",run);
+            throw new InputReceiptError("INPUT_OUTCOME_UNKNOWN","Native input outcome is unconfirmed; inspect the original session before continuing");
+          }
+        }
+        throw error;
+      } finally { if(input)this.runInputs.release(input);this.pendingConsoleInputs.delete(request.params.sessionId); }
     });
 
     this.app.get("/api/connectors", async () => ({ connectors: this.connectors.list().map((adapter) => ({ definition: adapter.definition, instance: adapter.instance })) }));
@@ -3513,14 +3555,14 @@ export class ControllerService {
       const semanticStatus = error instanceof SemanticPolicyError
         ? error.code === "FORBIDDEN" ? 403 : error.code === "STALE_WORKFLOW" ? 409 : 400
         : undefined;
-      const status = error instanceof PublicationError ? error.statusCode : error instanceof TaskDispatchError ? error.statusCode : error instanceof RevisionConflictError
+      const status = error instanceof InputReceiptError||error instanceof AdapterContractError&&["SESSION_DETACHED","SESSION_CANCELLED","SESSION_BUSY"].includes(error.code)?409:error instanceof PublicationError ? error.statusCode : error instanceof TaskDispatchError ? error.statusCode : error instanceof RevisionConflictError
         ? 409
         : error instanceof LlmRuntimeError
           ? error.code === "SELECTION_CHANGED" ? 409 : error.code === "NO_AVAILABLE_PROFILE" ? 503 : 400
         : error instanceof ConfigPlanError && ["PROFILE_CONTEXT_CHANGED","REMOTE_DRAFT_PROBE_UNAVAILABLE"].includes(error.code)?409:error instanceof ConfigPlanError || error instanceof ConfigValidationError
           ? 400
           : semanticStatus ?? workspaceStatus ?? connectorStatus ?? secretStatus ?? (error && typeof error === "object" && "validation" in error ? 400 : 500);
-      const code = error instanceof PublicationError || error instanceof TaskDispatchError || error instanceof RevisionConflictError || error instanceof ConfigPlanError || error instanceof SecretStoreError || error instanceof LlmRuntimeError || error instanceof ConnectorError || error instanceof WorkspacePolicyError || error instanceof SemanticPolicyError
+      const code = error instanceof InputReceiptError||error instanceof AdapterContractError||error instanceof PublicationError || error instanceof TaskDispatchError || error instanceof RevisionConflictError || error instanceof ConfigPlanError || error instanceof SecretStoreError || error instanceof LlmRuntimeError || error instanceof ConnectorError || error instanceof WorkspacePolicyError || error instanceof SemanticPolicyError
         ? error.code
         : error instanceof ConfigValidationError
           ? error.code

@@ -357,7 +357,9 @@ export class StructuredCliAdapter implements AgentAdapter {
   async cancel(sessionId: string): Promise<AdapterSession> {
     this.cancelling++;
     try {
-      this.require(sessionId);this.cancelled.add(sessionId);
+      const session=this.require(sessionId);
+      if(!this.turns.has(sessionId)&&["STARTING","RUNNING"].includes(session.state))throw new AdapterContractError("SESSION_DETACHED","Native termination cannot be confirmed without owned process handles");
+      this.cancelled.add(sessionId);
       // A failed persistence write must not prevent stopping the owned process.
       await this.turns.get(sessionId)?.cancel();
       return this.update(sessionId, { state: "CANCELLED" });
@@ -366,7 +368,6 @@ export class StructuredCliAdapter implements AgentAdapter {
   async status(sessionId: string): Promise<AdapterSession> {
     const session = this.require(sessionId);
     const turn = this.turns.get(sessionId);
-    if (!turn && this.definition.strictLifecycle && session.state === "RUNNING") return this.update(sessionId, { state: "FAILED" });
     return !turn || turn.status() === "running" ? structuredClone(session) : this.finish(sessionId);
   }
   async result(sessionId: string): Promise<AdapterResult> {
@@ -402,7 +403,10 @@ export class StructuredCliAdapter implements AgentAdapter {
     const session = this.require(sessionId);
     if (session.state === "CANCELLED") return structuredClone(session);
     const turn = this.turns.get(sessionId);
-    if (!turn) return this.definition.strictLifecycle && session.state === "RUNNING" ? this.update(sessionId, { state: "FAILED" }) : structuredClone(session);
+    if (!turn) {
+      if(this.definition.strictLifecycle&&["STARTING","RUNNING"].includes(session.state))throw new AdapterContractError("SESSION_DETACHED","Native execution outcome is unknown without owned process handles");
+      return structuredClone(session);
+    }
     const result = await turn.result();
     if (this.cancelled.has(sessionId)||this.require(sessionId).state === "CANCELLED") return structuredClone(this.require(sessionId));
     return this.update(sessionId, {

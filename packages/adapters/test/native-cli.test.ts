@@ -196,13 +196,14 @@ describe("installed native CLI harnesses", () => {
     expect(await adapter.result(session.id)).toMatchObject({ state: "COMPLETED", summary: "done" });
   });
 
-  it("fails a lost active process handle and refuses to resume it concurrently", async () => {
+  it("keeps a lost active process outcome unknown and refuses concurrent resume", async () => {
     const store = new MemorySessionStore();
     const calls: CliAgentBackend = { start: () => ({ status: () => "running", result: () => new Promise(() => {}), cancel: async () => undefined }) };
     const original = new GrokAdapter({ id: "grok", alias: "Grok", executable: "grok" }, calls, store);
     const session = await original.start({ runId: "run", workspacePath: "/workspace" });
     const restored = new GrokAdapter({ id: "grok", alias: "Grok", executable: "grok" }, calls, store);
-    expect((await restored.result(session.id)).state).toBe("FAILED");
+    await expect(restored.result(session.id)).rejects.toMatchObject({code:"SESSION_DETACHED"});
+    expect((await restored.status(session.id)).state).toBe("RUNNING");
     await expect(restored.send(session.id, "next")).rejects.toMatchObject({ code: "SESSION_DETACHED" });
   });
 

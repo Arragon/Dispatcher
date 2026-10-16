@@ -198,7 +198,37 @@ describe("personal Slack–Linear loop", () => {
     expect((await response).statusCode).toBe(409);
     expect(f.run().state).toBe("CANCELLED");
     expect(f.task().state).toBe("WAITING_USER");
-    expect(f.control.cancellations).toBe(1);
+    expect(f.control.cancellations).toBe(0);
+    expect(f.starts).toHaveLength(1); // Final spawn fence rejects before creating another child.
+  });
+
+  it("replays a durable Web input acknowledgement across reload without another native turn",async()=>{
+    const f=await waitingFixture(),run=f.run(),url=`/api/agents/profiles/${run.profileId}/sessions/${run.sessionId}/input`,authority={runId:run.id,generation:run.generation,leaseId:run.leaseId,lastActivityAt:run.lastActivityAt,taskRevision:f.service.database.getCanonicalTask(f.taskId)!.revision};
+    const request={headers:OWNER,method:"POST" as const,url,payload:{inputId:"web-input-1234",message:"approved",authority}};f.control.turn="running";
+    const first=await f.service.app.inject(request);expect(first.statusCode).toBe(200);expect(first.json()).toMatchObject({receipt:{state:"ACCEPTED"}});expect(f.starts).toHaveLength(2);
+    expect((await f.service.app.inject({...request,payload:{...request.payload,message:"changed"}})).json()).toMatchObject({code:"INPUT_IDEMPOTENCY_CONFLICT"});
+    await f.service.stop();const restored=await f.make();const replay=await restored.app.inject(request);expect(replay.statusCode).toBe(200);expect(replay.json()).toMatchObject({repeated:true,receipt:{state:"ACCEPTED"}});expect(f.starts).toHaveLength(2);
+    expect((await restored.app.inject({headers:OWNER,url:`/api/runs/${run.id}/inputs/web-input-1234`})).json()).toMatchObject({receipt:{state:"ACCEPTED"}});
+  });
+
+  it("still stops a newly owned child if authority changes after the final spawn fence",async()=>{
+    const f=await waitingFixture(),run=f.run();f.control.onStart=()=>f.service.database.saveEntity("run",run.id,JSON.parse(JSON.stringify({...run,state:"CANCELLED"})) as JsonValue);
+    const response=await f.service.app.inject({headers:OWNER,method:"POST",url:`/api/agents/profiles/${run.profileId}/sessions/${run.sessionId}/input`,payload:{inputId:"post-spawn-change",message:"continue",authority:{runId:run.id,generation:run.generation,leaseId:run.leaseId,lastActivityAt:run.lastActivityAt,taskRevision:f.service.database.getCanonicalTask(f.taskId)!.revision}}});
+    expect(response.statusCode).toBe(409);expect(f.starts).toHaveLength(2);expect(f.control.cancellations).toBe(1);expect(f.run().state).toBe("CANCELLED");
+  });
+
+  it("retains uncertain input after a failed acknowledgement and never sends its retry again",async()=>{
+    const f=await waitingFixture(),run=f.run(),agent=(f.service as unknown as {agentAdapters:Map<string,AgentAdapter>}).agentAdapters.get(run.profileId)!;const send=agent.send.bind(agent);
+    agent.send=async(...args)=>{await send(...args);throw new Error("native acknowledgement lost");};
+    const request={headers:OWNER,method:"POST" as const,url:`/api/agents/profiles/${run.profileId}/sessions/${run.sessionId}/input`,payload:{inputId:"unknown-input-123",message:"approved",authority:{runId:run.id,generation:run.generation,leaseId:run.leaseId,lastActivityAt:run.lastActivityAt,taskRevision:f.service.database.getCanonicalTask(f.taskId)!.revision}}};
+    expect((await f.service.app.inject(request)).json()).toMatchObject({code:"INPUT_OUTCOME_UNKNOWN"});expect(f.run()).toMatchObject({state:"RUNNER_UNAVAILABLE",recoveryReason:"NATIVE_OUTCOME_UNKNOWN"});expect(f.starts).toHaveLength(2);expect((await f.service.app.inject(request)).json()).toMatchObject({code:"INPUT_OUTCOME_UNKNOWN"});
+    expect((await f.service.app.inject({...request,payload:{...request.payload,inputId:"different-input-123"}})).json()).toMatchObject({code:"INPUT_OUTCOME_UNKNOWN"});expect(f.starts).toHaveLength(2);
+  });
+
+  it("fences cancellation after restart without falsely confirming a detached local process stopped",async()=>{
+    const f=await setup();await f.service.app.inject({headers:OWNER,method:"POST",url:`/api/tasks/${f.taskId}/dispatch`,payload:{}});const run=f.run();await f.service.stop();const restored=await f.make();
+    await expect((restored as unknown as {cancelRunExecution(run:Run):Promise<Run>}).cancelRunExecution(f.run(restored))).rejects.toMatchObject({code:"SESSION_DETACHED"});
+    expect(f.run(restored)).toMatchObject({state:"RUNNER_UNAVAILABLE",recoveryReason:"NATIVE_OUTCOME_UNKNOWN",revokedLeaseIds:[run.leaseId]});expect(f.control.cancellations).toBe(0);
   });
 
   it("projects the second WAITING_USER episode independently of the first", async () => {
@@ -232,7 +262,8 @@ describe("personal Slack–Linear loop", () => {
       await cycle;
       expect(f.run()).toMatchObject({ state: "SUPERSEDED", generation: 2, leaseExpiresAt: renewed.leaseExpiresAt });
       expect(f.task().state).toBe("WAITING_USER");
-      expect(f.control.cancellations).toBe(1);
+      expect(f.control.cancellations).toBe(0);
+      expect(f.starts).toHaveLength(1);
     } finally { release.resolve(); await cycle; }
   });
 

@@ -501,3 +501,13 @@
   applied configDir and both cwd/PWD of the registered repository. Persist only
   normalized evidence with its original check time; refreshes must not promote
   old or unknown authentication to success.
+
+- A persisted active session without an owned child is not a stopped process.
+  Native cancellation must refuse to report CANCELLED from stored PID/state
+  alone. Revoke canonical authority, retain unknown outcome, and never kill a
+  recorded PID. Fence STARTING writes after async preparation, then retain
+  post-spawn cleanup for changes that happen after that final check.
+- Input uncertainty belongs to a waiting episode, not just a client nonce.
+  A new nonce, actor or task-description revision must not authorize resending
+  an unconfirmed native reply. Store its original authority/message hashes and
+  replay confirmed receipts before checking the now-advanced task revision.

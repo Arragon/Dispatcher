@@ -2,6 +2,12 @@ import { describe, expect, it } from "vitest";
 import { CodexAdapter, normalizeCodexError, normalizeCodexEvent, type CodexBackend, type AdapterSession } from "../src/index.js";
 
 describe("Codex adapter", () => {
+  it("cannot acknowledge cancellation or resume of an active session without owned process handles",async()=>{
+    const saved:AdapterSession[]=[];let starts=0;const store={load:(id:string)=>saved.findLast(s=>s.id===id),save:(session:AdapterSession)=>{saved.push(structuredClone(session));}};
+    const profile={id:"p",alias:"P",codexHome:"/native"},backend:CodexBackend={start:()=>{starts++;return {cancel:async()=>undefined,status:()=>"running",result:async()=>({state:"completed",summary:"",providerSessionId:"native",events:[]})};}};
+    const session=await new CodexAdapter(profile,backend,store).start({runId:"r",workspacePath:"/work"});const restored=new CodexAdapter(profile,backend,store);
+    await expect(restored.cancel(session.id)).rejects.toMatchObject({code:"SESSION_DETACHED"});expect((await restored.status(session.id)).state).toBe("RUNNING");await expect(restored.send(session.id,"again")).rejects.toMatchObject({code:"SESSION_DETACHED"});expect(starts).toBe(1);
+  });
   it("persists a STARTING session before spawning and retains the real process identity", async () => {
     const saved: AdapterSession[] = [];
     let starts = 0;

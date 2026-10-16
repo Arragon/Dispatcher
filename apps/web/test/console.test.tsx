@@ -7,7 +7,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Navigation } from "../src/App.js";
 import TasksPage from "../src/TasksPage.js";
 
-afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); localStorage.clear(); });
+afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); localStorage.clear(); sessionStorage.clear(); });
 it("defaults to white, remembers explicit dark mode and keeps text navigation", async () => {
   render(<MemoryRouter><Navigation /></MemoryRouter>);
   expect(document.documentElement.dataset.theme).toBe("light");
@@ -125,8 +125,20 @@ it("submits run and task authority with a decision reply and retains failed inpu
   await userEvent.type(screen.getByRole("textbox",{name:"回复 Agent 的决策请求"}),"continue");
   await userEvent.click(screen.getByRole("button",{name:"发送回复并继续"}));
   expect(await screen.findByText("Run changed; refresh")).toBeTruthy();
-  expect(JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body))).toEqual({message:"continue",authority:{runId:"r",generation:3,leaseId:"l",taskRevision:7,lastActivityAt:"now"}});
+  expect(JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body))).toEqual({inputId:expect.any(String),message:"continue",authority:{runId:"r",generation:3,leaseId:"l",taskRevision:7,lastActivityAt:"now"}});
   expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe("continue");
+});
+
+it("retains an input ID across remount and retries the original request after a lost acknowledgement",async()=>{
+ const {TaskActions}=await import("../src/TaskActions.js");const requests:unknown[]=[];let sends=0;
+ vi.spyOn(globalThis,"fetch").mockImplementation(async(input,init)=>{
+  if(input==="/api/tasks/t")return new Response(JSON.stringify({revision:7,document:{currentRunId:"r"}}));
+  if(input==="/api/runs/r")return new Response(JSON.stringify({run:{state:"WAITING_USER",sessionId:"s",profileId:"ronna",generation:3,leaseId:"l",lastActivityAt:"now"}}));
+  requests.push(JSON.parse(String(init?.body)));if(++sends===1)throw new TypeError("network lost");return new Response(JSON.stringify({receipt:{state:"ACCEPTED"},repeated:true}));
+ });
+ const props={task:{id:"t",title:"Task",projectId:"p",state:"WAITING_USER",updatedAt:"now",revision:7},run:{id:"r",taskId:"t",profileId:"ronna",state:"WAITING_USER",createdAt:"now",updatedAt:"now",lastActivityAt:"now"},profiles:[],refresh:vi.fn()};
+ const first=render(<TaskActions {...props}/>);await userEvent.type(screen.getByRole("textbox"),"continue");await userEvent.click(screen.getByRole("button",{name:"发送回复并继续"}));expect(await screen.findByText("network lost")).toBeTruthy();first.unmount();
+ render(<TaskActions {...props}/>);expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe("continue");await userEvent.click(screen.getByRole("button",{name:"重试同一回复"}));expect(await screen.findByText("回复已发送到原 Agent 会话。")).toBeTruthy();expect(requests).toHaveLength(2);expect(requests[1]).toEqual(requests[0]);expect(sessionStorage.getItem("dispatcher-run-input:t:r")).toBeNull();
 });
 
 it("does not upgrade an old decision answer to a newer waiting episode", async () => {

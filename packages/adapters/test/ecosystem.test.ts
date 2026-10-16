@@ -34,6 +34,11 @@ class FakeCliTurn implements CliTurn {
 const cliBackend: CliAgentBackend = { start: vi.fn(() => new FakeCliTurn()) };
 
 describe("Cursor and Kiro adapters", () => {
+  it("does not claim a persisted active child stopped when its ownership handle was lost",async()=>{
+    const saved:AdapterSession[]=[];const store={load:(id:string)=>saved.findLast(s=>s.id===id),save:(session:AdapterSession)=>{saved.push(structuredClone(session));}};
+    const backend:CliAgentBackend={start:()=>({cancel:async()=>undefined,status:()=>"running",result:async()=>({state:"completed",summary:"",events:[]})})},profile={id:"p",alias:"P",executable:process.execPath};
+    const session=await new CursorAdapter(profile,backend,store).start({runId:"r",workspacePath:"/work"});await expect(new CursorAdapter(profile,backend,store).cancel(session.id)).rejects.toMatchObject({code:"SESSION_DETACHED"});expect(store.load(session.id)?.state).toBe("RUNNING");
+  });
   it("persists STARTING before native spawn and records only an actual backend PID", async () => {
     const saved: AdapterSession[] = [];
     let starts = 0;

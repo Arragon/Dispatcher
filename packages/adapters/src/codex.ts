@@ -223,6 +223,7 @@ export class CodexAdapter implements AgentAdapter {
 
   async send(sessionId: string, message: string): Promise<AdapterEvent> {
     if (this.cancelled.has(sessionId)||this.require(sessionId).state === "CANCELLED") throw new AdapterContractError("SESSION_CANCELLED", "A cancelled Codex session cannot accept input");
+    if(!this.turns.has(sessionId)&&["STARTING","RUNNING"].includes(this.require(sessionId).state))throw new AdapterContractError("SESSION_DETACHED","Inspect the original native process before continuing this session");
     if (this.sending.has(sessionId) || (this.require(sessionId).state === "RUNNING" && this.turns.get(sessionId)?.status() === "running")) throw new AdapterContractError("SESSION_BUSY", "Wait for the active Codex turn before sending another message");
     this.sending.add(sessionId);
     try {
@@ -254,8 +255,10 @@ export class CodexAdapter implements AgentAdapter {
   async cancel(sessionId: string): Promise<AdapterSession> {
     this.pending++;
     try {
-      this.require(sessionId);this.cancelled.add(sessionId);
+      const session=this.require(sessionId);
       const turn = this.turns.get(sessionId);
+      if(!turn&&["STARTING","RUNNING"].includes(session.state))throw new AdapterContractError("SESSION_DETACHED","Native termination cannot be confirmed without owned process handles");
+      this.cancelled.add(sessionId);
       if (turn) await turn.cancel();
       return this.update(sessionId, { state: "CANCELLED" });
     } finally { this.pending--; }

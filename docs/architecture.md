@@ -633,3 +633,20 @@ Registered local executable/native configuration file epochs invalidate prior
 evidence where observable. External account switches and PATH-resolved upgrades
 cannot always be observed without another native check and remain an explicit
 limitation. Waiting canonical Runs also prevent unsafe adapter replacement.
+
+## Native input receipts and cancellation
+
+Canonical Web input reserves a durable, actor-bound run-input receipt before
+calling the adapter. The identity binds the message and displayed authority;
+successful retries return the original acknowledgement, including after restart.
+An unconfirmed reservation blocks another input for the same waiting episode,
+even with another ID or actor. Legacy canonical requests derive a stable ID;
+standalone legacy sessions retain their separate compatibility contract.
+No message text is persisted in the receipt. The browser retains its pending
+draft/ID in session storage for explicit retry or receipt lookup.
+
+Cancellation revokes canonical authority before requesting physical stop. A
+missing local process handle cannot confirm termination: the Run remains
+unavailable with manual inspection required. The session store rechecks current
+task/lease authority immediately before native spawn, and post-send checks still
+stop a newly owned child when authority changes after that boundary.
