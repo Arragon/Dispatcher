@@ -74,6 +74,14 @@ it("rejects native probe evidence when the owning registration changes during th
   const changed=structuredClone(f.config);changed.agentProfiles[0]!.settings={codexHome:"/different-account"};runtime.configuration.applyPlan(runtime.configuration.buildPlan(changed,"fixture","cli").id,{confirmed:true});gate.resolve();await rejected;
 });
 
+it("preserves the owning Runner's observed usage after losing process attachment on restart",async()=>{
+ const f=fixture();f.runtime.close();const options={...f.options,createAdapter:(profile:unknown,store:SessionStore)=>{const adapter=f.options.createAdapter(profile,store);adapter.usage=async()=>({state:"AVAILABLE",tokens:{input:12,output:0,apiKey:"sk-private-canary-12345678"},tokenScope:"latest-turn",source:"event",apiKey:"sk-private-canary-12345678",executable:"/private/native"});return adapter;}};
+ const runtime=new NativeRunnerRuntime(options);cleanups.push(()=>runtime.close());runtime.configuration.applyPlan(runtime.configuration.buildPlan(f.config,"fixture","cli").id,{confirmed:true});
+ const send=(owner:NativeRunnerRuntime,payload:CommandPayload,messageId:string)=>owner.handle(payload,createEnvelope({kind:"command",runnerId:"remote",traceId:"usage",messageId,sequence:1,leaseId:"lease",generation:1,leaseExpiresAt:"2026-10-16T12:01:00Z",payload}));
+ await send(runtime,{type:"native.workspace_prepare",runId:"run",profileId:"p",plan:f.plan,verificationCommandIds:["check"]},"prepare");await send(runtime,{type:"run.start",runId:"run",execution:{version:1,profileId:"p",workspaceId:"run",prompt:"write",selection:f.selection}},"start");
+ const measured=await send(runtime,{type:"native.run",runId:"run",action:"usage"},"usage");expect(measured).toEqual({state:"AVAILABLE",tokens:{input:12,output:0},tokenScope:"latest-turn",source:"event"});expect(JSON.stringify(measured)).not.toMatch(/private|apiKey/);runtime.close();const restored=new NativeRunnerRuntime(options);cleanups.push(()=>restored.close());expect(await send(restored,{type:"native.run",runId:"run",action:"usage"},"usage-restored")).toEqual(measured);expect(f.starts()).toBe(1);
+});
+
 it("rejects foreign runners, unsafe scopes, missing commands and stale concrete selections before native start", async () => {
   const f = fixture(); f.apply();
   await expect(f.call({ type: "native.workspace_plan", profileId: "p", plan: f.plan }, undefined, { runnerId: "other" })).rejects.toMatchObject({ code: "RUNNER_MISMATCH" });

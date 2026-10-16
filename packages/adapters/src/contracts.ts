@@ -33,6 +33,8 @@ export type AdapterSessionState = "STARTING" | "RUNNING" | "PAUSED" | "CANCELLED
 
 export interface AdapterSession {
   executionSelection?: ExecutionSelection;
+  turnId?:string;
+  turnStartedAt?:string;
   id: string;
   runId: string;
   backendId: string;

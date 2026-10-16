@@ -7,6 +7,7 @@ import { api, ApiError, subscribeToEvents } from "./api.js";
 import { Drawer } from "./Drawer.js";
 import { TaskActions } from "./TaskActions.js";
 import { Notice } from "./ui.js";
+import {UsagePanel} from "./UsagePanel.js";
 import { safeLink, stateLabel, terminalStates } from "./task-view.js";
 interface TaskView { executionIntent?:{publicationId:string}; revision:number; document:Task; contract?:TaskContract; deliveries:DeliveryEvidence[]; runs:Run[]; archive?:{revision:number;archivedAt?:string} }
 interface RunResult { worktree:string; branch:string; files:string[]; verification:Run["verification"]; summary?:string }
@@ -49,6 +50,7 @@ export function TaskDetail({id,fallback,profiles,onClose,refresh}:{id:string;fal
       </section>
       <section className="detail-section"><h3>{frozenContract?"运行冻结契约":"任务契约"}</h3>{contract?<><p>{contract.goal}</p><h4>验收条件</h4><Lines items={contract.acceptanceCriteria}/><h4>允许修改范围</h4><Lines items={contract.scope}/><h4>约束</h4><Lines items={contract.constraints} empty="未登记额外约束"/>{Boolean(contract.referenceLinks?.length)&&<><h4>参考链接</h4>{contract.referenceLinks?.map(link=>safeLink(link)?<p key={link}><a href={safeLink(link)} target="_blank" rel="noreferrer">{link}</a></p>:<p key={link}>历史链接不可打开</p>)}</>}</>:<p>此记录没有可用的冻结契约。</p>}</section>
       <section className="detail-section"><h3>交付与修改文件</h3>{result.isFetching?<p role="status">正在读取结果…</p>:result.data?<><p>{result.data.result.worktree} · {result.data.result.branch}</p><Lines items={result.data.result.files} empty="没有文件变更"/></>:result.error instanceof ApiError&&result.error.code==="RUN_RESULT_UNAVAILABLE"?<p>尚无本地结果回执。</p>:result.error?<Notice tone="error">结果读取失败。<button onClick={()=>void result.refetch()}>重试读取结果</button></Notice>:<p>运行结束后读取本地结果。</p>}{data.deliveries?.filter(delivery=>!runId||delivery.runId===runId).map(delivery=><p key={delivery.id}>{delivery.kind} · {delivery.state}{safeLink(delivery.url)&&<> · <a href={safeLink(delivery.url)} target="_blank" rel="noreferrer">查看交付</a></>}</p>)}<Notice>Run 完成、验证通过与任务验收分别记录；任务为 REVIEW 时仍需人工验收。</Notice></section>
+      {run&&<UsagePanel key={run.id} runId={run.id}/>}
       <TaskActions key={`${id}:${data.revision}:${currentId}:${activeRun?.state}:${activeRun?.lastActivityAt}`} task={task} {...(actionsRun?{run:actionsRun}:{})} profiles={profiles} refresh={reload} publicationTask={Boolean(data.executionIntent)}/>
     </>}
     {task&&<><button disabled={busy||!data||(!task.archivedAt&&Boolean(data.runs?.some(entry=>!terminalStates.has(entry.state))))} onClick={()=>void archive()}>{busy?"处理中…":task.archivedAt?"恢复到当前项目":"归档任务"}</button><p className="muted">归档保留全部执行记录；存在未结束运行时不能归档。</p></>}

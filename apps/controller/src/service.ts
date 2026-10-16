@@ -1,6 +1,7 @@
 import { resolveProfileExecutionContext } from "./execution-context.js";
 import { ProfileProbeService } from "./profile-probes.js";
 import {RunInputReceipts,InputReceiptError,type RunInputIdentity} from "./run-inputs.js";
+import {UsageObservations,UsageObservationError} from "./usage-observations.js";
 import type { ProfileConsoleView } from "@dispatcher/domain";
 import { applyConfigEdits, consoleConfig, consoleConfigPlan } from "./config-edits.js";
 import {qualifyRoutingPolicy,type PolicyConfigEvidence} from "./policy-config.js";
@@ -472,6 +473,7 @@ export class ControllerService {
   private readonly pendingConsoleInputs = new Set<string>();
   private readonly profileProbes:ProfileProbeService;
   private readonly runInputs:RunInputReceipts;
+  private readonly usageObservations:UsageObservations;
   private readonly secureLinks: SecureDashboardLinkIssuer;
   private readonly messagingChannels = new Map<string, string>();
   private readonly agentAdapters = new Map<string, AgentAdapter>();
@@ -507,6 +509,7 @@ export class ControllerService {
     this.database = new DispatcherDatabase(join(options.dataDirectory, "dispatcher.sqlite"));
     this.profileProbes=new ProfileProbeService(this.database,()=>this.now());
     this.runInputs=new RunInputReceipts(this.database,()=>this.now());
+    this.usageObservations=new UsageObservations(this.database,()=>this.now());
     this.agentProcesses = new ProcessManager(join(options.dataDirectory, "agent-logs"));
     this.enrollments = new RunnerEnrollmentAuthority(
       this.database.listEntities<JsonValue>("runner-enrollment") as unknown as RunnerEnrollmentRecord[],
@@ -1283,6 +1286,11 @@ export class ControllerService {
   private async captureProfileResource(profileId: string, adapter: AgentAdapter, sessionId: string): Promise<ResourceSnapshot | undefined> {
     if (!adapter.usage) return undefined;
     const usage = await adapter.usage(sessionId);
+    const usageRun=this.database.listEntities<JsonValue>("run").map(value=>value as unknown as Run).find(run=>run.profileId===profileId&&run.sessionId===sessionId);
+    if(usageRun&&usage.observations!==undefined)try{
+      const inserted=this.usageObservations.record(usage.observations,{profileId,runId:usageRun.id,sessionId,generation:usageRun.generation});
+      if(this.database.getEntity("usage-error",usageRun.id))this.database.saveEntity("usage-error",usageRun.id,{profileId,runId:usageRun.id,status:"resolved",observedAt:this.now().toISOString()});if(inserted)this.fleetEvents.publish("usage.changed",usageRun.id,{runId:usageRun.id,profileId});
+    }catch(error){const diagnostic={profileId,runId:usageRun.id,status:"unknown",reasonCode:error instanceof UsageObservationError?error.code:"USAGE_UNAVAILABLE",observedAt:this.now().toISOString()};this.database.saveEntity("usage-error",usageRun.id,diagnostic);this.app.log.warn({error:redactValue(error),runId:usageRun.id},"Native usage observation rejected");}
     const reportedTokens = usage.tokens as { input?: unknown; output?: unknown; cachedInput?: unknown } | undefined;
     if (reportedTokens && Number.isSafeInteger(reportedTokens.input) && Number.isSafeInteger(reportedTokens.output) && Number(reportedTokens.input) >= 0 && Number(reportedTokens.output) >= 0) {
       const tokens = { input: Number(reportedTokens.input), output: Number(reportedTokens.output), ...(Number.isSafeInteger(reportedTokens.cachedInput) && Number(reportedTokens.cachedInput) >= 0 && Number(reportedTokens.cachedInput) <= Number(reportedTokens.input) ? { cachedInput: Number(reportedTokens.cachedInput) } : {}) };
@@ -1470,6 +1478,7 @@ export class ControllerService {
       if (!adapter) throw new ConnectorError("PERMANENT", `Profile ${run.profileId} is unavailable`);
       const session = await adapter.status(run.sessionId);
       if(session.providerSessionId)run.providerSessionId=session.providerSessionId;
+      const resource = await this.captureProfileResource(run.profileId, adapter, run.sessionId);
       if (session.state === "RUNNING" || session.state === "STARTING") {
         return { waiting: true, run, task: storedTask.document as unknown as Task, deliveries: [] };
       }
@@ -1485,7 +1494,6 @@ export class ControllerService {
         }
         return { waiting: true, run, task: this.database.getCanonicalTask<JsonValue>(run.taskId)!.document as unknown as Task, deliveries: [] };
       }
-      const resource = await this.captureProfileResource(run.profileId, adapter, run.sessionId);
       const telemetry = this.database.getEntity<JsonValue>("run-telemetry", run.id) as unknown as Pick<Run, "tokens" | "tokenScope" | "telemetryAt"> | undefined;
       if (telemetry) Object.assign(run, telemetry);
       if (resource && !["AVAILABLE", "LOW", "UNKNOWN"].includes(resource.state)) {
@@ -3361,6 +3369,7 @@ export class ControllerService {
         llmCallsLastHour: this.llm.snapshot().calls,
       };
     });
+    this.app.get<{Querystring:{profileId?:string;runId?:string;from?:string;to?:string}}>("/api/usage",async request=>({...this.usageObservations.query(request.query),errors:this.database.listEntities<JsonValue>("usage-error").filter(value=>{const error=value as {profileId?:string;runId?:string;status?:string};return error.status==="unknown"&&(!request.query.profileId||error.profileId===request.query.profileId)&&(!request.query.runId||error.runId===request.query.runId);})}));
 
     this.app.get("/api/llm", async () => {
       const current = this.configuration.current();
@@ -3556,14 +3565,14 @@ export class ControllerService {
       const semanticStatus = error instanceof SemanticPolicyError
         ? error.code === "FORBIDDEN" ? 403 : error.code === "STALE_WORKFLOW" ? 409 : 400
         : undefined;
-      const status = error instanceof InputReceiptError||error instanceof AdapterContractError&&["SESSION_DETACHED","SESSION_CANCELLED","SESSION_BUSY"].includes(error.code)?409:error instanceof PublicationError ? error.statusCode : error instanceof TaskDispatchError ? error.statusCode : error instanceof RevisionConflictError
+      const status = error instanceof UsageObservationError?400:error instanceof InputReceiptError||error instanceof AdapterContractError&&["SESSION_DETACHED","SESSION_CANCELLED","SESSION_BUSY"].includes(error.code)?409:error instanceof PublicationError ? error.statusCode : error instanceof TaskDispatchError ? error.statusCode : error instanceof RevisionConflictError
         ? 409
         : error instanceof LlmRuntimeError
           ? error.code === "SELECTION_CHANGED" ? 409 : error.code === "NO_AVAILABLE_PROFILE" ? 503 : 400
         : error instanceof ConfigPlanError && ["PROFILE_CONTEXT_CHANGED","REMOTE_DRAFT_PROBE_UNAVAILABLE"].includes(error.code)?409:error instanceof ConfigPlanError || error instanceof ConfigValidationError
           ? 400
           : semanticStatus ?? workspaceStatus ?? connectorStatus ?? secretStatus ?? (error && typeof error === "object" && "validation" in error ? 400 : 500);
-      const code = error instanceof InputReceiptError||error instanceof AdapterContractError||error instanceof PublicationError || error instanceof TaskDispatchError || error instanceof RevisionConflictError || error instanceof ConfigPlanError || error instanceof SecretStoreError || error instanceof LlmRuntimeError || error instanceof ConnectorError || error instanceof WorkspacePolicyError || error instanceof SemanticPolicyError
+      const code = error instanceof UsageObservationError||error instanceof InputReceiptError||error instanceof AdapterContractError||error instanceof PublicationError || error instanceof TaskDispatchError || error instanceof RevisionConflictError || error instanceof ConfigPlanError || error instanceof SecretStoreError || error instanceof LlmRuntimeError || error instanceof ConnectorError || error instanceof WorkspacePolicyError || error instanceof SemanticPolicyError
         ? error.code
         : error instanceof ConfigValidationError
           ? error.code

@@ -1,7 +1,18 @@
-import { describe, expect, it } from "vitest";
-import { CodexAdapter, normalizeCodexError, normalizeCodexEvent, type CodexBackend, type AdapterSession } from "../src/index.js";
+import { describe, expect, it,vi } from "vitest";
+import { CodexAdapter,CodexCliBackend, normalizeCodexError, normalizeCodexEvent, type CodexBackend, type AdapterSession } from "../src/index.js";
 
 describe("Codex adapter", () => {
+  it("retains native usage through bounded noisy output without losing turn completion",async()=>{
+    const {mkdtempSync,writeFileSync,rmSync}=await import("node:fs"),{tmpdir}=await import("node:os"),{join}=await import("node:path");const root=mkdtempSync(join(tmpdir(),"codex-usage-events-"));
+    try{writeFileSync(join(root,"exec"),`console.log(JSON.stringify({type:'thread.started',thread_id:'native'}));console.log(JSON.stringify({type:'turn.completed',usage:{input_tokens:100,output_tokens:0,cached_input_tokens:50}}));for(let i=0;i<4000;i++)console.log(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:'activity '+i}}));`);
+      const turn=new CodexCliBackend().start({executable:process.execPath,codexHome:root,workspacePath:root,prompt:"fixture"}),result=await turn.result();expect(result.state).toBe("completed");expect(result.events.length).toBeLessThanOrEqual(256);expect(result.events).toContainEqual(expect.objectContaining({type:"usage",tokens:{input:100,output:0,cachedInput:50}}));
+    }finally{rmSync(root,{recursive:true,force:true});}
+  });
+  it("reads active usage without waiting for native completion and retains a stable turn observation",async()=>{
+    const result=vi.fn(async()=>{throw new Error("usage waited for native completion");}),event=normalizeCodexEvent({type:"turn.completed",usage:{input_tokens:10,cached_input_tokens:5,output_tokens:0}})!;
+    const adapter=new CodexAdapter({id:"p",alias:"P",codexHome:"/native"},{start:()=>({cancel:async()=>undefined,status:()=>"running",events:()=>[event],result})});const session=await adapter.start({runId:"r",workspacePath:"/work"});
+    const first=await adapter.usage(session.id),second=await adapter.usage(session.id);expect(result).not.toHaveBeenCalled();expect(first.tokens).toEqual({input:10,cachedInput:5,output:0});expect(first.observations).toMatchObject([{version:1,scope:"turn",mode:"snapshot",profileId:"p",runId:"r",metrics:[{name:"input",value:"10",unit:"tokens"},{name:"output",value:"0",unit:"tokens"},{name:"cachedInput",value:"5",unit:"tokens",includedIn:"input"}]}]);expect(second.observations).toEqual(first.observations);
+  });
   it("cannot acknowledge cancellation or resume of an active session without owned process handles",async()=>{
     const saved:AdapterSession[]=[];let starts=0;const store={load:(id:string)=>saved.findLast(s=>s.id===id),save:(session:AdapterSession)=>{saved.push(structuredClone(session));}};
     const profile={id:"p",alias:"P",codexHome:"/native"},backend:CodexBackend={start:()=>{starts++;return {cancel:async()=>undefined,status:()=>"running",result:async()=>({state:"completed",summary:"",providerSessionId:"native",events:[]})};}};

@@ -211,6 +211,15 @@ describe("personal Slack–Linear loop", () => {
     expect((await restored.app.inject({headers:OWNER,url:`/api/runs/${run.id}/inputs/web-input-1234`})).json()).toMatchObject({receipt:{state:"ACCEPTED"}});
   });
 
+  it("collects normalized usage in the background without a console and preserves it across restart",async()=>{
+    const f=await setup();await f.service.app.inject({headers:OWNER,method:"POST",url:`/api/tasks/${f.taskId}/dispatch`,payload:{}});const run=f.run(),adapter=(f.service as unknown as {agentAdapters:Map<string,AgentAdapter>}).agentAdapters.get(run.profileId)!;
+    const usage=vi.fn(async()=>({state:"UNKNOWN",observations:[{version:1,eventId:"native-usage-1",profileId:run.profileId,runId:run.id,sessionId:run.sessionId,turnId:"turn-1",scope:"turn",mode:"snapshot",observedAt:f.control.now.toISOString(),source:"native-event",completeness:"complete",metrics:[{name:"input",value:"100",unit:"tokens"},{name:"output",value:"0",unit:"tokens"}]}]}));adapter.usage=usage;
+    expect((await f.service.app.inject({headers:OWNER,url:`/api/usage?runId=${run.id}`})).json().observations).toEqual([]);await f.service.runBackgroundCycle();await f.service.runBackgroundCycle();
+    const report=(await f.service.app.inject({headers:OWNER,url:`/api/usage?runId=${run.id}`})).json();expect(report.observations).toHaveLength(1);expect(report.totals).toContainEqual({profileId:run.profileId,scope:"turn",name:"output",unit:"tokens",value:"0"});expect(f.run().state).toBe("ACTIVE");expect(f.starts).toHaveLength(1);
+    const calls=usage.mock.calls.length;expect((await f.service.app.inject({headers:OWNER,url:"/api/usage?from=invalid"})).statusCode).toBe(400);expect(usage.mock.calls.length).toBe(calls);
+    await f.service.stop();const restored=await f.make();expect((await restored.app.inject({headers:OWNER,url:`/api/usage?runId=${run.id}`})).json().observations).toHaveLength(1);expect(f.starts).toHaveLength(1);
+  });
+
   it("still stops a newly owned child if authority changes after the final spawn fence",async()=>{
     const f=await waitingFixture(),run=f.run();f.control.onStart=()=>f.service.database.saveEntity("run",run.id,JSON.parse(JSON.stringify({...run,state:"CANCELLED"})) as JsonValue);
     const response=await f.service.app.inject({headers:OWNER,method:"POST",url:`/api/agents/profiles/${run.profileId}/sessions/${run.sessionId}/input`,payload:{inputId:"post-spawn-change",message:"continue",authority:{runId:run.id,generation:run.generation,leaseId:run.leaseId,lastActivityAt:run.lastActivityAt,taskRevision:f.service.database.getCanonicalTask(f.taskId)!.revision}}});

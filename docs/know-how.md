@@ -513,6 +513,15 @@
   alone. Revoke canonical authority, retain unknown outcome, and never kill a
   recorded PID. Fence STARTING writes after async preparation, then retain
   post-spawn cleanup for changes that happen after that final check.
+
+- Resource reads must not await an unfinished native turn. Preserve a stable
+  per-turn observation ID across status updates; a changed updatedAt timestamp
+  is not a new usage event. Keep old snapshots for historical queries, but use
+  only the latest snapshot plus later deltas when calculating the same scope.
+- Generic credential redaction matches the tokens and tokenScope field names.
+  Remote usage needs an allowlisted numeric token projection and validated
+  scope enum; never relax generic secret redaction or return arbitrary vendor
+  usage objects to preserve those metrics.
 - Input uncertainty belongs to a waiting episode, not just a client nonce.
   A new nonce, actor or task-description revision must not authorize resending
   an unconfirmed native reply. Store its original authority/message hashes and

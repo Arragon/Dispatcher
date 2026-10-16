@@ -19,6 +19,9 @@ it("starts only a reserved canonical Run with its frozen model and owning worksp
   expect(f.request.mock.calls[0]?.[0]).toMatchObject({ type: "run.start", execution: { profileId: "p", workspaceId: "run", prompt: "raw instructions", selection: f.selection } });
   expect(f.reserve).toHaveBeenCalledOnce(); expect(f.save).toHaveBeenCalledOnce();
 });
+it("retains normalized usage observations while filtering unrelated vendor fields",async()=>{
+ const f=fixture();f.run.sessionId="session";f.run.state="ACTIVE";const observations=[{version:1,eventId:"native-turn:usage",profileId:"p",runId:"run",sessionId:"session",scope:"turn",turnId:"native-turn",mode:"snapshot",observedAt:new Date().toISOString(),source:"native-event",completeness:"complete",metrics:[{name:"input",value:"12",unit:"tokens"}]}];f.request.mockResolvedValue({state:"AVAILABLE",observations,apiKey:"private"});expect(await f.adapter.usage("session")).toEqual({state:"AVAILABLE",observations});
+});
 it("keeps dropped or mismatched start responses unknown and never reports a different native session as started", async () => {
   const f = fixture(); f.request.mockRejectedValueOnce(new Error("connection lost"));
   await expect(f.adapter.start({ runId: "run", workspacePath: f.run.worktree!, executionSelection: f.selection })).rejects.toMatchObject({ code: "COMMAND_OUTCOME_UNKNOWN" });

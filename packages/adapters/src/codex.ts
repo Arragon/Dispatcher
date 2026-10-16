@@ -1,6 +1,6 @@
 import { OwnedProcessGroup } from "./owned-process.js";
 import { readCodexCatalog, type CodexReadRequest } from "./codex-catalog.js";
-import type { ExecutionSelection, ModelCatalogContext, AccountModelCatalog } from "@dispatcher/domain";
+import type { ExecutionSelection, ModelCatalogContext, AccountModelCatalog,UsageObservationV1 } from "@dispatcher/domain";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { promisify } from "node:util";
@@ -35,7 +35,7 @@ export interface CodexDiscoveryResult {
 
 export type NormalizedCodexEvent =
   | { type: "activity"; summary: string }
-  | { type: "usage"; summary: string; tokens: { input: number; output: number; cachedInput?: number } }
+  | { type: "usage"; summary: string;observedAt?:string; tokens: { input: number; output: number; cachedInput?: number } }
   | { type: "waiting"; reason: string }
   | { type: "resource"; state: "RATE_LIMITED" | "QUOTA_EXHAUSTED" | "AUTH_ERROR" | "PROVIDER_DOWN" | "UNKNOWN"; reason: string; resetsAt?: string; source: "event" | "error"; confidence: "high" | "medium" | "low" }
   | { type: "failure"; reason: string };
@@ -81,6 +81,7 @@ interface CodexTurn {
   cancel(): Promise<void>;
   status(): "running" | "completed";
   result(): Promise<CodexTurnResult>;
+  events?():NormalizedCodexEvent[];
 }
 
 export interface CodexBackend {
@@ -111,6 +112,10 @@ class SpawnedCodexTurn implements CodexTurn {
   private cancelled = false;
   private readonly outcome: Promise<CodexTurnResult>;
   private readonly ownership:OwnedProcessGroup;
+  private readonly retainedEvents:NormalizedCodexEvent[]=[];
+  private readonly criticalEvents=new Map<string,NormalizedCodexEvent>();
+  private record(event:NormalizedCodexEvent):void{this.retainedEvents.push(event);if(this.retainedEvents.length>256)this.retainedEvents.shift();if(event.type!=="activity")this.criticalEvents.set(event.type,event);}
+  events():NormalizedCodexEvent[]{const events=[...this.retainedEvents];for(const event of this.criticalEvents.values())if(!events.includes(event))events.push(event);while(events.length>256)events.splice(Math.max(0,events.findIndex(event=>event.type==="activity")),1);return structuredClone(events);}
 
   constructor(private readonly child: ChildProcess) {
     this.ownership=new OwnedProcessGroup(child);
@@ -119,7 +124,6 @@ class SpawnedCodexTurn implements CodexTurn {
     let providerSessionId: string | undefined;
     let completedTurn=false;
     let failedTurn=false;
-    const events: NormalizedCodexEvent[] = [];
     child.stdout?.on("data", (chunk: Buffer) => {
       stdout = (stdout + chunk.toString("utf8")).slice(-131_072);
       const lines = stdout.split("\n");
@@ -133,9 +137,9 @@ class SpawnedCodexTurn implements CodexTurn {
           if(event.type==="turn.completed")completedTurn=true;
           if(event.type==="turn.failed"||event.type==="error")failedTurn=true;
           const normalized = normalizeCodexEvent(event);
-          if (normalized) events.push(normalized);
+          if (normalized)this.record(normalized.type==="usage"?{...normalized,observedAt:new Date().toISOString()}:normalized);
         } catch {
-          events.push({ type: "activity", summary: line.slice(0, 500) });
+          this.record({ type: "activity", summary: line.slice(0, 500) });
         }
       }
     });
@@ -148,7 +152,8 @@ class SpawnedCodexTurn implements CodexTurn {
         await this.ownership.stop();
         this.completed = true;
         const normalized = code===0 ? undefined : normalizeCodexError(stderr);
-        if (normalized) events.push(normalized);
+        if (normalized)this.record(normalized);
+        const events=this.events();
         const last = events.findLast(e=>e.type==="failure"||e.type==="activity");
         const waiting = events.findLast((event) => event.type === "waiting");
         resolve({
@@ -204,6 +209,7 @@ export class CodexAdapter implements AgentAdapter {
       ...(input.executionSelection ? { executionSelection: structuredClone(input.executionSelection) } : {}),
       createdAt: now,
       updatedAt: now,
+      turnId:randomUUID(),turnStartedAt:now,
     };
     this.store.save(session);
     const turn = this.backend.start({
@@ -230,7 +236,7 @@ export class CodexAdapter implements AgentAdapter {
     const session = await this.finishCurrentTurn(sessionId);
     if (this.cancelled.has(sessionId)||this.require(sessionId).state === "CANCELLED") throw new AdapterContractError("SESSION_CANCELLED", "A cancelled Codex session cannot accept input");
     if (!session.providerSessionId) throw new AdapterContractError("SESSION_NOT_RESUMABLE", "Codex did not return a provider session id");
-    this.store.save({ ...session, state: "STARTING", updatedAt: new Date().toISOString() });
+    const turnStartedAt=new Date().toISOString();this.store.save({ ...session, state: "STARTING",turnId:randomUUID(),turnStartedAt,updatedAt:turnStartedAt });
     const turn = this.backend.start({
       executable: this.profile.executable ?? "codex",
       codexHome: this.profile.codexHome,
@@ -241,7 +247,7 @@ export class CodexAdapter implements AgentAdapter {
       ...(session.executionSelection ? session.executionSelection.requestedModel ? {model:session.executionSelection.requestedModel} : {} : this.profile.model ? {model:this.profile.model} : {}),
     });
     this.turns.set(sessionId, turn);
-    const persisted = { ...session }; delete persisted.processId;
+    const persisted = { ...this.require(sessionId) }; delete persisted.processId;
     try { this.store.save({ ...persisted, state: "RUNNING", ...(turn.processId !== undefined ? { processId: turn.processId } : {}), updatedAt: new Date().toISOString() }); }
     catch (error) { await turn.cancel(); throw error; }
     return { type: "session.message", sessionId, occurredAt: new Date().toISOString(), data: { acceptedCharacters: message.length } };
@@ -275,11 +281,11 @@ export class CodexAdapter implements AgentAdapter {
     return { sessionId, state: session.state, summary: result?.summary ?? `Codex session ${session.state.toLowerCase()}`, artifacts: [] };
   }
   async usage(sessionId: string): Promise<Record<string, unknown>> {
-    this.require(sessionId);
-    const result = await this.turns.get(sessionId)?.result();
-    const resource = result?.events.filter((event) => event.type === "resource").at(-1);
-    const tokens = result?.events.findLast((event) => event.type === "usage")?.tokens;
-    return { ...(resource ?? (result?.state==="completed" ? {state:"AVAILABLE",source:"event",confidence:"medium",reason:"Native turn completed; remaining quota was not reported"} : { state: "UNKNOWN", source: "event", confidence: "low" })), ...(tokens ? { tokens, tokenScope: "latest-turn" } : {}) };
+    const session=this.require(sessionId),turn=this.turns.get(sessionId),result=turn?.status()==="completed"?await turn.result():undefined,events=turn?.events?.()??result?.events??[];
+    const resource=events.findLast(event=>event.type==="resource"),usage=events.findLast(event=>event.type==="usage"),tokens=usage?.tokens;
+    const observedAt=usage?.observedAt??session.turnStartedAt??session.createdAt;
+    const observation:UsageObservationV1|undefined=tokens&&session.turnId?{version:1,eventId:`${session.turnId}:usage`,profileId:this.profile.id,runId:session.runId,sessionId:session.id,turnId:session.turnId,scope:"turn",mode:"snapshot",observedAt,collectedAt:observedAt,source:"native-event",completeness:"complete",metrics:[{name:"input",value:String(tokens.input),unit:"tokens"},{name:"output",value:String(tokens.output),unit:"tokens"},...(tokens.cachedInput!==undefined?[{name:"cachedInput",value:String(tokens.cachedInput),unit:"tokens",includedIn:"input"}]:[])]}:undefined;
+    return { ...(resource ?? (result?.state==="completed" ? {state:"AVAILABLE",source:"event",confidence:"medium",reason:"Native turn completed; remaining quota was not reported"} : { state: "UNKNOWN", source: "event", confidence: "low" })), ...(tokens ? { tokens, tokenScope: "latest-turn" } : {}),...(observation?{observations:[observation]}:{}) };
   }
   async diagnostics(sessionId: string): Promise<Record<string, unknown>> {
     const session = this.require(sessionId);

@@ -6,6 +6,7 @@ import { api, createConfigurationPlan, refreshConfiguration, type ConfigResponse
 import { NativeModelPicker, nativeDefaultChoice } from "./NativeModelPicker.js";
 import { Drawer } from "./Drawer.js";
 import { Notice, Tabs } from "./ui.js";
+import {UsagePanel} from "./UsagePanel.js";
 const LlmPage=lazy(()=>import("./LlmPage.js"));
 interface ModelConfig extends Record<string,unknown> {agentProfiles:Array<{id:string;alias:string;enabled?:boolean;settings?:Record<string,unknown>}>;repositories:Array<{id:string}>}
 interface Plan {id:string;risk:string;requiresConfirmation:boolean;changes:Array<{path:string}>}
@@ -46,7 +47,7 @@ export default function ModelsPage():React.JSX.Element {
     <fieldset className="catalog-controls" disabled={busy}><div className="details-grid"><label>Harness 账号<select disabled={busy||query.isLoading} value={profile} onChange={event=>{setProfile(event.target.value);setChoice({...nativeDefaultChoice});setPlan(undefined);setMessage("");}}><option value="">选择账号</option>{query.data?.config.agentProfiles.map(entry=><option key={entry.id} value={entry.id} disabled={entry.enabled===false}>{entry.alias}{entry.enabled===false?"（已停用）":""}</option>)}</select></label><label>项目仓库<select disabled={busy||query.isLoading} value={repository} onChange={event=>{setRepository(event.target.value);setChoice({...nativeDefaultChoice});setPlan(undefined);}}><option value="">选择仓库</option>{query.data?.config.repositories.map(entry=><option key={entry.id} value={entry.id}>{entry.id}</option>)}</select></label></div>
     <NativeModelPicker key={`${profile}:${repository}`} profileId={profile} repositoryId={repository} {...(query.data?{configRevision:query.data.revision}:{})} value={choice} onChange={next=>{setChoice(next);setPlan(undefined);}}/>
     {account&&<section className="detail-section"><h3>账号默认配置</h3><p>已保存模型：{typeof account.settings?.model==="string"?account.settings.model:"沿用原生配置"}</p><p className="muted">默认模型通过配置计划保存；这里只保存模型 ID。思考强度等参数在发布任务时单次选择。</p><div className="secure-actions"><button disabled={busy||!choice.modelId} onClick={()=>void planDefault()}>将所选模型设为账号默认…</button><button disabled={busy||!account.settings?.model} onClick={()=>void planDefault(true)}>移除默认模型覆盖…</button><Link className="button-link" to={`/publish?profile=${encodeURIComponent(profile)}${repository?`&repository=${encodeURIComponent(repository)}`:""}`}>前往发布任务</Link></div></section>}
-    </fieldset>{message&&<p role="status">{message}</p>}
+    </fieldset>{account&&<UsagePanel key={account.id} profileId={account.id}/>} {message&&<p role="status">{message}</p>}
     {plan&&<Drawer title="审阅账号默认模型" onClose={()=>{if(!busy)setPlan(undefined);}}><p>{reviewTarget}</p><p>风险：{plan.risk} · {plan.changes.length} 项变更</p><ul className="plan-changes">{plan.changes.map((change,index)=><li key={index}>{change.path}</li>)}</ul><Notice>此配置影响后续运行。当前和历史 Run 的冻结选择保持不变。</Notice><button className="primary" disabled={busy||!plan.changes.length} onClick={()=>void apply()}>确认并应用默认模型</button>{message&&<p role="alert">{message}</p>}</Drawer>}
     </article>}</section>;
 }

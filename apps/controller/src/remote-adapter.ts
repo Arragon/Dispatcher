@@ -72,7 +72,7 @@ export class RemoteNativeAdapter implements AgentAdapter {
   async usage(sessionId: string): Promise<Record<string, unknown>> {
     const run = this.run(sessionId, true), value = await this.options.request({ type: "native.run", runId: run.id, action: "usage" }, run);
     if (!object(value) || JSON.stringify(value).length > 64000) throw new AdapterContractError("REMOTE_RESULT_INVALID", "Owning Runner returned invalid usage evidence");
-    const allowed = ["state", "reason", "source", "confidence", "checkedAt", "remaining", "limit", "consumed", "resetsAt", "tokens", "tokenScope", "providerRequestId", "modelId", "profileId", "sessionId"];
+    const allowed = ["state", "reason", "source", "confidence", "checkedAt", "remaining", "limit", "consumed", "resetsAt", "tokens", "tokenScope", "observations", "providerRequestId", "modelId", "profileId", "sessionId"];
     return Object.fromEntries(Object.entries(value).filter(([key]) => allowed.includes(key)));
   }
   async diagnostics(sessionId: string): Promise<Record<string, unknown>> {

@@ -650,3 +650,24 @@ missing local process handle cannot confirm termination: the Run remains
 unavailable with manual inspection required. The session store rechecks current
 task/lease authority immediately before native spawn, and post-send checks still
 stop a newly owned child when authority changes after that boundary.
+
+## Usage observations
+
+Native adapters may return normalized versioned observations alongside resource
+state. Codex exposes bounded cached events without awaiting an active turn,
+with a persisted identity for each native turn. Controller collects these from
+its background advancement path, independently of dashboard connections. The
+owning remote Runner persists its last observed usage; read-only cached usage
+remains available after loss of process attachment without allowing execution.
+
+The existing entity store retains one immutable observation per native event
+identity. Replays are deduplicated and changed payloads conflict atomically.
+Snapshots replace totals for their exact account/run/session/turn/generation/
+period scope while preserving historical evidence; later deltas add only after
+that snapshot. Metrics use exact decimal strings with explicit units and
+inclusion relationships. Account periods are independent of task usage; time
+filters refer to observation timestamps, not inferred consumption intervals.
+Run.tokens remains the compatible latest-turn projection. Missing metrics and
+unavailable billing baselines stay unknown. Management reads never query a
+native provider. The current normalized token emitter is Codex; providers with
+no qualified observation emitter do not acquire synthetic usage values.
