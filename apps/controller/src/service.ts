@@ -498,6 +498,9 @@ export class ControllerService {
   private readonly background: BackgroundLoop;
   private dispatchQueue: Promise<void> = Promise.resolve();
   private readonly runAdvances = new Map<string, Promise<AdvanceResult>>();
+  private readonly runCancellations = new Map<string, Promise<Run>>();
+  private readonly cancelledRunIds = new Set<string>();
+  private readonly localVerifications = new Map<string, { controller: AbortController; settled: Promise<void> }>();
   private readonly dispatchingRuns = new Set<string>();
   private readonly remoteLifecycleJobs = new Map<string,Promise<void>>();
   private readonly remoteLifecycleQueued = new Set<string>();
@@ -699,9 +702,9 @@ export class ControllerService {
     this.persistLatestLeaseAudit(run.id);
   }
 
-  private fenceDelivery(run: Run, operation: "branch" | "push" | "pull-request" | "complete"): void {
+  private fenceDelivery(run: Run, operation: "verify" | "branch" | "push" | "pull-request" | "complete"): void {
     const current = this.database.getEntity<JsonValue>("run", run.id) as unknown as Run | undefined;
-    if (!current || current.generation !== run.generation || current.leaseId !== run.leaseId || !["VERIFYING", "DELIVERING"].includes(current.state)) throw new ConnectorError("CONFLICT", "Delivery authority rejected: stale or terminal run", { retryable: false, operation: "delivery" });
+    if (this.cancelledRunIds.has(run.id) || !current || current.generation !== run.generation || current.leaseId !== run.leaseId || !["VERIFYING", "DELIVERING"].includes(current.state)) throw new ConnectorError("CONFLICT", "Delivery authority rejected: stale or terminal run", { retryable: false, operation: "delivery" });
     this.restoreLeaseAuthority(run);
     try {
       this.leaseAuthority.fence(run.id, run.leaseId, run.generation, operation, this.now().toISOString());
@@ -1504,7 +1507,7 @@ export class ControllerService {
 
   private saveAdvancedRun(run: Run, expectedState: Run["state"]): void {
     const current = this.database.getEntity<JsonValue>("run", run.id) as unknown as Run | undefined;
-    if (!current || current.generation !== run.generation || current.leaseId !== run.leaseId || current.state !== expectedState) throw new ConnectorError("CONFLICT", "Run changed while advancement was awaiting work", { retryable: false });
+    if (this.cancelledRunIds.has(run.id) || !current || current.generation !== run.generation || current.leaseId !== run.leaseId || current.state !== expectedState) throw new ConnectorError("CONFLICT", "Run changed while advancement was awaiting work", { retryable: false });
     // Heartbeats can renew the same generation while verification or SCM awaits.
     if (current.leaseExpiresAt) run.leaseExpiresAt = current.leaseExpiresAt;
     this.database.saveEntity("run", run.id, json(run));
@@ -1607,13 +1610,29 @@ export class ControllerService {
       } else {
         const verification = new VerificationRegistry();
         for (const command of frozen ?? repository!.verificationCommands) verification.register(command);
-        for (const commandId of contract.verification) {
-          try {
-            const result = await verification.run(commandId, run.worktree);
+        const controller = new AbortController();
+        const settled = (async () => {
+          for (const commandId of contract.verification) {
+            this.fenceDelivery(run, "verify");
+            let result;
+            try { result = await verification.run(commandId, run.worktree!, controller.signal); }
+            catch (error) {
+              if (controller.signal.aborted) throw error;
+              if (verification.list().some(command => command.id === commandId)) {
+                this.markRemoteUnavailable(run.id, "Verification process cleanup is unconfirmed", "NATIVE_OUTCOME_UNKNOWN", run);
+                throw error;
+              }
+              summaries.push(`${commandId}:unregistered`); blocked = true; continue;
+            }
+            if (controller.signal.aborted) throw new AdapterContractError("RUN_CANCELLED", "Verification stopped after cancellation");
             summaries.push(`${commandId}:${result.status}`);
             if (result.required && result.status !== "passed") blocked = true;
-          } catch { summaries.push(`${commandId}:unregistered`); blocked = true; }
-        }
+          }
+        })();
+        this.localVerifications.set(run.id, { controller, settled });
+        try { await settled; }
+        finally { if (this.localVerifications.get(run.id)?.controller === controller) this.localVerifications.delete(run.id); }
+
       }
       run.verification = { state: blocked ? "FAILED" : "PASSED", commands: [...contract.verification], summary: summaries.join(", ") };
       if (blocked) {
@@ -1720,12 +1739,25 @@ export class ControllerService {
     const result=await this.remoteRequest(run.runnerId,{type:"native.run_finalize",runId:run.id},run,`native-finalize:${run.id}:${run.generation}`) as {runId?:unknown;settledAt?:unknown}|undefined;
     if(!result||result.runId!==run.id||typeof result.settledAt!=="string"||!Number.isFinite(Date.parse(result.settledAt)))throw new AdapterContractError("REMOTE_RESULT_INVALID","Owning Runner did not confirm execution finalization");
   }
-  private async cancelRunExecution(run:Run):Promise<Run> {
-    if(isTerminalRunState(run.state))return run;
+  private cancelRunExecution(run:Run):Promise<Run> {
+    if (isTerminalRunState(run.state)) return Promise.resolve(run);
+    const pending = this.runCancellations.get(run.id);
+    if (pending) return pending;
+    this.cancelledRunIds.add(run.id);
+    const cancellation = Promise.resolve().then(() => this.stopRunExecution(run)).finally(() => { this.runCancellations.delete(run.id); });
+    this.runCancellations.set(run.id, cancellation);
+    return cancellation;
+  }
+  private async stopRunExecution(run:Run):Promise<Run> {
+    const latest = this.database.getEntity<JsonValue>("run", run.id) as unknown as Run | undefined;
+    if (latest && isTerminalRunState(latest.state)) return latest;
     const remote=this.configuration.current().config.runners.some(runner=>runner.id===run.runnerId&&runner.mode==="remote");
     this.restoreLeaseAuthority(run);
     this.leaseAuthority.revoke(run.id,run.leaseId,run.generation,"Cancelled by operator",this.now().toISOString());
     this.persistLatestLeaseAudit(run.id);
+    const verification = this.localVerifications.get(run.id), advancing = this.runAdvances.get(run.id);
+    verification?.controller.abort();
+    this.markRemoteUnavailable(run.id, "Cancellation requested; waiting for owned execution to stop", "NATIVE_OUTCOME_UNKNOWN", run);
     if(remote){
       try{
         const stopped=await this.remoteRequest(run.runnerId,{type:"lease.revoke",leaseId:run.leaseId,generation:run.generation,reason:"Cancelled by operator"},run,`native-cancel-lease:${run.id}:${run.generation}`) as {runId?:unknown;leaseId?:unknown;generation?:unknown;revokedAt?:unknown}|undefined;
@@ -1733,11 +1765,30 @@ export class ControllerService {
       }catch(error){this.markRemoteUnavailable(run.id,"Cancellation has fenced authority; native termination is unconfirmed","REMOTE_LEASE_INVALID",run);throw error;}
     }else try{
       const adapter=this.agentAdapters.get(run.profileId);if(!adapter)throw new AdapterContractError("SESSION_DETACHED","Native backend is unavailable");
-      const stopped=await adapter.cancel(run.sessionId);if(stopped.state!=="CANCELLED")throw new AdapterContractError("SESSION_DETACHED","Native termination is unconfirmed");
+      const stopped=await adapter.cancel(run.sessionId);if(!["CANCELLED","COMPLETED","FAILED"].includes(stopped.state))throw new AdapterContractError("SESSION_DETACHED","Native termination is unconfirmed");
     }catch(error){this.markRemoteUnavailable(run.id,"Cancellation has fenced authority; inspect the original native process before continuing","NATIVE_OUTCOME_UNKNOWN",run);throw error;}
+    try {
+      await verification?.settled.catch(error => { if (!(error instanceof AdapterContractError) || error.code !== "RUN_CANCELLED") throw error; });
+      await advancing?.catch(() => undefined);
+    } catch (error) {
+      this.markRemoteUnavailable(run.id, "Cancellation has fenced authority; verification cleanup is unconfirmed", "NATIVE_OUTCOME_UNKNOWN", run);
+      throw error;
+    }
     const current=this.database.getEntity<JsonValue>("run",run.id) as unknown as Run|undefined;
     if(!current||current.leaseId!==run.leaseId||current.generation!==run.generation)throw new SemanticPolicyError("INVALID_INPUT","Run authority changed during cancellation");
-    if(!isTerminalRunState(current.state)){assertRunTransition(current.state,"CANCELLED");current.state="CANCELLED";current.endedAt=this.now().toISOString();delete current.recoveryState;delete current.recoveryReason;this.database.saveEntity("run",current.id,json(current));this.fleetEvents.publish("run.changed",current.id,{id:current.id,state:current.state});}
+    this.database.transaction(() => {
+      if (!isTerminalRunState(current.state)) {
+        assertRunTransition(current.state, "CANCELLED"); current.state = "CANCELLED"; current.endedAt = this.now().toISOString();
+        delete current.recoveryState; delete current.recoveryReason;
+        this.database.saveEntity("run", current.id, json(current));
+      }
+      for (const value of this.database.listEntities<JsonValue>("task-publication")) {
+        const publication = value as unknown as PublicationRecord;
+        if (publication.receipt?.runId === current.id) this.publications.markOutcome(publication.owner, publication.preview.publicationId, current);
+      }
+    });
+    this.fleetEvents.publish("run.changed", current.id, { id: current.id, state: current.state });
+    this.cancelledRunIds.delete(current.id);
     return current;
   }
   private async inspectRepository(plan:Parameters<WorkspaceManager["inspect"]>[0]):Promise<{baseCommit:string;root:string}> {
@@ -2576,6 +2627,7 @@ export class ControllerService {
   }
 
   private advanceRunExclusive(runId: string): Promise<AdvanceResult> {
+    if (this.cancelledRunIds.has(runId)) return Promise.reject(new AdapterContractError("RUN_CANCELLED", "Cancelled authority forbids further advancement"));
     const existing = this.runAdvances.get(runId);
     if (existing) return existing;
     const advance = (async () => {

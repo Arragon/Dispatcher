@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { OwnedProcessGroup } from "./owned-process.js";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { promisify } from "node:util";
 import {
@@ -81,25 +82,28 @@ export interface ProcessExecutor {
 export class SpawnProcessExecutor implements ProcessExecutor {
   async start(input: { file: string; args: string[]; cwd: string; runId: string; mode?: "headless" | "pty" }): Promise<ProcessExecution> {
     if (input.mode === "pty") throw new AdapterContractError("PTY_EXECUTOR_REQUIRED", "PTY mode must be provided by the Runner ProcessManager");
-    return new SpawnProcessExecution(input.runId, spawn(input.file, input.args, { cwd: input.cwd, shell: false, stdio: ["pipe", "pipe", "pipe"] }));
+    return new SpawnProcessExecution(input.runId, spawn(input.file, input.args, { cwd: input.cwd, shell: false, detached: process.platform !== "win32", env: { ...process.env, PWD: input.cwd }, stdio: ["pipe", "pipe", "pipe"] }));
   }
 }
 
 class SpawnProcessExecution implements ProcessExecution {
   private current: "running" | "cancelled" | "completed" | "failed" = "running";
+  private readonly ownership: OwnedProcessGroup;
   private stdout = "";
   private stderr = "";
   private readonly outcome: Promise<{ state: "cancelled" | "completed" | "failed"; summary: string }>;
 
   constructor(readonly id: string, private readonly child: ChildProcess) {
+    this.ownership = new OwnedProcessGroup(child);
     child.stdout?.on("data", (chunk: Buffer) => { this.stdout = (this.stdout + chunk.toString("utf8")).slice(-131_072); });
     child.stderr?.on("data", (chunk: Buffer) => { this.stderr = (this.stderr + chunk.toString("utf8")).slice(-32_768); });
-    this.outcome = new Promise((resolve) => {
+    this.outcome = new Promise((resolve, reject) => {
       child.on("error", (error) => { this.stderr = error.message; });
-      child.on("close", (code) => {
+      child.on("close", (code) => { void (async () => {
+        await this.ownership.stop();
         if (this.current !== "cancelled") this.current = code === 0 ? "completed" : "failed";
         resolve({ state: this.current, summary: (this.stdout.trim() || this.stderr.trim() || `Process exited with code ${code ?? "unknown"}`).slice(0, 4_000) });
-      });
+      })().catch(reject); });
     });
   }
   async status(): Promise<{ state: "running" | "cancelled" | "completed" | "failed" }> { return { state: this.current }; }
@@ -108,7 +112,8 @@ class SpawnProcessExecution implements ProcessExecution {
     await new Promise<void>((resolve, reject) => this.child.stdin!.write(data, (error) => error ? reject(error) : resolve()));
   }
   async cancel(): Promise<void> {
-    if (this.current === "running") { this.current = "cancelled"; this.child.kill("SIGTERM"); }
+    if (this.current === "running") this.current = "cancelled";
+    await this.ownership.stop();
     await this.outcome;
   }
   result(): Promise<{ state: "cancelled" | "completed" | "failed"; summary: string }> { return this.outcome; }
@@ -151,6 +156,7 @@ export const genericCliManifest: AdapterManifest = {
 export class GenericCliAdapter implements AgentAdapter {
   readonly manifest = validateManifest(genericCliManifest);
   private readonly executions = new Map<string, ProcessExecution>();
+  private readonly cancelledSessions = new Set<string>();
   constructor(private readonly executor: ProcessExecutor, private readonly template: GenericCliTemplate, private readonly store: SessionStore = new MemorySessionStore(), private readonly profileId?: string) {}
 
   async start(input: { runId: string; workspacePath: string; backendId?: string; prompt?: string }): Promise<AdapterSession> {
@@ -165,6 +171,7 @@ export class GenericCliAdapter implements AgentAdapter {
   }
 
   async send(sessionId: string, message: string): Promise<AdapterEvent> {
+    if (this.cancelledSessions.has(sessionId) || this.require(sessionId).state === "CANCELLED") throw new AdapterContractError("SESSION_CANCELLED", "CLI session cancellation forbids more input");
     const execution = this.executions.get(sessionId);
     if (!execution) throw new AdapterContractError("SESSION_NOT_ATTACHED", "CLI process is not attached to this runtime");
     await execution.send(message);
@@ -173,7 +180,9 @@ export class GenericCliAdapter implements AgentAdapter {
   async pause(): Promise<AdapterSession> { throw new AdapterContractError("UNSUPPORTED_CAPABILITY", "Generic CLI does not declare pause support"); }
   async resume(): Promise<AdapterSession> { throw new AdapterContractError("UNSUPPORTED_CAPABILITY", "Generic CLI does not declare resume support"); }
   async cancel(sessionId: string): Promise<AdapterSession> {
-    const execution = this.executions.get(sessionId);
+    const session = this.require(sessionId), execution = this.executions.get(sessionId);
+    if (!execution && ["STARTING", "RUNNING", "PAUSED"].includes(session.state)) throw new AdapterContractError("SESSION_DETACHED", "CLI process termination cannot be confirmed by this runtime");
+    this.cancelledSessions.add(sessionId);
     if (execution) await execution.cancel();
     return this.transition(sessionId, "CANCELLED");
   }

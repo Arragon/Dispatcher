@@ -47,6 +47,11 @@ revoked, or older-generation authority. Startup failures retain a failed Run
 and readable diagnostics instead of disappearing before Run persistence.
 Lease failure fences the Run before cancelling its current agent session;
 cleanup errors remain visible in the failure reason.
+Operator cancellation also aborts local verification process groups and waits for
+the current advancement to settle before acknowledging CANCELLED. A pending
+cancellation fences further verification/delivery even if persistence fails.
+Qoder and Generic CLI share owned process-group cleanup; detached active
+sessions and HTTP responses without a terminal state cannot confirm a stop.
 
 GitHub delivery persists PR/commit evidence before CI reads. A bounded background
 reconcile reads PR state/current head, commit statuses and paginated check runs,

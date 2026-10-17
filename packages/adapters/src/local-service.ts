@@ -70,6 +70,8 @@ export const localServiceManifest: AdapterManifest = {
 export class LocalServiceAdapter implements AgentAdapter {
   readonly manifest = validateManifest(localServiceManifest);
   private readonly snapshots = new Map<string, LocalServiceSnapshot>();
+  private readonly cancelledSessions = new Set<string>();
+  private readonly pendingInputs = new Map<string, Promise<AdapterEvent>>();
 
   constructor(
     readonly profile: LocalServiceProfileConfig,
@@ -103,7 +105,14 @@ export class LocalServiceAdapter implements AgentAdapter {
   }
   async send(sessionId: string, message: string): Promise<AdapterEvent> {
     const session = this.require(sessionId);
-    const providerSessionId = requireProviderSession(session);
+    if (this.cancelledSessions.has(sessionId) || session.state === "CANCELLED") throw new AdapterContractError("SESSION_CANCELLED", "HTTP session cancellation forbids more input");
+    if (this.pendingInputs.has(sessionId)) throw new AdapterContractError("INPUT_PENDING", "An HTTP input is already pending");
+    const send = this.sendInput(session, message).finally(() => { this.pendingInputs.delete(sessionId); });
+    this.pendingInputs.set(sessionId, send);
+    return send;
+  }
+  private async sendInput(session: AdapterSession, message: string): Promise<AdapterEvent> {
+    const sessionId = session.id, providerSessionId = requireProviderSession(session);
     const snapshot = await this.requestSnapshot(renderSessionPath(this.profile.inputPath, providerSessionId), { method: "POST", body: JSON.stringify({ message }) });
     this.snapshots.set(sessionId, snapshot);
     this.update(sessionId, { state: mapState(snapshot.state) });
@@ -113,9 +122,13 @@ export class LocalServiceAdapter implements AgentAdapter {
   async resume(): Promise<AdapterSession> { throw new AdapterContractError("UNSUPPORTED_CAPABILITY", "The local-service contract does not declare same-session resume"); }
   async cancel(sessionId: string): Promise<AdapterSession> {
     const session = this.require(sessionId);
+    this.cancelledSessions.add(sessionId);
+    await this.pendingInputs.get(sessionId)?.catch(() => undefined);
     const snapshot = await this.requestSnapshot(renderSessionPath(this.profile.cancelPath, requireProviderSession(session)), { method: "POST" });
+    const state = mapState(snapshot.state);
+    if (!["CANCELLED", "COMPLETED", "FAILED"].includes(state)) throw new AdapterContractError("CANCELLATION_UNCONFIRMED", "Local service did not confirm a terminal session state");
     this.snapshots.set(sessionId, snapshot);
-    return this.update(sessionId, { state: snapshot.state ? mapState(snapshot.state) : "CANCELLED" });
+    return this.update(sessionId, { state });
   }
   async status(sessionId: string): Promise<AdapterSession> {
     const session = this.require(sessionId);

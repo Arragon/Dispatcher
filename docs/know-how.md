@@ -99,6 +99,11 @@
   normalization, and PR evidence. Do not claim remote cancel support until an
   official endpoint is verified; the adapter intentionally declares no cancel
   capability.
+- An HTTP cancel response with no state or an unknown/running state is not a
+  stop acknowledgement. Drain earlier input requests before issuing stop, fence
+  later inputs immediately, and retain uncertainty when provider or disk writes
+  fail. Local canonical cancellation must also abort and await verification,
+  then drain the existing advancement before reporting CANCELLED.
 - WorkBuddy/CodeBuddy local-service paths are configuration, not guessed vendor
   defaults. Every session endpoint must place `{sessionId}` in its own path
   segment so percent-encoding cannot escape the configured endpoint shape.

@@ -15,6 +15,8 @@ import {
 } from "./contracts.js";
 import { MemorySessionStore, type SessionStore } from "./generic.js";
 
+import { OwnedProcessGroup } from "./owned-process.js";
+
 const execFileAsync = promisify(execFile);
 
 export interface QoderProfileConfig {
@@ -88,7 +90,7 @@ export class QoderCliBackend implements QoderBackend {
     if (input.configDir) args.push("--config-dir", input.configDir);
     if (input.model) args.push("--model", input.model);
     args.push("--", input.prompt);
-    return new SpawnedQoderTurn(spawn(input.executable, args, { cwd: input.workspacePath, shell: false, stdio: ["ignore", "pipe", "pipe"] }));
+    return new SpawnedQoderTurn(spawn(input.executable, args, { cwd: input.workspacePath, shell: false, detached: process.platform !== "win32", env: { ...process.env, PWD: input.workspacePath }, stdio: ["ignore", "pipe", "pipe"] }));
   }
 }
 
@@ -96,7 +98,9 @@ class SpawnedQoderTurn implements QoderTurn {
   private completed = false;
   private cancelled = false;
   private readonly outcome: Promise<QoderTurnResult>;
+  private readonly ownership: OwnedProcessGroup;
   constructor(private readonly child: ChildProcess) {
+    this.ownership = new OwnedProcessGroup(child);
     let stdout = "";
     let stderr = "";
     const events: NormalizedQoderEvent[] = [];
@@ -115,9 +119,10 @@ class SpawnedQoderTurn implements QoderTurn {
       }
     });
     child.stderr?.on("data", (chunk: Buffer) => { stderr = (stderr + chunk.toString("utf8")).slice(-16_384); });
-    this.outcome = new Promise((resolve) => {
+    this.outcome = new Promise((resolve, reject) => {
       child.on("error", (error) => { stderr = error.message; });
-      child.on("close", (code) => {
+      child.on("close", (code) => { void (async () => {
+        await this.ownership.stop();
         this.completed = true;
         const error = normalizeQoderError(stderr);
         if (error) events.push(error);
@@ -128,10 +133,10 @@ class SpawnedQoderTurn implements QoderTurn {
           summary: lastActivity?.summary ?? waiting?.reason ?? (code === 0 ? "Qoder completed" : "Qoder failed"),
           events,
         });
-      });
+      })().catch(reject); });
     });
   }
-  async cancel(): Promise<void> { if (!this.completed) { this.cancelled = true; this.child.kill("SIGTERM"); } await this.outcome; }
+  async cancel(): Promise<void> { if (!this.completed) this.cancelled = true; await this.ownership.stop(); await this.outcome; }
   status(): "running" | "completed" { return this.completed ? "completed" : "running"; }
   result(): Promise<QoderTurnResult> { return this.outcome; }
 }
@@ -139,6 +144,8 @@ class SpawnedQoderTurn implements QoderTurn {
 export class QoderAdapter implements AgentAdapter {
   readonly manifest = validateManifest(qoderManifest);
   private readonly turns = new Map<string, QoderTurn>();
+  private readonly cancelledSessions = new Set<string>();
+  private readonly pendingSends = new Set<string>();
   constructor(readonly profile: QoderProfileConfig, private readonly backend: QoderBackend = new QoderCliBackend(), private readonly store: SessionStore = new MemorySessionStore()) {}
 
   async start(input: { runId: string; workspacePath: string; backendId?: string; prompt?: string }): Promise<AdapterSession> {
@@ -150,15 +157,31 @@ export class QoderAdapter implements AgentAdapter {
     return structuredClone(session);
   }
   async send(sessionId: string, message: string): Promise<AdapterEvent> {
-    const session = await this.finish(sessionId);
-    if (!session.providerSessionId) throw new AdapterContractError("SESSION_NOT_RESUMABLE", "Qoder session identity is missing");
-    this.turns.set(sessionId, this.backend.start({ executable: this.profile.executable ?? "qoder", workspacePath: session.workspacePath, prompt: message, providerSessionId: session.providerSessionId, resume: true, ...(this.profile.configDir ? { configDir: this.profile.configDir } : {}), ...(this.profile.model ? { model: this.profile.model } : {}) }));
-    this.store.save({ ...session, state: "RUNNING", updatedAt: new Date().toISOString() });
-    return { type: "session.message", sessionId, occurredAt: new Date().toISOString(), data: { acceptedCharacters: message.length, providerSessionId: session.providerSessionId } };
+    this.assertSendable(sessionId);
+    if (this.pendingSends.has(sessionId)) throw new AdapterContractError("INPUT_PENDING", "A Qoder follow-up is already pending");
+    this.pendingSends.add(sessionId);
+    try {
+      const session = await this.finish(sessionId);
+      this.assertSendable(sessionId);
+      if (!session.providerSessionId) throw new AdapterContractError("SESSION_NOT_RESUMABLE", "Qoder session identity is missing");
+      this.turns.set(sessionId, this.backend.start({ executable: this.profile.executable ?? "qoder", workspacePath: session.workspacePath, prompt: message, providerSessionId: session.providerSessionId, resume: true, ...(this.profile.configDir ? { configDir: this.profile.configDir } : {}), ...(this.profile.model ? { model: this.profile.model } : {}) }));
+      this.store.save({ ...session, state: "RUNNING", updatedAt: new Date().toISOString() });
+      return { type: "session.message", sessionId, occurredAt: new Date().toISOString(), data: { acceptedCharacters: message.length, providerSessionId: session.providerSessionId } };
+    } finally { this.pendingSends.delete(sessionId); }
   }
+
   async pause(): Promise<AdapterSession> { throw new AdapterContractError("UNSUPPORTED_CAPABILITY", "Qoder print mode cannot pause a live turn"); }
   async resume(sessionId: string): Promise<AdapterSession> { await this.send(sessionId, "Continue from the existing task context."); return this.status(sessionId); }
-  async cancel(sessionId: string): Promise<AdapterSession> { await this.turns.get(sessionId)?.cancel(); return this.update(sessionId, { state: "CANCELLED" }); }
+  async cancel(sessionId: string): Promise<AdapterSession> {
+    const session = this.require(sessionId), turn = this.turns.get(sessionId);
+    if (!turn && ["STARTING", "RUNNING", "PAUSED"].includes(session.state)) throw new AdapterContractError("SESSION_DETACHED", "Qoder process termination cannot be confirmed by this runtime");
+    this.cancelledSessions.add(sessionId);
+    await turn?.cancel();
+    return this.update(sessionId, { state: "CANCELLED" });
+  }
+  private assertSendable(sessionId: string): void {
+    if (this.cancelledSessions.has(sessionId) || this.require(sessionId).state === "CANCELLED") throw new AdapterContractError("SESSION_CANCELLED", "Qoder cancellation forbids another native turn");
+  }
   async status(sessionId: string): Promise<AdapterSession> { const session = this.require(sessionId); const turn = this.turns.get(sessionId); return !turn || turn.status() === "running" ? structuredClone(session) : this.finish(sessionId); }
   async result(sessionId: string): Promise<AdapterResult> { const session = await this.finish(sessionId); const result = await this.turns.get(sessionId)?.result(); return { sessionId, state: session.state, summary: result?.summary ?? `Qoder session ${session.state.toLowerCase()}`, artifacts: [] }; }
   async usage(sessionId: string): Promise<Record<string, unknown>> { const result = await this.turns.get(sessionId)?.result(); return result?.events.filter((event) => event.type === "resource").at(-1) ?? { state: "UNKNOWN", source: "probe", confidence: "low" }; }
@@ -170,6 +193,7 @@ export class QoderAdapter implements AgentAdapter {
     const turn = this.turns.get(sessionId);
     if (!turn) return structuredClone(session);
     const result = await turn.result();
+    if (this.cancelledSessions.has(sessionId)) return structuredClone(this.require(sessionId));
     return this.update(sessionId, { state: result.state === "completed" ? "COMPLETED" : result.state === "cancelled" ? "CANCELLED" : result.state === "waiting" ? "PAUSED" : "FAILED" });
   }
   private require(id: string): AdapterSession { const session = this.store.load(id); if (!session) throw new AdapterContractError("SESSION_NOT_FOUND", `Unknown session ${id}`); return session; }

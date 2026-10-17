@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -33,7 +33,7 @@ async function fixture(options: Partial<ConstructorParameters<typeof ControllerS
   await apply(config => { config.agentProfiles = []; config.repositories = [{ id: "fixture", root: repository, defaultBaseRef: "main", scopePaths: [], verificationCommands: [] }]; });
   const workspace = await service.workspaces.create({ repositoryId: "fixture", taskId: "trial", runId: "trial", attempt: 1, baseRef: "main", scopePaths: [] });
   const start = (id: string) => service.app.inject({ method: "POST", url: `/api/agents/profiles/${id}/runs`, headers: OWNER, payload: { workspacePath: workspace.path, prompt: "hello" } });
-  return { service, apply, start, close: async () => { await service.stop(); rmSync(directory, { recursive: true, force: true }); } };
+  return { service, apply, start, workspace, directory, close: async () => { await service.stop(); rmSync(directory, { recursive: true, force: true }); } };
 }
 
 describe("all-provider adapter lifecycle", () => {
@@ -138,6 +138,35 @@ describe("all-provider adapter lifecycle", () => {
       expect(factory).toHaveBeenCalledOnce();
       expect((await f.apply(config => { config.agentProfiles[0]!.enabled = false; })).json()).toMatchObject({ code: "ACTIVE_AGENT_PROFILE" });
     } finally { finish?.(); await f.close(); }
+  });
+
+  it("does not acknowledge canonical cancellation until the active verification process tree has stopped", async () => {
+    const f = await fixture({ qoderBackendFactory: () => ({ start: () => ({ status: () => "completed", cancel: async () => undefined, result: async () => ({ state: "completed", summary: "done", events: [] }) }) }) });
+    const ready = join(f.directory, "verify-child.pid");
+    let child: number | undefined, parent: number | undefined;
+    let advancing: ReturnType<typeof f.service.app.inject> | undefined;
+    const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+    try {
+      const descendant = `process.on('SIGTERM',()=>{});require('node:fs').writeFileSync(${JSON.stringify(ready)},JSON.stringify({pid:process.pid,parent:process.ppid}));setInterval(()=>{},1000)`;
+      const body = `require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(descendant)}],{stdio:'ignore'}).unref();process.on('SIGTERM',()=>{});setInterval(()=>{},1000)`;
+      await f.apply(config => { config.agentProfiles = [{ id: "qoder", alias: "Qoder", provider: "qoder", runnerId: "local" }]; config.repositories[0]!.verificationCommands = [{ id: "wait", file: process.execPath, args: ["-e", body], required: true, timeoutMs: 15_000, outputLimitBytes: 1024 }]; });
+      const session = (await f.start("qoder")).json().session;
+      const now = new Date().toISOString();
+      f.service.database.writeCanonicalTask("task", 0, { id: "task", projectId: "fixture", title: "Task", state: "VERIFYING", currentRunId: "run", createdAt: now, updatedAt: now });
+      f.service.database.saveTaskContract("task", { version: 1, revision: 1, goal: "done", scope: ["README.md"], acceptanceCriteria: ["done"], verification: ["wait"], constraints: [], delivery: { type: "none", repository: "fixture" } });
+      f.service.database.saveEntity("run", "run", { id: "run", taskId: "task", runnerId: "local", providerId: "qoder", profileId: "qoder", sessionId: session.id, state: "VERIFYING", attempt: 1, generation: 1, leaseId: "lease", taskRevision: 1, contractRevision: 1, worktree: f.workspace.path, branch: f.workspace.branch, startedAt: now, lastActivityAt: now, verification: { state: "PENDING", commands: ["wait"] } });
+      f.service.database.saveEntity("task-publication", "publication", { owner: "operator", preview: { publicationId: "publication" }, receipt: { publicationId: "publication", taskId: "task", runId: "run", state: "STARTED" } });
+      advancing = f.service.app.inject({ method: "POST", url: "/api/runs/run/advance", headers: OWNER }); void advancing.then(() => undefined);
+      await vi.waitFor(() => expect(existsSync(ready)).toBe(true)); ({ pid: child, parent } = JSON.parse(readFileSync(ready, "utf8")));
+      const cancelled = await f.service.semanticTools.execute("run.cancel", { target: "run" }, { principal: { id: "operator", roles: ["operator"], channel: "api" }, workflowId: "cancel-verification", confirmed: true });
+      expect(cancelled).toMatchObject({ state: "CANCELLED" });
+      expect(alive(child!)).toBe(false);
+      await advancing;
+      expect(f.service.database.getEntity("run", "run")).toMatchObject({ state: "CANCELLED" });
+      expect(f.service.database.getCanonicalTask("task")!.document).toMatchObject({ state: "CANCELLED" });
+      expect(f.service.database.getEntity("run-result", "run")).toBeUndefined();
+      expect(f.service.database.getEntity("task-publication", "publication")).toMatchObject({ receipt: { state: "STARTED" } });
+    } finally { for (const pid of [child, parent]) if (pid && alive(pid)) process.kill(pid, "SIGKILL"); await advancing; await f.close(); }
   });
 
 });
