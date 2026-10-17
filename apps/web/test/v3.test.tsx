@@ -140,3 +140,9 @@ it("does not replace an uncertain commit with another publication preview",async
   mount(<PublishPage/>);await screen.findByRole("option",{name:/repo/});await userEvent.type(screen.getByLabelText("任务说明"),"body");await userEvent.click(screen.getByRole("button",{name:"检查并审阅"}));await userEvent.click(await screen.findByRole("button",{name:"确认并创建任务"}));await screen.findByText(/提交结果未知/);
   await userEvent.click(screen.getByRole("button",{name:"关闭"}));await userEvent.click(screen.getByRole("button",{name:"检查并审阅"}));expect(previews).toBe(1);
 });
+
+it("sends an explicit local commit choice only at publication review",async()=>{
+ const posts:Array<{path:string;body:Record<string,unknown>}>=[];
+ vi.spyOn(globalThis,"fetch").mockImplementation(async(input,init)=>{const path=String(input);if(init?.method==="POST"){posts.push({path,body:JSON.parse(String(init.body))});return new Response(JSON.stringify({publicationId:"local-commit",revision:1,state:"PREVIEW",canCommit:true,effectiveTask:{title:"Commit task",description:"body",contractState:"READY",missing:[]},checks:[{id:"delivery",status:"passed",message:"Local commit, no push"}],confirmation:{required:true,reviewHash:"commit-review",reasons:["Local commit"]}}));}return new Response(JSON.stringify(config));});
+ mount(<PublishPage/>);await screen.findByRole("option",{name:/repo/});await userEvent.selectOptions(screen.getByLabelText("项目仓库"),"repo");await userEvent.type(screen.getByLabelText("任务说明"),"body");await userEvent.selectOptions(screen.getByLabelText("交付方式"),"commit");expect(posts).toHaveLength(0);await userEvent.click(screen.getByRole("button",{name:"检查并审阅"}));expect(await screen.findByText("passed · Local commit, no push")).toBeTruthy();expect(posts).toEqual([{path:"/api/task-publications/preview",body:expect.objectContaining({delivery:{type:"commit"}})}]);
+});

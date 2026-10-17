@@ -8,6 +8,7 @@ import {
 } from "@dispatcher/protocol";
 
 export * from "./process.js";
+export * from "./local-git-delivery.js";
 export * from "./verification.js";
 export * from "./journal.js";
 export * from "./lease.js";

@@ -611,3 +611,11 @@
 - Scope comparisons must resolve symlink aliases and existing ancestors of
   missing paths. Apply the same private-path rule to actual result files under
   a whole-repository scope; hide native private path details in resolution errors.
+
+- Local commit must not reuse GitHub push's implicit add/commit path. Reuse
+  owned ProcessManager groups, validate the frozen managed workspace and preserve
+  native Git hooks. Keep unresolved mutation receipts unknown across restart;
+  never infer that a missing response permits another commit.
+- Hash explicit immutable workspace fields for delivery identity, not arbitrary
+  object property order or incidental plan timestamps. The post-commit scoped
+  file manifest, not a pre-hook snapshot, belongs with the saved commit SHA.

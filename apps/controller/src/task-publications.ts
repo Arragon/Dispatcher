@@ -107,7 +107,8 @@ export class PublicationService {
     const compiled=new TaskContractCompiler().compile({externalId:draft.clientDraftId,title,description:draft.description,labels:[],dependencies:[],...(repository?{repository:repository.id}:{}),scope:scopes,acceptanceCriteria:draft.acceptanceCriteria.filter(s=>s.trim()),verification,constraints:[],delivery:{type:draft.delivery.type},extensions:{}},1,repository?{workspace:{repositoryId:repository.id,baseRef,...(baseCommit?{baseCommit}:{}),...(draft.targetBranch?{targetBranch:draft.targetBranch}:{})},...(draft.referenceLinks?{referenceLinks:draft.referenceLinks}:{})}:undefined);
     if(existing){this.assertTaskBinding(existing.taskBinding);compiled.contract=structuredClone(existing.contract);}
     const checks:PublicationPreview["checks"]=[{id:"workspace",status:repository?"passed":"warning",message:repository?"Registered physical Git root and base commit verified":"No repository; task needs specification"}];
-    if (draft.delivery.type!=="none") checks.push({id:"delivery",status:"blocked",code:"DELIVERY_UNSUPPORTED",message:"Publication currently supports local results only"});
+    if (draft.delivery.type==="pull-request") checks.push({id:"delivery",status:"blocked",code:"DELIVERY_UNSUPPORTED",message:"Explicit pull-request delivery is not qualified yet"});
+    if(draft.delivery.type==="commit")checks.push(snapshot.config.runners.some(runner=>runner.id===repository?.runnerId&&runner.mode==="remote")?{id:"delivery",status:"blocked",code:"REMOTE_COMMIT_UNAVAILABLE",message:"Owning Runner commit is not qualified yet"}:{id:"delivery",status:"passed",message:"Create a local commit in this managed worktree; no push or pull request"});
     let selection:ExecutionSelection|undefined;
     let routingDecision:ModelRoutingDecision|undefined;
     if(draft.startMode==="dispatch") {

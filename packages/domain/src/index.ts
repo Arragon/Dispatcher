@@ -1,5 +1,6 @@
 export * from "./profile-console.js";
 export * from "./repository-console.js";
+export * from "./delivery.js";
 export * from "./usage.js";
 export * from "./diagnostics.js";
 import type { ExecutionSelection } from "./publication.js";

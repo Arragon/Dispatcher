@@ -149,7 +149,7 @@ import {
 import { LlmRuntime, LlmRuntimeError, type FetchLike, type LlmConfiguration, type LlmRole } from "@dispatcher/llm-runtime";
 import { createLogger, redactValue } from "@dispatcher/observability";
 import { DispatcherDatabase, RevisionConflictError, type JsonValue } from "@dispatcher/persistence";
-import { EmbeddedRunner, EventBus, LeaseFenceError, ProcessManager, RemoteRunnerServer, RunnerEnrollmentAuthority, RunnerLeaseAuthority, RunnerRegistry, VerificationRegistry, reconcileRunnerState, type RunnerEnrollmentRecord, type RunnerEvents } from "@dispatcher/runner";
+import { EmbeddedRunner, EventBus, LeaseFenceError, LocalGitDelivery, LocalGitDeliveryError, ProcessManager, RemoteRunnerServer, RunnerEnrollmentAuthority, RunnerLeaseAuthority, RunnerRegistry, VerificationRegistry, reconcileRunnerState, type RunnerEnrollmentRecord, type RunnerEvents } from "@dispatcher/runner";
 import {
   SemanticPolicyError,
   SemanticToolRegistry,
@@ -509,6 +509,7 @@ export class ControllerService {
   private dashboardClients = 0;
   private readonly secretTestStates = new Map<string, SecretTestState>();
   private readonly agentProcesses: ProcessManager;
+  private readonly localGitDelivery:LocalGitDelivery;
   private readonly controlAuth: ControlPlaneAuth;
   private readonly requestPrincipals = new WeakMap<object, ControlPrincipal>();
   private readonly messagingInbox: MessagingInbox;
@@ -517,7 +518,7 @@ export class ControllerService {
   private readonly runAdvances = new Map<string, Promise<AdvanceResult>>();
   private readonly runCancellations = new Map<string, Promise<Run>>();
   private readonly cancelledRunIds = new Set<string>();
-  private readonly localVerifications = new Map<string, { controller: AbortController; settled: Promise<void> }>();
+  private readonly localCommands = new Map<string, { controller: AbortController; settled: Promise<void> }>();
   private readonly dispatchingRuns = new Set<string>();
   private readonly remoteLifecycleJobs = new Map<string,Promise<void>>();
   private readonly remoteLifecycleQueued = new Set<string>();
@@ -547,6 +548,7 @@ export class ControllerService {
     this.resourceRegistry.restore(this.database.listEntities<JsonValue>("resource-signal") as unknown as ResourceSnapshot[]);
     this.resourceProbes.restore(this.database.listEntities<JsonValue>("resource-probe-schedule") as unknown as ResourceProbeSchedule[]);
     this.workspaces = new WorkspaceManager(this.repositories, join(options.dataDirectory, "worktrees"),()=>this.localPrivatePaths);
+    this.localGitDelivery=new LocalGitDelivery(this.database,this.agentProcesses,this.workspaces);
     this.tasks = new CanonicalTaskService(this.database, () => this.now());
     this.projections = new ProjectionWorker(this.database, this.connectors);
     this.secrets = options.secretStore ?? createDefaultSecretStore({ dataDirectory: options.dataDirectory });
@@ -733,8 +735,10 @@ export class ControllerService {
     this.persistLatestLeaseAudit(run.id);
   }
 
-  private fenceDelivery(run: Run, operation: "verify" | "branch" | "push" | "pull-request" | "complete"): void {
+  private fenceDelivery(run: Run, operation: "verify" | "commit" | "branch" | "push" | "pull-request" | "complete"): void {
     const current = this.database.getEntity<JsonValue>("run", run.id) as unknown as Run | undefined;
+    const task=this.database.getCanonicalTask<JsonValue>(run.taskId)?.document as unknown as Task|undefined;
+    if(task?.currentRunId!==run.id||task.state!=="VERIFYING")throw new ConnectorError("CONFLICT","Task no longer authorizes this verification/delivery",{retryable:false,operation:"delivery"});
     const remote = this.configuration.current().config.runners.some(runner => runner.id === run.runnerId && runner.mode === "remote");
     if (this.revokedRunnerCredentials.has(run.runnerId) || remote && !this.runnerCredentialContext(run.runnerId).usable) throw new ConnectorError("CONFLICT", "Owning Runner authorization is revoked", { retryable: false, operation: "delivery" });
     if (this.cancelledRunIds.has(run.id) || !current || current.generation !== run.generation || current.leaseId !== run.leaseId || !["VERIFYING", "DELIVERING"].includes(current.state)) throw new ConnectorError("CONFLICT", "Delivery authority rejected: stale or terminal run", { retryable: false, operation: "delivery" });
@@ -1696,9 +1700,9 @@ export class ControllerService {
             if (result.required && result.status !== "passed") blocked = true;
           }
         })();
-        this.localVerifications.set(run.id, { controller, settled });
+        this.localCommands.set(run.id, { controller, settled });
         try { await settled; }
-        finally { if (this.localVerifications.get(run.id)?.controller === controller) this.localVerifications.delete(run.id); }
+        finally { if (this.localCommands.get(run.id)?.controller === controller) this.localCommands.delete(run.id); }
 
       }
       run.verification = { state: blocked ? "FAILED" : "PASSED", commands: [...contract.verification], summary: summaries.join(", ") };
@@ -1721,14 +1725,20 @@ export class ControllerService {
     }
 
     if (run.state !== "DELIVERING" || !run.worktree || !run.branch) throw new ConnectorError("CONFLICT", `Run ${run.id} is not ready for delivery`);
-    if(contract.delivery.type==="none") {
+    if(contract.delivery.type==="none"||contract.delivery.type==="commit") {
       const remote=this.agentAdapters.get(run.profileId) instanceof RemoteNativeAdapter;
       const workspace=remote?this.database.getEntity<JsonValue>("workspace-handle",run.id) as unknown as WorkspaceHandle|undefined:this.workspaces.get(run.worktree);
       if(!workspace)throw new WorkspacePolicyError("WORKSPACE_UNAVAILABLE","Managed worktree requires restoration or inspection");
       const resultFiles=remote?await this.remoteRequest(run.runnerId,{type:"native.run_files",runId:run.id},run):await this.workspaces.resultFiles(workspace);
       if(!Array.isArray(resultFiles)||resultFiles.length>5000||resultFiles.some(file=>typeof file!=="string"||file.length>4000||/^[/\\]|^[a-z]:/i.test(file)||file.split(/[\\/]/).some(segment=>segment===".."||segment===".git"))||new Set(resultFiles).size!==resultFiles.length)throw new AdapterContractError("REMOTE_RESULT_INVALID","Owning Runner returned an invalid change manifest");
-      const files=resultFiles as string[];if(remote)assertPublicationScope(files,workspace.scopePaths);
-      const result={version:1,runId:run.id,taskId:run.taskId,runnerId:run.runnerId,deliveryType:"none",worktree:run.worktree,branch:run.branch,baseCommit:workspace.baseRevision,files,verification:run.verification,summary:run.activitySummary??"",createdAt:this.now().toISOString()};
+      let files=resultFiles as string[];if(remote)assertPublicationScope(files,workspace.scopePaths);
+      let commit:Awaited<ReturnType<LocalGitDelivery["commit"]>>|undefined;
+      if(contract.delivery.type==="commit"){
+        if(remote)throw new LocalGitDeliveryError("REMOTE_COMMIT_UNAVAILABLE","Owning Runner commit is not qualified yet");
+        const controller=new AbortController(),settled=(async()=>{commit=await this.localGitDelivery.commit({runId:run.id,generation:run.generation,leaseId:run.leaseId,workspace,message:`Dispatcher: ${contract.goal.split(/\r?\n/)[0]!.slice(0,160)}`,assertAuthority:()=>this.fenceDelivery(run,"commit"),signal:controller.signal});})();
+        this.localCommands.set(run.id,{controller,settled});try{await settled;files=commit!.files;}finally{if(this.localCommands.get(run.id)?.controller===controller)this.localCommands.delete(run.id);}
+      }
+      const result={version:1,runId:run.id,taskId:run.taskId,runnerId:run.runnerId,deliveryType:contract.delivery.type,...(commit?{commit}:{}),worktree:run.worktree,branch:run.branch,baseCommit:workspace.baseRevision,files,verification:run.verification,summary:run.activitySummary??"",createdAt:this.now().toISOString()};
       if(remote){this.fenceDelivery(run,"complete");await this.finalizeRemoteRun(run);}
       this.database.transaction(()=>{
         this.fenceDelivery(run,"complete");
@@ -1851,8 +1861,8 @@ export class ControllerService {
     this.restoreLeaseAuthority(run);
     this.leaseAuthority.revoke(run.id,run.leaseId,run.generation,"Cancelled by operator",this.now().toISOString());
     this.persistLatestLeaseAudit(run.id);
-    const verification = this.localVerifications.get(run.id), advancing = this.runAdvances.get(run.id);
-    verification?.controller.abort();
+    const localCommand = this.localCommands.get(run.id), advancing = this.runAdvances.get(run.id);
+    localCommand?.controller.abort();
     this.markRemoteUnavailable(run.id, "Cancellation requested; waiting for owned execution to stop", "NATIVE_OUTCOME_UNKNOWN", run);
     if(remote){
       try{
@@ -1875,10 +1885,10 @@ export class ControllerService {
       const stopped=await adapter.cancel(sessionId);if(!["CANCELLED","COMPLETED","FAILED"].includes(stopped.state))throw new AdapterContractError("SESSION_DETACHED","Native termination is unconfirmed");
     }catch(error){this.markRemoteUnavailable(run.id,"Cancellation has fenced authority; inspect the original native process before continuing","NATIVE_OUTCOME_UNKNOWN",run);throw error;}
     try {
-      await verification?.settled.catch(error => { if (!(error instanceof AdapterContractError) || error.code !== "RUN_CANCELLED") throw error; });
+      await localCommand?.settled.catch(error => { if (!(error instanceof AdapterContractError && error.code === "RUN_CANCELLED")&&!(error instanceof LocalGitDeliveryError&&error.code==="COMMIT_ABORTED")) throw error; });
       await advancing?.catch(() => undefined);
     } catch (error) {
-      this.markRemoteUnavailable(run.id, "Cancellation has fenced authority; verification cleanup is unconfirmed", "NATIVE_OUTCOME_UNKNOWN", run);
+      this.markRemoteUnavailable(run.id, "Cancellation has fenced authority; owned command cleanup is unconfirmed", "NATIVE_OUTCOME_UNKNOWN", run);
       throw error;
     }
     const current=this.database.getEntity<JsonValue>("run",run.id) as unknown as Run|undefined;
@@ -3620,7 +3630,7 @@ export class ControllerService {
       if(!/^\d+$/.test(offset)||!/^\d+$/.test(limit)||Number(offset)>10_000||Number(limit)<1||Number(limit)>100)return reply.code(400).send({code:"INVALID_REF_PAGE"});
       return this.repositoryRefs(request.params.id,Number(offset),Number(limit));
     });
-    this.app.get("/api/task-publications/capabilities", async () => ({ schemaVersion: 1, startModes: ["create-only","dispatch"], deliveryTypes: ["none"], selectionModes:["manual","policy-auto"], modelRouting:{classificationModes:["keyword","hybrid"],enabled:this.configuration.current().config.policies.modelRouting?.enabled===true}, projects: this.configuration.current().config.repositories.map(r => ({ id: `local:${r.id}`, repositoryId: r.id })) }));
+    this.app.get("/api/task-publications/capabilities", async () => ({ schemaVersion: 1, startModes: ["create-only","dispatch"], deliveryTypes: ["none","commit"], selectionModes:["manual","policy-auto"], modelRouting:{classificationModes:["keyword","hybrid"],enabled:this.configuration.current().config.policies.modelRouting?.enabled===true}, projects: this.configuration.current().config.repositories.map(r => ({ id: `local:${r.id}`, repositoryId: r.id })) }));
     this.app.post<{ Body: PublishDraftV1 }>("/api/task-publications/preview", { schema: { body: publishDraftSchema } }, async request => {
       const principal = this.principalFor(request);
       if (!principal.roles.includes("operator")) throw new PublicationError("FORBIDDEN", 403, "Operator role required");
@@ -3903,14 +3913,14 @@ export class ControllerService {
       const semanticStatus = error instanceof SemanticPolicyError
         ? error.code === "FORBIDDEN" ? 403 : error.code === "STALE_WORKFLOW" ? 409 : 400
         : undefined;
-      const status = error instanceof UsageObservationError?400:error instanceof InputReceiptError||error instanceof AdapterContractError&&["SESSION_DETACHED","SESSION_CANCELLED","SESSION_BUSY","SESSION_CONTEXT_CHANGED","CANCELLATION_UNCONFIRMED"].includes(error.code)?409:error instanceof PublicationError ? error.statusCode : error instanceof TaskDispatchError ? error.statusCode : error instanceof RevisionConflictError
+      const status = error instanceof LocalGitDeliveryError?409:error instanceof UsageObservationError?400:error instanceof InputReceiptError||error instanceof AdapterContractError&&["SESSION_DETACHED","SESSION_CANCELLED","SESSION_BUSY","SESSION_CONTEXT_CHANGED","CANCELLATION_UNCONFIRMED"].includes(error.code)?409:error instanceof PublicationError ? error.statusCode : error instanceof TaskDispatchError ? error.statusCode : error instanceof RevisionConflictError
         ? 409
         : error instanceof LlmRuntimeError
           ? error.code === "SELECTION_CHANGED" ? 409 : error.code === "NO_AVAILABLE_PROFILE" ? 503 : 400
         : error instanceof ConfigPlanError && ["PROFILE_CONTEXT_CHANGED","CONNECTOR_CONTEXT_CHANGED","REMOTE_DRAFT_PROBE_UNAVAILABLE","RUNNER_CREDENTIAL_BUSY","CREDENTIAL_CHANGE_PENDING","CREDENTIAL_IN_USE","NATIVE_PICKER_UNAVAILABLE","NATIVE_PICKER_BUSY"].includes(error.code)?409:error instanceof ConfigPlanError || error instanceof ConfigValidationError
           ? 400
           : semanticStatus ?? workspaceStatus ?? connectorStatus ?? secretStatus ?? (error && typeof error === "object" && "validation" in error ? 400 : 500);
-      const code = error instanceof UsageObservationError||error instanceof InputReceiptError||error instanceof AdapterContractError||error instanceof PublicationError || error instanceof TaskDispatchError || error instanceof RevisionConflictError || error instanceof ConfigPlanError || error instanceof SecretStoreError || error instanceof LlmRuntimeError || error instanceof ConnectorError || error instanceof WorkspacePolicyError || error instanceof SemanticPolicyError
+      const code = error instanceof LocalGitDeliveryError||error instanceof UsageObservationError||error instanceof InputReceiptError||error instanceof AdapterContractError||error instanceof PublicationError || error instanceof TaskDispatchError || error instanceof RevisionConflictError || error instanceof ConfigPlanError || error instanceof SecretStoreError || error instanceof LlmRuntimeError || error instanceof ConnectorError || error instanceof WorkspacePolicyError || error instanceof SemanticPolicyError
         ? error.code
         : error instanceof ConfigValidationError
           ? error.code

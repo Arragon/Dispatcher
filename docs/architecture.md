@@ -803,3 +803,30 @@ closed with a static reason and do not expose account paths. A whole-repository
 scope cannot authorize delivery of a changed file inside an account directory.
 This is a repository and delivery scope boundary; native tools still own their
 OS permissions and it is not an arbitrary filesystem sandbox.
+
+## Explicit local commit delivery
+
+A local commit is a distinct delivery choice after required verification. The
+owning LocalGitDelivery service uses the existing host Git and ProcessManager
+in the restored managed worktree. It verifies branch/common repository/ancestry
+and scoped result files before staging, checks authority around every owned
+command and validates the clean committed result afterwards. Git hooks remain
+active inside the owned process group; cancellation drains that group before a
+canonical acknowledgement. It never switches the original project worktree,
+invokes push or calls a provider API.
+
+A run/generation receipt binds lease, immutable workspace identity and message
+before mutation. Completed receipts replay the real SHA without another commit.
+Physical completion followed by failed receipt persistence is retained in this
+process for a safe persistence retry; restart with an unresolved intent remains
+COMMIT_OUTCOME_UNKNOWN and cannot blindly execute again. A terminal local result
+stores its commit evidence and post-commit file manifest directly, without a
+fabricated external connector. Existing native commits/no-change results are
+identified by created=false rather than claimed as newly created.
+
+Controller verification and local commit share the owned-command cancellation
+slot. Both native authority and current canonical Task/Run binding must still
+match before verification/delivery. The console stores the explicit choice in
+its draft, displays it at review and shows the saved SHA separately from task
+acceptance. Owning remote commit and explicit PR delivery remain unavailable
+until their separate qualified protocol paths are implemented.

@@ -1,7 +1,7 @@
 import { RoutingDecision } from "./RoutingDecision.js";
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import type { Task, TaskContract, Run, DeliveryEvidence } from "@dispatcher/domain";
+import type { Task, TaskContract, Run, DeliveryEvidence,LocalCommitResult } from "@dispatcher/domain";
 import type { FleetTaskInput, FleetProfileInput, FleetRunInput } from "@dispatcher/fleet";
 import { api, ApiError, subscribeToEvents } from "./api.js";
 import { Drawer } from "./Drawer.js";
@@ -10,7 +10,7 @@ import { Notice } from "./ui.js";
 import {UsagePanel} from "./UsagePanel.js";
 import { safeLink, stateLabel, terminalStates } from "./task-view.js";
 interface TaskView { executionIntent?:{publicationId:string}; revision:number; document:Task; contract?:TaskContract; deliveries:DeliveryEvidence[]; runs:Run[]; archive?:{revision:number;archivedAt?:string} }
-interface RunResult { worktree:string; branch:string; files:string[]; verification:Run["verification"]; summary?:string }
+interface RunResult { worktree:string; branch:string; files:string[]; verification:Run["verification"]; summary?:string;commit?:LocalCommitResult }
 function Lines({items,empty="未登记"}:{items?:string[];empty?:string}):React.JSX.Element {return items?.length ? <ul className="detail-list">{items.map((item,index)=><li key={index}>{item}</li>)}</ul> : <p className="muted">{empty}</p>;}
 export function TaskDetail({id,fallback,profiles,onClose,refresh}:{id:string;fallback?:FleetTaskInput;profiles:FleetProfileInput[];onClose:()=>void;refresh:()=>Promise<unknown>}):React.JSX.Element {
   const query=useQuery({queryKey:["task-detail",id],queryFn:()=>api<TaskView>(`/api/tasks/${encodeURIComponent(id)}`),retry:false});
@@ -49,7 +49,7 @@ export function TaskDetail({id,fallback,profiles,onClose,refresh}:{id:string;fal
       <h3>验证证据</h3><p>{run.verification?.state??"未提供"} · {run.verification?.summary??"没有验证摘要"}</p><Lines items={run.verification?.commands}/></>}
       </section>
       <section className="detail-section"><h3>{frozenContract?"运行冻结契约":"任务契约"}</h3>{contract?<><p>{contract.goal}</p><h4>验收条件</h4><Lines items={contract.acceptanceCriteria}/><h4>允许修改范围</h4><Lines items={contract.scope}/><h4>约束</h4><Lines items={contract.constraints} empty="未登记额外约束"/>{Boolean(contract.referenceLinks?.length)&&<><h4>参考链接</h4>{contract.referenceLinks?.map(link=>safeLink(link)?<p key={link}><a href={safeLink(link)} target="_blank" rel="noreferrer">{link}</a></p>:<p key={link}>历史链接不可打开</p>)}</>}</>:<p>此记录没有可用的冻结契约。</p>}</section>
-      <section className="detail-section"><h3>交付与修改文件</h3>{result.isFetching?<p role="status">正在读取结果…</p>:result.data?<><p>{result.data.result.worktree} · {result.data.result.branch}</p><Lines items={result.data.result.files} empty="没有文件变更"/></>:result.error instanceof ApiError&&result.error.code==="RUN_RESULT_UNAVAILABLE"?<p>尚无本地结果回执。</p>:result.error?<Notice tone="error">结果读取失败。<button onClick={()=>void result.refetch()}>重试读取结果</button></Notice>:<p>运行结束后读取本地结果。</p>}{data.deliveries?.filter(delivery=>!runId||delivery.runId===runId).map(delivery=><p key={delivery.id}>{delivery.kind} · {delivery.state}{safeLink(delivery.url)&&<> · <a href={safeLink(delivery.url)} target="_blank" rel="noreferrer">查看交付</a></>}</p>)}<Notice>Run 完成、验证通过与任务验收分别记录；任务为 REVIEW 时仍需人工验收。</Notice></section>
+      <section className="detail-section"><h3>交付与修改文件</h3>{result.isFetching?<p role="status">正在读取结果…</p>:result.data?<><p>{result.data.result.worktree} · {result.data.result.branch}</p>{result.data.result.commit&&<><p>{result.data.result.commit.created?"本次本地提交":"现有提交（未新增）"} · 未自动推送</p><code>{result.data.result.commit.commit}</code></>}<Lines items={result.data.result.files} empty="没有文件变更"/></>:result.error instanceof ApiError&&result.error.code==="RUN_RESULT_UNAVAILABLE"?<p>尚无本地结果回执。</p>:result.error?<Notice tone="error">结果读取失败。<button onClick={()=>void result.refetch()}>重试读取结果</button></Notice>:<p>运行结束后读取本地结果。</p>}{data.deliveries?.filter(delivery=>!runId||delivery.runId===runId).map(delivery=><p key={delivery.id}>{delivery.kind} · {delivery.state}{safeLink(delivery.url)&&<> · <a href={safeLink(delivery.url)} target="_blank" rel="noreferrer">查看交付</a></>}</p>)}<Notice>Run 完成、验证通过与任务验收分别记录；任务为 REVIEW 时仍需人工验收。</Notice></section>
       {run&&<UsagePanel key={run.id} runId={run.id}/>}
       <TaskActions key={`${id}:${data.revision}:${currentId}:${activeRun?.state}:${activeRun?.lastActivityAt}`} task={task} {...(actionsRun?{run:actionsRun}:{})} profiles={profiles} refresh={reload} publicationTask={Boolean(data.executionIntent)}/>
     </>}

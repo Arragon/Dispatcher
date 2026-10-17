@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync,chmodSync,existsSync,readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -38,6 +38,24 @@ async function setup() {
   return {service,root,clock,make,draft,preview,commit,starts,cliStarts,control,classificationRequests};
 }
 describe("task publication receipts", () => {
+  it("waits for an owned Git hook to terminate before acknowledging canonical cancellation",async()=>{
+    const f=await setup();f.control.completed=true;const ready=join(f.root,"..","git-hook.pid"),hook=join(f.root,".git","hooks","pre-commit");
+    writeFileSync(hook,`#!${process.execPath}\nconst fs=require('node:fs');process.on('SIGTERM',()=>{});fs.writeFileSync(${JSON.stringify(ready)},String(process.pid));setInterval(()=>{},1000);\n`);chmodSync(hook,0o755);
+    const preview=(await f.preview({...f.draft,startMode:"dispatch",execution:{...f.draft.execution,profileId:"codex-local"},delivery:{type:"commit"}})).json(),receipt=(await f.commit(preview)).json();expect(receipt.state).toBe("STARTED");
+    const advancing=f.service.app.inject({headers:OWNER,method:"POST",url:`/api/runs/${receipt.runId}/advance`});void advancing.then(()=>undefined);
+    await expect.poll(()=>existsSync(ready),{timeout:5000}).toBe(true);const pid=Number(readFileSync(ready,"utf8"));
+    const cancelled=await f.service.semanticTools.execute("run.cancel",{target:receipt.runId},{principal:{id:"operator",roles:["operator"],channel:"api"},workflowId:"cancel-commit",confirmed:true});expect(cancelled).toMatchObject({state:"CANCELLED"});await advancing;
+    let stopped=false;try{process.kill(pid,0);}catch(error){stopped=Boolean(error&&typeof error==="object"&&"code" in error&&error.code==="ESRCH");}expect(stopped).toBe(true);const run=f.service.database.getEntity<JsonValue>("run",receipt.runId) as {worktree:string};expect(execFileSync("git",["-C",run.worktree,"rev-list","--count",`${execFileSync("git",["-C",f.root,"rev-parse","HEAD"],{encoding:"utf8"}).trim()}..HEAD`],{encoding:"utf8"}).trim()).toBe("0");
+  });
+  it("finishes explicit local commit delivery without GitHub, push or changing the original worktree",async()=>{
+    const f=await setup();f.control.completed=true;const original=execFileSync("git",["-C",f.root,"rev-parse","HEAD"],{encoding:"utf8"}).trim();execFileSync("git",["-C",f.root,"remote","add","origin","https://must-not-push.invalid/fixture.git"]);
+    const draft={...f.draft,startMode:"dispatch",execution:{...f.draft.execution,profileId:"codex-local"},delivery:{type:"commit"}};
+    const preview=(await f.preview(draft)).json();expect(preview.canCommit).toBe(true);const receipt=(await f.commit(preview)).json();expect(receipt.state).toBe("STARTED");
+    const advanced=await f.service.app.inject({headers:OWNER,method:"POST",url:`/api/runs/${receipt.runId}/advance`});expect(advanced.json()).toMatchObject({run:{state:"COMPLETE",verification:{state:"PASSED"}},task:{state:"REVIEW"},deliveries:[]});
+    const result=f.service.database.getEntity("run-result",receipt.runId) as {commit:{commit:string;created:boolean};worktree:string};expect(result.commit).toMatchObject({created:true,commit:expect.stringMatching(/^[a-f0-9]{40}$/)});
+    expect(execFileSync("git",["-C",f.root,"rev-parse","HEAD"],{encoding:"utf8"}).trim()).toBe(original);expect(execFileSync("git",["-C",result.worktree,"rev-list","--count",`${original}..HEAD`],{encoding:"utf8"}).trim()).toBe("1");
+    expect((await f.service.app.inject({headers:OWNER,method:"POST",url:`/api/runs/${receipt.runId}/advance`})).json().run.state).toBe("COMPLETE");expect(execFileSync("git",["-C",result.worktree,"rev-list","--count",`${original}..HEAD`],{encoding:"utf8"}).trim()).toBe("1");
+  });
   async function policyFixture() {
     const f=await setup(),config=f.service.configuration.current().config;
     config.policies.modelRouting={enabled:true,requireConfirmation:true,classificationMode:"keyword",semanticFailureMode:"stop",taskTypes:[{id:"fix",name:"修复",definition:"修复问题",enabled:true,keywordGroups:[{any:["修复"],all:[],exclude:[]}]}],rules:[{id:"fix-local",name:"修复规则",enabled:true,taskTypeId:"fix",profileId:"codex-local",repositoryId:"repo",priority:1,target:{modelSelectionId:"catalog-model",reasoning:{mode:"native-default"}}}]};
