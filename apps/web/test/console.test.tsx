@@ -166,6 +166,29 @@ it("recovers the original config plan after remount and resolves a lost apply ac
  mount();await userEvent.click(await screen.findByRole("button",{name:"核对上次配置计划"}));expect(await screen.findByText("服务端确认此计划已应用，无需再次提交。")).toBeTruthy();expect(await screen.findByRole("button",{name:"回滚上次计划"})).toBeTruthy();expect(applies).toBe(1);
 });
 
+it.each([false,true])("refreshes a rolled-back config without discarding a newer dirty draft (%s)",async dirty=>{
+ const {default:SettingsPage}=await import("../src/SettingsPage.js");sessionStorage.setItem("dispatcher-config-plan:all","applied-plan");let rolledBack=false,planPosts=0;
+ vi.spyOn(globalThis,"fetch").mockImplementation(async(input,init)=>{
+  if(input==="/api/config?view=console")return new Response(JSON.stringify({revision:rolledBack?3:2,config:{controller:{id:rolledBack?"original":"applied"}}}));
+  if(input==="/api/config/schema")return new Response(JSON.stringify({schema:{type:"object",properties:{controller:{type:"object",properties:{id:{type:"string",title:"Controller ID"}}}}},uiSchema:{}}));
+  if(input==="/api/config/plans/applied-plan")return new Response(JSON.stringify({plan:{id:"applied-plan",state:"APPLIED",baseRevision:1,risk:"safe",requiresConfirmation:false,changes:[]},currentRevision:2,appliedRevision:2}));
+  if(input==="/api/config/plans/applied-plan/rollback?view=console"){rolledBack=true;return new Response("{}");}
+  if(init?.method==="POST"){planPosts++;return new Response("{}");}
+  return new Response(null,{status:404});
+ });
+ render(<QueryClientProvider client={new QueryClient({defaultOptions:{queries:{retry:false}}})}><SettingsPage/></QueryClientProvider>);
+ await userEvent.click(await screen.findByRole("button",{name:"核对上次配置计划"}));await screen.findByRole("button",{name:"回滚上次计划"});
+ const field=screen.getByRole("textbox",{name:"Controller ID"});
+ if(dirty){await userEvent.clear(field);await userEvent.type(field,"new-unsubmitted-draft");}
+ await userEvent.click(screen.getByRole("button",{name:"回滚上次计划"}));await screen.findByText(/配置已回滚/);
+ expect((field as HTMLInputElement).value).toBe(dirty?"new-unsubmitted-draft":"original");
+ if(dirty){
+  expect(screen.getByRole("button",{name:"重新载入当前配置"})).toBeTruthy();
+  await userEvent.click(screen.getByRole("button",{name:"预览配置变更"}));await screen.findByText(/配置版本已改变/);
+  expect((field as HTMLInputElement).value).toBe("new-unsubmitted-draft");expect(planPosts).toBe(0);
+ }
+});
+
 it("offers recovery instead of a blank console after a page render failure", async () => {
   const {ConsoleBoundary} = await import("../src/App.js");
   vi.spyOn(console,"error").mockImplementation(()=>undefined);

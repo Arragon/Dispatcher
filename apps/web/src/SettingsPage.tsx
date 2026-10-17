@@ -114,8 +114,8 @@ export default function SettingsPage({sectionId, embedded = false,onDraftChange}
     setBusy(true); setMessage("正在回滚并验证…");
     try {
       await api(`/api/config/plans/${appliedPlanId}/rollback?view=console`, { method: "POST" });
-      setAppliedPlanId(undefined); setPlan(undefined);trackPlan(undefined);dirty.current = false;
-      await configQuery.refetch(); await refreshConfiguration(client); setMessage("配置已回滚并记录审计。");
+      setAppliedPlanId(undefined); setPlan(undefined);trackPlan(undefined);setConflict(dirty.current);
+      await configQuery.refetch(); await refreshConfiguration(client); setMessage(dirty.current ? "配置已回滚并记录审计，未提交草稿已保留；配置基线已改变，请核对后重新载入。" : "配置已回滚并记录审计。");
     } catch (error) { setMessage(error instanceof Error ? error.message : "回滚失败，当前版本保留。"); }
     finally { setBusy(false); }
   }
