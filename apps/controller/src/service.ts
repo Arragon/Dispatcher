@@ -2212,6 +2212,7 @@ export class ControllerService {
     if(remote&&contract.delivery.type==="pull-request"&&!reviewedDelivery)throw new PublicationError("REMOTE_DELIVERY_UNAVAILABLE",409,"Remote PR delivery requires a reviewed owning target");
     const scheduler = new CanonicalScheduler(() => this.dispatchCandidates(body?.profileId).filter(candidate=>candidate.runnerId===repositoryRunner));
     const runId = randomUUID();
+    const baseCommit=contract.workspace?.baseCommit??publication?.baseCommit;
     const workspacePlan = {
       repositoryId,
       taskId: taskId,
@@ -2219,7 +2220,7 @@ export class ControllerService {
       attempt: 1,
       baseRef: contract.workspace?.baseRef ?? body?.baseRef ?? contract.delivery.baseBranch ?? repositoryConfig.defaultBaseRef,
       scopePaths: contract.workspace ? contract.scope : repositoryConfig.scopePaths,
-      ...(contract.workspace?.baseCommit ? {baseCommit:contract.workspace.baseCommit}:{}),
+      ...(baseCommit ? {baseCommit}:{}),
       ...(contract.workspace?.targetBranch ? {targetBranch:contract.workspace.targetBranch}:{}),
     };
     this.database.saveEntity("workspace-intent",runId,json({...workspacePlan,state:remote?"PLANNED":"CREATING",runnerId:repositoryRunner}));

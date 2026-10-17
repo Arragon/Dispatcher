@@ -965,3 +965,16 @@ evidence. Push confirmation, PR receipt and CI evidence are shown independently;
 a saved push cannot imply an unpushed commit or an absent/confirmed PR. The frozen
 SCM identity filters the selected PR when available, and the same PR link is not
 rendered twice. Querying these views invokes no native inference or SCM mutation.
+
+## Create-only availability and later execution qualification
+
+Create-only publication preserves the reviewed declarative task even when owning
+Git or SCM evidence is unavailable. Physical scope/private-path policy denials
+still reject input; availability failures produce explicit warnings and never
+fabricate baseCommit or effectiveDelivery. Committing a create-only review makes
+no new device/SCM query. A previously observed baseline stays the reviewed commit
+if its ref later moves. Contract READY describes specification completeness,
+not proven execution availability. Immediate dispatch still requires all physical
+Git, SCM and native checks. When a saved task has no baseline, fresh publication
+review supplies a qualified baseCommit to its workspace plan without rewriting
+the original TaskContract; that Run executes the approved SHA, not a moving ref.

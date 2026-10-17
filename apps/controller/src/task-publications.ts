@@ -5,7 +5,7 @@ import type { PublishDraftV1, PublicationPreview, PublicationReceipt, Task, Task
 import type { CanonicalTaskService } from "@dispatcher/integrations";
 import type { DispatcherDatabase, JsonValue } from "@dispatcher/persistence";
 import { TaskContractCompiler } from "@dispatcher/semantic";
-import type { WorkspaceManager } from "@dispatcher/workspace";
+import { WorkspacePolicyError, type WorkspaceManager } from "@dispatcher/workspace";
 const json = (value: unknown): JsonValue => JSON.parse(JSON.stringify(value)) as JsonValue;
 const startupState = (run: Run): PublicationReceipt["state"] => run.state === "RUNNER_UNAVAILABLE" ? "OUTCOME_UNKNOWN" : run.state === "FAILED" ? "START_FAILED" : "STARTED";
 export function contentHash(value: unknown): string {
@@ -103,17 +103,21 @@ export class PublicationService {
     if (verification.some(id=>!repository?.verificationCommands.some(c=>c.id===id)) || repository?.verificationCommands.some(c=>c.required&&!verification.includes(c.id))) throw new PublicationError("INVALID_VERIFICATION",400,"Select registered verification commands, including every required command");
     const baseRef=draft.baseRef??repository?.defaultBaseRef??"";
     let baseCommit: string|undefined;
-    if(repository) { try { baseCommit=(await this.workspaces.inspect({repositoryId:repository.id,baseRef:existing?.contract.workspace?.baseCommit??baseRef,scopePaths:scopes,...(draft.targetBranch?{targetBranch:draft.targetBranch}:{})})).baseCommit; } catch(error) { throw new PublicationError("INVALID_WORKSPACE",400,error instanceof Error?error.message:"Repository cannot be inspected"); } }
+    let workspaceCheck:PublicationPreview["checks"][number]={id:"workspace",status:"warning",message:"No repository; task needs specification"};
+    if(repository) { try { baseCommit=(await this.workspaces.inspect({repositoryId:repository.id,baseRef:existing?.contract.workspace?.baseCommit??baseRef,scopePaths:scopes,...(draft.targetBranch?{targetBranch:draft.targetBranch}:{})})).baseCommit;workspaceCheck={id:"workspace",status:"passed",message:"Registered physical Git root and base commit verified"}; } catch(error) {
+      if(draft.startMode==="dispatch"||error instanceof WorkspacePolicyError)throw new PublicationError("INVALID_WORKSPACE",400,error instanceof Error?error.message:"Repository cannot be inspected");
+      workspaceCheck={id:"workspace",status:"warning",code:"WORKSPACE_UNVERIFIED",message:"Repository execution context is unverified; task creation is allowed and dispatch requires a fresh owning Git check"};
+    } }
     let deliverySelection:ScmDeliverySelection|undefined,deliveryCheck:PublicationPreview["checks"][number]|undefined;
     if(draft.delivery.type==="pull-request")try{
       if(!repository)throw new PublicationError("DELIVERY_REPOSITORY_REQUIRED",400,"Select a registered repository for PR delivery");
       deliverySelection=await this.runtime.prepareDelivery(draft,repository);deliveryCheck={id:"delivery",status:"passed",message:"Selected SCM repository and base branch match the owning origin; Git authentication and PR token write scope require actual execution"};
-    }catch(error){deliveryCheck={id:"delivery",status:"blocked",code:error instanceof PublicationError?error.code:"SCM_PREFLIGHT_UNAVAILABLE",message:error instanceof Error?error.message:"SCM preflight is unavailable"};}
+    }catch(error){deliveryCheck={id:"delivery",status:draft.startMode==="dispatch"?"blocked":"warning",code:error instanceof PublicationError?error.code:"SCM_PREFLIGHT_UNAVAILABLE",message:draft.startMode==="dispatch"?(error instanceof Error?error.message:"SCM preflight is unavailable"):"PR delivery is unverified; task creation is allowed and dispatch requires a fresh SCM/owning-origin review"};}
     const first=draft.description.split(/\r?\n/).find(line=>line.trim())?.trim()??"Task";
     const chars=Array.from(first); const title=draft.title?.trim() || chars.slice(0,80).join("")+(chars.length>80?"…":"");
     const compiled=new TaskContractCompiler().compile({externalId:draft.clientDraftId,title,description:draft.description,labels:[],dependencies:[],...(repository?{repository:repository.id}:{}),scope:scopes,acceptanceCriteria:draft.acceptanceCriteria.filter(s=>s.trim()),verification,constraints:[],delivery:{type:draft.delivery.type},extensions:{}},1,repository?{delivery:{type:draft.delivery.type,...(draft.delivery.type==="pull-request"?{...(draft.delivery.targetRepository?{repository:draft.delivery.targetRepository.toLowerCase()}:{}),...(draft.delivery.baseBranch?{baseBranch:draft.delivery.baseBranch}:{}),...(draft.delivery.scmConnectorId?{scmConnectorId:draft.delivery.scmConnectorId}:{})}:{})},workspace:{repositoryId:repository.id,baseRef,...(baseCommit?{baseCommit}:{}),...(draft.targetBranch?{targetBranch:draft.targetBranch}:{})},...(draft.referenceLinks?{referenceLinks:draft.referenceLinks}:{})}:undefined);
     if(existing){this.assertTaskBinding(existing.taskBinding);compiled.contract=structuredClone(existing.contract);}
-    const checks:PublicationPreview["checks"]=[{id:"workspace",status:repository?"passed":"warning",message:repository?"Registered physical Git root and base commit verified":"No repository; task needs specification"}];
+    const checks:PublicationPreview["checks"]=[workspaceCheck];
     if(deliveryCheck)checks.push(deliveryCheck);
     if(draft.delivery.type==="commit")checks.push({id:"delivery",status:"passed",message:"Create a local commit in the owning Runner's managed worktree; no push or pull request"});
     let selection:ExecutionSelection|undefined;
@@ -167,12 +171,12 @@ export class PublicationService {
     if(this.now().getTime()>=Date.parse(r.preview.expiresAt))throw new PublicationError("PREVIEW_EXPIRED",409,"Preview expired; review again");
     if(!r.preview.canCommit)throw new PublicationError("PRECHECK_BLOCKED",409,"Resolve blocked preflight checks");
     if(this.config.current().revision!==r.configRevision)throw new PublicationError("SELECTION_CHANGED",409,"Configuration changed; review again");
-    if(r.repository){const current=await this.workspaces.inspect({repositoryId:r.repository.id,baseRef:(r.taskBinding?r.contract?.workspace?.baseCommit:undefined)??r.contract?.workspace?.baseRef??r.draft.baseRef??r.repository.defaultBaseRef,scopePaths:r.draft.scopePaths??r.repository.scopePaths,...(r.draft.targetBranch?{targetBranch:r.draft.targetBranch}:{})});if(current.baseCommit!==r.baseCommit)throw new PublicationError("SELECTION_CHANGED",409,"Repository baseline changed; review again");}
+    if(r.draft.startMode==="dispatch"&&r.repository){const current=await this.workspaces.inspect({repositoryId:r.repository.id,baseRef:(r.taskBinding?r.contract?.workspace?.baseCommit:undefined)??r.contract?.workspace?.baseRef??r.draft.baseRef??r.repository.defaultBaseRef,scopePaths:r.draft.scopePaths??r.repository.scopePaths,...(r.draft.targetBranch?{targetBranch:r.draft.targetBranch}:{})});if(current.baseCommit!==r.baseCommit)throw new PublicationError("SELECTION_CHANGED",409,"Repository baseline changed; review again");}
     if(r.selection&&r.repository) {
       const selection=await this.runtime.prepare(r.draft,r.repository,undefined,{owner,reviewed:r.selection});
       if(contentHash({...selection,selectedAt:undefined})!==contentHash({...r.selection,selectedAt:undefined}))throw new PublicationError("SELECTION_CHANGED",409,"Execution selection changed; review again");
     }
-    if(r.deliverySelection&&r.repository){const current=await this.runtime.prepareDelivery(r.draft,r.repository);if(contentHash({...current,reviewedAt:undefined})!==contentHash({...r.deliverySelection,reviewedAt:undefined}))throw new PublicationError("SELECTION_CHANGED",409,"SCM or owning origin changed; review again");}
+    if(r.draft.startMode==="dispatch"&&r.deliverySelection&&r.repository){const current=await this.runtime.prepareDelivery(r.draft,r.repository);if(contentHash({...current,reviewedAt:undefined})!==contentHash({...r.deliverySelection,reviewedAt:undefined}))throw new PublicationError("SELECTION_CHANGED",409,"SCM or owning origin changed; review again");}
     const receipt=this.db.transaction(()=>{
       r=this.record(owner,id);if(r.receipt)return r.receipt;
       this.assertCurrentDraft(r);

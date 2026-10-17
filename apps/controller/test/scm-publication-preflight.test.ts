@@ -19,7 +19,7 @@ async function fixture(){
  }});await service.start({listen:false});cleanups.push(async()=>{gate.resolve();await service.stop();rmSync(directory,{recursive:true,force:true});});
  const config=service.configuration.current().config;config.agentProfiles=[];config.repositories=[{id:"local-repo",root,defaultBaseRef:"main",scopePaths:["."],verificationCommands:[{id:"check",file:process.execPath,args:["-e","process.exit(0)"],required:true,timeoutMs:3000,outputLimitBytes:1000}]}];config.connectors=[{id:"unselected",kind:"scm",definitionId:"scm.github",displayName:"Unselected",enabled:true,credentialRef:"secret://github/unselected",settings:{apiBase:"https://unselected.invalid"}},{id:"chosen",kind:"scm",definitionId:"scm.github",displayName:"Chosen",enabled:true,credentialRef:"secret://github/chosen"}];service.configuration.applyPlan(service.configuration.buildPlan(config,"fixture","cli").id,{confirmed:true});
  const draft={schemaVersion:1,clientDraftId:"scm-draft",description:"Explicit delivery",projectId:"local:local-repo",repositoryId:"local-repo",scopePaths:["."],acceptanceCriteria:["works"],verificationCommandIds:["check"],startMode:"create-only",execution:{selectionMode:"manual"},delivery:{type:"pull-request",scmConnectorId:"chosen",targetRepository:"Acme/Repo",baseBranch:"main"}};
- const preview=(delivery:unknown=draft.delivery)=>service.app.inject({headers:{authorization:"Bearer owner"},method:"POST",url:"/api/task-publications/preview",payload:{...draft,delivery}});return {service,git,calls,native,transport,draft,preview,control,entered,gate};
+ const preview=(delivery:unknown=draft.delivery,startMode=draft.startMode)=>service.app.inject({headers:{authorization:"Bearer owner"},method:"POST",url:"/api/task-publications/preview",payload:{...draft,startMode,delivery}});return {service,git,calls,native,transport,draft,preview,control,entered,gate};
 }
 it("preflights only the explicitly selected SCM and freezes its delivery identity separately from workspace",async()=>{
  const f=await fixture(),response=await f.preview();expect(response.statusCode).toBe(200);const p=response.json();expect(p.checks).toContainEqual(expect.objectContaining({id:"delivery",status:"passed"}));expect(p.effectiveDelivery).toMatchObject({scmConnectorId:"chosen",repository:"acme/repo",baseBranch:"main",target:{host:"github.com",repository:"acme/repo"}});
@@ -27,7 +27,7 @@ it("preflights only the explicitly selected SCM and freezes its delivery identit
  expect(p.canCommit).toBe(true);expect(f.calls).toEqual(["/repos/acme/repo","/repos/acme/repo/branches/main"]);expect(f.native).not.toHaveBeenCalled();expect(f.transport.push).not.toHaveBeenCalled();
 });
 it("rejects absent SCM selection and mismatched targets without silently choosing the first connector",async()=>{
- const f=await fixture();for(const delivery of [{type:"pull-request",targetRepository:"acme/repo",baseBranch:"main"},{...f.draft.delivery,scmConnectorId:"missing"},{...f.draft.delivery,targetRepository:"other/repo"}]){const p=(await f.preview(delivery)).json();expect(p.canCommit).toBe(false);expect(p.checks).toContainEqual(expect.objectContaining({id:"delivery",status:"blocked"}));}expect(f.calls).toEqual([]);
+ const f=await fixture();for(const delivery of [{type:"pull-request",targetRepository:"acme/repo",baseBranch:"main"},{...f.draft.delivery,scmConnectorId:"missing"},{...f.draft.delivery,targetRepository:"other/repo"}]){const p=(await f.preview(delivery,"dispatch")).json();expect(p.canCommit).toBe(false);expect(p.checks).toContainEqual(expect.objectContaining({id:"delivery",status:"blocked"}));}expect(f.calls).toEqual([]);
 });
 it("performs no SCM or origin qualification for none and commit",async()=>{
  const f=await fixture();f.git("remote","set-url","origin","file:///unqualified-target");for(const type of ["none","commit"]){const p=(await f.preview({type})).json();expect(p.canCommit).toBe(true);expect(f.service.database.getEntity("task-publication",p.publicationId)).toMatchObject({contract:{delivery:{type}}});}expect(f.calls).toEqual([]);expect(f.transport.push).not.toHaveBeenCalled();
@@ -37,13 +37,17 @@ it("rejects SCM configuration changes that happen while metadata is being read",
 });
 
 it("keeps metadata write access unknown or denied instead of passing PR preflight",async()=>{
- const f=await fixture();f.control.canPush=false;const p=(await f.preview()).json();expect(p.canCommit).toBe(false);expect(p.checks).toContainEqual(expect.objectContaining({id:"delivery",status:"blocked"}));expect(f.calls).toEqual(["/repos/acme/repo"]);expect(f.transport.push).not.toHaveBeenCalled();
+ const f=await fixture();f.control.canPush=false;const p=(await f.preview(f.draft.delivery,"dispatch")).json();expect(p.canCommit).toBe(false);expect(p.checks).toContainEqual(expect.objectContaining({id:"delivery",status:"blocked"}));expect(f.calls).toEqual(["/repos/acme/repo"]);expect(f.transport.push).not.toHaveBeenCalled();
 });
 it("does not bless SCM evidence observed before a credential replacement",async()=>{
- const f=await fixture();f.control.hold=true;const pending=f.preview();void pending.then(()=>undefined);await f.entered.promise;
+ const f=await fixture();f.control.hold=true;const pending=f.preview(f.draft.delivery,"dispatch");void pending.then(()=>undefined);await f.entered.promise;
  const changed=await f.service.app.inject({headers:{authorization:"Bearer owner"},method:"PUT",url:"/api/secrets/github/chosen",payload:{value:"replacement-fixture"}});expect(changed.statusCode,changed.body).toBe(201);f.gate.resolve();const response=await pending;expect(response.statusCode).toBe(200);expect(response.json().checks).toContainEqual(expect.objectContaining({id:"delivery",code:"SELECTION_CHANGED",status:"blocked"}));expect(response.json()).not.toHaveProperty("effectiveDelivery");
 });
 
 it("does not expose provider error text in publication preflight",async()=>{
- const f=await fixture();f.control.failMetadata=true;const p=(await f.preview()).json();expect(p.checks).toContainEqual(expect.objectContaining({id:"delivery",status:"blocked",code:"SCM_PREFLIGHT_UNAVAILABLE"}));expect(JSON.stringify(p)).not.toContain("unsafe-provider-error-secret-canary");
+ const f=await fixture();f.control.failMetadata=true;const p=(await f.preview(f.draft.delivery,"dispatch")).json();expect(p.checks).toContainEqual(expect.objectContaining({id:"delivery",status:"blocked",code:"SCM_PREFLIGHT_UNAVAILABLE"}));expect(JSON.stringify(p)).not.toContain("unsafe-provider-error-secret-canary");
+});
+
+it("saves create-only PR intent when SCM metadata is unavailable and does not requery it at commit",async()=>{
+ const f=await fixture();f.control.failMetadata=true;const p=(await f.preview()).json();expect(p.canCommit,p).toBe(true);expect(p.checks).toContainEqual(expect.objectContaining({id:"delivery",status:"warning",code:"SCM_PREFLIGHT_UNAVAILABLE"}));expect(p).not.toHaveProperty("effectiveDelivery");const before=f.calls.length;const saved=await f.service.app.inject({headers:{authorization:"Bearer owner","idempotency-key":"offline-scm"},method:"POST",url:`/api/task-publications/${p.publicationId}/commit`,payload:{revision:p.revision,reviewHash:p.confirmation.reviewHash,confirmation:{accepted:true}}});expect(saved.json()).toMatchObject({state:"TASK_CREATED"});expect(f.calls).toHaveLength(before);expect(f.service.database.getTaskContract(saved.json().taskId)).toMatchObject({delivery:{type:"pull-request",scmConnectorId:"chosen",repository:"acme/repo",baseBranch:"main"}});expect(f.native).not.toHaveBeenCalled();expect(f.transport.push).not.toHaveBeenCalled();
 });

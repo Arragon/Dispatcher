@@ -204,8 +204,8 @@ describe("task publication receipts", () => {
     expect((await f.commit(p,"key-1",restored)).json().taskId).toBe(a.json().taskId);
     expect((await restored.app.inject({headers:OWNER,url:`/api/task-publications/${p.publicationId}`})).json().taskId).toBe(a.json().taskId);
   });
-  it("requires confirmation and rejects stale reviews, invalid links, unknown commands and expanded scope", async () => {
-    const f=await setup(); const p=(await f.preview()).json();
+  it("requires confirmation and rejects stale dispatch reviews, invalid links, unknown commands and expanded scope", async () => {
+    const f=await setup(); const p=(await f.preview({...f.draft,startMode:"dispatch",execution:{...f.draft.execution,profileId:"codex-local"}})).json();
     expect((await f.commit(p,"missing",f.service,{confirmation:{accepted:false}})).statusCode).toBe(400);
     for(const patch of [{description:123},{schemaVersion:"1"},{arbitraryShell:"touch unsafe"},{referenceLinks:["javascript:alert(1)"]},{scopePaths:["../escape"]},{verificationCommandIds:["arbitrary shell"]},{execution:{selectionMode:"manual",selectionType:"explicit-model"}}]) expect((await f.preview({...f.draft,...patch})).statusCode).toBe(400);
     writeFileSync(join(f.root,"change"),"new"); execFileSync("git",["-C",f.root,"add","."]);execFileSync("git",["-C",f.root,"commit","-m","move base"]);
@@ -288,4 +288,23 @@ describe("task publication receipts", () => {
     expect((await f.commit(p)).statusCode).toBe(500);expect(f.service.database.listCanonicalTasks()).toHaveLength(0);expect(f.service.database.listEntities("operation-receipt")).toHaveLength(0);
     f.service.database.saveTaskContract=original;expect((await f.commit(p)).statusCode).toBe(200);
   });
+});
+
+it("creates a canonical task for an offline owning Runner without Controller Git or native execution",async()=>{
+ const f=await setup(),config=f.service.configuration.current().config;config.runners.push({id:"offline",displayName:"Offline",mode:"remote",capacity:1,tags:[],credentialRef:"secret://runner/offline/token"});config.repositories[0]!.runnerId="offline";config.agentProfiles[0]!.runnerId="offline";f.service.configuration.applyPlan(f.service.configuration.buildPlan(config,"fixture","cli").id,{confirmed:true});const inspect=vi.spyOn(f.service.workspaces,"inspect"),create=vi.spyOn(f.service.workspaces,"create");
+ const response=await f.preview(),p=response.json();expect(response.statusCode,response.body).toBe(200);expect(p).toMatchObject({canCommit:true,effectiveTask:{contractState:"READY"}});expect(p.checks).toContainEqual(expect.objectContaining({id:"workspace",status:"warning",code:"WORKSPACE_UNVERIFIED"}));const saved=await f.commit(p);expect(saved.json()).toMatchObject({state:"TASK_CREATED"});expect(f.service.database.getTaskContract(saved.json().taskId)).not.toHaveProperty("workspace.baseCommit");expect(f.service.database.listEntities("run")).toHaveLength(0);expect(inspect).not.toHaveBeenCalled();expect(create).not.toHaveBeenCalled();expect(f.starts).toHaveLength(0);
+});
+it("does not require device availability again when committing a create-only review",async()=>{
+ const f=await setup(),p=(await f.preview()).json(),inspect=vi.spyOn(f.service.workspaces,"inspect").mockRejectedValue(new Error("device offline"));const saved=await f.commit(p);expect(saved.json()).toMatchObject({state:"TASK_CREATED"});expect(inspect).not.toHaveBeenCalled();expect(f.service.database.listEntities("run")).toHaveLength(0);
+});
+it("requires fresh Git qualification before dispatching a task saved without a verified baseline",async()=>{
+ const f=await setup(),inspect=vi.spyOn(f.service.workspaces,"inspect").mockRejectedValue(new Error("offline")),response=await f.preview();expect(response.statusCode,response.body).toBe(200);const saved=(await f.commit(response.json())).json();expect(saved.state).toBe("TASK_CREATED");inspect.mockRestore();const current=f.service.database.getCanonicalTask(saved.taskId)!;
+ const preview=await f.service.app.inject({headers:OWNER,method:"POST",url:`/api/tasks/${saved.taskId}/publications/preview`,payload:{expectedRevision:current.revision,execution:{profileId:"codex-local",selectionMode:"manual",selectionType:"native-default"}}});expect(preview.json()).toMatchObject({canCommit:true,effectiveExecution:{repositoryBaseCommit:expect.any(String)}});const qualified=preview.json(),head=qualified.effectiveExecution.repositoryBaseCommit,create=vi.spyOn(f.service.workspaces,"create"),receipt=(await f.commit(qualified,"fresh-start")).json();expect(receipt.state).toBe("STARTED");expect(create.mock.calls[0]?.[0]).toMatchObject({baseCommit:head});expect(f.service.database.getTaskContract(saved.taskId)).not.toHaveProperty("workspace.baseCommit");
+});
+it("preserves physical scope denials while allowing create-only availability warnings",async()=>{
+ const f=await setup();symlinkSync(tmpdir(),join(f.root,"outside"));const denied=await f.preview({...f.draft,scopePaths:["outside"]});expect(denied.statusCode,denied.body).toBe(400);expect(denied.json().code).toBe("INVALID_WORKSPACE");expect(f.service.database.listCanonicalTasks()).toHaveLength(0);
+});
+
+it("retains the reviewed create-only baseline when its branch moves before saving",async()=>{
+ const f=await setup(),p=(await f.preview()).json(),before=execFileSync("git",["-C",f.root,"rev-parse","HEAD"],{encoding:"utf8"}).trim();writeFileSync(join(f.root,"later.txt"),"later");execFileSync("git",["-C",f.root,"add","later.txt"]);execFileSync("git",["-C",f.root,"commit","-m","later"]);const saved=(await f.commit(p)).json();expect(saved.state).toBe("TASK_CREATED");expect(f.service.database.getTaskContract(saved.taskId)).toMatchObject({workspace:{baseCommit:before}});expect(f.starts).toHaveLength(0);
 });

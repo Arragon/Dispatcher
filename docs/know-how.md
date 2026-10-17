@@ -672,3 +672,8 @@
   process ownership evidence.
   Bind query caches to the chosen Run/phase so previous attempts cannot supply
   a different attempt's result; preserve known facts during background refresh.
+- Keep create-only availability separate from scope safety. Offline evidence can
+  remain warning/unknown while canonical creation succeeds; known physical scope
+  denials still fail. Do not invent a baseline when Git is unavailable. At later
+  dispatch, pass the newly reviewed SHA into workspace creation even if the
+  original TaskContract intentionally has no baseCommit.
