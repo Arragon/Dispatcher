@@ -1,3 +1,4 @@
+import type {ScmDeliverySelection} from "@dispatcher/domain";
 import { resolveProfileExecutionContext } from "./execution-context.js";
 import { ProfileProbeService } from "./profile-probes.js";
 import { CredentialContext } from "./credential-context.js";
@@ -9,7 +10,7 @@ import type { ProfileConsoleView,NativeSessionConsoleView,RepositoryConsoleConte
 import { applyConfigEdits, consoleConfig, consoleConfigPlan } from "./config-edits.js";
 import {qualifyRoutingPolicy,type PolicyConfigEvidence} from "./policy-config.js";
 import {TaskClassifier} from "./task-classifier.js";
-import { remoteCatalog, remoteRunInventory,remoteRepositoryRefs,remoteCommitResult } from "./remote-results.js";
+import { remoteCatalog, remoteRunInventory,remoteRepositoryRefs,remoteCommitResult,remoteDeliveryTarget } from "./remote-results.js";
 import { RemoteNativeAdapter } from "./remote-adapter.js";
 import { NATIVE_EXECUTION_CAPABILITY,NATIVE_GIT_DELIVERY_CAPABILITY,requiresNativeGitDelivery, type CommandPayload } from "@dispatcher/protocol";
 import { ModelRoutingService } from "./model-routing.js";
@@ -662,6 +663,7 @@ export class ControllerService {
     this.lifecycle = new LifecycleManager(modules);
     this.modelRouting = new ModelRoutingService(this.database,()=>this.now(),new TaskClassifier(this.database,this.llm,()=>this.now()));
     this.publications = new PublicationService(this.database, this.configuration, this.tasks, { inspect: plan => this.inspectRepository(plan) }, () => this.now(), {
+      prepareDelivery:(draft,repository)=>this.prepareScmDelivery(draft,repository),
       prepare: (draft,repository,workspacePath,context) => this.preparePublication(draft,repository,workspacePath,context),
       dispatch: async (record,taskId) => (await this.dispatchTask(taskId,{profileId:record.selection!.profileId,repositoryId:record.repository!.id},`publication:${record.preview.publicationId}`,record)).run,
     });
@@ -2039,6 +2041,21 @@ export class ControllerService {
     if(this.catalogGenerations.get(key)!==generation)throw new PublicationError("CATALOG_SUPERSEDED",409,"A newer catalog request superseded this response");
     this.database.saveEntity("model-catalog",key,json(catalog));return catalog;
   }
+  private async prepareScmDelivery(draft:PublishDraftV1,repository:RepositoryConfig):Promise<ScmDeliverySelection>{
+    const snapshot=this.configuration.current(),delivery=draft.delivery;
+    if(delivery.type!=="pull-request"||!delivery.scmConnectorId||!delivery.targetRepository||!delivery.baseBranch)throw new PublicationError("SCM_SELECTION_REQUIRED",400,"Select an SCM connector, target repository and base branch explicitly");
+    const configured=snapshot.config.connectors.find(connector=>connector.id===delivery.scmConnectorId),adapter=this.connectors.get(delivery.scmConnectorId) as ScmAdapter|undefined;
+    if(!configured?.enabled||configured.kind!=="scm"||configured.definitionId!=="scm.github"||!adapter?.inspectDeliveryRepository)throw new PublicationError("SCM_UNAVAILABLE",409,"Selected SCM connector does not expose qualified PR preflight");
+    this.credentialContext.assertAvailable(configured);const contextFingerprint=this.connectorConfigurationFingerprint(configured.id),owner=repositoryRunnerId(snapshot.config,repository),remote=snapshot.config.runners.some(runner=>runner.id===owner&&runner.mode==="remote");
+    const target=remote?remoteDeliveryTarget(await this.remoteRequest(owner,{type:"native.repository_delivery",repositoryId:repository.id})):await this.workspaces.deliveryTarget(repository.id);
+    if(target.repository!==delivery.targetRepository.toLowerCase())throw new PublicationError("SCM_TARGET_MISMATCH",409,"PR repository does not match the owning origin");
+    const parts=target.repository.split("/");let inspection:Awaited<ReturnType<NonNullable<ScmAdapter["inspectDeliveryRepository"]>>>;
+    try{inspection=await adapter.inspectDeliveryRepository({owner:parts[0]!,name:parts[1]!},delivery.baseBranch);}catch(error){throw new PublicationError(error instanceof ConnectorError&&error.code==="AUTH"?"SCM_AUTH_UNAVAILABLE":"SCM_PREFLIGHT_UNAVAILABLE",409,"Selected SCM repository, base branch or write access could not be qualified");}
+    if(inspection.host!==target.host||inspection.repository!==target.repository||inspection.baseBranch!==delivery.baseBranch)throw new PublicationError("SCM_TARGET_MISMATCH",409,"SCM host or repository does not match the owning origin");
+    if(this.configuration.current().revision!==snapshot.revision||this.connectorConfigurationFingerprint(configured.id)!==contextFingerprint)throw new PublicationError("SELECTION_CHANGED",409,"SCM context changed during preflight");
+    return {version:1,scmConnectorId:configured.id,repository:target.repository,baseBranch:delivery.baseBranch,target,contextFingerprint,configRevision:snapshot.revision,reviewedAt:this.now().toISOString()};
+  }
+
   private async preparePublication(draft:PublishDraftV1,repository:RepositoryConfig,_workspacePath?:string,context?:{owner:string;reviewed?:ExecutionSelection}):Promise<ExecutionSelection> {
     await this.refreshLocalTrialSessions();
     const snapshot=this.configuration.current();const profile=snapshot.config.agentProfiles.find(p=>p.id===draft.execution.profileId);

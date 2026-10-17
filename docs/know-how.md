@@ -637,3 +637,10 @@
 - Additive delivery commands need an explicit peer capability even while keeping
   transport1.2 and legacy omitted-intent hashes. Gate preparation as well as the
   final command; otherwise an older Runner fails after a task has been created.
+
+- Keep a task's declarative SCM choice separate from observed credential/target
+  review snapshots. Otherwise credential rotation permanently invalidates a saved
+  task instead of requiring a fresh review. Bind observed snapshots into reviewHash.
+- Repository metadata permission is not proof of native SSH/Git authentication or
+  a token's PR write scope. Treat absent permission fields as unconfirmed and keep
+  the actual execution checks explicit. none/commit must not call SCM preflight.

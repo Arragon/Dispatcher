@@ -875,3 +875,27 @@ none and commit intents cannot gain push permission. Commit and push use the sam
 owned-command lifecycle and durable unknown-outcome rules. Verified PR runs cannot
 release capacity before their frozen push completes. Native commands accept no
 replacement targets, executable arguments, URLs or local roots.
+
+## Explicit SCM publication preflight
+
+New local contracts distinguish workspace.repositoryId from delivery.repository.
+none/commit carry no fabricated remote identity; explicit PR contracts can retain
+scmConnectorId, repository and baseBranch. External drafts without local execution
+context keep their existing compilation semantics.
+
+ScmDeliverySelection is a separate observed publication snapshot: selected
+connector, owning target fingerprint, credential/config context and review time.
+It is bound into reviewHash and rechecked before publication commit. It is not
+a permanent credential epoch in the TaskContract, so later task reviews can
+observe the current configured account without rewriting the task's SCM choice.
+The owning Runner reads remote origins; the Controller reads selected SCM metadata.
+A shared pure target predicate rejects extra/private fields on transport results.
+
+GitHub preflight uses read-only repository and branch metadata, rejects mismatched,
+archived/disabled repositories and absent/denied push permission, and requires a
+qualified base branch SHA. This does not prove native Git authentication or the
+token's Pull Requests write permission. Repository/branch API contracts follow
+the [GitHub REST docs](https://docs.github.com/en/rest/repos/repos#get-a-repository)
+and [branch docs](https://docs.github.com/en/rest/branches/branches#get-a-branch).
+SCM or credential context changes during reads cannot produce qualified evidence.
+PR execution remains blocked until the owned Git/API integration is complete.

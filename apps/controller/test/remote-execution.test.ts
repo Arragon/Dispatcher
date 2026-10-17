@@ -11,7 +11,7 @@ import { NativeRunnerRuntime, RemoteRunnerClient, RunnerJournal } from "@dispatc
 import { ControllerService } from "../src/service.js";
 const cleanups: Array<() => void | Promise<void>> = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
-async function setup(verificationFails = false,holdFirstReconcile = false,deliveryType:"none"|"commit"="none") {
+async function setup(verificationFails = false,holdFirstReconcile = false,deliveryType:"none"|"commit"|"pull-request"="none") {
   const directory = mkdtempSync(join(tmpdir(), "remote-execution-")); cleanups.push(() => rmSync(directory, { recursive: true, force: true }));
   const root = join(directory, "repo"); execFileSync("git", ["init", "-b", "main", root], { stdio: "ignore" }); execFileSync("git", ["-C", root, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "--allow-empty", "-m", "base"], { stdio: "ignore" });
   const controllerData = join(directory, "controller"), runnerData = join(directory, "runner");
@@ -19,15 +19,17 @@ async function setup(verificationFails = false,holdFirstReconcile = false,delive
   let clock=new Date();const now=()=>new Date(clock);
   let credential:string|undefined="fixture";
   const secrets={put:async(reference:string,value:string)=>{credential=value;return {reference,backend:"encrypted-local" as const,exists:true};},resolve:async()=>{if(!credential)throw new Error("Missing secret");return credential;},test:async()=>Boolean(credential),metadata:async()=>({exists:Boolean(credential)}),delete:async()=>{credential=undefined;}} as unknown as SecretStore;
+  const connectorRequests:string[]=[];
   const restores:ReturnType<typeof vi.spyOn>[]=[];
   const makeService=async()=>{
-    const instance=new ControllerService({dataDirectory:controllerData,host:"127.0.0.1",port:0,withRunner:true,ownerToken:"owner",clock:now,codexBackendFactory:localBackend,backgroundWorker:{enabled:false},secretStore:secrets});
+    const instance=new ControllerService({dataDirectory:controllerData,host:"127.0.0.1",port:0,withRunner:true,ownerToken:"owner",clock:now,codexBackendFactory:localBackend,backgroundWorker:{enabled:false},secretStore:secrets,integrationFetch:async(input,init)=>{expect(init?.method??"GET").toBe("GET");const url=new URL(String(input));expect(url.hostname).toBe("api.github.com");connectorRequests.push(url.pathname);return new Response(JSON.stringify(url.pathname.endsWith("/branches/main")?{name:"main",commit:{sha:"a".repeat(40)}}:{full_name:"acme/repo",archived:false,disabled:false,permissions:{push:true}}));}});
     restores.push(vi.spyOn(instance.workspaces,"restore"));await instance.start();cleanups.push(()=>instance.stop());return instance;
   };
   let service=await makeService();
   const repository = { id: "repo", runnerId: "remote", root, defaultBaseRef: "main", scopePaths: ["."], verificationCommands: [{ id: "check", file: process.execPath, args: ["-e", "if(require('node:fs').readFileSync('result.txt','utf8')!=='remote-ok\\n')process.exit(1)"], required: true, timeoutMs: 3000, outputLimitBytes: 1000 }] };
   if(verificationFails)repository.verificationCommands[0]!.args=["-e","process.exit(1)"];
   const config = service.configuration.current().config; config.runners.push({ id: "remote", displayName: "Remote", mode: "remote", capacity: 1, tags: [], credentialRef: "secret://runner/fixture/remote" }); config.repositories = [repository]; config.agentProfiles = [{ id: "p", alias: "P", provider: "codex", runnerId: "remote", settings: { codexHome: "/must-not-use/controller-native" } }];
+  if(deliveryType==="pull-request")config.connectors=[{id:"chosen",definitionId:"scm.github",kind:"scm",displayName:"Chosen",enabled:true,credentialRef:"secret://github/chosen"}];
   service.configuration.applyPlan(service.configuration.buildPlan(config, "fixture", "cli").id, { confirmed: true });
   const starts: Array<{ workspacePath: string; codexHome: string; model?: string; reasoningEffort?: string }> = [], catalogs: string[] = [];
   const nativeConfig = structuredClone(defaultDispatcherConfig); nativeConfig.runners = [config.runners.find(r => r.id === "remote")!]; nativeConfig.repositories = [repository]; nativeConfig.agentProfiles = [{ ...config.agentProfiles[0]!, settings: { codexHome: join(runnerData, "native-account") } }];
@@ -63,10 +65,10 @@ async function setup(verificationFails = false,holdFirstReconcile = false,delive
   await connect();
   const restartController=async()=>{await client.stop();await service.stop();service=await makeService();return service;};
   const createLocal = vi.spyOn(service.workspaces, "create"), headers = { authorization: "Bearer owner" };
-  const draft = { schemaVersion: 1, clientDraftId: "draft", projectId: "local:repo", repositoryId: "repo", description: "Write the result", scopePaths: ["."], acceptanceCriteria: ["result is correct"], startMode: "dispatch", execution: { profileId: "p", selectionMode: "manual", selectionType: "explicit-model", nativeModelId: "model", nativeParameters: {}, catalogRevision: catalog.revision, contextFingerprint: catalog.contextFingerprint }, delivery: { type: deliveryType } };
+  const draft = { schemaVersion: 1, clientDraftId: "draft", projectId: "local:repo", repositoryId: "repo", description: "Write the result", scopePaths: ["."], acceptanceCriteria: ["result is correct"], startMode: "dispatch", execution: { profileId: "p", selectionMode: "manual", selectionType: "explicit-model", nativeModelId: "model", nativeParameters: {}, catalogRevision: catalog.revision, contextFingerprint: catalog.contextFingerprint }, delivery: { type: deliveryType,...(deliveryType==="pull-request"?{scmConnectorId:"chosen",targetRepository:"acme/repo",baseBranch:"main"}:{}) } };
   const preview = async (clientDraftId="draft") => (await service.app.inject({ method: "POST", url: "/api/task-publications/preview", headers, payload: {...draft,clientDraftId} })).json();
   const commit = (p: { publicationId: string; revision: number; confirmation: { reviewHash: string } }) => service.app.inject({ method: "POST", url: `/api/task-publications/${p.publicationId}/commit`, headers: { ...headers, "idempotency-key": "remote-publication" }, payload: { revision: p.revision, reviewHash: p.confirmation.reviewHash, confirmation: { accepted: true } } });
-  return {get service(){return service;},runtime,get client(){return client;},root,runnerData,controllerData,starts,catalogs,localBackend,createLocal,headers,preview,commit,gate,entered,control,connect,restartController,restores,now,reconcileGate,reconcileEntered,verificationGate,verificationEntered,advanceClock:(ms:number)=>{clock=new Date(clock.getTime()+ms);}};
+  return {get service(){return service;},runtime,get client(){return client;},root,runnerData,controllerData,starts,catalogs,localBackend,createLocal,headers,preview,commit,gate,entered,control,connect,restartController,restores,now,connectorRequests,reconcileGate,reconcileEntered,verificationGate,verificationEntered,advanceClock:(ms:number)=>{clock=new Date(clock.getTime()+ms);}};
 }
 it("reads remote registered repository context and references without touching Controller Git or native execution",async()=>{
  const f=await setup();execFileSync("git",["-C",f.root,"branch","feature/remote-read"]);
@@ -297,4 +299,9 @@ it("delivers an explicit remote commit through the owning Runner with no Control
 it("blocks explicit commit on an older native Runner while preserving its none execution capability",async()=>{
  const f=await setup(false,false,"commit");await f.client.stop();await f.connect("fixture",[NATIVE_EXECUTION_CAPABILITY]);const preview=await f.preview();expect(preview.canCommit).toBe(false);expect(preview.checks).toContainEqual(expect.objectContaining({code:"REMOTE_DELIVERY_UNAVAILABLE",status:"blocked"}));expect(f.starts).toHaveLength(0);expect(existsSync(join(f.runnerData,"worktrees"))).toBe(false);
  await expect(f.service["remoteRunnerServer"].sendCommand("remote",{type:"native.run_push",runId:"run"},{leaseId:"lease",generation:1,leaseExpiresAt:new Date(Date.now()+60_000).toISOString()})).rejects.toThrow("native git delivery capability");
+});
+
+it("qualifies remote PR origin on the owning Runner while SCM reads remain on Controller",async()=>{
+ const f=await setup(false,false,"pull-request");execFileSync("git",["-C",f.root,"remote","add","origin","git@github.com:acme/repo.git"]);const local=vi.spyOn(f.service.workspaces,"deliveryTarget").mockRejectedValue(new Error("Controller cannot inspect foreign Git"));
+ const p=await f.preview();expect(p.checks).toContainEqual(expect.objectContaining({id:"delivery",status:"passed"}));expect(p.effectiveDelivery).toMatchObject({scmConnectorId:"chosen",target:{host:"github.com",repository:"acme/repo"}});expect(p.canCommit).toBe(false);expect(f.connectorRequests).toEqual(["/repos/acme/repo","/repos/acme/repo/branches/main"]);expect(local).not.toHaveBeenCalled();expect(f.localBackend).not.toHaveBeenCalled();expect(f.starts).toHaveLength(0);expect(f.runtime.configuration.current().config.connectors).toEqual([]);
 });

@@ -1,3 +1,4 @@
+import type {ScmDeliverySelection} from "./delivery.js";
 import type { ModelRoutingDecision } from "./model-routing.js";
 export type NativeParameter = string | number | boolean;
 export interface ExecutionSelection {
@@ -24,6 +25,7 @@ export interface PublicationPreview {
   expiresAt: string; inputHash: string;
   routingDecision?:ModelRoutingDecision;
   taskBinding?:{taskId:string;taskRevision:number};
+  effectiveDelivery?:ScmDeliverySelection;
   effectiveTask: { title: string; description: string; contractState: "READY" | "NEEDS_SPEC"; missing: string[] };
   effectiveExecution?: Omit<ExecutionSelection, "version" | "mode" | "source" | "requestedModel" | "selectedAt"> & { nativeModelId?: string; selectionSource: ExecutionSelection["source"]; repositoryBaseCommit: string };
   checks: Array<{ id: string; status: "passed" | "warning" | "blocked" | "not-required"; code?: string; message: string }>;

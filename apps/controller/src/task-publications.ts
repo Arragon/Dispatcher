@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { posix } from "node:path";
 import type { ConfigurationEngine, RepositoryConfig } from "@dispatcher/config";
-import type { PublishDraftV1, PublicationPreview, PublicationReceipt, Task, TaskContract, ExecutionSelection, Run, ModelRoutingDecision } from "@dispatcher/domain";
+import type { PublishDraftV1, PublicationPreview, PublicationReceipt, Task, TaskContract, ExecutionSelection, Run, ModelRoutingDecision,ScmDeliverySelection } from "@dispatcher/domain";
 import type { CanonicalTaskService } from "@dispatcher/integrations";
 import type { DispatcherDatabase, JsonValue } from "@dispatcher/persistence";
 import { TaskContractCompiler } from "@dispatcher/semantic";
@@ -17,6 +17,7 @@ export class PublicationError extends Error {
 }
 export interface PublicationRecord {
   owner: string; draft: PublishDraftV1; preview: PublicationPreview; configRevision: number;
+  deliverySelection?:ScmDeliverySelection;
   selection?: ExecutionSelection; contract?: TaskContract; baseCommit?: string; repository?: RepositoryConfig; receipt?: PublicationReceipt;
   taskBinding?:{taskId:string;taskRevision:number;contractHash:string};
 }
@@ -27,6 +28,7 @@ export class PublicationService {
   private readonly pending = new Map<string, Promise<PublicationReceipt>>();
   constructor(private readonly db: DispatcherDatabase, private readonly config: ConfigurationEngine, private readonly tasks: CanonicalTaskService, private readonly workspaces: Pick<WorkspaceManager,"inspect">, private readonly now: () => Date, private readonly runtime: {
     prepare(draft: PublishDraftV1, repository: RepositoryConfig, workspacePath?: string,context?:{owner:string;reviewed?:ExecutionSelection}): Promise<ExecutionSelection>;
+    prepareDelivery(draft:PublishDraftV1,repository:RepositoryConfig):Promise<ScmDeliverySelection>;
     dispatch(record: PublicationRecord, taskId: string): Promise<Run>;
   }) {}
   reconcile(): void {
@@ -83,7 +85,7 @@ export class PublicationService {
     if(!stored||!task||!contract?.workspace||!intent)throw new PublicationError("TASK_REVIEW_UNAVAILABLE",409,"Task does not have a local publication workspace contract");
     this.record(owner,intent.publicationId);
     const taskBinding={taskId,taskRevision:expectedRevision,contractHash:contentHash(contract)};this.assertTaskBinding(taskBinding);
-    const draft:PublishDraftV1={schemaVersion:1,clientDraftId:`task:${taskId}:${expectedRevision}`,title:task.title,description:contract.instructions??task.description??"",projectId:task.projectId,repositoryId:contract.workspace.repositoryId,baseRef:contract.workspace.baseRef,...(contract.workspace.targetBranch?{targetBranch:contract.workspace.targetBranch}:{}),scopePaths:contract.scope,acceptanceCriteria:contract.acceptanceCriteria,referenceLinks:contract.referenceLinks??[],verificationCommandIds:contract.verification,startMode:"dispatch",execution:structuredClone(execution),delivery:{type:contract.delivery.type,...(contract.delivery.repository?{targetRepository:contract.delivery.repository}:{}),...(contract.delivery.baseBranch?{baseBranch:contract.delivery.baseBranch}:{})}};
+    const draft:PublishDraftV1={schemaVersion:1,clientDraftId:`task:${taskId}:${expectedRevision}`,title:task.title,description:contract.instructions??task.description??"",projectId:task.projectId,repositoryId:contract.workspace.repositoryId,baseRef:contract.workspace.baseRef,...(contract.workspace.targetBranch?{targetBranch:contract.workspace.targetBranch}:{}),scopePaths:contract.scope,acceptanceCriteria:contract.acceptanceCriteria,referenceLinks:contract.referenceLinks??[],verificationCommandIds:contract.verification,startMode:"dispatch",execution:structuredClone(execution),delivery:{type:contract.delivery.type,...(contract.delivery.scmConnectorId?{scmConnectorId:contract.delivery.scmConnectorId}:{}),...(contract.delivery.repository?{targetRepository:contract.delivery.repository}:{}),...(contract.delivery.baseBranch?{baseBranch:contract.delivery.baseBranch}:{})}};
     return this.preview(owner,draft,{taskBinding,contract});
   }
   async preview(owner: string, draft: PublishDraftV1,existing?:{taskBinding:NonNullable<PublicationRecord["taskBinding"]>;contract:TaskContract}): Promise<PublicationPreview> {
@@ -102,12 +104,18 @@ export class PublicationService {
     const baseRef=draft.baseRef??repository?.defaultBaseRef??"";
     let baseCommit: string|undefined;
     if(repository) { try { baseCommit=(await this.workspaces.inspect({repositoryId:repository.id,baseRef:existing?.contract.workspace?.baseCommit??baseRef,scopePaths:scopes,...(draft.targetBranch?{targetBranch:draft.targetBranch}:{})})).baseCommit; } catch(error) { throw new PublicationError("INVALID_WORKSPACE",400,error instanceof Error?error.message:"Repository cannot be inspected"); } }
+    let deliverySelection:ScmDeliverySelection|undefined,deliveryCheck:PublicationPreview["checks"][number]|undefined;
+    if(draft.delivery.type==="pull-request")try{
+      if(!repository)throw new PublicationError("DELIVERY_REPOSITORY_REQUIRED",400,"Select a registered repository for PR delivery");
+      deliverySelection=await this.runtime.prepareDelivery(draft,repository);deliveryCheck={id:"delivery",status:"passed",message:"Selected SCM repository and base branch match the owning origin; Git authentication and PR token write scope require actual execution"};
+    }catch(error){deliveryCheck={id:"delivery",status:"blocked",code:error instanceof PublicationError?error.code:"SCM_PREFLIGHT_UNAVAILABLE",message:error instanceof Error?error.message:"SCM preflight is unavailable"};}
     const first=draft.description.split(/\r?\n/).find(line=>line.trim())?.trim()??"Task";
     const chars=Array.from(first); const title=draft.title?.trim() || chars.slice(0,80).join("")+(chars.length>80?"…":"");
-    const compiled=new TaskContractCompiler().compile({externalId:draft.clientDraftId,title,description:draft.description,labels:[],dependencies:[],...(repository?{repository:repository.id}:{}),scope:scopes,acceptanceCriteria:draft.acceptanceCriteria.filter(s=>s.trim()),verification,constraints:[],delivery:{type:draft.delivery.type},extensions:{}},1,repository?{workspace:{repositoryId:repository.id,baseRef,...(baseCommit?{baseCommit}:{}),...(draft.targetBranch?{targetBranch:draft.targetBranch}:{})},...(draft.referenceLinks?{referenceLinks:draft.referenceLinks}:{})}:undefined);
+    const compiled=new TaskContractCompiler().compile({externalId:draft.clientDraftId,title,description:draft.description,labels:[],dependencies:[],...(repository?{repository:repository.id}:{}),scope:scopes,acceptanceCriteria:draft.acceptanceCriteria.filter(s=>s.trim()),verification,constraints:[],delivery:{type:draft.delivery.type},extensions:{}},1,repository?{delivery:{type:draft.delivery.type,...(draft.delivery.type==="pull-request"?{...(draft.delivery.targetRepository?{repository:draft.delivery.targetRepository.toLowerCase()}:{}),...(draft.delivery.baseBranch?{baseBranch:draft.delivery.baseBranch}:{}),...(draft.delivery.scmConnectorId?{scmConnectorId:draft.delivery.scmConnectorId}:{})}:{})},workspace:{repositoryId:repository.id,baseRef,...(baseCommit?{baseCommit}:{}),...(draft.targetBranch?{targetBranch:draft.targetBranch}:{})},...(draft.referenceLinks?{referenceLinks:draft.referenceLinks}:{})}:undefined);
     if(existing){this.assertTaskBinding(existing.taskBinding);compiled.contract=structuredClone(existing.contract);}
     const checks:PublicationPreview["checks"]=[{id:"workspace",status:repository?"passed":"warning",message:repository?"Registered physical Git root and base commit verified":"No repository; task needs specification"}];
-    if (draft.delivery.type==="pull-request") checks.push({id:"delivery",status:"blocked",code:"DELIVERY_UNSUPPORTED",message:"Explicit pull-request delivery is not qualified yet"});
+    if(deliveryCheck)checks.push(deliveryCheck);
+    if(draft.delivery.type==="pull-request")checks.push({id:"delivery-runtime",status:"blocked",code:"DELIVERY_UNSUPPORTED",message:"Owned PR/API execution is not qualified yet"});
     if(draft.delivery.type==="commit")checks.push({id:"delivery",status:"passed",message:"Create a local commit in the owning Runner's managed worktree; no push or pull request"});
     let selection:ExecutionSelection|undefined;
     let routingDecision:ModelRoutingDecision|undefined;
@@ -117,11 +125,12 @@ export class PublicationService {
     }
     const publicationId=randomUUID(); const inputHash=contentHash(draft); const expiresAt=new Date(this.now().getTime()+600000).toISOString();
     if(existing)this.assertTaskBinding(existing.taskBinding);
-    const reviewHash=contentHash({draft,taskBinding:existing?.taskBinding,configRevision:snapshot.revision,baseCommit,contract:compiled.contract,checks,selection:selection?{...selection,selectedAt:undefined}:undefined});
+    const reviewHash=contentHash({draft,taskBinding:existing?.taskBinding,configRevision:snapshot.revision,baseCommit,contract:compiled.contract,checks,deliverySelection:deliverySelection?{...deliverySelection,reviewedAt:undefined}:undefined,selection:selection?{...selection,selectedAt:undefined}:undefined});
     const canCommit=!checks.some(c=>c.status==="blocked");
-    const preview:PublicationPreview={publicationId,revision:1,state:canCommit?"PREVIEW":"NEEDS_INPUT",expiresAt,inputHash,...(routingDecision?{routingDecision}:{}),effectiveTask:{title,description:draft.description,contractState:compiled.state,missing:compiled.missing},...(selection&&baseCommit?{effectiveExecution:{profileId:selection.profileId,runnerId:selection.runnerId,providerId:selection.providerId,backendId:selection.backendId,selectionType:selection.selectionType,nativeParameters:selection.nativeParameters,selectionSource:selection.source,configRevision:selection.configRevision,contextFingerprint:selection.contextFingerprint,repositoryBaseCommit:baseCommit,...(selection.requestedModel?{nativeModelId:selection.requestedModel}:{}),...(selection.catalogRevision?{catalogRevision:selection.catalogRevision}:{})}}:{}),checks,confirmation:{required:true,reviewHash,reasons:[draft.startMode==="dispatch"?"Start a native agent in a managed worktree":"Create a canonical task"]},canCommit};
+    const preview:PublicationPreview={publicationId,revision:1,state:canCommit?"PREVIEW":"NEEDS_INPUT",expiresAt,inputHash,...(deliverySelection?{effectiveDelivery:deliverySelection}:{}),...(routingDecision?{routingDecision}:{}),effectiveTask:{title,description:draft.description,contractState:compiled.state,missing:compiled.missing},...(selection&&baseCommit?{effectiveExecution:{profileId:selection.profileId,runnerId:selection.runnerId,providerId:selection.providerId,backendId:selection.backendId,selectionType:selection.selectionType,nativeParameters:selection.nativeParameters,selectionSource:selection.source,configRevision:selection.configRevision,contextFingerprint:selection.contextFingerprint,repositoryBaseCommit:baseCommit,...(selection.requestedModel?{nativeModelId:selection.requestedModel}:{}),...(selection.catalogRevision?{catalogRevision:selection.catalogRevision}:{})}}:{}),checks,confirmation:{required:true,reviewHash,reasons:[draft.startMode==="dispatch"?"Start a native agent in a managed worktree":"Create a canonical task"]},canCommit};
     if(existing)preview.taskBinding={taskId:existing.taskBinding.taskId,taskRevision:existing.taskBinding.taskRevision};
-    const record:PublicationRecord={owner,draft:structuredClone(draft),preview,configRevision:snapshot.revision,...(existing?{taskBinding:existing.taskBinding}:{}),...(selection?{selection}:{}),...(compiled.contract?{contract:compiled.contract}:{}),...(repository?{repository}:{}),...(baseCommit?{baseCommit}:{})};
+    const record:PublicationRecord={owner,draft:structuredClone(draft),preview,configRevision:snapshot.revision,...(deliverySelection?{deliverySelection}:{}),...(existing?{taskBinding:existing.taskBinding}:{}),...(selection?{selection}:{}),...(compiled.contract?{contract:compiled.contract}:{}),...(repository?{repository}:{}),...(baseCommit?{baseCommit}:{})};
+    if(this.config.current().revision!==snapshot.revision)throw new PublicationError("SELECTION_CHANGED",409,"Configuration changed during publication preflight");
     return this.db.transaction(()=>{
       const draftIdentity=contentHash({owner,clientDraftId:draft.clientDraftId,inputHash});
       const binding=this.db.getEntity<JsonValue>("publication-draft",draftIdentity) as {publicationId:string}|undefined;
@@ -164,6 +173,7 @@ export class PublicationService {
       const selection=await this.runtime.prepare(r.draft,r.repository,undefined,{owner,reviewed:r.selection});
       if(contentHash({...selection,selectedAt:undefined})!==contentHash({...r.selection,selectedAt:undefined}))throw new PublicationError("SELECTION_CHANGED",409,"Execution selection changed; review again");
     }
+    if(r.deliverySelection&&r.repository){const current=await this.runtime.prepareDelivery(r.draft,r.repository);if(contentHash({...current,reviewedAt:undefined})!==contentHash({...r.deliverySelection,reviewedAt:undefined}))throw new PublicationError("SELECTION_CHANGED",409,"SCM or owning origin changed; review again");}
     const receipt=this.db.transaction(()=>{
       r=this.record(owner,id);if(r.receipt)return r.receipt;
       this.assertCurrentDraft(r);

@@ -8,14 +8,14 @@ export interface CompileResult {
 }
 
 export class TaskContractCompiler {
-  compile(draft: TaskDraft, revision = 1, context?: { workspace: NonNullable<TaskContract["workspace"]>; referenceLinks?: string[] }): CompileResult {
+  compile(draft: TaskDraft, revision = 1, context?: { workspace: NonNullable<TaskContract["workspace"]>; referenceLinks?: string[];delivery?:TaskContract["delivery"] }): CompileResult {
     const missing: CompileResult["missing"] = [];
     if (!draft.repository?.trim()) missing.push("repository");
     if (draft.scope.length === 0) missing.push("scope");
     if (draft.acceptanceCriteria.length === 0) missing.push("acceptanceCriteria");
     if (draft.verification.length === 0) missing.push("verification");
     if (missing.length) return { state: "NEEDS_SPEC", missing };
-    const delivery = draft.delivery ?? { type: "pull-request" as const, baseBranch: "main" };
+    const delivery = context?.delivery??draft.delivery ?? { type: "pull-request" as const, baseBranch: "main" };
     return {
       state: "READY",
       missing,
@@ -31,7 +31,7 @@ export class TaskContractCompiler {
         constraints: [...draft.constraints],
         delivery: {
           ...delivery,
-          ...(!context || delivery.type !== "none" ? { repository: draft.repository! } : {}),
+          ...(!context ? { repository: draft.repository! } : {}),
         },
       },
     };

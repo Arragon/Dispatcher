@@ -1,5 +1,5 @@
 import {createHash} from "node:crypto";
-import type {GitDeliveryTarget} from "@dispatcher/domain";
+import {isGitDeliveryTarget,type GitDeliveryTarget} from "@dispatcher/domain";
 import { execFile } from "node:child_process";
 import { mkdir, realpath, stat } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
@@ -134,7 +134,7 @@ export class WorkspaceManager {
       return {host,repository:path.toLowerCase()};
     };
     const fetch=identity(urls[0]!),push=identity(urls[1]!);if(fetch.host!==push.host||fetch.repository!==push.repository)return invalid();
-    return {target:{version:1,...push,remoteFingerprint:createHash("sha256").update(JSON.stringify(urls)).digest("hex")},url:urls[1]!};
+    const target={version:1,...push,remoteFingerprint:createHash("sha256").update(JSON.stringify(urls)).digest("hex")};if(!isGitDeliveryTarget(target))return invalid();return {target,url:urls[1]!};
   }
 
   async inspect(plan: Pick<WorkspacePlan, "repositoryId" | "baseRef" | "scopePaths"> & { targetBranch?: string }): Promise<{ baseCommit: string; root: string }> {

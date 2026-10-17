@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { ConnectorDefinition, ConnectorInstance } from "@dispatcher/domain";
 import { ConnectorError, createConnectorDefinition, type ConnectorProbeResult } from "./contracts.js";
-import type { DeliveryRequest, PullRequestStatus, RepositoryRef, ScmAdapter } from "./scm.js";
+import type { DeliveryRequest, PullRequestStatus, RepositoryRef, ScmAdapter, ScmRepositoryInspection } from "./scm.js";
 import { assertDeliveryGate } from "./scm.js";
 import type { IntegrationFetch, SecretResolver } from "./linear.js";
 
@@ -87,6 +87,17 @@ export class GitHubScmConnector implements ScmAdapter {
   async probe(): Promise<ConnectorProbeResult> {
     await this.request("/user");
     return { health: "HEALTHY", checkedAt: new Date().toISOString() };
+  }
+  async inspectDeliveryRepository(repository:RepositoryRef,baseBranch:string):Promise<ScmRepositoryInspection>{
+    const invalid=():never=>{throw new ConnectorError("PERMANENT","SCM repository, write access or base branch is unavailable or unconfirmed",{retryable:false,operation:"read"});};
+    let base:URL;try{base=new URL(this.apiBase);}catch{return invalid();}
+    if(base.protocol!=="https:"||base.username||base.password||base.search||base.hash||![repository.owner,repository.name].every(part=>/^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$/.test(part))||!baseBranch||baseBranch.length>200||baseBranch.startsWith("-")||/[\s~^:?*[\\]/.test(baseBranch)||["..","//","@{"].some(part=>baseBranch.includes(part))||baseBranch.split("/").some(part=>!part||part.startsWith(".")||part.endsWith(".lock"))||baseBranch.endsWith("."))return invalid();
+    const path=`/repos/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.name)}`,fullName=`${repository.owner}/${repository.name}`.toLowerCase(),raw=await this.request(path),metadata=raw&&typeof raw==="object"&&!Array.isArray(raw)?raw as Record<string,unknown>:{};
+    const permissions=metadata.permissions&&typeof metadata.permissions==="object"?metadata.permissions as Record<string,unknown>:{};
+    if(typeof metadata.full_name!=="string"||metadata.full_name.toLowerCase()!==fullName||metadata.archived!==false||metadata.disabled!==false||permissions.push!==true)return invalid();
+    const rawBranch=await this.request(`${path}/branches/${encodeURIComponent(baseBranch)}`),branch=rawBranch&&typeof rawBranch==="object"?rawBranch as Record<string,unknown>:{},commit=branch.commit&&typeof branch.commit==="object"?branch.commit as Record<string,unknown>:{};
+    if(branch.name!==baseBranch||typeof commit.sha!=="string"||!/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(commit.sha))return invalid();
+    return {host:base.hostname==="api.github.com"?"github.com":base.hostname.toLowerCase(),repository:fullName,baseBranch};
   }
   async ensureBranch(repository: RepositoryRef, branch: string, baseBranch: string): Promise<void> {
     await this.options.transport.ensureBranch(repository, branch, baseBranch);

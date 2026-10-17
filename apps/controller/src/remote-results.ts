@@ -1,3 +1,4 @@
+import {isGitDeliveryTarget,type GitDeliveryTarget} from "@dispatcher/domain";
 import { AdapterContractError } from "@dispatcher/adapters";
 import type { AccountModelCatalog,LocalCommitResult,RepositoryRefs } from "@dispatcher/domain";
 import type { RunnerLease, RunnerRunSnapshot } from "@dispatcher/runner";
@@ -54,3 +55,5 @@ export function remoteCommitResult(value:unknown,expected:{runId:string;generati
  if(!object(value)||!keys(value,["version","runId","generation","commit","branch","files","created","completedAt"])||value.version!==1||Object.entries(expected).some(([key,expected])=>value[key]!==expected)||typeof value.commit!=="string"||!/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(value.commit)||typeof value.created!=="boolean"||typeof value.completedAt!=="string"||!Number.isFinite(Date.parse(value.completedAt))||!Array.isArray(value.files)||value.files.length>5000||value.files.some(file=>typeof file!=="string"||!file||file.length>4000||file.includes(String.fromCharCode(0))||/^[/\\]|^[a-z]:/i.test(file)||file.split(/[\\/]/).some(segment=>segment===".."||segment===".git"))||new Set(value.files).size!==value.files.length)return invalid();
  return structuredClone(value) as unknown as LocalCommitResult;
 }
+
+export function remoteDeliveryTarget(value:unknown):GitDeliveryTarget{if(!isGitDeliveryTarget(value))throw new AdapterContractError("REMOTE_RESULT_INVALID","Owning Runner returned an invalid delivery target");return structuredClone(value);}

@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { remoteCatalog, remoteRunInventory,remoteCommitResult } from "../src/remote-results.js";
+import { remoteCatalog, remoteRunInventory,remoteCommitResult,remoteDeliveryTarget } from "../src/remote-results.js";
 const identity = { profileId: "p", runnerId: "remote", providerId: "codex" };
 function catalog() { return { ...identity, backendId: "codex-exec-json", contextFingerprint: "context", revision: "catalog", fetchedAt: new Date().toISOString(), freshness: "native-fresh", source: "native-rpc", selectionSupport: "explicit", entries: [{ id: "model", displayName: "Model", kind: "model", selectable: true, access: "unconfirmed", parameterOptions: { reasoningEffort: ["low"] }, parameterDefaults: { reasoningEffort: "low" } }] }; }
 it("rejects a foreign catalog identity, duplicate model identities and unknown provider payload fields", () => {
@@ -22,4 +22,9 @@ it("validates commit receipts against canonical ownership and rejects private or
  const expected={runId:"run",generation:1,branch:"dispatcher/task/run"},good={version:1,...expected,commit:"a".repeat(40),files:["result.txt"],created:true,completedAt:"2026-10-16T12:00:00Z"};
  expect(remoteCommitResult(good,expected)).toEqual(good);
  for(const patch of [{runId:"foreign"},{generation:2},{branch:"main"},{commit:"bad"},{files:["../private"]},{files:[".git/config"]},{files:["/private/path"]},{files:["a","a"]},{created:"yes"},{completedAt:"bad"},{credential:"secret"}])expect(()=>remoteCommitResult({...good,...patch},expected)).toThrow(expect.objectContaining({code:"REMOTE_RESULT_INVALID"}));
+});
+
+it("rejects unbounded or private fields from owning delivery target metadata",()=>{
+ const target={version:1,host:"github.example",repository:"acme/repo",remoteFingerprint:"a".repeat(64)};expect(remoteDeliveryTarget(target)).toEqual(target);
+ for(const patch of [{host:"git@private"},{host:"bad..host"},{repository:"../repo"},{remoteFingerprint:"bad"},{url:"ssh://private/target"}])expect(()=>remoteDeliveryTarget({...target,...patch})).toThrow(expect.objectContaining({code:"REMOTE_RESULT_INVALID"}));
 });

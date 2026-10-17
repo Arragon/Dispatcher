@@ -31,7 +31,10 @@ export interface PullRequestStatus {
   headCommit?: string;
 }
 
+export interface ScmRepositoryInspection {host:string;repository:string;baseBranch:string}
+
 export interface ScmAdapter extends ConnectorAdapter {
+  inspectDeliveryRepository?(repository:RepositoryRef,baseBranch:string):Promise<ScmRepositoryInspection>;
   ensureBranch(repository: RepositoryRef, branch: string, baseBranch: string, idempotencyKey: string): Promise<void>;
   push(repository: RepositoryRef, branch: string, idempotencyKey: string): Promise<{ commit: string }>;
   createOrGetPullRequest(request: DeliveryRequest): Promise<PullRequestStatus>;

@@ -43,3 +43,15 @@ describe("GitHub CI aggregation", () => {
     expect(paths).toContain("/repos/acme/repo/commits/abc/check-runs?filter=latest&per_page=100&page=2");
   });
 });
+
+it("qualifies a matching writable repository and base branch through read-only GitHub metadata",async()=>{
+ const calls:Array<{url:string;method:string}>=[],adapter=new GitHubScmConnector({instance:{id:"chosen",definitionId:"scm.github",kind:"scm",displayName:"Chosen",enabled:true,health:"HEALTHY",revision:1,updatedAt:new Date().toISOString()},credentialRef:"secret://github/chosen",resolveSecret:async()=>"fixture",transport:{ensureBranch:async()=>{throw new Error("No Git mutation during preflight");},push:async()=>{throw new Error("No push during preflight");}},fetch:async(input,init)=>{const url=new URL(String(input));calls.push({url:url.pathname,method:init?.method??"GET"});return new Response(JSON.stringify(url.pathname.endsWith("/branches/main")?{name:"main",commit:{sha:"a".repeat(40)}}:{full_name:"Acme/Repo",archived:false,disabled:false,permissions:{push:true}}));}});
+ expect(await adapter.inspectDeliveryRepository({owner:"acme",name:"repo"},"main")).toEqual({host:"github.com",repository:"acme/repo",baseBranch:"main"});expect(calls).toEqual([{url:"/repos/acme/repo",method:"GET"},{url:"/repos/acme/repo/branches/main",method:"GET"}]);
+});
+it.each([{full_name:"other/repo",permissions:{push:true}},{full_name:"acme/repo",archived:true,permissions:{push:true}},{full_name:"acme/repo",disabled:true,permissions:{push:true}},{full_name:"acme/repo",permissions:{push:false}},{full_name:"acme/repo"}])("does not qualify a mismatched, disabled or unconfirmed writable repository: %j",async metadata=>{
+ const adapter=new GitHubScmConnector({instance:{id:"chosen",definitionId:"scm.github",kind:"scm",displayName:"Chosen",enabled:true,health:"HEALTHY",revision:1,updatedAt:new Date().toISOString()},credentialRef:"secret://github/chosen",resolveSecret:async()=>"fixture",transport:{ensureBranch:async()=>undefined,push:async()=>({commit:"unused"})},fetch:async()=>new Response(JSON.stringify({archived:false,disabled:false,...metadata}))});await expect(adapter.inspectDeliveryRepository({owner:"acme",name:"repo"},"main")).rejects.toMatchObject({code:"PERMANENT"});
+});
+
+it.each([{name:"other",commit:{sha:"a".repeat(40)}},{name:"main",commit:{sha:"bad"}},{name:"main"}])("refuses unqualified PR base metadata: %j",async branch=>{
+ const adapter=new GitHubScmConnector({instance:{id:"chosen",definitionId:"scm.github",kind:"scm",displayName:"Chosen",enabled:true,health:"HEALTHY",revision:1,updatedAt:new Date().toISOString()},credentialRef:"secret://github/chosen",resolveSecret:async()=>"fixture",transport:{ensureBranch:async()=>undefined,push:async()=>({commit:"unused"})},fetch:async input=>new Response(JSON.stringify(String(input).includes("/branches/")?branch:{full_name:"acme/repo",archived:false,disabled:false,permissions:{push:true}}))});await expect(adapter.inspectDeliveryRepository({owner:"acme",name:"repo"},"main")).rejects.toMatchObject({code:"PERMANENT"});
+});

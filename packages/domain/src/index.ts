@@ -152,7 +152,7 @@ export interface TaskContract {
   acceptanceCriteria: string[];
   verification: string[];
   constraints: string[];
-  delivery: { type: "pull-request" | "commit" | "none"; repository?: string; baseBranch?: string };
+  delivery: { type: "pull-request" | "commit" | "none"; repository?: string; baseBranch?: string; scmConnectorId?:string };
 }
 
 export interface DeliveryEvidence {

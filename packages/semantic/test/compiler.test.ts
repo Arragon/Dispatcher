@@ -25,6 +25,12 @@ describe("TaskContractCompiler", () => {
     expect(new TaskContractCompiler().compile(draft({ description }), 1, { workspace: { repositoryId: "local-repo", baseRef: "main" }, referenceLinks: ["https://example.invalid/spec"] }).contract).toMatchObject({ goal: "Implement the task", instructions: description, workspace: { repositoryId: "local-repo" }, referenceLinks: ["https://example.invalid/spec"] });
   });
 
+  it("keeps local workspace identity separate from explicit SCM targets",()=>{
+    const compiler=new TaskContractCompiler(),workspace={repositoryId:"local-repo",baseRef:"main"};
+    for(const type of ["none","commit"] as const)expect(compiler.compile(draft({repository:"local-repo",delivery:{type}}),1,{workspace}).contract?.delivery).toEqual({type});
+    expect(compiler.compile(draft({repository:"local-repo",delivery:{type:"pull-request"}}),1,{workspace,delivery:{type:"pull-request",repository:"acme/remote",baseBranch:"release",scmConnectorId:"chosen"}}).contract?.delivery).toEqual({type:"pull-request",repository:"acme/remote",baseBranch:"release",scmConnectorId:"chosen"});
+  });
+
   it("routes incomplete drafts to NEEDS_SPEC instead of execution", () => {
     expect(new TaskContractCompiler().compile(draft({ repository: undefined, scope: [], acceptanceCriteria: [], verification: [] }))).toEqual({
       state: "NEEDS_SPEC",
