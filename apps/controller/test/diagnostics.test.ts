@@ -32,3 +32,16 @@ it("reads saved diagnostics without native work, keeps unknown distinct and expo
   expect(probe).not.toHaveBeenCalled();const checked=await service.app.inject({headers,method:"POST",url:"/api/diagnostics/checks",payload:{checkId:"profile.native",entityId:"p"}});expect(checked.statusCode).toBe(200);expect(probe).toHaveBeenCalledOnce();expect(checked.json().diagnostics.entries).toContainEqual(expect.objectContaining({entityRef:{kind:"profile",id:"p"},category:"authentication",status:"unknown",observedAt:expect.any(String)}));
  }finally{await service.stop();rmSync(root,{recursive:true,force:true});}
 });
+
+it("invalidates connector health in diagnostics and the console after same-reference rotation",async()=>{
+ const root=mkdtempSync(join(tmpdir(),"connector-credential-")),headers={authorization:"Bearer diagnostics-owner"},entered=Promise.withResolvers<void>(),gate=Promise.withResolvers<void>();let held=false;
+ const service=new ControllerService({dataDirectory:root,ownerToken:"diagnostics-owner",backgroundWorker:{enabled:false},secretStore:{test:async()=>true,resolve:async()=>"fixture",put:async(reference:string)=>({reference,backend:"encrypted-local",exists:true})} as never,integrationFetch:async()=>{if(held){entered.resolve();await gate.promise;}return new Response(JSON.stringify({login:"fixture"}));}});
+ try{
+  const config=service.configuration.current().config;config.connectors=[{id:"github",definitionId:"scm.github",kind:"scm",displayName:"GitHub",enabled:true,credentialRef:"secret://github/fixture",settings:{apiBase:"https://github.invalid"}}];service.configuration.applyPlan(service.configuration.buildPlan(config,"test","cli").id,{confirmed:true});await service.start({listen:false});
+  const check=()=>service.app.inject({headers,method:"POST",url:"/api/connectors/github/test"});expect((await check()).statusCode).toBe(200);
+  expect((await service.app.inject({headers,url:"/api/fleet/connectors"})).json().connectors[0].health).toBe("HEALTHY");
+  held=true;const pending=check();await entered.promise;expect((await service.app.inject({headers,method:"PUT",url:"/api/secrets/github/fixture",payload:{value:"private-rotated-value"}})).statusCode).toBe(201);gate.resolve();expect((await pending).statusCode).toBe(409);
+  expect((await service.app.inject({headers,url:"/api/fleet/connectors"})).json().connectors[0]).toMatchObject({health:"UNKNOWN"});
+  expect((await service.app.inject({headers,url:"/api/diagnostics"})).json().entries).toContainEqual(expect.objectContaining({category:"integration",status:"stale",reasonCode:"CONNECTOR_CONTEXT_CHANGED"}));
+ }finally{gate.resolve();await service.stop();rmSync(root,{recursive:true,force:true});}
+});

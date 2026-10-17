@@ -675,6 +675,19 @@ unavailable with manual inspection required. The session store rechecks current
 task/lease authority immediately before native spawn, and post-send checks still
 stop a newly owned child when authority changes after that boundary.
 
+Controller-managed credential mutations have opaque persisted epochs keyed by
+hashed references. The epoch advances before touching the secret store, so an
+uncertain or failed write cannot keep old evidence current. A pending write
+excludes new local execution/catalog/probe use and ConfigPlan applies that use
+that reference. All nonterminal canonical work, pending starts/inputs/stops and
+unresolved standalone work block replacement of a local account's credential.
+Local catalog scope includes the applied account and observed credential epoch;
+remote catalogs retain the owning Runner's native scope. Profile, connector and
+credential checks reject late old-context results. External secret-store or
+native-login changes remain observable only through qualified native checks,
+not a claim of continuous account monitoring. No secret value or digest of a
+secret value is saved in these epoch records.
+
 ## Usage observations
 
 Native adapters may return normalized versioned observations alongside resource

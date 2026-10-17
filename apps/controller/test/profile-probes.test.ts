@@ -57,3 +57,24 @@ it("preserves a waiting canonical account even when no native child is currently
  expect(()=>service.configuration.applyPlan(service.configuration.buildPlan(changed,"test","cli").id,{confirmed:true})).toThrow(expect.objectContaining({code:"ACTIVE_AGENT_PROFILE"}));expect(service.configuration.current().config.agentProfiles[0]!.enabled).toBeUndefined();
  }finally{await service.stop();rmSync(directory,{recursive:true,force:true});}
 });
+
+it("invalidates same-reference credentials across reload, pending writes, failed writes and in-flight probes",async()=>{
+ const {mkdtempSync,rmSync}=await import("node:fs"),{tmpdir}=await import("node:os"),{join}=await import("node:path"),{ControllerService}=await import("../src/service.js");
+ const directory=mkdtempSync(join(tmpdir(),"credential-profile-")),headers={authorization:"Bearer probe-owner"};
+ let holdWrite=false,failWrite=false,holdProbe=false;const writeEntered=Promise.withResolvers<void>(),writeGate=Promise.withResolvers<void>(),probeEntered=Promise.withResolvers<void>(),probeGate=Promise.withResolvers<void>();
+ const options={dataDirectory:directory,withRunner:true,ownerToken:"probe-owner",backgroundWorker:{enabled:false},secretStore:{test:async()=>true,put:async(reference:string)=>{if(holdWrite){writeEntered.resolve();await writeGate.promise;}if(failWrite)throw new Error("uncertain write");return {reference,exists:true,backend:"encrypted-local"};}} as never,profileProbeExecutor:async()=>{if(holdProbe){probeEntered.resolve();await probeGate.promise;}return {installed:true,compatible:true,authenticated:true,authentication:"ready"};}};
+ let service=new ControllerService(options);
+ const read=async()=> (await service.app.inject({headers,url:"/api/agents/profiles/a"})).json().profile;
+ const probe=()=>service.app.inject({headers,method:"POST",url:"/api/agents/profiles/a/test"});
+ const put=(name="a")=>service.app.inject({headers,method:"PUT",url:`/api/secrets/grok/${name}`,payload:{value:"private-value-never-persist"}});
+ try{
+  const config=service.configuration.current().config;config.agentProfiles=[{id:"a",alias:"A",provider:"grok",runnerId:"local",credentialRef:"secret://grok/a"}];service.configuration.applyPlan(service.configuration.buildPlan(config,"test","cli").id,{confirmed:true});await service.start({listen:false});
+  expect((await probe()).statusCode).toBe(200);const initial=(await read()).authentication.observedAt;
+  expect((await put("other")).statusCode).toBe(201);expect((await read()).authentication).toMatchObject({status:"ready",observedAt:initial});
+  holdWrite=true;const pending=put();await writeEntered.promise;expect((await read()).authentication.status).toBe("stale");expect((await probe()).statusCode).toBe(409);expect((await put()).statusCode).toBe(409);
+  writeGate.resolve();expect((await pending).statusCode).toBe(201);holdWrite=false;
+  await service.stop();service=new ControllerService(options);await service.start({listen:false});expect((await read()).authentication.status).toBe("stale");
+  expect((await probe()).statusCode).toBe(200);holdProbe=true;const checking=probe();await probeEntered.promise;failWrite=true;expect((await put()).statusCode).toBe(500);probeGate.resolve();expect((await checking).statusCode).toBe(409);expect((await read()).authentication.status).toBe("stale");
+  expect(JSON.stringify(service.database.listEntities("credential-context"))).not.toMatch(/private-value|secret:\/\//);
+ }finally{writeGate.resolve();probeGate.resolve();await service.stop();rmSync(directory,{recursive:true,force:true});}
+});

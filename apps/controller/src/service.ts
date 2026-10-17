@@ -1,5 +1,6 @@
 import { resolveProfileExecutionContext } from "./execution-context.js";
 import { ProfileProbeService } from "./profile-probes.js";
+import { CredentialContext } from "./credential-context.js";
 import {RunInputReceipts,InputReceiptError,type RunInputIdentity} from "./run-inputs.js";
 import {UsageObservations,UsageObservationError} from "./usage-observations.js";
 import {buildDiagnostics,diagnosticChecks} from "./diagnostics.js";
@@ -473,6 +474,7 @@ export class ControllerService {
   private readonly leaseAuthority = new RunnerLeaseAuthority();
   private readonly pendingConsoleInputs = new Set<string>();
   private readonly profileProbes:ProfileProbeService;
+  private readonly credentialContext:CredentialContext;
   private readonly runInputs:RunInputReceipts;
   private readonly usageObservations:UsageObservations;
   private readonly secureLinks: SecureDashboardLinkIssuer;
@@ -517,6 +519,7 @@ export class ControllerService {
     this.app = fastify({ loggerInstance: logger as unknown as FastifyBaseLogger, ajv: {customOptions:{coerceTypes:false,removeAdditional:false}} });
     this.database = new DispatcherDatabase(join(options.dataDirectory, "dispatcher.sqlite"));
     this.profileProbes=new ProfileProbeService(this.database,()=>this.now());
+    this.credentialContext=new CredentialContext(this.database);
     this.runInputs=new RunInputReceipts(this.database,()=>this.now());
     this.usageObservations=new UsageObservations(this.database,()=>this.now());
     this.agentProcesses = new ProcessManager(join(options.dataDirectory, "agent-logs"));
@@ -935,15 +938,29 @@ export class ControllerService {
     return this.configuration.rollbackPlan(id);
   }
 
+  private profileHasActiveOperations(id: string): boolean {
+    const adapter=this.agentAdapters.get(id),owned=adapter instanceof StructuredCliAdapter||adapter instanceof CodexAdapter||adapter instanceof RemoteNativeAdapter;
+    return (this.pendingProfileStarts.get(id)??0)>0
+      || (this.database.listEntities<JsonValue>("run") as unknown as Run[]).some(run=>run.profileId===id&&!isTerminalRunState(run.state))
+      || Boolean(owned&&adapter.hasActiveOperations())
+      || (this.database.listEntities<JsonValue>("adapter-session") as unknown as AdapterSession[]).some(session=>session.profileId===id&&(this.pendingConsoleInputs.has(session.id)||this.pendingSessionCancellations.has(session.id)||session.state==="PAUSED"||!owned&&["STARTING","RUNNING"].includes(session.state)));
+  }
+  private assertCredentialChangeAllowed(reference: string): void {
+    this.credentialContext.assertAvailable(reference);
+    const config=this.configuration.current().config;
+    for(const profile of config.agentProfiles){
+      const runner=config.runners.find(candidate=>candidate.id===profile.runnerId);
+      if(runner?.mode!=="remote"&&this.credentialContext.references(profile).includes(reference)&&this.profileHasActiveOperations(profile.id))throw new ConfigPlanError("CREDENTIAL_IN_USE","Finish or cancel the account's active operations before replacing its credential");
+    }
+  }
   private applyRuntimeConfiguration(config: DispatcherConfig): void {
+    this.credentialContext.assertAvailable(config);
     const retainedAdapters = new Map<string, AgentAdapter>();
     const runnerIdentity = (runnerId: string) => {
       const runner = config.runners.find(candidate => candidate.id === runnerId);
       return runner ? { id: runner.id, mode: runner.mode, ...(runner.credentialRef ? { credentialRef: runner.credentialRef } : {}) } : undefined;
     };
     const adapterConfiguration = (profile: AgentProfileConfig) => structuredClone({ profile, runner: runnerIdentity(profile.runnerId) });
-    const runs = this.database.listEntities<JsonValue>("run") as unknown as Run[];
-    const sessions = this.database.listEntities<JsonValue>("adapter-session") as unknown as AdapterSession[];
     for (const [id, previous] of this.profileAdapterConfigurations) {
       const adapter = this.agentAdapters.get(id);
       const next = config.agentProfiles.find(profile => profile.id === id && profile.enabled !== false);
@@ -951,13 +968,7 @@ export class ControllerService {
         retainedAdapters.set(id, adapter);
         continue;
       }
-      const owned = adapter instanceof StructuredCliAdapter || adapter instanceof CodexAdapter || adapter instanceof RemoteNativeAdapter;
-      const busy = (this.pendingProfileStarts.get(id) ?? 0) > 0
-        || runs.some(run => run.profileId === id && !isTerminalRunState(run.state))
-        || (owned && adapter.hasActiveOperations())
-        || sessions.some(session => session.profileId === id && ((this.pendingConsoleInputs.has(session.id) || this.pendingSessionCancellations.has(session.id))
-          || session.state === "PAUSED" || (!owned && ["STARTING", "RUNNING"].includes(session.state))));
-      if (busy) throw new ConfigPlanError("ACTIVE_AGENT_PROFILE", `Finish or cancel active harness operations before changing or removing profile ${id}`);
+      if (this.profileHasActiveOperations(id)) throw new ConfigPlanError("ACTIVE_AGENT_PROFILE", `Finish or cancel active harness operations before changing or removing profile ${id}`);
       if (previous.runner?.mode === "remote" && !isDeepStrictEqual(previous.runner, runnerIdentity(previous.runner.id)) && this.remoteRunnerServer?.isConnected(previous.runner.id)) {
         throw new ConfigPlanError("RUNNER_CONNECTED", "Revoke and disconnect the Runner before changing its execution identity");
       }
@@ -1302,8 +1313,10 @@ export class ControllerService {
     const deadLetters = this.database.listDeadLetters<JsonValue>();
     const connectors = this.connectors.list().map((adapter) => {
       const blockers = this.database.connectorDeletionBlockers(adapter.instance.id);
-      const probe = this.database.getEntity<JsonValue>("connector-health", adapter.instance.id) as { health?: typeof adapter.instance.health; checkedAt?: string; message?: string } | undefined;
-      const health = probe?.health ?? adapter.instance.health;
+      const probe = this.database.getEntity<JsonValue>("connector-health", adapter.instance.id) as { health?: typeof adapter.instance.health; checkedAt?: string; message?: string; contextFingerprint?: string } | undefined;
+      const contextChanged=Boolean(probe&&probe.contextFingerprint!==this.connectorConfigurationFingerprint(adapter.instance.id));
+      const expired=Boolean(probe?.checkedAt&&Date.parse(probe.checkedAt)+5*60_000<now.getTime());
+      const health = contextChanged||expired ? "UNKNOWN" as const : probe?.health ?? adapter.instance.health;
       return {
         id: adapter.instance.id,
         displayName: adapter.instance.displayName,
@@ -1311,7 +1324,7 @@ export class ControllerService {
         health,
         checkedAt: probe?.checkedAt ?? adapter.instance.updatedAt,
         source: probe ? "probe" as const : "configuration" as const,
-        ...(probe?.message ? { reason: probe.message } : health === "HEALTHY" ? {} : { reason: health }),
+        ...(contextChanged?{reason:"连接或凭据已变更，请重新检查"}:expired?{reason:"连接检查已过期，请重新检查"}:probe?.message ? { reason: probe.message } : health === "HEALTHY" ? {} : { reason: health }),
         pendingOutbox: blockers.pendingOutbox,
         deadLetters: deadLetters.filter((entry) => entry.connectorInstanceId === adapter.instance.id).length,
         capabilities: adapter.definition.capabilities.filter((capability) => capability.support === "supported").map((capability) => `${capability.namespace}@${capability.version}`),
@@ -1414,7 +1427,7 @@ export class ControllerService {
   }
 
   private canRetryDeadLetter(entry:{source:string;sourceId:string}):boolean{return entry.source==="outbox"||entry.source==="inbox"&&entry.sourceId.startsWith(`${MESSAGING_INBOX_KIND}:`);}
-  private connectorConfigurationFingerprint(id:string):string{const config=this.configuration.current().config;return contentHash(config.connectors.find(entry=>entry.id===id)??{id,compatibility:config.integrations});}
+  private connectorConfigurationFingerprint(id:string):string{const config=this.configuration.current().config,connector=config.connectors.find(entry=>entry.id===id)??{id,compatibility:config.integrations};return contentHash({connector,credentials:this.credentialContext.fingerprint(connector)});}
   private diagnosticsSnapshot(){
     const current=this.configuration.current(),now=this.now(),runs=this.database.listEntities<JsonValue>("run") as unknown as Run[];
     const profiles=current.config.agentProfiles.map(profile=>{const view=this.profileConsoleView(profile.id),signals=this.resourceRegistry.signalsFor(profile.id).sort((a,b)=>Date.parse(b.checkedAt)-Date.parse(a.checkedAt));if(view.resources.status==="unknown"&&signals[0]&&Date.parse(signals[0].checkedAt)+this.resourceRegistry.maxSignalAgeMs<now.getTime())view.resources={status:"stale",observedAt:signals[0].checkedAt,source:signals[0].source,reasonCode:"RESOURCE_EVIDENCE_EXPIRED"};return view;});
@@ -1428,6 +1441,7 @@ export class ControllerService {
   }
   private async probeConnector(id:string){
     const connector=this.connectors.get(id);if(!connector)throw new ConfigPlanError("CONNECTOR_NOT_FOUND","Configured connector is unavailable");
+    const config=this.configuration.current().config;this.credentialContext.assertAvailable(config.connectors.find(entry=>entry.id===id)??config.integrations);
     const contextFingerprint=this.connectorConfigurationFingerprint(id),probe=await connector.probe();
     if(contextFingerprint!==this.connectorConfigurationFingerprint(id))throw new ConfigPlanError("CONNECTOR_CONTEXT_CHANGED","Connector configuration changed during the health check");
     const current=this.connectors.get(id);if(!current)throw new ConfigPlanError("CONNECTOR_CONTEXT_CHANGED","Connector registration changed during the health check");current.instance.health=probe.health;current.instance.updatedAt=probe.checkedAt;
@@ -1874,7 +1888,13 @@ export class ControllerService {
     if(!handle||contentHash(identity(handle))!==contentHash(identity(plan))||typeof handle.path!=="string"||!handle.path||handle.path.length>4000||typeof handle.repositoryRoot!=="string"||typeof handle.branch!=="string"||!handle.branch||!Number.isFinite(Date.parse(handle.createdAt))||typeof handle.baseRevision!=="string"||!/^[a-f0-9]{40,64}$/i.test(handle.baseRevision)||plan.baseCommit&&handle.baseRevision!==plan.baseCommit||reviewed&&["path","branch","baseRevision","repositoryRoot"].some(key=>handle[key as keyof WorkspaceHandle]!==reviewed[key as keyof WorkspaceHandle]))throw new AdapterContractError(reviewed?"COMMAND_OUTCOME_UNKNOWN":"REMOTE_RESULT_INVALID","Owning Runner workspace identity does not match its approved plan");
     return structuredClone(handle);
   }
-  private resolveProfileExecutionContext(profileId:string,repositoryId:string|undefined,purpose:Parameters<typeof resolveProfileExecutionContext>[3]) {return resolveProfileExecutionContext(this.configuration.current(),profileId,repositoryId,purpose);}
+  private resolveProfileExecutionContext(profileId:string,repositoryId:string|undefined,purpose:Parameters<typeof resolveProfileExecutionContext>[3]) {
+    const context=resolveProfileExecutionContext(this.configuration.current(),profileId,repositoryId,purpose);
+    // The owning remote Runner has its own native credentials and catalog fingerprint.
+    const credentials=context.runner.mode==="remote"?{credentialRef:context.runner.credentialRef}:context.profile;
+    if(purpose!=="probe")this.credentialContext.assertAvailable(credentials);
+    return {...context,fingerprint:contentHash({context:context.fingerprint,credentials:this.credentialContext.fingerprint(credentials)})};
+  }
   private assertLocalDraftProbe(runnerId?:string):void{
     if(!runnerId)return;const runner=this.configuration.current().config.runners.find(runner=>runner.id===runnerId);
     if(!runner)throw new ConfigPlanError("RUNNER_NOT_FOUND","Choose a configured Runner");
@@ -1908,6 +1928,7 @@ export class ControllerService {
   }
   private async probeConfiguredProfile(profileId:string,repositoryId?:string){
     const context=this.resolveProfileExecutionContext(profileId,repositoryId,"probe");
+    this.credentialContext.assertAvailable(context.runner.mode==="remote"?{credentialRef:context.runner.credentialRef}:context.profile);
     const evidence=await this.profileProbes.run(context,()=>this.executeProfileProbe(context),()=>{try{return this.resolveProfileExecutionContext(profileId,repositoryId,"probe").fingerprint;}catch{return "removed";}});
     this.fleetEvents.publish("profile.changed",profileId,{id:profileId,evidence});
     return {evidence,source:context.runner.mode==="remote"?"owning-runner":"local-native",authenticated:evidence.authentication.status==="ready",authentication:evidence.authentication.status==="ready"?"ready":evidence.authentication.status==="missing"?"missing":"unknown",...(["ready","missing"].includes(evidence.installation.status)?{installed:evidence.installation.status==="ready"}:{}),...(["ready","failed"].includes(evidence.compatibility.status)?{compatible:evidence.compatibility.status==="ready"}:{}),...(evidence.nativeVersion?{version:evidence.nativeVersion}:{}),...(context.profile.provider==="devin"?{apiVersion:"v3"}:{}),profile:this.profileConsoleView(profileId)};
@@ -1937,6 +1958,7 @@ export class ControllerService {
     const remote=snapshot.config.runners.some(runner=>runner.id===profile.runnerId&&runner.mode==="remote");
     if(!remote&&profile.runnerId!==this.embeddedRunner?.runner.id)return fallback("REMOTE_EXECUTION_UNAVAILABLE","Owning local Runner is unavailable");
     const applied=this.resolveProfileExecutionContext(profileId,repositoryId,"catalog");
+    if(!remote)context.executionContextRef=contentHash({repository:context.executionContextRef,context:applied.fingerprint});
     const adapter=this.agentAdapters.get(applied.profileId);
     if(!remote&&!adapter?.modelCatalog)return fallback("MODEL_CATALOG_UNSUPPORTED","This native adapter does not expose a model catalog");
     const key=contentHash({profileId,repositoryId});const generation=(this.catalogGenerations.get(key)??0)+1;this.catalogGenerations.set(key,generation);
@@ -1950,6 +1972,7 @@ export class ControllerService {
       catalog=error instanceof AdapterContractError&&(remote||error.code==="REMOTE_RESULT_INVALID")?fallback(error.code,error.message):error instanceof AdapterContractError && error.code==="NATIVE_VERSION_UNSUPPORTED" ? {...fallback(error.code,"Installed native version does not support the qualified catalog interface"),selectionSupport:"unsupported"} : error instanceof AdapterContractError && error.code==="NATIVE_CONTEXT_CHANGED" ? fallback(error.code,"Native account or configuration changed during the query; refresh before reviewing") : fallback("NATIVE_CATALOG_UNAVAILABLE","Native catalog could not be read; explicit selection is unavailable");
     }
     if(this.configuration.current().revision!==snapshot.revision)throw new PublicationError("SELECTION_CHANGED",409,"Configuration changed during native catalog query");
+    if(this.resolveProfileExecutionContext(profileId,repositoryId,"catalog").fingerprint!==applied.fingerprint)throw new PublicationError("SELECTION_CHANGED",409,"Account credentials or native context changed during the catalog query");
     if(this.catalogGenerations.get(key)!==generation)throw new PublicationError("CATALOG_SUPERSEDED",409,"A newer catalog request superseded this response");
     this.database.saveEntity("model-catalog",key,json(catalog));return catalog;
   }
@@ -2355,27 +2378,15 @@ export class ControllerService {
     this.semanticTools.register({
       name: "connector.test", description: "Probe a connector", risk: "write", input: { required: ["target"], properties: { target: "string" }, additionalProperties: false },
       execute: async ({ target }) => {
-        const connector = this.connectors.get(String(target));
-        if (!connector) throw new SemanticPolicyError("INVALID_INPUT", `Unknown connector ${String(target)}`);
-        const probe = await connector.probe();
-        connector.instance.health = probe.health;
-        connector.instance.updatedAt = probe.checkedAt;
-        this.database.saveEntity("connector-health", connector.instance.id, json(probe), probe.checkedAt);
-        this.fleetEvents.publish("connector.changed", connector.instance.id, probe);
-        return probe;
+        if (!this.connectors.get(String(target))) throw new SemanticPolicyError("INVALID_INPUT", `Unknown connector ${String(target)}`);
+        return this.probeConnector(String(target));
       },
     });
     this.semanticTools.register({
       name: "integration.test", description: "Probe an integration connector", risk: "write", input: { required: ["target"], properties: { target: "string" }, additionalProperties: false },
       execute: async ({ target }) => {
-        const connector = this.connectors.get(String(target));
-        if (!connector) throw new SemanticPolicyError("INVALID_INPUT", `Unknown connector ${String(target)}`);
-        const probe = await connector.probe();
-        connector.instance.health = probe.health;
-        connector.instance.updatedAt = probe.checkedAt;
-        this.database.saveEntity("connector-health", connector.instance.id, json(probe), probe.checkedAt);
-        this.fleetEvents.publish("connector.changed", connector.instance.id, probe);
-        return probe;
+        if (!this.connectors.get(String(target))) throw new SemanticPolicyError("INVALID_INPUT", `Unknown connector ${String(target)}`);
+        return this.probeConnector(String(target));
       },
     });
     this.semanticTools.register({
@@ -3311,6 +3322,7 @@ export class ControllerService {
       const run = this.database.listEntities<JsonValue>("run").map((value) => value as unknown as Run).find((entry) => entry.sessionId === request.params.sessionId);
       const binding = run ? this.runConversation(run) : undefined;
       const assertAuthority = (): void => {
+        this.resolveProfileExecutionContext(request.params.profileId,undefined,"resume");
         if (!run) return; // Standalone trial sessions have no canonical task authority.
         const expected = request.body.authority;
         const current = this.database.getEntity<JsonValue>("run", run.id) as unknown as Run | undefined;
@@ -3740,14 +3752,20 @@ export class ControllerService {
         if (!request.body?.value) return reply.code(400).send({ code: "SECRET_VALUE_REQUIRED" });
         const reference = `secret://${request.params.namespace}/${request.params.name}`;
         if (this.configuration.current().config.runners.some(runner => runner.credentialRef === reference)) return reply.code(409).send({ code: "RUNNER_CREDENTIAL_MANAGED", message: "Use Runner enrollment or rotation to update this credential" });
-        const metadata = await this.secrets.put(reference, request.body.value);
+        this.assertCredentialChangeAllowed(reference);
+        const value=request.body.value;
+        const metadata = await this.credentialContext.change(reference,()=>this.secrets.put(reference, value));
         this.secretTestStates.delete(reference);
         return reply.code(201).send({ secret: this.secretView(metadata) });
       },
     );
     this.app.post<{ Params: { namespace: string; name: string } }>("/api/secrets/:namespace/:name/test", async (request) => {
       const reference = `secret://${request.params.namespace}/${request.params.name}`;
+      this.credentialContext.assertAvailable(reference);
+      const fingerprint=this.credentialContext.fingerprint(reference);
+      const assertCurrent=()=>{this.credentialContext.assertAvailable(reference);if(fingerprint!==this.credentialContext.fingerprint(reference))throw new ConfigPlanError("PROFILE_CONTEXT_CHANGED","Credential changed during its check; check again");};
       const metadata = await this.secrets.metadata(reference);
+      assertCurrent();
       const testedAt = new Date().toISOString();
       if (!metadata.exists) {
         this.secretTestStates.set(reference, { lastTestedAt: testedAt, lastTestStatus: "failed" });
@@ -3755,9 +3773,11 @@ export class ControllerService {
       }
       try {
         const ok = await this.secrets.test(reference, { principal: "controller", purpose: "test" });
+        assertCurrent();
         this.secretTestStates.set(reference, { lastTestedAt: testedAt, lastTestStatus: ok ? "ok" : "failed" });
         return { ok, secret: this.secretView(metadata) };
       } catch (error) {
+        assertCurrent();
         this.secretTestStates.set(reference, { lastTestedAt: testedAt, lastTestStatus: "failed" });
         throw error;
       }
@@ -3767,7 +3787,8 @@ export class ControllerService {
       if (requiredSecretReferences(this.configuration.current().config).includes(reference) || this.configuration.current().config.runners.some(runner => runner.credentialRef === reference)) {
         return reply.code(409).send({ code: "SECRET_IN_USE", message: "Disable the configuration that uses this credential before deleting it" });
       }
-      await this.secrets.delete(reference);
+      this.assertCredentialChangeAllowed(reference);
+      await this.credentialContext.change(reference,()=>this.secrets.delete(reference));
       this.secretTestStates.delete(reference);
       return reply.code(204).send();
     });
@@ -3799,7 +3820,7 @@ export class ControllerService {
         ? 409
         : error instanceof LlmRuntimeError
           ? error.code === "SELECTION_CHANGED" ? 409 : error.code === "NO_AVAILABLE_PROFILE" ? 503 : 400
-        : error instanceof ConfigPlanError && ["PROFILE_CONTEXT_CHANGED","CONNECTOR_CONTEXT_CHANGED","REMOTE_DRAFT_PROBE_UNAVAILABLE","RUNNER_CREDENTIAL_BUSY"].includes(error.code)?409:error instanceof ConfigPlanError || error instanceof ConfigValidationError
+        : error instanceof ConfigPlanError && ["PROFILE_CONTEXT_CHANGED","CONNECTOR_CONTEXT_CHANGED","REMOTE_DRAFT_PROBE_UNAVAILABLE","RUNNER_CREDENTIAL_BUSY","CREDENTIAL_CHANGE_PENDING","CREDENTIAL_IN_USE"].includes(error.code)?409:error instanceof ConfigPlanError || error instanceof ConfigValidationError
           ? 400
           : semanticStatus ?? workspaceStatus ?? connectorStatus ?? secretStatus ?? (error && typeof error === "object" && "validation" in error ? 400 : 500);
       const code = error instanceof UsageObservationError||error instanceof InputReceiptError||error instanceof AdapterContractError||error instanceof PublicationError || error instanceof TaskDispatchError || error instanceof RevisionConflictError || error instanceof ConfigPlanError || error instanceof SecretStoreError || error instanceof LlmRuntimeError || error instanceof ConnectorError || error instanceof WorkspacePolicyError || error instanceof SemanticPolicyError

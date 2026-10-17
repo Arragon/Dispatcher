@@ -568,3 +568,12 @@
   A new nonce, actor or task-description revision must not authorize resending
   an unconfirmed native reply. Store its original authority/message hashes and
   replay confirmed receipts before checking the now-advanced task revision.
+
+- An unchanged secret reference is not an unchanged credential. Fence a
+  Controller-observed write before awaiting the store; a failed write may have
+  an uncertain outcome and must invalidate previous checks. Persist opaque
+  epochs, never hashes of secret values. Keep remote catalog scope owned by the
+  Runner; a Controller-only fingerprint must not replace its selection identity.
+- Preserve established error contracts while adding credential-specific
+  conflicts. Shared ConfigPlan ACTIVE_AGENT_PROFILE remains its existing400;
+  credential replacement conflicts use their own409 code.

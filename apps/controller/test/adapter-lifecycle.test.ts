@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { AgentAdapter, DevinBackend, QoderBackend } from "@dispatcher/adapters";
 import type { DispatcherConfig, SecretStore } from "@dispatcher/config";
+import { contentHash } from "../src/task-publications.js";
 import { ControllerService } from "../src/service.js";
 
 const OWNER = { authorization: "Bearer test-owner" };
@@ -37,6 +38,29 @@ async function fixture(options: Partial<ConstructorParameters<typeof ControllerS
 }
 
 describe("all-provider adapter lifecycle", () => {
+  it("changes local catalog identity after a credential write and rejects a late old-context catalog",async()=>{
+    const f=await fixture(),entered=Promise.withResolvers<void>(),gate=Promise.withResolvers<void>();let held=false;
+    try{
+      expect((await f.apply(config=>{config.agentProfiles=[{id:"grok",alias:"Grok",provider:"grok",runnerId:"local",credentialRef:"secret://grok/account"}];})).statusCode).toBe(200);
+      const adapter=(f.service as unknown as {agentAdapters:Map<string,AgentAdapter>}).agentAdapters.get("grok")!;
+      adapter.modelCatalog=async context=>{if(held){entered.resolve();await gate.promise;}return {profileId:"grok",runnerId:"local",providerId:"grok",backendId:"grok-headless",contextFingerprint:contentHash(context.executionContextRef),revision:"fixture",fetchedAt:new Date().toISOString(),freshness:"native-fresh",source:"cli-query",selectionSupport:"explicit",entries:[]};};
+      const catalog=()=>f.service.app.inject({headers:OWNER,url:"/api/agents/profiles/grok/models?repositoryId=fixture"});
+      const before=await catalog();expect(before.statusCode).toBe(200);
+      held=true;const pending=catalog();await entered.promise;expect((await f.service.app.inject({headers:OWNER,method:"PUT",url:"/api/secrets/grok/account",payload:{value:"rotated-secret"}})).statusCode).toBe(201);gate.resolve();expect((await pending).statusCode).toBe(409);held=false;
+      const after=await catalog();expect(after.statusCode).toBe(200);expect(after.json().contextFingerprint).not.toBe(before.json().contextFingerprint);
+    }finally{gate.resolve();await f.close();}
+  });
+  it("refuses a same-reference credential replacement during a pending provider start or canonical wait",async()=>{
+    const entered=Promise.withResolvers<void>(),gate=Promise.withResolvers<void>();
+    const f=await fixture({devinBackendFactory:()=>({health:async()=>({ok:true}),create:async()=>{entered.resolve();await gate.promise;return {sessionId:"credential-start",status:"completed",pullRequests:[]};},get:async()=>({sessionId:"credential-start",status:"completed",pullRequests:[]}),send:async()=>{}})});
+    const put=()=>f.service.app.inject({headers:OWNER,method:"PUT",url:"/api/secrets/devin/account",payload:{value:"rotated-private-value"}});
+    try{
+      expect((await f.apply(config=>{config.agentProfiles=[{id:"devin",alias:"Devin",provider:"devin",runnerId:"local",credentialRef:"secret://devin/account",settings:{organizationId:"org"}}];})).statusCode).toBe(200);
+      const pending=f.start("devin");await entered.promise;expect((await put()).statusCode).toBe(409);gate.resolve();expect((await pending).statusCode).toBe(201);
+      expect((await put()).statusCode).toBe(201);
+      f.service.database.saveEntity("run","credential-wait",{id:"credential-wait",profileId:"devin",state:"WAITING_USER"});expect((await put()).statusCode).toBe(409);
+    }finally{gate.resolve();await f.close();}
+  });
   it("retains Qoder handles and Devin/HTTP snapshots across unrelated applies, and blocks busy account or runner changes", async () => {
     let running = true;
     const cancel = vi.fn(async () => { running = false; });
