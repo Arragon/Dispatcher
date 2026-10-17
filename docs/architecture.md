@@ -858,5 +858,20 @@ service, checks clean branch/SHA/scope, then pushes exactly that SHA to the mana
 branch with no force, automatic tags or submodule push. Its own durable intent and
 receipt prevent blind repetition after an uncertain outcome. It preserves native
 Git authentication/hooks and drains the owned process group on cancellation.
-This primitive is not yet exposed through publication or native push commands;
-explicit PR integration remains a separate step.
+The native push protocol exposes this only to a frozen PR intent. Publication
+PR preflight and SCM API integration remain a separate step.
+
+## Native Git delivery negotiation
+
+Standalone Runtime capabilities are the single source for CLI advertisement.
+The additive native-git-delivery-v1 capability gates commit/push, delivery target
+reads and non-none prepared intents on both Controller and transport dispatch.
+Old native-execution-v1 peers retain none execution and receive an explicit
+unsupported-delivery precheck rather than a descriptor they cannot validate.
+
+native.repository_delivery reads only the owning registration's normalized origin.
+A frozen PR intent authorizes native.run_push after a completed verified turn;
+none and commit intents cannot gain push permission. Commit and push use the same
+owned-command lifecycle and durable unknown-outcome rules. Verified PR runs cannot
+release capacity before their frozen push completes. Native commands accept no
+replacement targets, executable arguments, URLs or local roots.

@@ -2,10 +2,10 @@ import { createHash, randomUUID } from "node:crypto";
 import { join,resolve } from "node:path";
 import {nativePrivatePaths,type AdapterSession,type AgentAdapter,type SessionStore} from "@dispatcher/adapters";
 import { ConfigurationEngine, repositoryRunnerId, type AgentProfileConfig, type DispatcherConfig, type RepositoryConfig } from "@dispatcher/config";
-import type { AccountModelCatalog, ExecutionSelection, LocalCommitResult, ModelCatalogContext } from "@dispatcher/domain";
+import type { AccountModelCatalog, ExecutionSelection, GitPushResult, LocalCommitResult, ModelCatalogContext } from "@dispatcher/domain";
 import { redactValue } from "@dispatcher/observability";
 import { DispatcherDatabase, type JsonValue } from "@dispatcher/persistence";
-import { parseEnvelope, type CommandPayload, type NativeDeliveryIntent, type NativeStartDescriptor, type NativeWorkspacePlan, type ProtocolEnvelope } from "@dispatcher/protocol";
+import { NATIVE_EXECUTION_CAPABILITY,NATIVE_GIT_DELIVERY_CAPABILITY,parseEnvelope, type CommandPayload, type NativeDeliveryIntent, type NativeStartDescriptor, type NativeWorkspacePlan, type ProtocolEnvelope } from "@dispatcher/protocol";
 import { RepositoryRegistry, WorkspaceManager, type WorkspaceHandle } from "@dispatcher/workspace";
 import { LeaseFenceError, RunnerLeaseAuthority, type RunnerLease } from "./lease.js";
 import { LocalGitDelivery, LocalGitDeliveryError } from "./local-git-delivery.js";
@@ -21,7 +21,7 @@ interface ExecutionRecord {
   descriptorHash?: string; session?: AdapterSession; result?: JsonValue;
   observedUsage?: JsonValue;
   startCommandHash?: string; settledAt?: string;
-  delivery?:NativeDeliveryIntent; verificationPassed?:boolean; deliveryState?:"started"|"complete"|"unknown"; commit?:LocalCommitResult;
+  delivery?:NativeDeliveryIntent; verificationPassed?:boolean; deliveryState?:"started"|"complete"|"unknown"; commit?:LocalCommitResult;push?:GitPushResult;
 }
 interface OperationReceipt { identity: string; state: "PENDING" | "COMPLETE" | "UNKNOWN"; result?: JsonValue }
 export class NativeRunnerError extends Error {
@@ -162,10 +162,11 @@ export class NativeRunnerRuntime {
       },
     };
   }
+  capabilities():string[]{return this.adapters.size?[NATIVE_EXECUTION_CAPABILITY,NATIVE_GIT_DELIVERY_CAPABILITY]:[];}
   profileInventory(): string[] { return [...this.adapters.keys()].sort(); }
   capacity(): number { return this.config.runners.find(r => r.id === this.options.runnerId)?.capacity ?? 0; }
   registerHandlers(client: { register(type: CommandPayload["type"], handler: (payload: CommandPayload, envelope: ProtocolEnvelope<CommandPayload>) => Promise<unknown>): unknown }): void {
-    const commands: CommandPayload["type"][] = ["native.repository", "native.repository_refs", "native.workspace_plan", "native.workspace_prepare", "native.model_catalog", "native.profile_probe", "native.run", "native.run_verify", "native.run_commit", "native.run_files", "native.run_finalize", "run.start", "runner.reconcile", "lease.renew", "lease.revoke"];
+    const commands: CommandPayload["type"][] = ["native.repository", "native.repository_refs", "native.repository_delivery", "native.workspace_plan", "native.workspace_prepare", "native.model_catalog", "native.profile_probe", "native.run", "native.run_verify", "native.run_commit", "native.run_push", "native.run_files", "native.run_finalize", "run.start", "runner.reconcile", "lease.renew", "lease.revoke"];
     for (const type of commands) client.register(type, (payload, envelope) => this.handle(payload, envelope));
   }
   private profile(id: string): { profile: AgentProfileConfig; adapter: AgentAdapter } {
@@ -214,7 +215,7 @@ export class NativeRunnerRuntime {
     if (envelope.runnerId !== this.options.runnerId) throw new NativeRunnerError("RUNNER_MISMATCH", "Command targets a different Runner");
     parseEnvelope(envelope);
     if (hash(envelope.payload) !== hash(payload)) throw new NativeRunnerError("COMMAND_IDEMPOTENCY_CONFLICT", "Envelope and command disagree");
-    const mutating = payload.type === "native.workspace_prepare" || payload.type === "run.start" || payload.type === "native.run_commit" || payload.type === "native.run_verify" || payload.type === "native.run_finalize" || payload.type === "lease.renew" || payload.type === "lease.revoke" || payload.type === "native.run" && ["send", "pause", "resume", "cancel"].includes(payload.action);
+    const mutating = payload.type === "native.workspace_prepare" || payload.type === "run.start" || payload.type === "native.run_push" || payload.type === "native.run_commit" || payload.type === "native.run_verify" || payload.type === "native.run_finalize" || payload.type === "lease.renew" || payload.type === "lease.revoke" || payload.type === "native.run" && ["send", "pause", "resume", "cancel"].includes(payload.action);
     if (mutating) {
       const identity = remoteCommandHash(envelope), bound = this.database.getEntity<JsonValue>("native-command-binding", envelope.messageId) as { identity: string } | undefined;
       if (bound && bound.identity !== identity) throw new NativeRunnerError("COMMAND_IDEMPOTENCY_CONFLICT", "Command id is already durably bound to different content or authority");
@@ -224,6 +225,7 @@ export class NativeRunnerRuntime {
     if (payload.type === "lease.renew" || payload.type === "lease.revoke") return this.updateLease(payload);
     const runId = "runId" in payload ? payload.runId : payload.type === "native.workspace_plan" ? payload.plan.runId : undefined;
     return this.serialize(runId ?? "registration-reads", async () => {
+      if(payload.type==="native.repository_delivery"){this.repository(payload.repositoryId);return this.workspaces.deliveryTarget(payload.repositoryId);}
       if(payload.type==="native.repository_refs"){this.repository(payload.repositoryId);return this.workspaces.refs(payload.repositoryId,payload.offset,payload.limit);}
       if (payload.type === "native.repository") {
         const repository = this.repository(payload.repositoryId);
@@ -247,33 +249,19 @@ export class NativeRunnerRuntime {
       }
       if (payload.type === "native.workspace_prepare") return this.prepare(payload, envelope);
       if (payload.type === "run.start" && payload.execution) return this.start(payload.runId, payload.execution, envelope);
-      if (payload.type === "native.run" || payload.type === "native.run_commit" || payload.type === "native.run_verify" || payload.type === "native.run_files" || payload.type === "native.run_finalize") {
+      if (payload.type === "native.run" || payload.type === "native.run_push" || payload.type === "native.run_commit" || payload.type === "native.run_verify" || payload.type === "native.run_files" || payload.type === "native.run_finalize") {
         const record = this.require(payload.runId); this.fence(record, envelope);
         const receipt = this.readReceipt(envelope);
         if (receipt) return receipt.result;
         if (record.state === "OUTCOME_UNKNOWN"&&!(payload.type==="native.run"&&payload.action==="usage")) throw new NativeRunnerError("COMMAND_OUTCOME_UNKNOWN", "Native process ownership must be reconciled before another operation");
         if (payload.type === "native.run_finalize") {
           if (!terminal(record.state) || this.ownedCommandAborts.has(record.runId)) throw new NativeRunnerError("EXECUTION_NOT_COMPLETE", "Native execution and verification must finish before releasing capacity");
+          if(record.state==="COMPLETE"&&record.verificationPassed===true&&record.delivery?.type==="pull-request"&&!record.push)throw new NativeRunnerError("EXECUTION_DELIVERY_PENDING","Frozen PR push has not completed");
           record.settledAt ??= this.now().toISOString(); this.save(record); return { runId: record.runId, settledAt: record.settledAt };
         }
-        if (record.settledAt && (payload.type === "native.run_commit" || payload.type === "native.run_verify" || payload.type === "native.run" && ["send", "resume", "pause"].includes(payload.action))) throw new NativeRunnerError("EXECUTION_SETTLED", "Controller finalized this execution; it cannot accept further work");
+        if (record.settledAt && (payload.type === "native.run_push" || payload.type === "native.run_commit" || payload.type === "native.run_verify" || payload.type === "native.run" && ["send", "resume", "pause"].includes(payload.action))) throw new NativeRunnerError("EXECUTION_SETTLED", "Controller finalized this execution; it cannot accept further work");
         if (record.deliveryState && payload.type==="native.run" && ["send","resume","pause"].includes(payload.action)) throw new NativeRunnerError("DELIVERY_STARTED","Committed or uncertain delivery cannot accept another native turn");
-        if (payload.type==="native.run_commit") {
-          const intent=record.delivery;
-          if(intent?.type!=="commit")throw new NativeRunnerError("DELIVERY_NOT_SELECTED","Commit was not frozen in this execution's preparation");
-          if(record.commit)return structuredClone(record.commit);
-          if(record.state!=="COMPLETE")throw new NativeRunnerError("EXECUTION_NOT_COMPLETE","Commit requires a successfully completed native turn");
-          if(record.verificationPassed!==true)throw new NativeRunnerError("VERIFICATION_REQUIRED","Required frozen verification must pass before commit");
-          return this.operation(record,envelope,async()=>{
-            const abort=new AbortController();this.ownedCommandAborts.set(record.runId,abort);
-            try{
-              record.deliveryState="started";this.save(record);
-              const result=await this.gitDelivery.commit({runId:record.runId,generation:record.lease.generation,leaseId:record.lease.leaseId,workspace:await this.workspace(record),message:intent.message,signal:abort.signal,assertAuthority:()=>this.fence(record,envelope)});
-              this.fence(record,envelope);record.commit=result;record.deliveryState="complete";this.save(record);return result;
-            }catch(error){record.deliveryState="unknown";if(!(error instanceof LocalGitDeliveryError&&error.code==="COMMIT_ABORTED"))record.state="OUTCOME_UNKNOWN";this.save(record);throw error;}
-            finally{this.ownedCommandAborts.delete(record.runId);}
-          });
-        }
+        if(payload.type==="native.run_commit"||payload.type==="native.run_push")return this.deliver(record,envelope,payload.type==="native.run_push"?"push":"commit");
         if (payload.type === "native.run_files") { const files = await this.workspaces.resultFiles(await this.workspace(record)); this.fence(record, envelope); return files; }
         if (payload.type === "native.run_verify") return this.operation(record, envelope, async () => {
           if(record.deliveryState)throw new NativeRunnerError("DELIVERY_STARTED","Delivery already froze this execution result");
@@ -325,6 +313,27 @@ export class NativeRunnerRuntime {
     });
   }
 
+  private async deliver(record:ExecutionRecord,envelope:ProtocolEnvelope<CommandPayload>,kind:"commit"|"push"):Promise<unknown>{
+    const intent=record.delivery;
+    if(!intent||intent.type==="none"||kind==="push"&&intent.type!=="pull-request")throw new NativeRunnerError("DELIVERY_NOT_SELECTED","Delivery permission was not frozen during preparation");
+    if(kind==="push"&&record.push&&record.commit)return {version:1,commit:structuredClone(record.commit),push:structuredClone(record.push)};
+    if(kind==="commit"&&record.commit)return structuredClone(record.commit);
+    if(record.state!=="COMPLETE")throw new NativeRunnerError("EXECUTION_NOT_COMPLETE","Git delivery requires a successfully completed native turn");
+    if(record.verificationPassed!==true)throw new NativeRunnerError("VERIFICATION_REQUIRED","Required frozen verification must pass before delivery");
+    return this.operation(record,envelope,async()=>{
+      const abort=new AbortController();this.ownedCommandAborts.set(record.runId,abort);
+      try{
+        record.deliveryState="started";this.save(record);
+        const input={runId:record.runId,generation:record.lease.generation,leaseId:record.lease.leaseId,workspace:await this.workspace(record),message:intent.message,signal:abort.signal,assertAuthority:()=>this.fence(record,envelope)};
+        if(kind==="push"&&intent.type==="pull-request")record.push=await this.gitDelivery.push({...input,target:intent.target});
+        else if(intent.type==="pull-request")await this.workspaces.resolvePushTarget(input.workspace,intent.target);
+        record.commit=await this.gitDelivery.commit(input);this.fence(record,envelope);record.deliveryState="complete";this.save(record);
+        return kind==="push"?{version:1,commit:record.commit,push:record.push}:record.commit;
+      }catch(error){record.deliveryState="unknown";if(!(error instanceof LocalGitDeliveryError&&error.code==="COMMIT_ABORTED"))record.state="OUTCOME_UNKNOWN";this.save(record);throw error;}
+      finally{this.ownedCommandAborts.delete(record.runId);}
+    });
+  }
+
   private async catalog(profileId: string, repositoryId: string, reason: ModelCatalogContext["reason"], record?: ExecutionRecord): Promise<AccountModelCatalog> {
     const { profile, adapter } = this.profile(profileId), repository = this.repository(repositoryId), registration = this.registration(profile, repository);
     if (!adapter.modelCatalog) throw new NativeRunnerError("MODEL_CATALOG_UNSUPPORTED", "Native catalog is unavailable");
@@ -342,6 +351,10 @@ export class NativeRunnerRuntime {
       if (!command) throw new NativeRunnerError("VERIFICATION_COMMAND_UNAVAILABLE", "Verification command is not registered on this Runner");
       return structuredClone(command);
     });
+    if(payload.delivery?.type==="pull-request"){
+      const actual=await this.workspaces.deliveryTarget(payload.plan.repositoryId);
+      if(hash(actual)!==hash(payload.delivery.target))throw new NativeRunnerError("DELIVERY_TARGET_CHANGED","Owning origin changed before preparation");
+    }
     const planHash = hash({ profileId: payload.profileId, plan: payload.plan, verificationCommands,...(payload.delivery?{delivery:payload.delivery}:{}) }), previous = this.records.get(payload.runId);
     if (previous) {
       this.fence(previous, envelope);

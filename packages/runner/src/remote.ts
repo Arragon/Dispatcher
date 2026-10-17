@@ -3,7 +3,7 @@ import type { Server } from "node:http";
 import type { Runner } from "@dispatcher/domain";
 import {
   PROTOCOL_VERSION,
-  NATIVE_EXECUTION_CAPABILITY,isNativeExecutionCommand,
+  NATIVE_EXECUTION_CAPABILITY,NATIVE_GIT_DELIVERY_CAPABILITY,requiresNativeGitDelivery,isNativeExecutionCommand,
   createEnvelope,
   parseEnvelope,
   type CommandPayload,
@@ -128,6 +128,7 @@ export class RemoteRunnerServer {
     const connection = this.connections.get(runnerId);
     if (!connection) throw new Error(`Runner ${runnerId} is not connected`);
     if(isNativeExecutionCommand(payload)&&!connection.runner.capabilities.includes(NATIVE_EXECUTION_CAPABILITY))throw new Error("Runner does not advertise native execution capability");
+    if(requiresNativeGitDelivery(payload)&&!connection.runner.capabilities.includes(NATIVE_GIT_DELIVERY_CAPABILITY))throw new Error("Runner does not advertise native git delivery capability");
     if (connection.runner.state === "DRAINING" && payload.type === "run.start") throw new Error(`Runner ${runnerId} is draining`);
     const messageId = options.messageId ?? randomUUID();
     const identity=remoteCommandHash({payload,...(options.leaseId?{leaseId:options.leaseId}:{}),...(options.generation!==undefined?{generation:options.generation}:{})});

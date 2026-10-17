@@ -41,9 +41,9 @@ async function setup(verificationFails = false,holdFirstReconcile = false,delive
   const verificationGate=Promise.withResolvers<void>(),verificationEntered=Promise.withResolvers<void>();
   const gate=Promise.withResolvers<void>(),entered=Promise.withResolvers<void>(),reconcileGate=Promise.withResolvers<void>(),reconcileEntered=Promise.withResolvers<void>(),control={holdStart:false,invalidatePrepared:false,expireAfterRenew:false,holdReconcile:holdFirstReconcile,mismatchStart:false,holdVerify:false};
   let client!:RemoteRunnerClient;
-  const connect=async(bearerToken="fixture")=>{
+  const connect=async(bearerToken="fixture",capabilities=runtime.capabilities())=>{
     const address=service.app.server.address() as {port:number};
-    const connected=new RemoteRunnerClient({url:`ws://127.0.0.1:${address.port}/runner`,bearerToken,runner:{id:"remote",displayName:"Remote",platform:process.platform as "darwin",architecture:process.arch,capacity:3,state:"ONLINE",capabilities:[NATIVE_EXECUTION_CAPABILITY],lastSeenAt:now().toISOString()},profileInventory:["p"],journal,onAuthorizationLost:()=>runtime.shutdown()});
+    const connected=new RemoteRunnerClient({url:`ws://127.0.0.1:${address.port}/runner`,bearerToken,runner:{id:"remote",displayName:"Remote",platform:process.platform as "darwin",architecture:process.arch,capacity:3,state:"ONLINE",capabilities,lastSeenAt:now().toISOString()},profileInventory:["p"],journal,onAuthorizationLost:()=>runtime.shutdown()});
     runtime.registerHandlers({register:(type,handler)=>connected.register(type,async(payload,envelope)=>{
       if(payload.type==="native.workspace_prepare"||payload.type==="run.start"){
         const run=service.database.getEntity("run",payload.runId) as unknown as Run,task=service.database.getCanonicalTask(run.taskId)?.document as unknown as Task;
@@ -292,4 +292,9 @@ it("delivers an explicit remote commit through the owning Runner with no Control
  expect(f.runtime.database.getEntity("native-execution",receipt.runId)).toMatchObject({delivery:{type:"commit"},deliveryState:"complete",settledAt:expect.any(String)});
  expect(f.runtime.database.getEntity("native-operation",`native-commit:${receipt.runId}:1`)).toMatchObject({state:"COMPLETE",result:result.commit});expect(local).not.toHaveBeenCalled();expect(f.localBackend).not.toHaveBeenCalled();expect(f.createLocal).not.toHaveBeenCalled();
  expect((await f.commit(p)).json()).toEqual(receipt);expect(f.starts).toHaveLength(1);
+});
+
+it("blocks explicit commit on an older native Runner while preserving its none execution capability",async()=>{
+ const f=await setup(false,false,"commit");await f.client.stop();await f.connect("fixture",[NATIVE_EXECUTION_CAPABILITY]);const preview=await f.preview();expect(preview.canCommit).toBe(false);expect(preview.checks).toContainEqual(expect.objectContaining({code:"REMOTE_DELIVERY_UNAVAILABLE",status:"blocked"}));expect(f.starts).toHaveLength(0);expect(existsSync(join(f.runnerData,"worktrees"))).toBe(false);
+ await expect(f.service["remoteRunnerServer"].sendCommand("remote",{type:"native.run_push",runId:"run"},{leaseId:"lease",generation:1,leaseExpiresAt:new Date(Date.now()+60_000).toISOString()})).rejects.toThrow("native git delivery capability");
 });

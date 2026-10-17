@@ -633,3 +633,7 @@
 - Real Git transfer can be tested without a network write by a fixture-only SSH
   command connected to an isolated bare receive-pack. This validates Git transfer
   and process ownership, not a real SSH server, account authorization or GitHub PR.
+
+- Additive delivery commands need an explicit peer capability even while keeping
+  transport1.2 and legacy omitted-intent hashes. Gate preparation as well as the
+  final command; otherwise an older Runner fails after a task has been created.

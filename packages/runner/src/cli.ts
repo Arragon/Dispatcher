@@ -8,7 +8,6 @@ import { promisify } from "node:util";
 import type { Runner } from "@dispatcher/domain";
 import { createNativeProfileAdapter, probeNativeProfile } from "@dispatcher/adapters";
 import { validateConfig, repositoryRunnerId, type DispatcherConfig } from "@dispatcher/config";
-import { NATIVE_EXECUTION_CAPABILITY } from "@dispatcher/protocol";
 import { NativeRunnerRuntime, NativeRunnerError } from "./native-runtime.js";
 import { RunnerJournal } from "./journal.js";
 import { RemoteRunnerClient } from "./remote.js";
@@ -110,7 +109,7 @@ async function serve(args: string[]): Promise<void> {
     platform: adapter.platform,
     architecture: adapter.architecture,
     state: "ONLINE",
-    capabilities: [...adapter.capabilities(), ...(runtime.profileInventory().length ? [NATIVE_EXECUTION_CAPABILITY] : [])],
+    capabilities: [...adapter.capabilities(), ...runtime.capabilities()],
     capacity: Math.min(Number(flag(args, "--capacity", String(runtime.capacity() || 1))), runtime.capacity() || 1),
     lastSeenAt: new Date().toISOString(),
   };

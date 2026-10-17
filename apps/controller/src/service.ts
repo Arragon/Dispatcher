@@ -11,7 +11,7 @@ import {qualifyRoutingPolicy,type PolicyConfigEvidence} from "./policy-config.js
 import {TaskClassifier} from "./task-classifier.js";
 import { remoteCatalog, remoteRunInventory,remoteRepositoryRefs,remoteCommitResult } from "./remote-results.js";
 import { RemoteNativeAdapter } from "./remote-adapter.js";
-import { NATIVE_EXECUTION_CAPABILITY, type CommandPayload } from "@dispatcher/protocol";
+import { NATIVE_EXECUTION_CAPABILITY,NATIVE_GIT_DELIVERY_CAPABILITY,requiresNativeGitDelivery, type CommandPayload } from "@dispatcher/protocol";
 import { ModelRoutingService } from "./model-routing.js";
 import type { WorkspaceHandle } from "@dispatcher/workspace";
 import { PublicationService, PublicationError, contentHash, assertPublicationScope, type PublicationRecord } from "./task-publications.js";
@@ -1839,6 +1839,7 @@ export class ControllerService {
   private async remoteRequest(runnerId:string,payload:CommandPayload,run?:Run,messageId?:string):Promise<unknown> {
     const configured=this.configuration.current().config.runners.find(runner=>runner.id===runnerId&&runner.mode==="remote"),runner=this.runners.list().find(runner=>runner.id===runnerId);
     if(!configured||!runner||!["ONLINE","DEGRADED","DRAINING"].includes(runner.state)||!runner.capabilities.includes(NATIVE_EXECUTION_CAPABILITY)||!this.remoteRunnerServer.isConnected(runnerId))throw new AdapterContractError("REMOTE_EXECUTION_UNAVAILABLE","Owning Runner is offline or has no qualified native execution capability");
+    if(requiresNativeGitDelivery(payload)&&!runner.capabilities.includes(NATIVE_GIT_DELIVERY_CAPABILITY))throw new AdapterContractError("REMOTE_DELIVERY_UNAVAILABLE","Owning Runner must advertise native Git delivery support");
     const credential = this.runnerCredentialContext(runnerId);
     if (!credential.usable) throw new AdapterContractError("REMOTE_CREDENTIAL_CHANGED", "Owning Runner authorization is revoked");
     const response=await this.remoteRunnerServer.sendCommand(runnerId,payload,{...(run?{leaseId:run.leaseId,generation:run.generation,...(run.leaseExpiresAt?{leaseExpiresAt:run.leaseExpiresAt}:{})}:{}),...(messageId?{messageId}:{})});
@@ -2044,6 +2045,7 @@ export class ControllerService {
     if(!profile)throw new PublicationError("PROFILE_REQUIRED",409,"Choose a configured native account");
     if(repositoryRunnerId(snapshot.config,repository)!==profile.runnerId)throw new PublicationError("RUNNER_REPOSITORY_MISMATCH",409,"Account and repository belong to different Runners");
     if(profile.runnerId!==this.embeddedRunner?.runner.id&&!(this.agentAdapters.get(profile.id) instanceof RemoteNativeAdapter))throw new PublicationError("REMOTE_EXECUTION_UNAVAILABLE",409,"Owning Runner has no qualified native execution backend");
+    if(draft.delivery.type!=="none"&&this.agentAdapters.get(profile.id) instanceof RemoteNativeAdapter&&!this.runners.list().find(runner=>runner.id===profile.runnerId)?.capabilities.includes(NATIVE_GIT_DELIVERY_CAPABILITY))throw new PublicationError("REMOTE_DELIVERY_UNAVAILABLE",409,"Update the owning Runner to support explicit Git delivery");
     const catalog=await this.modelCatalog(profile.id,repository.id,_workspacePath?"before-start":"preflight",_workspacePath);
     if(catalog.selectionSupport==="unsupported")throw new PublicationError("NATIVE_SELECTION_UNSUPPORTED",409,"This native backend does not expose qualified per-run model selection");
     if(catalog.failure?.code==="NATIVE_AUTH_REQUIRED"||catalog.failure?.code==="PROFILE_DISABLED"||catalog.failure?.code==="NATIVE_CONTEXT_CHANGED")throw new PublicationError(catalog.failure.code,409,catalog.failure.message);
