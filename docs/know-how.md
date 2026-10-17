@@ -664,5 +664,11 @@
 - A push receipt alone cannot establish PR or CI state. Use the selected Run's
   actual delivery evidence for the PR label/link, including while CI is pending.
 - Result reads must include delivery/recovery phases, not just terminal Runs.
+- Legacy external PR contracts can keep their configured default SCM without
+  rewriting TaskContract. Freeze its qualified target before a new Run starts
+  and reuse owning Git delivery. Never adopt an unbound historical Run into a
+  newer mutation protocol: absent receipts cannot prove an old write did not
+  happen. Keep explicit custom GitTransport boundaries separate from default
+  process ownership evidence.
   Bind query caches to the chosen Run/phase so previous attempts cannot supply
   a different attempt's result; preserve known facts during background refresh.

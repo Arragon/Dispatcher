@@ -939,8 +939,16 @@ Git and Controller HTTP use sequential owned-command cancellation slots. The
 HTTP slot starts only after Git's process group has drained, and its abort
 settlement does not suppress a Git cleanup failure. CI reads receive the same
 abort signal. Completed Run results now explicitly include generation. Legacy
-external contracts without scmConnectorId retain their existing delivery adapter
-path rather than acquiring an implicit new SCM choice.
+external contracts without scmConnectorId keep their declarative contract and
+configured first-SCM behavior. Before a new default-transport Run starts, the
+Controller qualifies and freezes that connector, owning origin and base using
+the same SCM preflight, then delivers through LocalGitDelivery. It rechecks the
+snapshot before native start. Historical default-transport Runs without a frozen
+target require review and a new Run; recovery cannot invent a target after an
+unrecorded possible write. Default connector Git methods refuse execution outside
+the owning path. Explicitly injected GitTransport adapters retain their existing
+integration contract; their process ownership is not inferred from default Git
+tests.
 
 ## Explicit PR console flow
 

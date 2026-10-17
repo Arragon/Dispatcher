@@ -127,7 +127,6 @@ import {
   DeliveryService,
   GitHubScmConnector,
   LinearTaskConnector,
-  LocalGitTransport,
   SlackMessagingConnector,
   MessagingIdentityService,
   ConversationBindingService,
@@ -1051,7 +1050,7 @@ export class ControllerService {
           instance,
           credentialRef: configured.credentialRef,
           resolveSecret: (reference) => this.secrets.resolve(reference, { principal: "controller", purpose: "integration" }),
-          transport: this.options.gitTransport ?? new LocalGitTransport(),
+          transport: this.options.gitTransport ?? {ensureBranch:async()=>{throw new ConnectorError("CONFLICT","Canonical delivery requires owning Git execution",{retryable:false});},push:async()=>{throw new ConnectorError("CONFLICT","Canonical delivery requires owning Git execution",{retryable:false});}},
           ...(this.options.integrationFetch ? { fetch: this.options.integrationFetch } : {}),
           ...(stringSetting(configured.settings?.apiBase) ? { apiBase: stringSetting(configured.settings?.apiBase)! } : {}),
         }));
@@ -1730,7 +1729,10 @@ export class ControllerService {
     }
 
     if (run.state !== "DELIVERING" || !run.worktree || !run.branch) throw new ConnectorError("CONFLICT", `Run ${run.id} is not ready for delivery`);
-    if(contract.delivery.type==="pull-request"&&contract.delivery.scmConnectorId)return this.deliverExplicitPr(run,contract);
+    if(contract.delivery.type==="pull-request"){
+      if(contract.delivery.scmConnectorId||this.database.getEntity("run-delivery-selection",run.id))return this.deliverExplicitPr(run,contract);
+      if(!this.options.gitTransport)throw new ConnectorError("CONFLICT","Legacy delivery has no frozen owning target; review and dispatch a new Run",{retryable:false,operation:"delivery"});
+    }
     if(contract.delivery.type==="none"||contract.delivery.type==="commit") {
       const remote=this.agentAdapters.get(run.profileId) instanceof RemoteNativeAdapter;
       const workspace=remote?this.database.getEntity<JsonValue>("workspace-handle",run.id) as unknown as WorkspaceHandle|undefined:this.workspaces.get(run.worktree);
@@ -1807,7 +1809,7 @@ export class ControllerService {
 
   private async deliverExplicitPr(run:Run,contract:TaskContract):Promise<AdvanceResult>{
     const selected=this.database.getEntity<JsonValue>("run-delivery-selection",run.id) as unknown as ScmDeliverySelection|undefined;
-    if(!selected||selected.scmConnectorId!==contract.delivery.scmConnectorId||selected.repository!==contract.delivery.repository||selected.baseBranch!==contract.delivery.baseBranch)throw new ConnectorError("CONFLICT","Run has no matching reviewed SCM delivery selection",{retryable:false,operation:"delivery"});
+    if(!selected||contract.delivery.scmConnectorId&&selected.scmConnectorId!==contract.delivery.scmConnectorId||selected.repository!==contract.delivery.repository?.toLowerCase()||selected.baseBranch!==(contract.delivery.baseBranch??"main"))throw new ConnectorError("CONFLICT","Run has no matching reviewed SCM delivery selection",{retryable:false,operation:"delivery"});
     this.fenceDelivery(run,"push");const remote=this.agentAdapters.get(run.profileId) instanceof RemoteNativeAdapter,workspace=remote?this.database.getEntity<JsonValue>("workspace-handle",run.id) as unknown as WorkspaceHandle|undefined:this.workspaces.get(run.worktree!);
     if(!workspace)throw new WorkspacePolicyError("WORKSPACE_UNAVAILABLE","Managed delivery workspace is unavailable");
     let git:RunGitDelivery;
@@ -2082,7 +2084,7 @@ export class ControllerService {
     if(this.catalogGenerations.get(key)!==generation)throw new PublicationError("CATALOG_SUPERSEDED",409,"A newer catalog request superseded this response");
     this.database.saveEntity("model-catalog",key,json(catalog));return catalog;
   }
-  private async prepareScmDelivery(draft:PublishDraftV1,repository:RepositoryConfig):Promise<ScmDeliverySelection>{
+  private async prepareScmDelivery(draft:Pick<PublishDraftV1,"delivery">,repository:RepositoryConfig):Promise<ScmDeliverySelection>{
     const snapshot=this.configuration.current(),delivery=draft.delivery;
     if(delivery.type!=="pull-request"||!delivery.scmConnectorId||!delivery.targetRepository||!delivery.baseBranch)throw new PublicationError("SCM_SELECTION_REQUIRED",400,"Select an SCM connector, target repository and base branch explicitly");
     const configured=snapshot.config.connectors.find(connector=>connector.id===delivery.scmConnectorId),adapter=this.connectors.get(delivery.scmConnectorId) as ScmAdapter|undefined;
@@ -2200,7 +2202,12 @@ export class ControllerService {
     const repositoryRunner=repositoryRunnerId(this.configuration.current().config,repositoryConfig),remote=this.configuration.current().config.runners.some(runner=>runner.id===repositoryRunner&&runner.mode==="remote");
     if(body.profileId&&this.configuration.current().config.agentProfiles.find(profile=>profile.id===body.profileId)?.runnerId!==repositoryRunner)throw new PublicationError("RUNNER_REPOSITORY_MISMATCH",409,"Account and repository belong to different Runners");
     if(remote&&!publication?.selection)throw new PublicationError("REMOTE_SELECTION_REQUIRED",409,"Remote dispatch requires a reviewed native execution selection");
-    const reviewedDelivery=publication?.deliverySelection;
+    let reviewedDelivery=publication?.deliverySelection;
+    if(contract.delivery.type==="pull-request"&&!contract.delivery.scmConnectorId&&!this.options.gitTransport){
+      const scm=this.connectors.list().find(connector=>connector.instance.kind==="scm"&&connector.definition.id==="scm.github");
+      if(!scm)throw new PublicationError("SCM_UNAVAILABLE",409,"A configured GitHub connector is required before legacy delivery can start");
+      reviewedDelivery=await this.prepareScmDelivery({delivery:{type:"pull-request",scmConnectorId:scm.instance.id,targetRepository:contract.delivery.repository??"",baseBranch:contract.delivery.baseBranch??"main"}},repositoryConfig);
+    }
     if(contract.delivery.type==="pull-request"&&contract.delivery.scmConnectorId&&(!reviewedDelivery||reviewedDelivery.scmConnectorId!==contract.delivery.scmConnectorId||reviewedDelivery.repository!==contract.delivery.repository||reviewedDelivery.baseBranch!==contract.delivery.baseBranch))throw new PublicationError("SCM_REVIEW_REQUIRED",409,"Review the explicit SCM delivery before dispatch");
     if(remote&&contract.delivery.type==="pull-request"&&!reviewedDelivery)throw new PublicationError("REMOTE_DELIVERY_UNAVAILABLE",409,"Remote PR delivery requires a reviewed owning target");
     const scheduler = new CanonicalScheduler(() => this.dispatchCandidates(body?.profileId).filter(candidate=>candidate.runnerId===repositoryRunner));
@@ -2234,7 +2241,7 @@ export class ControllerService {
         ...(publication?.selection ? {executionSelection:publication.selection}:{}),
         beforeStart:async()=>{
           if(publication&&contentHash(this.database.getTaskContract(taskId))!==contentHash(publication.contract))throw new PublicationError("TASK_CHANGED",409,"Task contract changed before native startup");
-          if(reviewedDelivery&&publication){const current=await this.prepareScmDelivery(publication.draft,repositoryConfig);if(contentHash({...current,reviewedAt:undefined})!==contentHash({...reviewedDelivery,reviewedAt:undefined}))throw new PublicationError("SELECTION_CHANGED",409,"SCM target or context changed before native start");}
+          if(reviewedDelivery){const current=await this.prepareScmDelivery({delivery:{type:"pull-request",scmConnectorId:reviewedDelivery.scmConnectorId,targetRepository:reviewedDelivery.repository,baseBranch:reviewedDelivery.baseBranch}},repositoryConfig);if(contentHash({...current,reviewedAt:undefined})!==contentHash({...reviewedDelivery,reviewedAt:undefined}))throw new PublicationError("SELECTION_CHANGED",409,"SCM target or context changed before native start");}
           if(remote){
             const reserved=this.database.getEntity<JsonValue>("run",runId) as unknown as Run|undefined;
             if(!reserved||reserved.state!=="STARTING")throw new PublicationError("RUN_CHANGED",409,"Remote workspace requires a reserved canonical Run");
