@@ -6,10 +6,10 @@ import {Notice} from "./ui.js";
 interface UsageReport {observations:UsageObservationV1[];totals:Array<{profileId:string;scope:string;name:string;unit:string;value:string}>;errors:Array<{reasonCode:string}>;rangeBasis:string}
 const scopeNames:Record<string,string>={turn:"回合",run:"运行",session:"会话","account-period":"账户周期"};
 const metricNames:Record<string,string>={input:"输入",output:"输出",cachedInput:"缓存输入",cost:"实际上报费用",remaining:"账户剩余"};
-export function UsagePanel({profileId,runId}:{profileId?:string;runId?:string}):React.JSX.Element{
+export function UsagePanel({profileId,runId,sessionId}:{profileId?:string;runId?:string;sessionId?:string}):React.JSX.Element{
  const [from,setFrom]=useState(""),[to,setTo]=useState(""),[range,setRange]=useState<{from?:string;to?:string}>({}),[message,setMessage]=useState("");
- const params=new URLSearchParams({...(profileId?{profileId}:{}),...(runId?{runId}:{}),...range});
- const query=useQuery({queryKey:["usage",profileId,runId,range],queryFn:async()=>{const report=await api<UsageReport>(`/api/usage?${params}`);if(!Array.isArray(report.observations)||!Array.isArray(report.totals)||!Array.isArray(report.errors))throw new Error("用量响应缺少已验证观测结构");return report;},enabled:Boolean(profileId||runId),retry:false});
+ const params=new URLSearchParams({...(profileId?{profileId}:{}),...(runId?{runId}:{}),...(sessionId?{sessionId}:{}),...range});
+ const query=useQuery({queryKey:["usage",profileId,runId,sessionId,range],queryFn:async()=>{const report=await api<UsageReport>(`/api/usage?${params}`);if(!Array.isArray(report.observations)||!Array.isArray(report.totals)||!Array.isArray(report.errors))throw new Error("用量响应缺少已验证观测结构");return report;},enabled:Boolean(profileId||runId||sessionId),retry:false});
  useEffect(()=>subscribeToEvents(()=>void query.refetch()),[query.refetch]);
  function filter(event:React.FormEvent):void{event.preventDefault();try{const next={...(from?{from:new Date(from).toISOString()}:{}),...(to?{to:new Date(to).toISOString()}:{} )};if(next.from&&next.to&&next.from>next.to)throw new Error("开始时间不能晚于结束时间。");setRange(next);setMessage("");}catch(error){setMessage(error instanceof Error?error.message:"时间范围无效。");}}
  return <section className="detail-section" aria-label="实际用量"><h3>实际用量观测</h3><p className="muted">按观测时间筛选。累计快照取同一范围的最后值，缓存包含于输入时分别展示；账户周期值独立于任务。</p>

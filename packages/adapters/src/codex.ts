@@ -287,6 +287,9 @@ export class CodexAdapter implements AgentAdapter {
     const observation:UsageObservationV1|undefined=tokens&&session.turnId?{version:1,eventId:`${session.turnId}:usage`,profileId:this.profile.id,runId:session.runId,sessionId:session.id,turnId:session.turnId,scope:"turn",mode:"snapshot",observedAt,collectedAt:observedAt,source:"native-event",completeness:"complete",metrics:[{name:"input",value:String(tokens.input),unit:"tokens"},{name:"output",value:String(tokens.output),unit:"tokens"},...(tokens.cachedInput!==undefined?[{name:"cachedInput",value:String(tokens.cachedInput),unit:"tokens",includedIn:"input"}]:[])]}:undefined;
     return { ...(resource ?? (result?.state==="completed" ? {state:"AVAILABLE",source:"event",confidence:"medium",reason:"Native turn completed; remaining quota was not reported"} : { state: "UNKNOWN", source: "event", confidence: "low" })),checkedAt:resource?.observedAt??(resource?.source==="probe"?new Date().toISOString():observedAt), ...(tokens ? { tokens, tokenScope: "latest-turn" } : {}),...(observation?{observations:[observation]}:{}) };
   }
+  async usageObservations(sessionId:string):Promise<UsageObservationV1[]>{
+    return (await this.usage(sessionId)).observations as UsageObservationV1[]??[];
+  }
   async diagnostics(sessionId: string): Promise<Record<string, unknown>> {
     const session = this.require(sessionId);
     return { sessionId, profileId: session.profileId, alias: this.profile.alias, attached: this.turns.has(sessionId), resumable: Boolean(session.providerSessionId) };

@@ -978,3 +978,17 @@ not proven execution availability. Immediate dispatch still requires all physica
 Git, SCM and native checks. When a saved task has no baseline, fresh publication
 review supplies a qualified baseCommit to its workspace plan without rewriting
 the original TaskContract; that Run executes the approved SHA, not a moving ref.
+
+## Cached standalone usage
+
+AgentAdapter optionally exposes usageObservations for already owned native events;
+it cannot perform provider queries or wait for an active turn. Codex implements
+this using its existing bounded event cache. The background loop collects eligible
+bound standalone sessions independently of UI, rechecks durable identity/account
+context after awaits, and records original event time/turn identity. Normalization
+validates the native operation ID but omits canonical runId/generation for these
+records and rejects canonical-run scope. Terminal cursors avoid permanent rescans;
+failed writes remain unknown and eligible for retry. Canonical and standalone
+collection share the same validation/dedup/error path. The saved-usage API supports
+session filtering and the existing session drawer uses it without provider calls.
+Other adapters without qualified usage event protocols remain unknown.

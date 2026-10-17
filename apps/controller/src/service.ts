@@ -4,7 +4,7 @@ import { ProfileProbeService } from "./profile-probes.js";
 import { CredentialContext } from "./credential-context.js";
 import {DirectorySelections,type DirectoryPicker} from "./local-directories.js";
 import {RunInputReceipts,InputReceiptError,type RunInputIdentity} from "./run-inputs.js";
-import {UsageObservations,UsageObservationError} from "./usage-observations.js";
+import {UsageObservations,UsageObservationError,type UsageContext} from "./usage-observations.js";
 import {buildDiagnostics,diagnosticChecks} from "./diagnostics.js";
 import type { ProfileConsoleView,NativeSessionConsoleView,RepositoryConsoleContext,RepositoryRefs,DeliveryEvidence } from "@dispatcher/domain";
 import { applyConfigEdits, consoleConfig, consoleConfigPlan } from "./config-edits.js";
@@ -649,6 +649,7 @@ export class ControllerService {
     this.background = new BackgroundLoop([
       { name: "embedded-leases", run: () => this.renewEmbeddedLeases() },
       { name: "messaging-inbox", run: () => this.processMessagingInbox(worker.inboxBatchSize ?? 10) },
+      { name: "standalone-usage", run: () => this.collectStandaloneUsage() },
       { name: "run-advancement", run: () => this.advanceDueRuns(worker.maxConcurrentRuns ?? 2, worker.runBaseDelayMs ?? 1_000, worker.runMaxDelayMs ?? 5 * 60_000) },
       { name: "run-attention", run: () => this.notifyDueAttention() },
       { name: "delivery-reconcile", run: () => this.reconcileDeliveryRuns(worker.maxConcurrentRuns ?? 2) },
@@ -1385,14 +1386,38 @@ export class ControllerService {
     return this.fleet.rebuild({ projects, tasks, runs, connectors, profiles }, now);
   }
 
+  private saveUsageObservations(input:unknown,context:UsageContext):boolean{
+    const identity=context.standalone?`session:${context.sessionId}`:context.runId;
+    const reference={profileId:context.profileId,...(context.standalone?{sessionId:context.sessionId}:{runId:context.runId})};
+    try{
+      const inserted=this.usageObservations.record(input,context);
+      if(Array.isArray(input)&&input.length&&this.database.getEntity("usage-error",identity))this.database.saveEntity("usage-error",identity,{...reference,status:"resolved",observedAt:this.now().toISOString()});
+      if(inserted)this.fleetEvents.publish("usage.changed",identity,reference);
+      return (this.database.getEntity("usage-error",identity) as {status?:string}|undefined)?.status!=="unknown";
+    }catch(error){this.database.saveEntity("usage-error",identity,{...reference,status:"unknown",reasonCode:error instanceof UsageObservationError?error.code:"USAGE_UNAVAILABLE",observedAt:this.now().toISOString()});this.app.log.warn({error:redactValue(error),...reference},"Native usage observation rejected");return false;}
+  }
+  private async collectStandaloneUsage():Promise<void>{
+    const sessions=(this.database.listEntities<JsonValue>("adapter-session") as unknown as BoundSession[]).filter(session=>{
+      if(this.canonicalSession(session)||!session.profileId||!session.turnId||this.sessionContextState(session)!=="current")return false;
+      const cursor=this.database.getEntity<JsonValue>("standalone-usage-cursor",session.id) as {turnId?:string}|undefined;
+      return !["COMPLETED","CANCELLED","FAILED"].includes(session.state)||cursor?.turnId!==session.turnId;
+    });
+    await runBounded(sessions,4,async session=>{
+      const adapter=this.agentAdapters.get(session.profileId!);if(!adapter?.usageObservations)return;
+      try{
+        await adapter.status(session.id);
+        const observations=await adapter.usageObservations(session.id),current=this.database.getEntity<JsonValue>("adapter-session",session.id) as unknown as BoundSession|undefined;
+        if(!current||current.profileId!==session.profileId||current.runId!==session.runId||current.turnId!==session.turnId||current.authority?.fingerprint!==session.authority?.fingerprint||this.canonicalSession(current)||this.sessionContextState(current)!=="current")return;
+        if(this.saveUsageObservations(observations,{profileId:session.profileId!,runId:session.runId,sessionId:session.id,standalone:true})&&["COMPLETED","CANCELLED","FAILED"].includes(current.state))this.database.saveEntity("standalone-usage-cursor",session.id,{turnId:current.turnId!});
+      }catch(error){this.database.saveEntity("usage-error",`session:${session.id}`,{profileId:session.profileId!,sessionId:session.id,status:"unknown",reasonCode:error instanceof UsageObservationError?error.code:"USAGE_UNAVAILABLE",observedAt:this.now().toISOString()});}
+    });
+  }
+
   private async captureProfileResource(profileId: string, adapter: AgentAdapter, sessionId: string): Promise<ResourceSnapshot | undefined> {
     if (!adapter.usage) return undefined;
     const usage = await adapter.usage(sessionId);
     const usageRun=this.database.listEntities<JsonValue>("run").map(value=>value as unknown as Run).find(run=>run.profileId===profileId&&run.sessionId===sessionId);
-    if(usageRun&&usage.observations!==undefined)try{
-      const inserted=this.usageObservations.record(usage.observations,{profileId,runId:usageRun.id,sessionId,generation:usageRun.generation});
-      if(this.database.getEntity("usage-error",usageRun.id))this.database.saveEntity("usage-error",usageRun.id,{profileId,runId:usageRun.id,status:"resolved",observedAt:this.now().toISOString()});if(inserted)this.fleetEvents.publish("usage.changed",usageRun.id,{runId:usageRun.id,profileId});
-    }catch(error){const diagnostic={profileId,runId:usageRun.id,status:"unknown",reasonCode:error instanceof UsageObservationError?error.code:"USAGE_UNAVAILABLE",observedAt:this.now().toISOString()};this.database.saveEntity("usage-error",usageRun.id,diagnostic);this.app.log.warn({error:redactValue(error),runId:usageRun.id},"Native usage observation rejected");}
+    if(usageRun&&usage.observations!==undefined)this.saveUsageObservations(usage.observations,{profileId,runId:usageRun.id,sessionId,generation:usageRun.generation});
     const reportedTokens = usage.tokens as { input?: unknown; output?: unknown; cachedInput?: unknown } | undefined;
     if (reportedTokens && Number.isSafeInteger(reportedTokens.input) && Number.isSafeInteger(reportedTokens.output) && Number(reportedTokens.input) >= 0 && Number(reportedTokens.output) >= 0) {
       const tokens = { input: Number(reportedTokens.input), output: Number(reportedTokens.output), ...(Number.isSafeInteger(reportedTokens.cachedInput) && Number(reportedTokens.cachedInput) >= 0 && Number(reportedTokens.cachedInput) <= Number(reportedTokens.input) ? { cachedInput: Number(reportedTokens.cachedInput) } : {}) };
@@ -3785,7 +3810,7 @@ export class ControllerService {
       if(check.id==="runner.connection"&&!this.configuration.current().config.runners.some(runner=>runner.id===id))return reply.code(404).send({code:"RUNNER_NOT_FOUND"});
       return {checkId:check.id,cost:check.cost,completedAt:this.now().toISOString(),diagnostics:this.diagnosticsSnapshot()};
     });
-    this.app.get<{Querystring:{profileId?:string;runId?:string;from?:string;to?:string}}>("/api/usage",async request=>({...this.usageObservations.query(request.query),errors:this.database.listEntities<JsonValue>("usage-error").filter(value=>{const error=value as {profileId?:string;runId?:string;status?:string};return error.status==="unknown"&&(!request.query.profileId||error.profileId===request.query.profileId)&&(!request.query.runId||error.runId===request.query.runId);})}));
+    this.app.get<{Querystring:{profileId?:string;runId?:string;sessionId?:string;from?:string;to?:string}}>("/api/usage",async request=>({...this.usageObservations.query(request.query),errors:this.database.listEntities<JsonValue>("usage-error").filter(value=>{const error=value as {profileId?:string;runId?:string;sessionId?:string;status?:string};return error.status==="unknown"&&(!request.query.profileId||error.profileId===request.query.profileId)&&(!request.query.runId||error.runId===request.query.runId)&&(!request.query.sessionId||error.sessionId===request.query.sessionId);})}));
 
     this.app.get("/api/llm", async () => {
       const current = this.configuration.current();

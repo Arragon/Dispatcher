@@ -1,4 +1,4 @@
-import type { ExecutionSelection, AccountModelCatalog, ModelCatalogContext } from "@dispatcher/domain";
+import type { ExecutionSelection, AccountModelCatalog, ModelCatalogContext, UsageObservationV1 } from "@dispatcher/domain";
 export type AdapterPlatform = "darwin" | "linux" | "win32";
 export type BackendKind = "sdk" | "api" | "daemon" | "headless-cli" | "pty";
 
@@ -73,6 +73,8 @@ export interface AgentAdapter {
   status(sessionId: string): Promise<AdapterSession>;
   result(sessionId: string): Promise<AdapterResult>;
   usage?(sessionId: string): Promise<Record<string, unknown>>;
+  /** Reads already owned native events only; never waits for an active turn or performs a provider query. */
+  usageObservations?(sessionId:string):Promise<UsageObservationV1[]>;
   diagnostics?(sessionId: string): Promise<Record<string, unknown>>;
 }
 

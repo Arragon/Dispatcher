@@ -677,3 +677,8 @@
   denials still fail. Do not invent a baseline when Git is unavailable. At later
   dispatch, pass the newly reviewed SHA into workspace creation even if the
   original TaskContract intentionally has no baseCommit.
+- An AdapterSession.runId can identify a standalone native operation rather than
+  a canonical Run. Validate that incoming usage belongs to it, but omit canonical
+  runId/generation from stored standalone observations. A terminal session needs
+  a separate successful-collection cursor: native completion is not proof its
+  metrics were saved. Empty cached results cannot resolve an earlier usage error.
