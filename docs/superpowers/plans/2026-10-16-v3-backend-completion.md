@@ -58,13 +58,66 @@ Files: llm-runtime contracts/runtime, config roles, Controller model-routing, we
 Files: protocol commands, runner command handlers/runtime, Controller remote adapter/context/workspace/verification orchestration and tests.
 - [x] Audit existing remote envelope/journal/lease boundaries; extend typed commands for owning Runner inspect/catalog/session/workspace/verification/result.
 - [x] Preserve repository IDs and Runner paths, remote PID/native identity, frozen selection, trusted result/usage events, disconnect/manual recovery and revocation fences.
-- [ ] Controller-zero-local-run negative tests and process-separated Runner end-to-end evidence, then real distinct-device evidence if available. Full gate, commit/check quota.
+- [x] Controller-zero-local-run negative tests and process-separated Runner end-to-end evidence; real distinct-device acceptance explicitly deferred by user. Full gates and exact native/controlled tiers are recorded below.
 
 ### 5. Remaining document gaps and final audit
 
 - [ ] Audit BE-01..BE-35 and every section/button against current source and authoritative evidence; retain delivered work, identify partial/unverified requirements explicitly.
 - [ ] Complete safe console config leaf patches/protected fields, durable account/context probes, local picker/context/refs, durable input receipts, usage dedup/ranges, diagnostic process/window measurements, explicit commit/PR delivery and event coverage as the audit requires.
 - [ ] Full gate plus desktop/mobile end-to-end, independent fresh-context final review (executing-plans skill), repair with regressions and final acceptance map. Close goal only when all required scope is proven.
+
+## Requirement acceptance map (2026-10-17, before final independent review)
+
+This maps current source and regression evidence, not blanket release acceptance.
+Local means implementation plus relevant automated checks. Native means the exact
+provider/version/process proof recorded in the ledger. Provider/account/OS Gates
+below stay separate; missing values/capabilities remain unknown or unsupported.
+
+| ID | Current evidence / implementation | Acceptance boundary |
+| --- | --- | --- |
+| BE-01 | domain publication/model/usage/delivery types, AJV schemas; domain/config/protocol tests | Local; additive old-config compatibility covered. |
+| BE-02 | TaskContractCompiler + scheduler.renderTaskContract; compiler/publication tests and real Cursor instructions | Main path verified; legacy run.reroute still needs independent audit of prompt/frozen snapshots. |
+| BE-03 | config-edits, ConfigPlan revision/leaf protection, credential-context; config-edits/config tests | Local; hidden fields retained and parent replacement rejected. |
+| BE-04 | execution-context/native factories, profile-probes/remote-context tests | Local and real owning Cursor/Codex process evidence; account-specific capability remains qualified separately. |
+| BE-05 | repository context/refs + persisted local Project; repository-context/repository-refs tests | Local real Git, owning remote protocol; reads never fetch. |
+| BE-06 | WorkspaceManager inspect/handle/scope/private paths + frozen plan SHA; workspace/task-publications/native-runtime tests | Local real Git; no invented SHA for offline creation. |
+| BE-07 | native account/project catalogs; codex/cli catalog and remote tests | Fresh real Codex/Cursor evidence exists; unsupported readers return explicit unavailable. |
+| BE-08 | ExecutionSelection + native start/send snapshots; native-model tests | Local and selected real provider proofs; no universal effort/model fallback. |
+| BE-09 | publication payload identity/receipt + atomic task/contract transaction; task-publications tests | Local concurrency/restart/disk-failure coverage. |
+| BE-10 | PublicationService checks/preview, offline create-only; task-publications/scm-publication-preflight tests | Local zero-worktree/start/write preview; device/SCM availability warnings distinct from scope denials. |
+| BE-11 | canonical reservation/common dispatch, revalidation + startup receipts; publication/remote-execution tests | Local plus independent real native start; unknown outcomes are retained. |
+| BE-12 | run-contract/verification snapshots, owning verification and none result; publication/remote-runtime tests | Local and real none/commit proofs; Task stays REVIEW. |
+| BE-13 | PublishPage + ApiError + field diagnostics/recovery; v3/pr-publication tests and browser fields | Local and current browser focus, adjacent explanations, reload/draft/receipt coverage. |
+| BE-14 | independent installed/compatible/auth probe records + TTL/context; profile-probes/diagnostics tests | Local; configured/enabled does not prove login. |
+| BE-15 | AgentsPage schema wizard, private console fields and ConfigPlan; management/adaptation tests | Local; step navigation is not config apply. |
+| BE-16 | retained native/legacy adapters, busy/pending/stop protection; adapter-lifecycle/owned-process tests | Local real-process cleanup; no silent active-handle replacement. |
+| BE-17 | native default model -> reviewed ConfigPlan -> applied projection; policy-config/native-model tests | Local; current Run selection is immutable. |
+| BE-18 | per-provider catalog/query/selection adapters and fixed/failure fixtures; native-cli/mac-harnesses/catalog tests | Partial native acceptance: exact installed-version/account Gates in project knowledge remain; native-default-only/unsupported is explicit. |
+| BE-19 | canonical trial publication, separate bound historical sessions; adapter-lifecycle/adaptation tests | Local; actual independent session IDs and no fake canonical Run. |
+| BE-20 | internal model role/pool/reset references, paid-test disclosures; policy-config/management tests | Local/controlled endpoint; actual account inference is a separate Gate. |
+| BE-21 | configured+observed Runner projection, enrollment/revoke epochs and peer capabilities; distributed/enrollment/remote tests | Local and independent transport; production service/keyring deployment not signed off. |
+| BE-22 | repository management + bounded localhost directory selection; local-directories tests | Cancel/process cleanup verified; actual native folder-selection visual acceptance remains open. |
+| BE-23 | connector probe/inbox/reconcile/retry contract; integration/personal-loop tests | Local/controlled providers; no false delivered state or forced conflict overwrite. |
+| BE-24 | local auth, setup, search, preference storage; app/v3/management tests + current browser | Local and representative browser login/search/task opening/theme/density; password/enrollment actions were not clicked in QA. |
+| BE-25 | publication/workspace/run recovery, durable mutation intents and lease journal; remote/runtime/publication tests | Local crash/restart/unknown-outcome coverage; no blind respawn or dirty cleanup. |
+| BE-26 | durable input receipt/wait episode, cancellation process drain/context; run-inputs/lifecycle/native-runtime tests | Main native input/cancel verified; legacy resume/reroute authority/snapshot paths are explicit final-review focus. |
+| BE-27 | exact UsageObservations, Codex bounded cached events, remote forwarding + standalone background; usage/Codex/runtime tests | Core and real Codex usage replay verified; other unqualified native numeric emitters remain unknown. |
+| BE-28 | observation-time filters, separate units/scopes, inclusion and missing billing baseline; usage/web tests | Local; actual rate-based estimates unavailable without qualified billing evidence, no invented balance attribution. |
+| BE-29 | aggregate diagnostics, safe check registry/export, scalar/null measurements; diagnostics tests and actual saved export | Local/browser; unmeasured process/hour values remain null with truthful counter scope. |
+| BE-30 | shared SSE/read projections + component/action regressions; all web tests,24 desktop/mobile page visits | Source/local/browser tier; external mutations and native dialogs are not collectively claimed as manually passed. |
+| BE-31 | LocalGitDelivery, owning native commit/push, selected SCM receipts + legacy default qualification; Git/PR tests | Real independent Cursor commit passed. Independent real Git + controlled native/mocked SCM PR passed; actual SSH/GitHub PR permission remains open. |
+| BE-32 | native-execution-v1/native-git-delivery-v1, owning registered descriptors and authenticated leases | Real separate Controller/Runner/native processes accepted for current user scope; physical cross-device explicitly deferred. |
+| BE-33 | pure deterministic classification/rules, fail-closed binding and ConfigPlan UI; scheduler/routing tests | Local and real Cursor keyword/deferred execution proof. |
+| BE-34 | bounded tool-free task_classifier, dedup/evidence/arbitration; classifier/runtime tests | Controlled inference endpoint qualified; actual paid classification account remains external Gate. |
+| BE-35 | version/account/process evidence ledger and explicit acceptance tiers | Open formal release Gate; no fixture/full-suite/native READY label substitutes for external qualification. |
+
+### Open acceptance / review Gates
+
+- User scope: independent Runner process first; physical cross-device acceptance is deferred.
+- New real owning commit is qualified for Cursor2026.10.01-e373342/gpt-5.4-nano-low. Earlier real Codex none/usage proof remains valid; its new commit attempt hit native account/read RPC timeout before execution and is not a successful Codex commit proof.
+- Actual SSH authorization and GitHub PR creation require a specified authorized provider target; only isolated bare transfer and controlled SCM were used here.
+- Native folder picker selection, production Runner service/keyring enrollment and unqualified provider/account execution/usage evidence remain explicit Gates.
+- A fresh whole-branch reviewer must judge remaining legacy resume/reroute interactions and any newly discovered behavioral gaps. Current full gate before local layout refinements was80 files/693 tests; layout build/lint/UI38 tests and current browser checks passed. Fresh full gate/review follows.
 
 ## Execution ledger
 
