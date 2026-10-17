@@ -251,4 +251,15 @@ describe("all-provider adapter lifecycle", () => {
     } finally { await f.close(); }
   });
 
+  it("requires a Controller restart before replacing its live embedded executor identity", async () => {
+    const f = await fixture();
+    try {
+      const before = f.service.configuration.current().revision;
+      const response = await f.apply(config => { config.runners[0]!.mode = "remote"; config.runners[0]!.credentialRef = "secret://runner/local"; });
+      expect(response.json()).toMatchObject({ code: "EMBEDDED_RUNNER_RESTART_REQUIRED" });
+      expect(f.service.configuration.current().revision).toBe(before);
+      expect(f.service.runners.list()[0]).toMatchObject({ id: "local", state: "ONLINE" });
+    } finally { await f.close(); }
+  });
+
 });

@@ -496,6 +496,16 @@
   reattachment: it participates in native-input retry identity. Bound inventory
   application to identities present before the query, and coalesce a later
   heartbeat so a slow empty snapshot cannot hide a newly started Run.
+- Revoke Runner authorization before the first secret-store await. A failed
+  metadata/delete operation must not leave the socket or an in-flight auth
+  result authorized. Use an opaque identity epoch rather than timestamps: test
+  clocks and fast re-enrollment can have identical enrolledAt values. Recheck
+  the epoch after secret resolution and remote RPC awaits. Keep an in-memory
+  revocation fence if persistence fails; a failed response is not durable proof.
+  Re-enrollment repeats revocation/lease fencing before activating a new key.
+  A shared reference cannot be deleted by a single identity's revoke; require a
+  dedicated reference for enrollment/rotation instead. Generic secret APIs must
+  retain applied Runner references without making them a bootstrap prerequisite.
 - Remote cancellation cannot depend on a received native session ID: a dropped
   start acknowledgement leaves only the reserved lease. Persist revocation,
   require owning-Runner stop acknowledgement, and keep uncertainty visible.

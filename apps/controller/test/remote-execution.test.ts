@@ -18,7 +18,7 @@ async function setup(verificationFails = false,holdFirstReconcile = false) {
   const localBackend = vi.fn(() => { throw new Error("Controller must not construct native remote execution"); });
   let clock=new Date();const now=()=>new Date(clock);
   let credential:string|undefined="fixture";
-  const secrets={resolve:async()=>{if(!credential)throw new Error("Missing secret");return credential;},test:async()=>Boolean(credential),metadata:async()=>({exists:Boolean(credential)}),delete:async()=>{credential=undefined;}} as unknown as SecretStore;
+  const secrets={put:async(reference:string,value:string)=>{credential=value;return {reference,backend:"encrypted-local" as const,exists:true};},resolve:async()=>{if(!credential)throw new Error("Missing secret");return credential;},test:async()=>Boolean(credential),metadata:async()=>({exists:Boolean(credential)}),delete:async()=>{credential=undefined;}} as unknown as SecretStore;
   const restores:ReturnType<typeof vi.spyOn>[]=[];
   const makeService=async()=>{
     const instance=new ControllerService({dataDirectory:controllerData,host:"127.0.0.1",port:0,withRunner:true,ownerToken:"owner",clock:now,codexBackendFactory:localBackend,backgroundWorker:{enabled:false},secretStore:secrets});
@@ -41,9 +41,9 @@ async function setup(verificationFails = false,holdFirstReconcile = false) {
   const verificationGate=Promise.withResolvers<void>(),verificationEntered=Promise.withResolvers<void>();
   const gate=Promise.withResolvers<void>(),entered=Promise.withResolvers<void>(),reconcileGate=Promise.withResolvers<void>(),reconcileEntered=Promise.withResolvers<void>(),control={holdStart:false,invalidatePrepared:false,expireAfterRenew:false,holdReconcile:holdFirstReconcile,mismatchStart:false,holdVerify:false};
   let client!:RemoteRunnerClient;
-  const connect=async()=>{
+  const connect=async(bearerToken="fixture")=>{
     const address=service.app.server.address() as {port:number};
-    const connected=new RemoteRunnerClient({url:`ws://127.0.0.1:${address.port}/runner`,bearerToken:"fixture",runner:{id:"remote",displayName:"Remote",platform:process.platform as "darwin",architecture:process.arch,capacity:3,state:"ONLINE",capabilities:[NATIVE_EXECUTION_CAPABILITY],lastSeenAt:now().toISOString()},profileInventory:["p"],journal,onAuthorizationLost:()=>runtime.shutdown()});
+    const connected=new RemoteRunnerClient({url:`ws://127.0.0.1:${address.port}/runner`,bearerToken,runner:{id:"remote",displayName:"Remote",platform:process.platform as "darwin",architecture:process.arch,capacity:3,state:"ONLINE",capabilities:[NATIVE_EXECUTION_CAPABILITY],lastSeenAt:now().toISOString()},profileInventory:["p"],journal,onAuthorizationLost:()=>runtime.shutdown()});
     runtime.registerHandlers({register:(type,handler)=>connected.register(type,async(payload,envelope)=>{
       if(payload.type==="native.workspace_prepare"||payload.type==="run.start"){
         const run=service.database.getEntity("run",payload.runId) as unknown as Run,task=service.database.getCanonicalTask(run.taskId)?.document as unknown as Task;
@@ -175,4 +175,99 @@ it("restores the verification phase and reuses its durable receipt after a lost 
   await vi.waitFor(()=>expect(f.service.database.getEntity("run",receipt.runId)).toMatchObject({state:"VERIFYING"}));
   const replay=await f.service.app.inject({method:"POST",url:`/api/runs/${receipt.runId}/advance`,headers:f.headers});expect(replay.json()).toMatchObject({run:{state:"COMPLETE",verification:{state:"PASSED"}}});expect(f.starts).toHaveLength(1);
   const operations=f.runtime.database.listEntities("native-operation") as unknown as Array<{state:string}>;expect(operations.filter(operation=>operation.state==="COMPLETE")).toHaveLength(1);
+});
+
+it.each(["metadata", "delete"] as const)("fences Runner authorization before awaiting failing secret %s", async operation => {
+  const f = await setup(), preview = await f.preview(), receipt = (await f.commit(preview)).json();
+  const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
+  const store = vi.spyOn(f.service.secrets, operation).mockImplementation(async () => { entered.resolve(); await release.promise; throw new Error("controlled credential-store failure"); });
+  const shutdown = vi.spyOn(f.runtime, "shutdown");
+  const revoking = f.service.app.inject({ method: "POST", url: "/api/runners/remote/credential/revoke", headers: f.headers }); void revoking.then(() => undefined);
+  try {
+    await entered.promise;
+    expect(f.service.database.getEntity("runner-identity", "remote")).toMatchObject({ revokedAt: expect.any(String), epoch: expect.any(String) });
+    await vi.waitFor(() => expect(shutdown).toHaveBeenCalled());
+    await expect(f.connect()).rejects.toThrow("unauthorized");
+    expect(f.service.database.getEntity("run", receipt.runId)).toMatchObject({ state: "RUNNER_UNAVAILABLE", revokedLeaseIds: expect.arrayContaining([expect.any(String)]) });
+    release.resolve(); expect((await revoking).statusCode).toBe(500);
+    await expect(f.connect()).rejects.toThrow("unauthorized");
+    expect(f.starts).toHaveLength(1);
+  } finally { release.resolve(); await revoking; store.mockRestore(); shutdown.mockRestore(); }
+});
+it("rejects an authentication result that resolved after credential revocation", async () => {
+  const f = await setup(), entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
+  const resolve = vi.spyOn(f.service.secrets, "resolve").mockImplementation(async () => { entered.resolve(); await release.promise; return "fixture"; });
+  const connecting = f.connect(), rejected = expect(connecting).rejects.toThrow("unauthorized");
+  try {
+    await entered.promise;
+    expect((await f.service.app.inject({ method: "POST", url: "/api/runners/remote/credential/revoke", headers: f.headers })).statusCode).toBe(200);
+    release.resolve(); await rejected;
+  } finally { release.resolve(); await connecting.catch(() => undefined); resolve.mockRestore(); }
+});
+it("changes the Runner identity epoch for re-enrollment even with an unchanged clock", async () => {
+  const f = await setup();
+  const enroll = async () => {
+    const issued = await f.service.app.inject({ method: "POST", url: "/api/runners/remote/enrollment", headers: f.headers });
+    const enrolled = await f.service.app.inject({ method: "POST", url: "/api/runners/enroll", payload: { runnerId: "remote", token: issued.json().token } });
+    expect(enrolled.statusCode, enrolled.body).toBe(201);
+    return f.service.database.getEntity("runner-identity", "remote") as { epoch?: string; enrolledAt?: string };
+  };
+  const before = await enroll(), after = await enroll();
+  expect(before.epoch).toEqual(expect.any(String)); expect(after.epoch).not.toBe(before.epoch);
+  expect(after.enrolledAt).toBe(before.enrolledAt);
+});
+it("serializes credential changes and blocks generic secret mutation or identity edits during a change", async () => {
+  const f = await setup(), entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
+  const original = f.service.secrets.delete.bind(f.service.secrets);
+  const deleting = vi.spyOn(f.service.secrets, "delete").mockImplementation(async reference => { entered.resolve(); await release.promise; await original(reference); });
+  const pending = f.service.app.inject({ method: "POST", url: "/api/runners/remote/credential/revoke", headers: f.headers }); void pending.then(() => undefined);
+  try {
+    await entered.promise;
+    for (const suffix of ["credential/revoke", "credential/rotate", "enrollment"]) {
+      const blocked = await f.service.app.inject({ method: "POST", url: `/api/runners/remote/${suffix}`, headers: f.headers });
+      expect(blocked.statusCode).toBe(409); expect(blocked.json()).toMatchObject({ code: "RUNNER_CREDENTIAL_BUSY" });
+    }
+    expect((await f.service.app.inject({ method: "PUT", url: "/api/secrets/runner/fixture%2Fremote", headers: f.headers, payload: { value: "replacement" } })).json()).toMatchObject({ code: "RUNNER_CREDENTIAL_MANAGED" });
+    expect((await f.service.app.inject({ method: "DELETE", url: "/api/secrets/runner/fixture%2Fremote", headers: f.headers })).json()).toMatchObject({ code: "SECRET_IN_USE" });
+    const next = structuredClone(f.service.configuration.current().config); next.runners.find(runner => runner.id === "remote")!.credentialRef = "secret://runner/other";
+    const plan = f.service.configuration.buildPlan(next, "fixture", "cli");
+    expect(() => f.service.configuration.applyPlan(plan.id, { confirmed: true })).toThrow(expect.objectContaining({ code: "RUNNER_CREDENTIAL_BUSY" }));
+    release.resolve(); expect((await pending).statusCode).toBe(200);
+  } finally { release.resolve(); await pending; deleting.mockRestore(); }
+});
+it("revokes one shared-reference identity without deleting another Runner's credential", async () => {
+  const f = await setup();
+  const next = f.service.configuration.current().config;
+  next.runners.push({ id: "other", displayName: "Other", mode: "remote", capacity: 1, tags: [], credentialRef: "secret://runner/fixture/remote" });
+  f.service.configuration.applyPlan(f.service.configuration.buildPlan(next, "fixture", "cli").id, { confirmed: true });
+  expect((await f.service.app.inject({ method: "POST", url: "/api/runners/remote/credential/rotate", headers: f.headers })).json()).toMatchObject({ code: "SHARED_RUNNER_CREDENTIAL" });
+  expect((await f.service.app.inject({ method: "POST", url: "/api/runners/remote/enrollment", headers: f.headers })).json()).toMatchObject({ code: "SHARED_RUNNER_CREDENTIAL" });
+  expect((await f.service.app.inject({ method: "POST", url: "/api/runners/enroll", payload: { runnerId: "remote", token: "invalid-token" } })).statusCode).toBe(401);
+  expect((await f.service.app.inject({ method: "POST", url: "/api/runners/remote/credential/revoke", headers: f.headers })).statusCode).toBe(200);
+  await expect(f.connect()).rejects.toThrow("unauthorized");
+  expect((await f.service.secrets.metadata("secret://runner/fixture/remote")).exists).toBe(true);
+  const address = f.service.app.server.address() as { port: number }, journal = new RunnerJournal(join(f.runnerData, "other-transport.sqlite"));
+  const other = new RemoteRunnerClient({ url: `ws://127.0.0.1:${address.port}/runner`, bearerToken: "fixture", runner: { id: "other", displayName: "Other", platform: process.platform as "darwin", architecture: process.arch, capacity: 1, state: "ONLINE", capabilities: [], lastSeenAt: f.now().toISOString() }, profileInventory: [], journal });
+  try {
+    await other.start(); expect(f.service.runners.list().find(runner => runner.id === "other")).toMatchObject({ state: "ONLINE" });
+    const changed = structuredClone(f.service.configuration.current().config); changed.runners.find(runner => runner.id === "other")!.credentialRef = "secret://runner/dedicated";
+    const plan = f.service.configuration.buildPlan(changed, "fixture", "cli");
+    expect(() => f.service.configuration.applyPlan(plan.id, { confirmed: true })).toThrow(expect.objectContaining({ code: "RUNNER_CONNECTED" }));
+  }
+  finally { await other.stop(); journal.close(); }
+});
+
+it("keeps a Runner revoked in memory when the durable identity write fails", async () => {
+  const f = await setup(), preview = await f.preview(), receipt = (await f.commit(preview)).json();
+  const original = f.service.database.saveEntity.bind(f.service.database);
+  const save = vi.spyOn(f.service.database, "saveEntity").mockImplementation((kind, id, value, updatedAt) => {
+    if (kind === "runner-identity") throw new Error("controlled identity persistence failure");
+    return original(kind, id, value, updatedAt);
+  });
+  try {
+    expect((await f.service.app.inject({ method: "POST", url: "/api/runners/remote/credential/revoke", headers: f.headers })).statusCode).toBe(500);
+    await expect(f.connect()).rejects.toThrow("unauthorized");
+    const advanced = await f.service.app.inject({ method: "POST", url: `/api/runs/${receipt.runId}/advance`, headers: f.headers });
+    expect(advanced.statusCode).not.toBe(200); expect(f.service.database.getEntity("run-result", receipt.runId)).toBeUndefined(); expect(f.starts).toHaveLength(1);
+  } finally { save.mockRestore(); }
 });

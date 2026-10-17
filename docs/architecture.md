@@ -161,6 +161,17 @@ permanent or exhausted failures to the dead-letter store.
 
 ## Configuration and secrets
 
+Runner credential revocation first denies the in-memory identity, closes its
+connection and persists a new opaque identity epoch, then revokes Run leases
+before awaiting secret-store work. Authentication and remote RPC replies recheck
+the same identity after awaits. Re-enrollment revokes the old identity before
+replacing its secret; credential mutations serialize per Runner. Generic secret
+routes cannot overwrite configured Runner references or delete applied references.
+A shared reference can be revoked for one identity without deleting the other
+Runner's value; enrollment/rotation requires a dedicated reference. Connected
+remote identity changes require revoke/disconnect, and a composed Embedded
+Runner identity requires a Controller restart.
+
 Effective configuration follows the frozen precedence:
 
 ```text

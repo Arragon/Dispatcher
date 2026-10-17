@@ -482,6 +482,8 @@ export class ControllerService {
   private readonly pendingProfileStarts = new Map<string, number>();
   private readonly trialReservations = new Map<string, { runnerId: string; workspacePath: string }>();
   private readonly pendingSessionCancellations = new Map<string, Promise<AdapterSession>>();
+  private readonly revokedRunnerCredentials = new Set<string>();
+  private readonly runnerCredentialOperations = new Set<string>();
   private readonly rawWebhookBodies = new WeakMap<object, Uint8Array>();
   private readonly startedAt = Date.now();
   private readonly embeddedRunner?: EmbeddedRunner;
@@ -583,9 +585,11 @@ export class ControllerService {
       path: "/runner",
       authenticate: async ({ runnerId, bearerToken }) => {
         if (!bearerToken) return false;
-        const configured = this.configuration.current().config.runners.find((runner) => runner.id === runnerId && runner.mode === "remote");
-        if (!configured?.credentialRef) return false;
-        let expected:string;try{expected=await this.secrets.resolve(configured.credentialRef, { principal: "controller", purpose: "provider" });}catch{return false;}
+        const context = this.runnerCredentialContext(runnerId);
+        if (!context.usable || !context.credentialRef) return false;
+        let expected:string;try{expected=await this.secrets.resolve(context.credentialRef, { principal: "controller", purpose: "provider" });}catch{return false;}
+        const current = this.runnerCredentialContext(runnerId);
+        if (!current.usable || current.fingerprint !== context.fingerprint) return false;
         const suppliedBytes = Buffer.from(bearerToken);
         const expectedBytes = Buffer.from(expected);
         return suppliedBytes.length === expectedBytes.length && timingSafeEqual(suppliedBytes, expectedBytes);
@@ -715,6 +719,8 @@ export class ControllerService {
 
   private fenceDelivery(run: Run, operation: "verify" | "branch" | "push" | "pull-request" | "complete"): void {
     const current = this.database.getEntity<JsonValue>("run", run.id) as unknown as Run | undefined;
+    const remote = this.configuration.current().config.runners.some(runner => runner.id === run.runnerId && runner.mode === "remote");
+    if (this.revokedRunnerCredentials.has(run.runnerId) || remote && !this.runnerCredentialContext(run.runnerId).usable) throw new ConnectorError("CONFLICT", "Owning Runner authorization is revoked", { retryable: false, operation: "delivery" });
     if (this.cancelledRunIds.has(run.id) || !current || current.generation !== run.generation || current.leaseId !== run.leaseId || !["VERIFYING", "DELIVERING"].includes(current.state)) throw new ConnectorError("CONFLICT", "Delivery authority rejected: stale or terminal run", { retryable: false, operation: "delivery" });
     this.restoreLeaseAuthority(run);
     try {
@@ -955,6 +961,13 @@ export class ControllerService {
       if (previous.runner?.mode === "remote" && !isDeepStrictEqual(previous.runner, runnerIdentity(previous.runner.id)) && this.remoteRunnerServer?.isConnected(previous.runner.id)) {
         throw new ConfigPlanError("RUNNER_CONNECTED", "Revoke and disconnect the Runner before changing its execution identity");
       }
+    }
+    for (const previous of this.configuration.current().config.runners) {
+      const next = config.runners.find(runner => runner.id === previous.id);
+      if (next && next.mode === previous.mode && next.credentialRef === previous.credentialRef) continue;
+      if (this.runnerCredentialOperations.has(previous.id)) throw new ConfigPlanError("RUNNER_CREDENTIAL_BUSY", "Finish the current Runner credential operation before changing its identity");
+      if (this.remoteRunnerServer?.isConnected(previous.id)) throw new ConfigPlanError("RUNNER_CONNECTED", "Revoke and disconnect the Runner before changing its execution identity");
+      if (this.embeddedRunner?.runner.id === previous.id && previous.mode === "embedded") throw new ConfigPlanError("EMBEDDED_RUNNER_RESTART_REQUIRED", "The embedded executor identity is fixed for this process; restart with the new configuration");
     }
     this.llm.configure(llmConfiguration(config.internalLlm));
     this.repositories.clear();
@@ -1771,7 +1784,11 @@ export class ControllerService {
   private async remoteRequest(runnerId:string,payload:CommandPayload,run?:Run,messageId?:string):Promise<unknown> {
     const configured=this.configuration.current().config.runners.find(runner=>runner.id===runnerId&&runner.mode==="remote"),runner=this.runners.list().find(runner=>runner.id===runnerId);
     if(!configured||!runner||!["ONLINE","DEGRADED","DRAINING"].includes(runner.state)||!runner.capabilities.includes(NATIVE_EXECUTION_CAPABILITY)||!this.remoteRunnerServer.isConnected(runnerId))throw new AdapterContractError("REMOTE_EXECUTION_UNAVAILABLE","Owning Runner is offline or has no qualified native execution capability");
+    const credential = this.runnerCredentialContext(runnerId);
+    if (!credential.usable) throw new AdapterContractError("REMOTE_CREDENTIAL_CHANGED", "Owning Runner authorization is revoked");
     const response=await this.remoteRunnerServer.sendCommand(runnerId,payload,{...(run?{leaseId:run.leaseId,generation:run.generation,...(run.leaseExpiresAt?{leaseExpiresAt:run.leaseExpiresAt}:{})}:{}),...(messageId?{messageId}:{})});
+    const currentCredential = this.runnerCredentialContext(runnerId);
+    if (!currentCredential.usable || currentCredential.fingerprint !== credential.fingerprint) throw new AdapterContractError("REMOTE_CREDENTIAL_CHANGED", "Owning Runner authorization changed during the operation");
     if(response.payload.type==="rpc.error")throw new AdapterContractError(response.payload.code,"Owning Runner rejected the native operation");
     return response.payload.result;
   }
@@ -2861,16 +2878,33 @@ export class ControllerService {
       : adapter.send({ channel: message.conversationId, subject: "Dispatcher", body: text, severity: "warning" }, idempotencyKey);
   }
 
+  private runnerCredentialContext(runnerId: string): { usable: boolean; credentialRef?: string; fingerprint: string } {
+    const runner = this.configuration.current().config.runners.find(candidate => candidate.id === runnerId && candidate.mode === "remote");
+    const identity = this.database.getEntity<JsonValue>("runner-identity", runnerId) as { runnerId?: string; credentialRef?: string; revokedAt?: string; epoch?: string } | undefined;
+    const usable = Boolean(runner?.credentialRef && !this.revokedRunnerCredentials.has(runnerId) && (!identity || identity.runnerId === runnerId && identity.revokedAt === undefined && identity.credentialRef === runner.credentialRef));
+    return { usable, ...(runner?.credentialRef ? { credentialRef: runner.credentialRef } : {}), fingerprint: contentHash({ runnerId, credentialRef: runner?.credentialRef, identity }) };
+  }
+  private async withRunnerCredentialChange<T>(runnerId: string, change: () => Promise<T>): Promise<T> {
+    if (this.runnerCredentialOperations.has(runnerId)) throw new ConfigPlanError("RUNNER_CREDENTIAL_BUSY", "Another credential operation is still pending for this Runner");
+    this.runnerCredentialOperations.add(runnerId);
+    try { return await change(); } finally { this.runnerCredentialOperations.delete(runnerId); }
+  }
+  private sharedRunnerCredential(runnerId: string, reference: string): boolean {
+    return this.configuration.current().config.runners.some(runner => runner.id !== runnerId && runner.credentialRef === reference);
+  }
   private async revokeRunnerCredential(runnerId: string, credentialRef: string | undefined): Promise<void> {
+    // These fences precede every asynchronous secret-store operation, including failures.
+    this.revokedRunnerCredentials.add(runnerId);
+    this.remoteRunnerServer.disconnect(runnerId, "credential revoked");
+    this.database.saveEntity("runner-identity", runnerId, json({ runnerId, ...(credentialRef ? { credentialRef } : {}), epoch: randomUUID(), revokedAt: this.now().toISOString() }));
     this.enrollments.revoke(runnerId, this.now());
     for(const value of this.database.listEntities<JsonValue>("run")){
       const run=value as unknown as Run;if(run.runnerId!==runnerId||isTerminalRunState(run.state))continue;
       this.restoreLeaseAuthority(run);this.leaseAuthority.revoke(run.id,run.leaseId,run.generation,"Runner credential revoked",this.now().toISOString());this.persistLatestLeaseAudit(run.id);
       this.markRemoteUnavailable(run.id,"Runner credentials revoked; owning process termination requires confirmation","REMOTE_LEASE_INVALID",run);
     }
-    if (credentialRef && (await this.secrets.metadata(credentialRef)).exists) await this.secrets.delete(credentialRef);
-    this.remoteRunnerServer.disconnect(runnerId, "credential revoked");
-    this.database.saveEntity("runner-identity", runnerId, json({ runnerId, ...(credentialRef ? { credentialRef } : {}), revokedAt: this.now().toISOString() }));
+    // A shared value still belongs to other configured Runners; this Runner's identity remains revoked.
+    if (credentialRef && !this.sharedRunnerCredential(runnerId, credentialRef) && (await this.secrets.metadata(credentialRef)).exists) await this.secrets.delete(credentialRef);
   }
 
   private readonly modelRouting: ModelRoutingService;
@@ -2965,6 +2999,8 @@ export class ControllerService {
     this.app.post<{ Params: { id: string }; Body: { ttlMs?: number } }>("/api/runners/:id/enrollment", async (request, reply) => {
       const runner = this.configuration.current().config.runners.find((candidate) => candidate.id === request.params.id && candidate.mode === "remote");
       if (!runner) return reply.code(404).send({ code: "REMOTE_RUNNER_NOT_FOUND" });
+      if (this.runnerCredentialOperations.has(runner.id)) throw new ConfigPlanError("RUNNER_CREDENTIAL_BUSY", "A credential change is still pending");
+      if (runner.credentialRef && this.sharedRunnerCredential(runner.id, runner.credentialRef)) return reply.code(409).send({ code: "SHARED_RUNNER_CREDENTIAL", message: "Configure a dedicated credential reference before enrollment" });
       const issued = this.enrollments.issue(runner.id, request.body?.ttlMs, this.now());
       return reply.code(201).send({ runnerId: runner.id, token: issued.token, expiresAt: issued.record.expiresAt });
     });
@@ -2972,28 +3008,36 @@ export class ControllerService {
       if (!request.body?.runnerId || !request.body.token) return reply.code(400).send({ code: "ENROLLMENT_INPUT_REQUIRED" });
       const runner = this.configuration.current().config.runners.find((candidate) => candidate.id === request.body!.runnerId && candidate.mode === "remote");
       if (!runner?.credentialRef) return reply.code(404).send({ code: "REMOTE_RUNNER_NOT_FOUND" });
-      try {
-        this.enrollments.consume(runner.id, request.body.token, this.now());
-      } catch (error) {
-        this.controlAuth.recordFailure(request.ip);
-        return reply.code(401).send({ code: "ENROLLMENT_REJECTED", message: error instanceof Error ? error.message : "Enrollment rejected" });
-      }
-      const bearerToken = randomBytes(32).toString("base64url");
-      await this.secrets.put(runner.credentialRef, bearerToken);
-      this.database.saveEntity("runner-identity", runner.id, json({ runnerId: runner.id, credentialRef: runner.credentialRef, enrolledAt: this.now().toISOString() }));
-      return reply.code(201).send({ runnerId: runner.id, credentialRef: runner.credentialRef, bearerToken, protocolVersion: "1.2" });
+      const enrollmentToken = request.body.token, credentialRef = runner.credentialRef;
+      try { this.enrollments.consume(runner.id, enrollmentToken, this.now()); }
+      catch (error) { this.controlAuth.recordFailure(request.ip); return reply.code(401).send({ code: "ENROLLMENT_REJECTED", message: error instanceof Error ? error.message : "Enrollment rejected" }); }
+      if (this.sharedRunnerCredential(runner.id, credentialRef)) return reply.code(409).send({ code: "SHARED_RUNNER_CREDENTIAL", message: "Configure a dedicated credential reference before enrollment" });
+      const enrolled = await this.withRunnerCredentialChange(runner.id, async () => {
+        await this.revokeRunnerCredential(runner.id, credentialRef);
+        const bearerToken = randomBytes(32).toString("base64url");
+        await this.secrets.put(credentialRef, bearerToken);
+        this.database.saveEntity("runner-identity", runner.id, json({ runnerId: runner.id, credentialRef, epoch: randomUUID(), enrolledAt: this.now().toISOString() }));
+        this.revokedRunnerCredentials.delete(runner.id);
+        return { runnerId: runner.id, credentialRef, bearerToken, protocolVersion: "1.2" };
+      });
+      return reply.code(201).send(enrolled);
     });
     this.app.post<{ Params: { id: string } }>("/api/runners/:id/credential/revoke", async (request, reply) => {
       const runner = this.configuration.current().config.runners.find((candidate) => candidate.id === request.params.id && candidate.mode === "remote");
       if (!runner) return reply.code(404).send({ code: "REMOTE_RUNNER_NOT_FOUND" });
-      await this.revokeRunnerCredential(runner.id, runner.credentialRef);
-      return { runnerId: runner.id, revoked: true };
+      return this.withRunnerCredentialChange(runner.id, async () => {
+        await this.revokeRunnerCredential(runner.id, runner.credentialRef);
+        return { runnerId: runner.id, revoked: true };
+      });
     });
     this.app.post<{ Params: { id: string }; Body: { ttlMs?: number } }>("/api/runners/:id/credential/rotate", async (request, reply) => {
       const runner = this.configuration.current().config.runners.find((candidate) => candidate.id === request.params.id && candidate.mode === "remote");
       if (!runner) return reply.code(404).send({ code: "REMOTE_RUNNER_NOT_FOUND" });
-      await this.revokeRunnerCredential(runner.id, runner.credentialRef);
-      const issued = this.enrollments.issue(runner.id, request.body?.ttlMs, this.now());
+      if (runner.credentialRef && this.sharedRunnerCredential(runner.id, runner.credentialRef)) return reply.code(409).send({ code: "SHARED_RUNNER_CREDENTIAL", message: "Configure a dedicated credential reference before rotation" });
+      const issued = await this.withRunnerCredentialChange(runner.id, async () => {
+        await this.revokeRunnerCredential(runner.id, runner.credentialRef);
+        return this.enrollments.issue(runner.id, request.body?.ttlMs, this.now());
+      });
       return reply.code(201).send({ runnerId: runner.id, token: issued.token, expiresAt: issued.record.expiresAt });
     });
     this.app.get("/api/adapters/manifests", async () => ({ manifests: adapterManifests }));
@@ -3695,6 +3739,7 @@ export class ControllerService {
       async (request, reply) => {
         if (!request.body?.value) return reply.code(400).send({ code: "SECRET_VALUE_REQUIRED" });
         const reference = `secret://${request.params.namespace}/${request.params.name}`;
+        if (this.configuration.current().config.runners.some(runner => runner.credentialRef === reference)) return reply.code(409).send({ code: "RUNNER_CREDENTIAL_MANAGED", message: "Use Runner enrollment or rotation to update this credential" });
         const metadata = await this.secrets.put(reference, request.body.value);
         this.secretTestStates.delete(reference);
         return reply.code(201).send({ secret: this.secretView(metadata) });
@@ -3719,7 +3764,7 @@ export class ControllerService {
     });
     this.app.delete<{ Params: { namespace: string; name: string } }>("/api/secrets/:namespace/:name", async (request, reply) => {
       const reference = `secret://${request.params.namespace}/${request.params.name}`;
-      if (requiredSecretReferences(this.configuration.current().config).includes(reference)) {
+      if (requiredSecretReferences(this.configuration.current().config).includes(reference) || this.configuration.current().config.runners.some(runner => runner.credentialRef === reference)) {
         return reply.code(409).send({ code: "SECRET_IN_USE", message: "Disable the configuration that uses this credential before deleting it" });
       }
       await this.secrets.delete(reference);
@@ -3754,7 +3799,7 @@ export class ControllerService {
         ? 409
         : error instanceof LlmRuntimeError
           ? error.code === "SELECTION_CHANGED" ? 409 : error.code === "NO_AVAILABLE_PROFILE" ? 503 : 400
-        : error instanceof ConfigPlanError && ["PROFILE_CONTEXT_CHANGED","CONNECTOR_CONTEXT_CHANGED","REMOTE_DRAFT_PROBE_UNAVAILABLE"].includes(error.code)?409:error instanceof ConfigPlanError || error instanceof ConfigValidationError
+        : error instanceof ConfigPlanError && ["PROFILE_CONTEXT_CHANGED","CONNECTOR_CONTEXT_CHANGED","REMOTE_DRAFT_PROBE_UNAVAILABLE","RUNNER_CREDENTIAL_BUSY"].includes(error.code)?409:error instanceof ConfigPlanError || error instanceof ConfigValidationError
           ? 400
           : semanticStatus ?? workspaceStatus ?? connectorStatus ?? secretStatus ?? (error && typeof error === "object" && "validation" in error ? 400 : 500);
       const code = error instanceof UsageObservationError||error instanceof InputReceiptError||error instanceof AdapterContractError||error instanceof PublicationError || error instanceof TaskDispatchError || error instanceof RevisionConflictError || error instanceof ConfigPlanError || error instanceof SecretStoreError || error instanceof LlmRuntimeError || error instanceof ConnectorError || error instanceof WorkspacePolicyError || error instanceof SemanticPolicyError
