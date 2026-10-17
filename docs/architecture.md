@@ -992,3 +992,13 @@ failed writes remain unknown and eligible for retry. Canonical and standalone
 collection share the same validation/dedup/error path. The saved-usage API supports
 session filtering and the existing session drawer uses it without provider calls.
 Other adapters without qualified usage event protocols remain unknown.
+
+## Publication field diagnostics
+
+Publication errors may add bounded fieldErrors with canonical draft JSON pointers
+and required/invalid/too-long codes. Schema normalization whitelists known paths
+and never includes validator data or arbitrary parameter keys. Existing error
+codes remain for semantic failures; schema field errors use INVALID_DRAFT. The
+composer maps these pointers to labelled controls, preserves text, identifies
+invalid fields with descriptions and focuses the first issue, opening its
+containing details element. Unknown/non-field failures retain the general error.

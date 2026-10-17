@@ -61,3 +61,5 @@ export interface AccountModelCatalog {
   entries: Array<{id:string;displayName:string;kind:"model"|"tier"|"native-auto";selectable:boolean;unsupportedReason?:string;access:"account-listed"|"unconfirmed"|"denied";parameterOptions:Record<string,NativeParameter[]>;parameterDefaults?:Record<string,NativeParameter>;billing?:{mode:"unknown"|"subscription"|"metered"}}>;
   failure?: {code:string;message:string};
 }
+
+export interface PublicationFieldError {path:string;code:"required"|"invalid"|"too-long"}

@@ -15,7 +15,7 @@ import { RemoteNativeAdapter } from "./remote-adapter.js";
 import { NATIVE_EXECUTION_CAPABILITY,NATIVE_GIT_DELIVERY_CAPABILITY,requiresNativeGitDelivery, type CommandPayload } from "@dispatcher/protocol";
 import { ModelRoutingService } from "./model-routing.js";
 import type { WorkspaceHandle } from "@dispatcher/workspace";
-import { PublicationService, PublicationError, contentHash, assertPublicationScope, type PublicationRecord } from "./task-publications.js";
+import { PublicationService, PublicationError, publicationValidationFields, contentHash, assertPublicationScope, type PublicationRecord } from "./task-publications.js";
 import { publishDraftSchema, type PublishDraftV1, type ExecutionSelection, type AccountModelCatalog, type ModelCatalogContext } from "@dispatcher/domain";
 import { projectViews, publicWebUrl } from "./console-projection.js";
 import { existsSync, realpathSync, statSync } from "node:fs";
@@ -3993,7 +3993,7 @@ export class ControllerService {
       return reply.code(204).send();
     });
 
-    this.app.setErrorHandler((error, _request, reply) => {
+    this.app.setErrorHandler((error, request, reply) => {
       const secretStatus = error instanceof SecretStoreError
         ? error.code === "SECRET_ACCESS_DENIED"
           ? 403
@@ -4029,8 +4029,11 @@ export class ControllerService {
           ? error.code
         : "INTERNAL_ERROR";
       this.app.log.error({ error: redactValue(error) }, "request failed");
+      const publicationRoute=["/api/task-publications/preview","/api/tasks/:id/publications/preview"].includes(request.routeOptions.url??"");
+      const schemaFields=publicationRoute&&error&&typeof error==="object"&&"validation"in error?publicationValidationFields(error.validation):[];
+      const fieldErrors=error instanceof PublicationError?error.fieldErrors:schemaFields;
       const message = error instanceof Error ? error.message : "Request failed";
-      void reply.code(status).send({ code, message: status === 500 ? "Internal error" : message });
+      void reply.code(status).send({code:schemaFields.length?"INVALID_DRAFT":code,message:status===500?"Internal error":schemaFields.length?"Task draft contains invalid fields":message,...(fieldErrors?.length?{fieldErrors}:{})});
     });
 
     const webRoot = this.options.webRoot ?? resolve(fileURLToPath(new URL("../../web/dist", import.meta.url)));

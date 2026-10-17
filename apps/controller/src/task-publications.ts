@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { posix } from "node:path";
 import type { ConfigurationEngine, RepositoryConfig } from "@dispatcher/config";
-import type { PublishDraftV1, PublicationPreview, PublicationReceipt, Task, TaskContract, ExecutionSelection, Run, ModelRoutingDecision,ScmDeliverySelection } from "@dispatcher/domain";
+import type { PublishDraftV1, PublicationPreview, PublicationReceipt, Task, TaskContract, ExecutionSelection, Run, ModelRoutingDecision,ScmDeliverySelection,PublicationFieldError } from "@dispatcher/domain";
 import type { CanonicalTaskService } from "@dispatcher/integrations";
 import type { DispatcherDatabase, JsonValue } from "@dispatcher/persistence";
 import { TaskContractCompiler } from "@dispatcher/semantic";
@@ -13,8 +13,23 @@ export function contentHash(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(stable(value))??"undefined").digest("hex");
 }
 export class PublicationError extends Error {
-  constructor(readonly code: string, readonly statusCode: number, message: string,readonly routingDecision?:ModelRoutingDecision) { super(message); }
+  constructor(readonly code: string, readonly statusCode: number, message: string,readonly routingDecision?:ModelRoutingDecision,readonly fieldErrors?:PublicationFieldError[]) { super(message); }
 }
+const draftFields=["title","description","projectId","repositoryId","baseRef","targetBranch","scopePaths","acceptanceCriteria","referenceLinks","verificationCommandIds","execution/profileId","execution/nativeModelId","execution/nativeParameters","execution/catalogRevision","execution/contextFingerprint","execution/selectionMode","delivery/type","delivery/scmConnectorId","delivery/targetRepository","delivery/baseBranch"].map(field=>`/${field}`);
+export function publicationValidationFields(input:unknown):PublicationFieldError[]{
+  if(!Array.isArray(input))return [];
+  const fields=new Map<string,PublicationFieldError>();
+  for(const value of input.slice(0,32)){
+    if(!value||typeof value!=="object")continue;
+    const row=value as {instancePath?:unknown;keyword?:unknown;params?:{missingProperty?:unknown}};
+    if(typeof row.instancePath!=="string")continue;
+    const pointer=row.instancePath+(row.keyword==="required"&&typeof row.params?.missingProperty==="string"?`/${row.params.missingProperty}`:"");
+    const path=draftFields.find(field=>pointer===field||pointer.startsWith(`${field}/`));
+    if(path&&!fields.has(path))fields.set(path,{path,code:row.keyword==="required"?"required":["maxLength","maxItems"].includes(String(row.keyword))?"too-long":"invalid"});
+  }
+  return [...fields.values()];
+}
+function inputError(code:string,message:string,path:string,fieldCode:PublicationFieldError["code"]="invalid"):PublicationError{return new PublicationError(code,400,message,undefined,[{path,code:fieldCode}]);}
 export interface PublicationRecord {
   owner: string; draft: PublishDraftV1; preview: PublicationPreview; configRevision: number;
   deliverySelection?:ScmDeliverySelection;
@@ -22,7 +37,7 @@ export interface PublicationRecord {
   taskBinding?:{taskId:string;taskRevision:number;contractHash:string};
 }
 export function assertPublicationScope(scopes:string[],allowed:string[]):void {
-  if(allowed.length && scopes.some(scope=>!allowed.some(parent=>{const rel=posix.relative(parent,scope);return rel===""||(!rel.startsWith("../")&&rel!==".."&&!posix.isAbsolute(rel));})))throw new PublicationError("INVALID_SCOPE",400,"Requested scope exceeds registered scope");
+  if(allowed.length && scopes.some(scope=>!allowed.some(parent=>{const rel=posix.relative(parent,scope);return rel===""||(!rel.startsWith("../")&&rel!==".."&&!posix.isAbsolute(rel));})))throw inputError("INVALID_SCOPE","Requested scope exceeds registered scope","/scopePaths");
 }
 export class PublicationService {
   private readonly pending = new Map<string, Promise<PublicationReceipt>>();
@@ -89,23 +104,24 @@ export class PublicationService {
     return this.preview(owner,draft,{taskBinding,contract});
   }
   async preview(owner: string, draft: PublishDraftV1,existing?:{taskBinding:NonNullable<PublicationRecord["taskBinding"]>;contract:TaskContract}): Promise<PublicationPreview> {
-    if (!draft.description.trim()) throw new PublicationError("INVALID_DRAFT",400,"Task description must not be blank");
-    for (const [values,max] of [[draft.acceptanceCriteria,8000],[draft.referenceLinks??[],2000],[draft.scopePaths??[],4000]] as const) if (Array.from(values.join("\n")).length > max) throw new PublicationError("INVALID_DRAFT",400,"Draft field exceeds its length limit");
-    for (const link of draft.referenceLinks??[]) { let url: URL; try {url=new URL(link);} catch {throw new PublicationError("INVALID_LINK",400,"Invalid reference link");} if (!["http:","https:"].includes(url.protocol)||url.username||url.password) throw new PublicationError("INVALID_LINK",400,"References require http(s) without credentials"); }
+    if (!draft.description.trim()) throw inputError("INVALID_DRAFT","Task description must not be blank","/description","required");
+    for (const [values,max,path] of [[draft.acceptanceCriteria,8000,"/acceptanceCriteria"],[draft.referenceLinks??[],2000,"/referenceLinks"],[draft.scopePaths??[],4000,"/scopePaths"]] as const) if (Array.from(values.join("\n")).length > max) throw inputError("INVALID_DRAFT","Draft field exceeds its length limit",path,"too-long");
+    for (const link of draft.referenceLinks??[]) { let url: URL; try {url=new URL(link);} catch {throw inputError("INVALID_LINK","Invalid reference link","/referenceLinks");} if (!["http:","https:"].includes(url.protocol)||url.username||url.password) throw inputError("INVALID_LINK","References require http(s) without credentials","/referenceLinks"); }
     const snapshot = this.config.current();
     const repository = snapshot.config.repositories.find(r=>r.id===draft.repositoryId);
-    if (draft.repositoryId && !repository) throw new PublicationError("REPOSITORY_NOT_FOUND",400,"Select a registered repository");
+    if (draft.repositoryId && !repository) throw inputError("REPOSITORY_NOT_FOUND","Select a registered repository","/repositoryId");
     // Local projects have an explicit server-derived repository identity, independent of remote delivery names.
-    if (draft.projectId !== (repository ? `local:${repository.id}` : "local:inbox")) throw new PublicationError("PROJECT_REPOSITORY_MISMATCH",400,"Local project does not own this repository");
+    if (draft.projectId !== (repository ? `local:${repository.id}` : "local:inbox")) throw inputError("PROJECT_REPOSITORY_MISMATCH","Local project does not own this repository","/repositoryId");
     const scopes=draft.scopePaths??repository?.scopePaths??[];
     if(repository)assertPublicationScope(scopes,repository.scopePaths);
     const verification=draft.verificationCommandIds??repository?.verificationCommands.map(c=>c.id)??[];
-    if (verification.some(id=>!repository?.verificationCommands.some(c=>c.id===id)) || repository?.verificationCommands.some(c=>c.required&&!verification.includes(c.id))) throw new PublicationError("INVALID_VERIFICATION",400,"Select registered verification commands, including every required command");
+    if (verification.some(id=>!repository?.verificationCommands.some(c=>c.id===id)) || repository?.verificationCommands.some(c=>c.required&&!verification.includes(c.id))) throw inputError("INVALID_VERIFICATION","Select registered verification commands, including every required command","/verificationCommandIds");
     const baseRef=draft.baseRef??repository?.defaultBaseRef??"";
     let baseCommit: string|undefined;
     let workspaceCheck:PublicationPreview["checks"][number]={id:"workspace",status:"warning",message:"No repository; task needs specification"};
     if(repository) { try { baseCommit=(await this.workspaces.inspect({repositoryId:repository.id,baseRef:existing?.contract.workspace?.baseCommit??baseRef,scopePaths:scopes,...(draft.targetBranch?{targetBranch:draft.targetBranch}:{})})).baseCommit;workspaceCheck={id:"workspace",status:"passed",message:"Registered physical Git root and base commit verified"}; } catch(error) {
-      if(draft.startMode==="dispatch"||error instanceof WorkspacePolicyError)throw new PublicationError("INVALID_WORKSPACE",400,error instanceof Error?error.message:"Repository cannot be inspected");
+      if(error instanceof WorkspacePolicyError){const path=["INVALID_TARGET_BRANCH","BRANCH_EXISTS"].includes(error.code)?"/targetBranch":error.code==="INVALID_BASE_REF"?"/baseRef":["INVALID_SCOPE","SYMLINK_ESCAPE","PRIVATE_PATH_SCOPE","PRIVATE_PATH_CHECK_UNAVAILABLE"].includes(error.code)?"/scopePaths":"/repositoryId";throw inputError("INVALID_WORKSPACE",error.message,path);}
+      if(draft.startMode==="dispatch")throw new PublicationError("INVALID_WORKSPACE",400,error instanceof Error?error.message:"Repository cannot be inspected");
       workspaceCheck={id:"workspace",status:"warning",code:"WORKSPACE_UNVERIFIED",message:"Repository execution context is unverified; task creation is allowed and dispatch requires a fresh owning Git check"};
     } }
     let deliverySelection:ScmDeliverySelection|undefined,deliveryCheck:PublicationPreview["checks"][number]|undefined;

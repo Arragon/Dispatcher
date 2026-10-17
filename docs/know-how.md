@@ -682,3 +682,7 @@
   runId/generation from stored standalone observations. A terminal session needs
   a separate successful-collection cursor: native completion is not proof its
   metrics were saved. Empty cached results cannot resolve an earlier usage error.
+- Do not serialize raw validator errors into draft field diagnostics. Whitelist
+  canonical input paths and static codes; never echo validator data/unknown keys.
+  Focus the existing affected control and open its collapsed details section so
+  a field error is actionable without changing or discarding the user's draft.
