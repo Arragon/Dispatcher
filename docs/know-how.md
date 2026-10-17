@@ -587,3 +587,11 @@
 - Persist SDK/HTTP STARTING before an external create request. Bind the original
   account context once, and never bind an old unqualified session merely because
   its record is being updated under today's configuration.
+
+- Workspace package exports resolve its built output in cross-package tests.
+  After changing that package, build before Controller/Runner targets; a source-
+  local unit alone does not prove callers see the new method.
+- Repository IDs, durable local Project IDs and remote delivery owner/name are
+  separate identities. Ref browsing reads current local/Runner refs without
+  fetching; only publication review freezes the selected base commit. Preserve
+  historical Project rows when a repository registration is removed.

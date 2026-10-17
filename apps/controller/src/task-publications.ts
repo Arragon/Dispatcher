@@ -179,6 +179,7 @@ export class PublicationService {
       if(!this.db.createEntityIfAbsent("operation-receipt",receiptId,json({requestHash,publicationId:id})))throw new PublicationError("IDEMPOTENCY_CONFLICT",409,"Commit already reserved");
       const taskId=r.taskBinding?.taskId??randomUUID();
       if(!r.taskBinding){const now=this.now().toISOString();const task:Task={id:taskId,projectId:r.draft.projectId,title:r.preview.effectiveTask.title,description:r.draft.description,state:r.preview.effectiveTask.contractState,createdAt:now,updatedAt:now};
+        if(!this.db.getEntity("project",task.projectId))this.db.saveEntity("project",task.projectId,json({id:task.projectId,name:r.repository?.id??"本地收件箱",...(r.repository?{repository:r.repository.id}:{}),revision:1,updatedAt:now}));
         this.tasks.execute({id:`publication:${id}`,taskId,baseRevision:0,actor:owner,command:{type:"task.create",task}});
         if(r.contract)this.db.saveTaskContract(taskId,json(r.contract));
       }

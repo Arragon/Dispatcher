@@ -8,6 +8,7 @@ export interface NativeStartDescriptor {version:1;profileId:string;workspaceId:s
 export type NativeRunAction="status"|"result"|"usage"|"diagnostics"|"send"|"pause"|"resume"|"cancel";
 export type NativeCommandPayload=
   |{type:"native.repository";repositoryId:string;baseRef:string;scopePaths:string[];targetBranch?:string}
+  |{type:"native.repository_refs";repositoryId:string;offset:number;limit:number}
   |{type:"native.workspace_plan";profileId:string;plan:NativeWorkspacePlan}
   |{type:"native.workspace_prepare";runId:string;profileId:string;plan:NativeWorkspacePlan;verificationCommandIds:string[]}
   |{type:"native.model_catalog";profileId:string;repositoryId:string;runId?:string;reason:ModelCatalogContext["reason"]}
@@ -33,6 +34,7 @@ export function validateNativeExecutionCommand(payload:Record<string,unknown>,au
   const fenced=()=>id(authority.leaseId)&&Number.isSafeInteger(authority.generation)&&Number(authority.generation)>0&&typeof authority.leaseExpiresAt==="string"&&Number.isFinite(Date.parse(authority.leaseExpiresAt));
   switch(payload.type){
     case "native.repository":return keys(payload,["type","repositoryId","baseRef","scopePaths"],["targetBranch"])&&id(payload.repositoryId)&&id(payload.baseRef)&&scopes(payload.scopePaths)&&(payload.targetBranch===undefined||id(payload.targetBranch));
+    case "native.repository_refs":return keys(payload,["type","repositoryId","offset","limit"])&&id(payload.repositoryId)&&Number.isSafeInteger(payload.offset)&&Number(payload.offset)>=0&&Number(payload.offset)<=10_000&&Number.isSafeInteger(payload.limit)&&Number(payload.limit)>=1&&Number(payload.limit)<=100;
     case "native.workspace_plan":return keys(payload,["type","profileId","plan"])&&id(payload.profileId)&&workspace(payload.plan);
     case "native.workspace_prepare":return keys(payload,["type","runId","profileId","plan","verificationCommandIds"])&&id(payload.runId)&&id(payload.profileId)&&workspace(payload.plan)&&payload.plan.runId===payload.runId&&ids(payload.verificationCommandIds)&&fenced();
     case "native.model_catalog":return keys(payload,["type","profileId","repositoryId","reason"],["runId"])&&id(payload.profileId)&&id(payload.repositoryId)&&["open","selection-change","preflight","before-start","manual-refresh"].includes(String(payload.reason))&&(payload.runId===undefined||id(payload.runId)&&fenced());

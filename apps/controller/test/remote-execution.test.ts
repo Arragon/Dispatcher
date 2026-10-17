@@ -68,6 +68,13 @@ async function setup(verificationFails = false,holdFirstReconcile = false) {
   const commit = (p: { publicationId: string; revision: number; confirmation: { reviewHash: string } }) => service.app.inject({ method: "POST", url: `/api/task-publications/${p.publicationId}/commit`, headers: { ...headers, "idempotency-key": "remote-publication" }, payload: { revision: p.revision, reviewHash: p.confirmation.reviewHash, confirmation: { accepted: true } } });
   return {get service(){return service;},runtime,get client(){return client;},root,runnerData,controllerData,starts,catalogs,localBackend,createLocal,headers,preview,commit,gate,entered,control,connect,restartController,restores,now,reconcileGate,reconcileEntered,verificationGate,verificationEntered,advanceClock:(ms:number)=>{clock=new Date(clock.getTime()+ms);}};
 }
+it("reads remote registered repository context and references without touching Controller Git or native execution",async()=>{
+ const f=await setup();execFileSync("git",["-C",f.root,"branch","feature/remote-read"]);
+ const local=vi.spyOn(f.service.workspaces,"refs").mockRejectedValue(new Error("Controller must not inspect remote files"));
+ const context=await f.service.app.inject({headers:f.headers,url:"/api/repositories/repo/context"});expect(context.statusCode).toBe(200);expect(context.json()).toMatchObject({runnerId:"remote",git:{state:"valid"}});
+ const refs=await f.service.app.inject({headers:f.headers,url:"/api/repositories/repo/refs?offset=0&limit=1"});expect(refs.statusCode,refs.body).toBe(200);expect(refs.json()).toMatchObject({nextOffset:1,refs:[{name:"refs/heads/feature/remote-read"}]});
+ expect(local).not.toHaveBeenCalled();expect(f.starts).toHaveLength(0);expect(f.createLocal).not.toHaveBeenCalled();expect(existsSync(join(f.controllerData,"worktrees"))).toBe(false);
+});
 it("reserves canonical authority before owning-Runner worktree creation and completes remote verification/result delivery", async () => {
   const f = await setup(), p = await f.preview(); expect(p.canCommit).toBe(true); expect(f.starts).toHaveLength(0); expect(existsSync(join(f.runnerData, "worktrees"))).toBe(false);
   const receipt = (await f.commit(p)).json(); expect(receipt).toMatchObject({ state: "STARTED" }); expect(f.starts).toHaveLength(1);

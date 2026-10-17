@@ -74,6 +74,26 @@ export class WorkspaceManager {
     return workspace ? structuredClone(workspace) : undefined;
   }
 
+  async refs(repositoryId:string,offset=0,limit=50) {
+    if(!Number.isSafeInteger(offset)||offset<0||offset>10_000||!Number.isSafeInteger(limit)||limit<1||limit>100)throw new WorkspacePolicyError("INVALID_REF_PAGE","Ref offset/limit are outside the supported range");
+    const repository=this.registry.get(repositoryId),root=await realpath(repository.root),signal=AbortSignal.timeout(8_000);
+    const top=(await execute("git",["-C",root,"rev-parse","--show-toplevel"],{signal,timeout:8_000,maxBuffer:1024*1024})).stdout.trim();
+    if(await realpath(top)!==root)throw new WorkspacePolicyError("INVALID_REPOSITORY_ROOT","Registered root must be the physical Git root");
+    const output=(await execute("git",["-C",root,"for-each-ref",`--count=${offset+limit+1}`,"--sort=refname","--format=%(refname)%09%(objectname)","refs/heads","refs/remotes","refs/tags"],{signal,timeout:8_000,maxBuffer:2*1024*1024})).stdout;
+    const all=output.trim()?output.trimEnd().split("\n"):[],page=all.slice(offset,offset+limit);
+    const refs:Array<{name:string;commit:string;kind:"branch"|"tag"|"remote"}>=[];
+    for(const line of page){
+      const [name,object]=line.split("\t");
+      if(!name||!object||!/^refs\/(heads|remotes|tags)\//.test(name)||!/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(object))throw new WorkspacePolicyError("INVALID_REF_RESULT","Git returned an invalid reference");
+      // Resolve annotated tags to the exact commit; non-commit tags are not execution bases.
+      let commit:string;try{commit=(await execute("git",["-C",root,"rev-parse","--verify","--end-of-options",`${name}^{commit}`],{signal,timeout:8_000,maxBuffer:1024})).stdout.trim();}catch(error){if(signal.aborted)throw error;continue;}
+      if(!/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(commit))throw new WorkspacePolicyError("INVALID_REF_RESULT","Git returned an invalid commit");
+      const kind=name.startsWith("refs/heads/")?"branch" as const:name.startsWith("refs/tags/")?"tag" as const:"remote" as const;
+      refs.push({name,commit,kind});
+    }
+    return {refs,offset,limit,...(all.length>offset+limit?offset+limit<=10_000?{nextOffset:offset+limit}:{truncated:true}:{})};
+  }
+
   async inspect(plan: Pick<WorkspacePlan, "repositoryId" | "baseRef" | "scopePaths"> & { targetBranch?: string }): Promise<{ baseCommit: string; root: string }> {
     const repository = this.registry.get(plan.repositoryId);
     const root = await realpath(repository.root);

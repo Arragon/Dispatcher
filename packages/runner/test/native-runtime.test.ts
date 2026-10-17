@@ -209,6 +209,12 @@ it("ignores foreign native paths and rejects cross-device repository use and sco
   for (const scopePaths of [[], ["."], ["src-other"]]) await expect(f.call({ type: "native.workspace_plan", profileId: "p", plan: { ...f.plan, scopePaths } })).rejects.toMatchObject({ code: "SCOPE_NOT_REGISTERED" });
   expect(f.starts()).toBe(0);
 });
+it("reads references only from its registered repository without starting a native session",async()=>{
+ const f=fixture();f.apply();execFileSync("git",["-C",f.root,"branch","feature/ref-read"]);
+ const refs=await f.call({type:"native.repository_refs",repositoryId:"repo",offset:0,limit:1});expect(refs).toMatchObject({offset:0,limit:1,nextOffset:1,refs:[{name:"refs/heads/feature/ref-read",kind:"branch"}]});
+ await expect(f.call({type:"native.repository_refs",repositoryId:"unknown",offset:0,limit:10})).rejects.toMatchObject({code:"REPOSITORY_UNAVAILABLE"});
+ expect(f.starts()).toBe(0);
+});
 
 it("holds capacity through native completion until Controller finalization and then prevents further input", async () => {
   const f = fixture(); f.apply(); await f.prepare(); await f.start(); f.complete(); await f.call({ type: "native.run", runId: "run", action: "status" });

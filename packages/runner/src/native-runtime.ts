@@ -155,7 +155,7 @@ export class NativeRunnerRuntime {
   profileInventory(): string[] { return [...this.adapters.keys()].sort(); }
   capacity(): number { return this.config.runners.find(r => r.id === this.options.runnerId)?.capacity ?? 0; }
   registerHandlers(client: { register(type: CommandPayload["type"], handler: (payload: CommandPayload, envelope: ProtocolEnvelope<CommandPayload>) => Promise<unknown>): unknown }): void {
-    const commands: CommandPayload["type"][] = ["native.repository", "native.workspace_plan", "native.workspace_prepare", "native.model_catalog", "native.profile_probe", "native.run", "native.run_verify", "native.run_files", "native.run_finalize", "run.start", "runner.reconcile", "lease.renew", "lease.revoke"];
+    const commands: CommandPayload["type"][] = ["native.repository", "native.repository_refs", "native.workspace_plan", "native.workspace_prepare", "native.model_catalog", "native.profile_probe", "native.run", "native.run_verify", "native.run_files", "native.run_finalize", "run.start", "runner.reconcile", "lease.renew", "lease.revoke"];
     for (const type of commands) client.register(type, (payload, envelope) => this.handle(payload, envelope));
   }
   private profile(id: string): { profile: AgentProfileConfig; adapter: AgentAdapter } {
@@ -214,6 +214,7 @@ export class NativeRunnerRuntime {
     if (payload.type === "lease.renew" || payload.type === "lease.revoke") return this.updateLease(payload);
     const runId = "runId" in payload ? payload.runId : payload.type === "native.workspace_plan" ? payload.plan.runId : undefined;
     return this.serialize(runId ?? "registration-reads", async () => {
+      if(payload.type==="native.repository_refs"){this.repository(payload.repositoryId);return this.workspaces.refs(payload.repositoryId,payload.offset,payload.limit);}
       if (payload.type === "native.repository") {
         const repository = this.repository(payload.repositoryId);
         this.assertScopes(repository, payload.scopePaths);

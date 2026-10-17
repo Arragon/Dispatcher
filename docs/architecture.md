@@ -746,3 +746,24 @@ explicit probe result may establish a new time. Remote cached reads preserve
 their original timestamp across restart. Unmeasured process totals and hourly
 LLM counts are null; the measured cumulative counter covers generation attempts
 since this Controller instance started and excludes independent probes.
+
+## Registered repository context and references
+
+Read-only repository context identifies the configured repository, its durable
+local Project, owning Runner and configuration revision separately. Applied
+registrations establish local Project rows; publication creates the repository-
+less local inbox Project in the same transaction as its first Task. Removing a
+registration retains historical Project/Task identity. Context/reference GETs
+never write configuration or project rows, create worktrees, fetch or execute
+verification commands. A changed registration rejects an in-flight read.
+
+WorkspaceManager reads sorted bounded existing refs, resolves annotated tags to
+commits, omits non-commit tags and limits the entire read to eight seconds. Page
+offsets refer to current refs, not a frozen execution baseline; publication still
+resolves and freezes the chosen commit during review. The additive registered
+native.repository_refs command runs only on the owning Runner and rejects
+unregistered/foreign repositories. Controller validates the returned bounded
+shape; it never interprets a foreign filesystem path. Older/offline Runners
+return explicit unavailability rather than local fallback. The shared frontend
+reference picker queries only on explicit request and retains native ref names;
+repository context is shown independently from account/model readiness.

@@ -1,10 +1,22 @@
 import { AdapterContractError } from "@dispatcher/adapters";
-import type { AccountModelCatalog } from "@dispatcher/domain";
+import type { AccountModelCatalog,RepositoryRefs } from "@dispatcher/domain";
 import type { RunnerLease, RunnerRunSnapshot } from "@dispatcher/runner";
 const object = (value: unknown): value is Record<string, unknown> => Boolean(value && typeof value === "object" && !Array.isArray(value));
 const text = (value: unknown, max = 200): value is string => typeof value === "string" && value.length > 0 && value.length <= max;
 const parameter = (value: unknown) => typeof value === "boolean" || typeof value === "number" && Number.isFinite(value) || typeof value === "string" && value.length <= 4000;
 const keys = (value: Record<string, unknown>, allowed: string[]) => Object.keys(value).every(key => allowed.includes(key));
+export function remoteRepositoryRefs(value:unknown,offset:number,limit:number):RepositoryRefs{
+  const invalid=():never=>{throw new AdapterContractError("REMOTE_RESULT_INVALID","Owning Runner returned invalid repository references");};
+  if(!object(value)||!keys(value,["offset","limit","nextOffset","truncated","refs"])||value.offset!==offset||value.limit!==limit||value.nextOffset!==undefined&&(value.nextOffset!==offset+limit||offset+limit>10_000)||value.truncated!==undefined&&typeof value.truncated!=="boolean"||value.truncated===true&&value.nextOffset!==undefined||!Array.isArray(value.refs)||value.refs.length>limit)return invalid();
+  const names=new Set<string>();
+  for(const ref of value.refs){
+    if(!object(ref)||!keys(ref,["name","commit","kind"])||!text(ref.name,1024))return invalid();
+    const name=ref.name;
+    if(names.has(name)||Array.from(name).some(character=>character.codePointAt(0)!<=32||character.codePointAt(0)===127)||["..","//","@{","~","^",":","?","*","[","\\"].some(value=>name.includes(value))||name.split("/").some(part=>part.startsWith(".")||part.endsWith(".lock"))||name.endsWith(".")||!/^refs\/(heads|tags|remotes)\/.+/.test(name)||typeof ref.commit!=="string"||!/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(ref.commit)||ref.kind!==(name.startsWith("refs/heads/")?"branch":name.startsWith("refs/tags/")?"tag":"remote"))return invalid();
+    names.add(name);
+  }
+  return structuredClone(value) as unknown as RepositoryRefs;
+}
 export function remoteCatalog(value: unknown, expected: { profileId: string; runnerId: string; providerId: string }): AccountModelCatalog {
   const invalid = (): never => { throw new AdapterContractError("REMOTE_RESULT_INVALID", "Owning Runner returned an invalid or mismatched native catalog"); };
   if (!object(value) || !keys(value, ["profileId", "runnerId", "providerId", "backendId", "contextFingerprint", "revision", "fetchedAt", "freshness", "source", "selectionSupport", "entries", "failure"]) || Object.entries(expected).some(([key, expected]) => value[key] !== expected) || ![value.backendId, value.contextFingerprint, value.revision].every(item => text(item, 1000)) || typeof value.fetchedAt !== "string" || !Number.isFinite(Date.parse(value.fetchedAt)) || !["native-fresh", "native-cache", "unverified"].includes(String(value.freshness)) || !["cli-query", "native-rpc", "account-api"].includes(String(value.source)) || !["explicit", "native-default-only", "unsupported"].includes(String(value.selectionSupport)) || !Array.isArray(value.entries) || value.entries.length > 10000) return invalid();

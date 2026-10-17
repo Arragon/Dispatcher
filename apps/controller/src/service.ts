@@ -4,11 +4,11 @@ import { CredentialContext } from "./credential-context.js";
 import {RunInputReceipts,InputReceiptError,type RunInputIdentity} from "./run-inputs.js";
 import {UsageObservations,UsageObservationError} from "./usage-observations.js";
 import {buildDiagnostics,diagnosticChecks} from "./diagnostics.js";
-import type { ProfileConsoleView,NativeSessionConsoleView,DeliveryEvidence } from "@dispatcher/domain";
+import type { ProfileConsoleView,NativeSessionConsoleView,RepositoryConsoleContext,RepositoryRefs,DeliveryEvidence } from "@dispatcher/domain";
 import { applyConfigEdits, consoleConfig, consoleConfigPlan } from "./config-edits.js";
 import {qualifyRoutingPolicy,type PolicyConfigEvidence} from "./policy-config.js";
 import {TaskClassifier} from "./task-classifier.js";
-import { remoteCatalog, remoteRunInventory } from "./remote-results.js";
+import { remoteCatalog, remoteRunInventory,remoteRepositoryRefs } from "./remote-results.js";
 import { RemoteNativeAdapter } from "./remote-adapter.js";
 import { NATIVE_EXECUTION_CAPABILITY, type CommandPayload } from "@dispatcher/protocol";
 import { ModelRoutingService } from "./model-routing.js";
@@ -1166,6 +1166,11 @@ export class ControllerService {
       // Controller owns this executor's concurrency setting; remote reports stay with their owner.
       if (configured && reported) this.runners.register({ ...reported, capacity: configured.capacity, displayName: configured.displayName });
     }
+    for(const repository of config.repositories){
+      const id=`local:${repository.id}`,existing=this.database.getEntity<JsonValue>("project",id) as unknown as Project|undefined;
+      if(existing?.repository&&existing.repository!==repository.id)throw new ConfigPlanError("LOCAL_PROJECT_CONFLICT","Local project repository binding is already owned by another registration");
+      if(!existing?.repository)this.database.saveEntity("project",id,json({...existing,id,name:existing?.name??repository.id,repository:repository.id,revision:existing?.revision??1,updatedAt:this.now().toISOString()}));
+    }
   }
 
   private async processExternalTaskEvent(adapter: TaskPlatformAdapter, event: ExternalEvent): Promise<{ task: Task; revision: number; duplicate: boolean }> {
@@ -1892,6 +1897,27 @@ export class ControllerService {
     const inspected=await this.remoteRequest(owner,{type:"native.repository",...plan}) as {baseCommit?:unknown;root?:unknown;registeredRoot?:unknown;verificationCommands?:unknown};
     if(!inspected||typeof inspected.baseCommit!=="string"||!/^[a-f0-9]{40,64}$/i.test(inspected.baseCommit)||typeof inspected.root!=="string"||inspected.root.length>4000||inspected.registeredRoot!==repository.root||contentHash(inspected.verificationCommands)!==contentHash(repository.verificationCommands))throw new PublicationError("REMOTE_REPOSITORY_MISMATCH",409,"Owning Runner repository or verification registration differs; review both registrations");
     return {baseCommit:inspected.baseCommit,root:inspected.root};
+  }
+  private async repositoryContext(id:string):Promise<RepositoryConsoleContext>{
+    const snapshot=this.configuration.current(),repository=snapshot.config.repositories.find(repository=>repository.id===id);
+    if(!repository)throw new PublicationError("REPOSITORY_NOT_FOUND",404,"Choose a registered repository");
+    const runnerId=repositoryRunnerId(snapshot.config,repository),remote=snapshot.config.runners.some(runner=>runner.id===runnerId&&runner.mode==="remote");
+    let git:RepositoryConsoleContext["git"];
+    try{const inspected=await this.inspectRepository({repositoryId:id,baseRef:repository.defaultBaseRef,scopePaths:repository.scopePaths});git={state:"valid",baseRef:repository.defaultBaseRef,baseCommit:inspected.baseCommit};}
+    catch(error){git={state:remote?"unavailable":"invalid",baseRef:repository.defaultBaseRef,reasonCode:error instanceof AdapterContractError?error.code:error instanceof WorkspacePolicyError?error.code:"REPOSITORY_INSPECTION_FAILED"};}
+    if(snapshot.revision!==this.configuration.current().revision)throw new PublicationError("SELECTION_CHANGED",409,"Repository registration changed while reading context");
+    const available=git.state==="valid",action={allowed:available,requiresConfirmation:false,...(!available?{reasonCode:git.reasonCode}:{})};
+    return {repositoryId:id,projectId:`local:${id}`,runnerId,runnerBindingSource:repository.runnerId?"explicit":"legacy-local",configRevision:snapshot.revision,git,scopePaths:[...repository.scopePaths],verificationCommands:repository.verificationCommands.map(command=>({id:command.id,required:command.required})),actions:{publish:{...action,requiresConfirmation:true},refs:action}};
+  }
+  private async repositoryRefs(id:string,offset:number,limit:number):Promise<RepositoryRefs>{
+    const snapshot=this.configuration.current(),repository=snapshot.config.repositories.find(repository=>repository.id===id);
+    if(!repository)throw new PublicationError("REPOSITORY_NOT_FOUND",404,"Choose a registered repository");
+    const runnerId=repositoryRunnerId(snapshot.config,repository),remote=snapshot.config.runners.some(runner=>runner.id===runnerId&&runner.mode==="remote");
+    let refs:RepositoryRefs;
+    try{refs=remote?remoteRepositoryRefs(await this.remoteRequest(runnerId,{type:"native.repository_refs",repositoryId:id,offset,limit}),offset,limit):await this.workspaces.refs(id,offset,limit);}
+    catch(error){throw new PublicationError(error instanceof AdapterContractError?error.code:error instanceof WorkspacePolicyError?error.code:"REPOSITORY_REFS_UNAVAILABLE",409,"Repository references could not be read on the owning Runner");}
+    if(snapshot.revision!==this.configuration.current().revision)throw new PublicationError("SELECTION_CHANGED",409,"Repository registration changed while reading references");
+    return refs;
   }
   private remoteWorkspace(value:unknown,plan:Parameters<WorkspaceManager["create"]>[0],reviewed?:WorkspaceHandle):WorkspaceHandle {
     const handle=value as WorkspaceHandle|undefined;
@@ -3565,6 +3591,12 @@ export class ControllerService {
       const decision=await this.modelRouting.preview(principal.id,draft,snapshot.config,snapshot.revision,catalog,{trial:true,keywordOnly:request.body.semantic!==true,forceSemantic:request.body.semantic===true,...(policy?{policy}:{})});
       if(this.configuration.current().revision!==snapshot.revision)throw new PublicationError("ROUTING_DECISION_STALE",409,"Configuration changed during classification trial");
       return {trial:true,source:policy?"draft":"applied",decision};
+    });
+    this.app.get<{Params:{id:string}}>("/api/repositories/:id/context",async request=>this.repositoryContext(request.params.id));
+    this.app.get<{Params:{id:string};Querystring:{offset?:string;limit?:string}}>("/api/repositories/:id/refs",async(request,reply)=>{
+      const {offset="0",limit="50"}=request.query;
+      if(!/^\d+$/.test(offset)||!/^\d+$/.test(limit)||Number(offset)>10_000||Number(limit)<1||Number(limit)>100)return reply.code(400).send({code:"INVALID_REF_PAGE"});
+      return this.repositoryRefs(request.params.id,Number(offset),Number(limit));
     });
     this.app.get("/api/task-publications/capabilities", async () => ({ schemaVersion: 1, startModes: ["create-only","dispatch"], deliveryTypes: ["none"], selectionModes:["manual","policy-auto"], modelRouting:{classificationModes:["keyword","hybrid"],enabled:this.configuration.current().config.policies.modelRouting?.enabled===true}, projects: this.configuration.current().config.repositories.map(r => ({ id: `local:${r.id}`, repositoryId: r.id })) }));
     this.app.post<{ Body: PublishDraftV1 }>("/api/task-publications/preview", { schema: { body: publishDraftSchema } }, async request => {

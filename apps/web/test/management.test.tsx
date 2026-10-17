@@ -117,3 +117,12 @@ it("keeps platform connections usable when recovery reads fail and tab labels re
   expect(await screen.findByRole("alert")).toHaveProperty("textContent",expect.stringContaining("同步恢复记录读取失败"));
   expect(screen.queryByText(/\[object Object\]/)).toBeNull();
 });
+
+it("loads bounded repository refs only on request and preserves the chosen base reference",async()=>{
+ const {RepositoryRefPicker}=await import("../src/RepositoryContext.js");const {useState}=await import("react");
+ const fetch=vi.spyOn(globalThis,"fetch").mockImplementation(async()=>new Response(JSON.stringify({offset:0,limit:50,refs:[{name:"refs/heads/feature/selected",commit:"a".repeat(40),kind:"branch"}]})));
+ function Picker(){const [value,setValue]=useState("");return <RepositoryRefPicker id="registered" value={value} onChange={setValue}/>;}
+ mount(<Picker/>);expect(fetch).not.toHaveBeenCalled();await userEvent.click(screen.getByRole("button",{name:"读取仓库引用"}));
+ await screen.findByRole("option",{name:"refs/heads/feature/selected · aaaaaaaaaa"});await userEvent.selectOptions(screen.getByLabelText("选择已读取引用"),"refs/heads/feature/selected");expect((screen.getByLabelText("基准引用") as HTMLInputElement).value).toBe("refs/heads/feature/selected");
+ expect(fetch.mock.calls.map(([path])=>String(path))).toEqual(["/api/repositories/registered/refs?offset=0&limit=50"]);expect(fetch.mock.calls.every(([,init])=>!init?.method)).toBe(true);
+});
