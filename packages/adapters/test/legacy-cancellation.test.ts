@@ -1,6 +1,16 @@
 import { expect, it, vi } from "vitest";
-import { GenericCliAdapter, LocalServiceAdapter, MemorySessionStore, QoderAdapter, type ProcessExecution, type QoderBackend } from "../src/index.js";
+import { DevinAdapter,GenericCliAdapter, LocalServiceAdapter, MemorySessionStore, QoderAdapter, type ProcessExecution, type QoderBackend } from "../src/index.js";
 const profile = { id: "http", alias: "HTTP", provider: "workbuddy" as const, baseUrl: "http://127.0.0.1:9999", healthPath: "/health", startPath: "/start", statusPath: "/sessions/{sessionId}", inputPath: "/sessions/{sessionId}/input", cancelPath: "/sessions/{sessionId}/cancel" };
+it.each(["http","devin"])("persists %s startup before an external request and checks shared-store profile ownership",async kind=>{
+ const store=new MemorySessionStore(),request=vi.fn(async()=>({sessionId:"native",state:"completed",status:"completed",pullRequests:[]})),fetch=vi.fn(async()=>new Response(JSON.stringify(await request())));
+ const backend={health:async()=>({ok:true}),create:request,get:request,send:request};
+ const failedStore={load:(id:string)=>store.load(id),save:()=>{throw new Error("startup persistence failed");}};
+ const make=(id:string,sessionStore=store)=>kind==="http"?new LocalServiceAdapter({...profile,id},undefined,fetch,sessionStore):new DevinAdapter({id,alias:id,credentialRef:"secret://devin/a",organizationId:"org-fixture"},backend,sessionStore);
+ const failed=kind==="http"?new LocalServiceAdapter(profile,undefined,fetch,failedStore):new DevinAdapter({id:"http",alias:"HTTP",credentialRef:"secret://devin/a",organizationId:"org-fixture"},backend,failedStore);
+ await expect(failed.start({runId:"run",workspacePath:"/work"})).rejects.toThrow("startup persistence failed");expect(request).not.toHaveBeenCalled();
+ const first=await make("a").start({runId:"run",workspacePath:"/work"});request.mockClear();
+ await expect(make("b").status(first.id)).rejects.toMatchObject({code:"SESSION_PROFILE_MISMATCH"});expect(request).not.toHaveBeenCalled();
+});
 it.each(["qoder", "generic"] as const)("refuses a detached active %s cancel without changing persisted state", async kind => {
   const store = new MemorySessionStore();
   store.save({ id: "session", runId: "run", profileId: "p", workspacePath: "/work", backendId: "fixture", state: "RUNNING", createdAt: "2026-10-16T00:00:00Z", updatedAt: "2026-10-16T00:00:00Z" });

@@ -4,7 +4,7 @@ import { CredentialContext } from "./credential-context.js";
 import {RunInputReceipts,InputReceiptError,type RunInputIdentity} from "./run-inputs.js";
 import {UsageObservations,UsageObservationError} from "./usage-observations.js";
 import {buildDiagnostics,diagnosticChecks} from "./diagnostics.js";
-import type { ProfileConsoleView,DeliveryEvidence } from "@dispatcher/domain";
+import type { ProfileConsoleView,NativeSessionConsoleView,DeliveryEvidence } from "@dispatcher/domain";
 import { applyConfigEdits, consoleConfig, consoleConfigPlan } from "./config-edits.js";
 import {qualifyRoutingPolicy,type PolicyConfigEvidence} from "./policy-config.js";
 import {TaskClassifier} from "./task-classifier.js";
@@ -234,15 +234,20 @@ interface DeliveryFeedback {
 const CREDENTIAL_PATTERN = /(?:sk-|xox[baprs]-|gh[op]_)[a-z0-9_-]{8,}/i;
 const ADVANCEABLE_RUN_STATES = new Set<Run["state"]>(["ACTIVE", "VERIFYING", "DELIVERING"]);
 
+interface SessionAuthority {version:1;fingerprint:string;repositoryId?:string;stopState:NativeSessionConsoleView["stopState"]}
+type BoundSession=AdapterSession&{authority?:SessionAuthority};
 class DatabaseSessionStore implements SessionStore {
-  constructor(private readonly database: DispatcherDatabase,private readonly beforeSpawn?:(session:AdapterSession)=>void) {}
+  constructor(private readonly database: DispatcherDatabase,private readonly beforeSpawn?:(session:AdapterSession)=>void,private readonly bind?:(session:AdapterSession)=>SessionAuthority|undefined) {}
   load(id: string): AdapterSession | undefined {
     const value = this.database.getEntity<JsonValue>("adapter-session", id);
     return value as unknown as AdapterSession | undefined;
   }
   save(session: AdapterSession): void {
     if(session.state==="STARTING")this.beforeSpawn?.(session);
-    this.database.saveEntity("adapter-session", session.id, JSON.parse(JSON.stringify(session)) as JsonValue, session.updatedAt);
+    const previous=this.load(session.id) as BoundSession|undefined;
+    // Never adopt historical unbound sessions into the current account implicitly.
+    const authority=previous?previous.authority:this.bind?.(session);
+    this.database.saveEntity("adapter-session", session.id, json({...session,...(authority?{authority}:{})}), session.updatedAt);
   }
 }
 
@@ -484,6 +489,7 @@ export class ControllerService {
   private readonly pendingProfileStarts = new Map<string, number>();
   private readonly trialReservations = new Map<string, { runnerId: string; workspacePath: string }>();
   private readonly pendingSessionCancellations = new Map<string, Promise<AdapterSession>>();
+  private readonly uncertainSessionStops = new Set<string>();
   private readonly revokedRunnerCredentials = new Set<string>();
   private readonly runnerCredentialOperations = new Set<string>();
   private readonly rawWebhookBodies = new WeakMap<object, Uint8Array>();
@@ -943,7 +949,7 @@ export class ControllerService {
     return (this.pendingProfileStarts.get(id)??0)>0
       || (this.database.listEntities<JsonValue>("run") as unknown as Run[]).some(run=>run.profileId===id&&!isTerminalRunState(run.state))
       || Boolean(owned&&adapter.hasActiveOperations())
-      || (this.database.listEntities<JsonValue>("adapter-session") as unknown as AdapterSession[]).some(session=>session.profileId===id&&(this.pendingConsoleInputs.has(session.id)||this.pendingSessionCancellations.has(session.id)||session.state==="PAUSED"||!owned&&["STARTING","RUNNING"].includes(session.state)));
+      || (this.database.listEntities<JsonValue>("adapter-session") as unknown as AdapterSession[]).some(session=>session.profileId===id&&(this.pendingConsoleInputs.has(session.id)||this.pendingSessionCancellations.has(session.id)||this.sessionStopUncertain(session)||session.state==="PAUSED"||!owned&&["STARTING","RUNNING"].includes(session.state)));
   }
   private assertCredentialChangeAllowed(reference: string): void {
     this.credentialContext.assertAvailable(reference);
@@ -1060,7 +1066,12 @@ export class ControllerService {
     for (const id of this.profileAdapterConfigurations.keys()) {
       if (!retainedAdapters.has(id)) this.profileAdapterConfigurations.delete(id);
     }
-    const store = new DatabaseSessionStore(this.database, session => this.fenceNativeSpawn(session.runId, session.profileId));
+    const store = new DatabaseSessionStore(this.database, session => this.fenceNativeSpawn(session.runId, session.profileId),session=>{
+      if(!session.profileId)return;
+      const repositoryId=this.workspaces.get(session.workspacePath)?.repositoryId;
+      const context=this.resolveProfileExecutionContext(session.profileId,repositoryId,"start");
+      return {version:1,fingerprint:context.fingerprint,...(repositoryId?{repositoryId}:{}),stopState:"none"};
+    });
     for(const profile of config.agentProfiles.filter(profile=>profile.enabled!==false&&config.runners.some(runner=>runner.id===profile.runnerId&&runner.mode==="remote"))){
       if(retainedAdapters.has(profile.id))continue;
       const manifest=manifestForProvider(profile.provider);
@@ -1762,7 +1773,7 @@ export class ControllerService {
   private standaloneTrialSessions(): AdapterSession[] {
     const runs = this.database.listEntities<JsonValue>("run") as unknown as Run[];
     const canonicalSessions = new Set(runs.map(run => run.sessionId)), canonicalProfiles = new Map(runs.map(run => [run.id, run.profileId]));
-    return (this.database.listEntities<JsonValue>("adapter-session") as unknown as AdapterSession[]).filter(session => !canonicalSessions.has(session.id) && !(canonicalProfiles.has(session.runId) && canonicalProfiles.get(session.runId) === session.profileId) && ["STARTING", "RUNNING", "PAUSED"].includes(session.state));
+    return (this.database.listEntities<JsonValue>("adapter-session") as unknown as AdapterSession[]).filter(session => !canonicalSessions.has(session.id) && !(canonicalProfiles.has(session.runId) && canonicalProfiles.get(session.runId) === session.profileId) && (["STARTING", "RUNNING", "PAUSED"].includes(session.state)||this.sessionStopUncertain(session)));
   }
   private async refreshChangingTrialSessions(before: DispatcherConfig, after: DispatcherConfig): Promise<void> {
     const changing = before.agentProfiles.filter(profile => {
@@ -3056,10 +3067,7 @@ export class ControllerService {
     this.app.get("/api/agents/profiles", async () => ({
       revision: this.configuration.current().revision,
       profiles:this.configuration.current().config.agentProfiles.map(profile=>this.profileConsoleView(profile.id)),
-      sessions: this.database.listEntities<JsonValue>("adapter-session").map((value) => {
-        const session = value as Record<string, JsonValue>;
-        return { id: session.id, runId: session.runId, profileId: session.profileId, state: session.state, updatedAt: session.updatedAt };
-      }),
+      sessions: this.database.listEntities<JsonValue>("adapter-session").map(value=>this.sessionView(value as unknown as AdapterSession)),
     }));
     this.app.get<{Params:{id:string}}>("/api/agents/profiles/:id",async(request,reply)=>{
       if(!this.configuration.current().config.agentProfiles.some(profile=>profile.id===request.params.id))return reply.code(404).send({code:"PROFILE_NOT_FOUND"});return {profile:this.profileConsoleView(request.params.id)};
@@ -3283,12 +3291,25 @@ export class ControllerService {
       const { profileId, sessionId } = request.params;
       const stored = this.database.getEntity<JsonValue>("adapter-session", sessionId) as unknown as AdapterSession | undefined;
       if (stored?.profileId !== profileId) return reply.code(404).send({ code: "SESSION_NOT_FOUND" });
-      if ((this.database.listEntities<JsonValue>("run") as unknown as Run[]).some(run => run.sessionId === sessionId)) return reply.code(409).send({ code: "CANONICAL_EXECUTION_REQUIRED", message: "Cancel the canonical Run to revoke its lease and stop verification" });
+      if (this.canonicalSession(stored)) return reply.code(409).send({ code: "CANONICAL_EXECUTION_REQUIRED", message: "Cancel the canonical Run to revoke its lease and stop verification" });
       const adapter = this.agentAdapters.get(profileId);
       if (!adapter) return reply.code(404).send({ code: "PROFILE_NOT_FOUND" });
+      if(this.sessionStopState(stored)==="confirmed")return {session:this.sessionView(stored),canonical:false,repeated:true};
+      if(!adapter.manifest.backends.some(backend=>backend.capabilities.includes("cancel")))return reply.code(409).send({code:"UNSUPPORTED_CAPABILITY",message:"This backend has no qualified cancellation operation; inspect the native session"});
+      const localHandle=adapter instanceof CodexAdapter||adapter instanceof StructuredCliAdapter||adapter instanceof QoderAdapter||adapter instanceof GenericCliAdapter;
+      if(!localHandle)this.assertSessionContext(stored);
       let pending = this.pendingSessionCancellations.get(sessionId);
       if (!pending) {
-        pending = Promise.resolve().then(() => adapter.cancel(sessionId)).finally(() => { this.pendingSessionCancellations.delete(sessionId); });
+        this.uncertainSessionStops.add(sessionId);
+        this.saveSessionStop(stored,"requested");
+        pending = Promise.resolve().then(async()=>{
+          try{
+            if(localHandle&&(await adapter.diagnostics?.(sessionId))?.attached!==true)throw new AdapterContractError("SESSION_DETACHED","A detached local snapshot cannot confirm physical stop");
+            const stopped=await adapter.cancel(sessionId);
+            if(!["CANCELLED","COMPLETED","FAILED"].includes(stopped.state))throw new AdapterContractError("CANCELLATION_UNCONFIRMED","Native termination is not confirmed");
+            this.saveSessionStop(stopped,"confirmed");this.uncertainSessionStops.delete(sessionId);return stopped;
+          }catch(error){try{this.saveSessionStop(stored,"unconfirmed");}catch{/* The in-memory fence survives failed persistence. */}throw error;}
+        }).finally(() => { this.pendingSessionCancellations.delete(sessionId); });
         this.pendingSessionCancellations.set(sessionId, pending);
       }
       return { session: this.sessionView(await pending), canonical: false };
@@ -3298,7 +3319,15 @@ export class ControllerService {
       if (storedSession?.profileId !== request.params.profileId) return reply.code(404).send({ code: "SESSION_NOT_FOUND" });
       const adapter = this.agentAdapters.get(request.params.profileId);
       if (!adapter) return reply.code(404).send({ code: "PROFILE_NOT_FOUND" });
-      return { session: this.sessionView(await adapter.status(request.params.sessionId)) };
+      if(!this.canonicalSession(storedSession)&&(this.sessionContextState(storedSession)!=="current"||this.pendingSessionCancellations.has(storedSession.id)))return {session:this.sessionView(storedSession)};
+      const localHandle=adapter instanceof CodexAdapter||adapter instanceof StructuredCliAdapter||adapter instanceof QoderAdapter||adapter instanceof GenericCliAdapter;
+      const attached=localHandle?(await adapter.diagnostics?.(storedSession.id))?.attached===true:false;
+      const session=await adapter.status(request.params.sessionId);
+      if(!this.canonicalSession(storedSession)){
+        this.assertSessionContext(storedSession);
+        if(this.sessionStopUncertain(storedSession)&&(!localHandle||attached)&&["CANCELLED","COMPLETED","FAILED"].includes(session.state)){this.saveSessionStop(session,"confirmed");this.uncertainSessionStops.delete(session.id);}
+      }
+      return { session: this.sessionView(session) };
     });
     this.app.get<{Params:{runId:string;inputId:string}}>("/api/runs/:runId/inputs/:inputId",async(request,reply)=>{
       const receipt=this.runInputs.find(this.principalFor(request).id,request.params.inputId,request.params.runId);return receipt?{receipt}:reply.code(404).send({code:"INPUT_NOT_FOUND"});
@@ -3319,11 +3348,15 @@ export class ControllerService {
       }
       const adapter = this.agentAdapters.get(request.params.profileId);
       if (!adapter) return reply.code(404).send({ code: "PROFILE_NOT_FOUND" });
-      const run = this.database.listEntities<JsonValue>("run").map((value) => value as unknown as Run).find((entry) => entry.sessionId === request.params.sessionId);
+      const run = this.canonicalSession(storedSession);
       const binding = run ? this.runConversation(run) : undefined;
       const assertAuthority = (): void => {
         this.resolveProfileExecutionContext(request.params.profileId,undefined,"resume");
-        if (!run) return; // Standalone trial sessions have no canonical task authority.
+        if (!run) {
+          this.assertSessionContext(storedSession);
+          if(this.sessionStopState(storedSession)!=="none")throw new AdapterContractError("SESSION_CANCELLED","A requested stop forbids further input");
+          return;
+        }
         const expected = request.body.authority;
         const current = this.database.getEntity<JsonValue>("run", run.id) as unknown as Run | undefined;
         const task = this.database.getCanonicalTask<JsonValue>(run.taskId);
@@ -3816,7 +3849,7 @@ export class ControllerService {
       const semanticStatus = error instanceof SemanticPolicyError
         ? error.code === "FORBIDDEN" ? 403 : error.code === "STALE_WORKFLOW" ? 409 : 400
         : undefined;
-      const status = error instanceof UsageObservationError?400:error instanceof InputReceiptError||error instanceof AdapterContractError&&["SESSION_DETACHED","SESSION_CANCELLED","SESSION_BUSY"].includes(error.code)?409:error instanceof PublicationError ? error.statusCode : error instanceof TaskDispatchError ? error.statusCode : error instanceof RevisionConflictError
+      const status = error instanceof UsageObservationError?400:error instanceof InputReceiptError||error instanceof AdapterContractError&&["SESSION_DETACHED","SESSION_CANCELLED","SESSION_BUSY","SESSION_CONTEXT_CHANGED","CANCELLATION_UNCONFIRMED"].includes(error.code)?409:error instanceof PublicationError ? error.statusCode : error instanceof TaskDispatchError ? error.statusCode : error instanceof RevisionConflictError
         ? 409
         : error instanceof LlmRuntimeError
           ? error.code === "SELECTION_CHANGED" ? 409 : error.code === "NO_AVAILABLE_PROFILE" ? 503 : 400
@@ -3854,7 +3887,32 @@ export class ControllerService {
     };
   }
 
-  private sessionView(session: AdapterSession): Pick<AdapterSession, "id" | "runId" | "profileId" | "state" | "createdAt" | "updatedAt"> {
+  private canonicalSession(session:AdapterSession):Run|undefined{return (this.database.listEntities<JsonValue>("run") as unknown as Run[]).find(run=>run.sessionId===session.id||run.id===session.runId&&run.profileId===session.profileId);}
+  private sessionStopState(session:AdapterSession):NativeSessionConsoleView["stopState"]{
+    const stored=this.database.getEntity<JsonValue>("adapter-session",session.id) as unknown as BoundSession|undefined;
+    const state=stored?.authority?.stopState??"none";return this.uncertainSessionStops.has(session.id)&&!["requested","unconfirmed"].includes(state)?"unconfirmed":state;
+  }
+  private sessionStopUncertain(session:AdapterSession):boolean{return ["requested","unconfirmed"].includes(this.sessionStopState(session));}
+  private sessionContextState(session:AdapterSession):NativeSessionConsoleView["contextState"]{
+    const stored=this.database.getEntity<JsonValue>("adapter-session",session.id) as unknown as BoundSession|undefined,authority=stored?.authority;
+    if(!authority||!session.profileId)return "unknown";
+    try{return this.resolveProfileExecutionContext(session.profileId,authority.repositoryId,"probe").fingerprint===authority.fingerprint?"current":"changed";}catch{return "changed";}
+  }
+  private assertSessionContext(session:AdapterSession):void{
+    if(this.sessionContextState(session)!=="current")throw new AdapterContractError("SESSION_CONTEXT_CHANGED","Original session account context is changed or unknown; inspect its saved history");
+    this.resolveProfileExecutionContext(session.profileId!,undefined,"resume");
+  }
+  private saveSessionStop(session:AdapterSession,stopState:NativeSessionConsoleView["stopState"]):void{
+    const stored=this.database.getEntity<JsonValue>("adapter-session",session.id) as unknown as BoundSession|undefined;
+    if(!stored)throw new AdapterContractError("SESSION_NOT_FOUND","Session disappeared during stop");
+    const authority=stored.authority??{version:1 as const,fingerprint:"unknown"};
+    this.database.saveEntity("adapter-session",session.id,json({...stored,...(stopState==="confirmed"?session:{}),authority:{...authority,stopState}}));
+  }
+  private sessionView(session: AdapterSession): NativeSessionConsoleView {
+    const run=this.canonicalSession(session),contextState=this.sessionContextState(session),stopState=this.sessionStopState(session),adapter=this.agentAdapters.get(session.profileId??"");
+    const localHandle=adapter instanceof CodexAdapter||adapter instanceof StructuredCliAdapter||adapter instanceof QoderAdapter||adapter instanceof GenericCliAdapter;
+    const current=contextState==="current",standalone=!run&&Boolean(adapter);
+    const action=(allowed:boolean,reasonCode?:string)=>({allowed,requiresConfirmation:false,...(!allowed&&reasonCode?{reasonCode}:{})});
     return {
       id: session.id,
       runId: session.runId,
@@ -3862,6 +3920,8 @@ export class ControllerService {
       state: session.state,
       createdAt: session.createdAt,
       updatedAt: session.updatedAt,
+      canonical:Boolean(run),...(run?{taskId:run.taskId}:{}),contextState,stopState,
+      actions:{input:action(standalone&&current&&stopState==="none"&&session.state!=="CANCELLED","SESSION_CONTEXT_OR_STOP_REQUIRED"),cancel:{...action(standalone&&Boolean(adapter?.manifest.backends.some(backend=>backend.capabilities.includes("cancel")))&&(current||localHandle)&&stopState!=="confirmed","CANONICAL_OR_CONTEXT_REQUIRED"),requiresConfirmation:true},refresh:action(Boolean(adapter)&&(Boolean(run)||current),"SESSION_CONTEXT_CHANGED")},
     };
   }
 }

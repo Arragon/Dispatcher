@@ -128,3 +128,19 @@ it("renders recovered publication mode from the reviewed snapshot instead of the
   mount(<PublishPage/>);const dialog=await screen.findByRole("dialog",{name:"审阅任务草稿"});
   expect(within(dialog).getByRole("button",{name:"确认并启动执行"})).toBeTruthy();expect(within(dialog).getByText("Old acceptance")).toBeTruthy();localStorage.clear();
 });
+
+it("separates canonical task links from standalone controls and exposes uncertain stop without enabling input",async()=>{
+ const {default:AgentsPage}=await import("../src/AgentsPage.js");
+ const actions={input:{allowed:false,requiresConfirmation:false},cancel:{allowed:true,requiresConfirmation:true},refresh:{allowed:true,requiresConfirmation:false}};
+ const standalone={id:"standalone",runId:"trial",profileId:"p",state:"COMPLETED",createdAt:"2026-10-16",updatedAt:"2026-10-16",canonical:false,contextState:"current",stopState:"unconfirmed",actions};let stopped=false;
+ const fetch=vi.spyOn(globalThis,"fetch").mockImplementation(async(input,init)=>{
+  const path=String(input),session=stopped?{...standalone,stopState:"confirmed",actions:{...actions,cancel:{allowed:false,requiresConfirmation:true}}}:standalone;
+  if(path.endsWith("/cancel")&&init?.method==="POST"){stopped=true;return new Response(JSON.stringify({session:{...session,stopState:"confirmed"}}));}
+  return new Response(JSON.stringify(path.includes("manifests")?{manifests:[{id:"codex",displayName:"Codex",platforms:[],configSchema:{type:"object",properties:{}},uiSchema:{},secretFields:[],backends:[],capabilities:{}}]}:path.includes("compatibility")?{matrix:[]}:path==="/api/agents/profiles"?{profiles:[{id:"p",alias:"Account",provider:"codex",runnerId:"local",state:"CONFIGURED"}],sessions:[{...standalone,id:"canonical",canonical:true,taskId:"task-one"},session]}:{session}));
+ });
+ mount(<AgentsPage/>);expect(await screen.findByRole("link",{name:"查看任务"})).toHaveProperty("href",expect.stringContaining("/tasks?task=task-one"));
+ expect(fetch.mock.calls.every(([,init])=>!init?.method)).toBe(true);await userEvent.click(screen.getByRole("button",{name:"查看会话"}));
+ const dialog=screen.getByRole("dialog",{name:"独立 Agent 会话"});expect(within(dialog).getByText("尚未确认，继续输入与账号变更已阻止")).toBeTruthy();
+ await userEvent.click(within(dialog).getByRole("button",{name:"停止会话"}));expect(await within(dialog).findByText("已确认")).toBeTruthy();expect((within(dialog).getByRole("button",{name:"停止会话"}) as HTMLButtonElement).disabled).toBe(true);
+ expect(fetch.mock.calls.filter(([,init])=>init?.method==="POST").map(([path])=>String(path))).toEqual(["/api/agents/profiles/p/sessions/standalone/cancel"]);
+});

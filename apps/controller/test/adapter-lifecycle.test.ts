@@ -38,6 +38,48 @@ async function fixture(options: Partial<ConstructorParameters<typeof ControllerS
 }
 
 describe("all-provider adapter lifecycle", () => {
+  it("does not turn a detached local terminal snapshot into a confirmed uncertain stop",async()=>{
+    const f=await fixture({qoderBackendFactory:()=>({start:()=>({status:()=>"completed",cancel:async()=>undefined,result:async()=>({state:"completed",summary:"done",events:[]})})})});
+    try{
+      expect((await f.apply(config=>{config.agentProfiles=[{id:"qoder",alias:"Qoder",provider:"qoder",runnerId:"local"}];})).statusCode).toBe(200);
+      const started=await f.start("qoder"),id=started.json().session.id,url=`/api/agents/profiles/qoder/sessions/${id}`;
+      const row=f.service.database.getEntity("adapter-session",id) as Record<string,unknown>;
+      f.service.database.saveEntity("adapter-session",id,JSON.parse(JSON.stringify({...row,state:"COMPLETED",authority:{...row.authority as object,stopState:"unconfirmed"}})));
+      const adapter=(f.service as unknown as {agentAdapters:Map<string,AgentAdapter>}).agentAdapters.get("qoder")!;
+      vi.spyOn(adapter,"diagnostics").mockResolvedValue({attached:false});const cancel=vi.spyOn(adapter,"cancel");
+      expect((await f.service.app.inject({headers:OWNER,url})).json().session.stopState).toBe("unconfirmed");
+      expect((await f.service.app.inject({headers:OWNER,method:"POST",url:`${url}/cancel`})).json()).toMatchObject({code:"SESSION_DETACHED"});expect(cancel).not.toHaveBeenCalled();
+      expect((await f.apply(config=>{config.agentProfiles[0]!.enabled=false;})).json()).toMatchObject({code:"ACTIVE_AGENT_PROFILE"});
+    }finally{await f.close();}
+  });
+  it("keeps completed HTTP history bound to its original credential and refuses provider queries after rotation",async()=>{
+    const fetch=vi.fn(async()=>new Response(JSON.stringify({sessionId:"context-native",state:"completed"}))),f=await fixture({integrationFetch:fetch});
+    try{
+      expect((await f.apply(config=>{config.agentProfiles=[{id:"http",alias:"HTTP",provider:"workbuddy",runnerId:"local",credentialRef:"secret://workbuddy/account",settings:{baseUrl:"http://127.0.0.1:9999",healthPath:"/health",startPath:"/start",statusPath:"/sessions/{sessionId}",inputPath:"/sessions/{sessionId}/input",cancelPath:"/sessions/{sessionId}/cancel"}}];})).statusCode).toBe(200);
+      const started=await f.start("http");expect(started.statusCode).toBe(201);const id=started.json().session.id;
+      expect((await f.service.app.inject({headers:OWNER,method:"PUT",url:"/api/secrets/workbuddy/account",payload:{value:"rotated-value"}})).statusCode).toBe(201);fetch.mockClear();
+      const detail=await f.service.app.inject({headers:OWNER,url:`/api/agents/profiles/http/sessions/${id}`});expect(detail.statusCode).toBe(200);expect(detail.json().session).toMatchObject({contextState:"changed",canonical:false,actions:{input:{allowed:false},cancel:{allowed:false}}});
+      const input=await f.service.app.inject({headers:OWNER,method:"POST",url:`/api/agents/profiles/http/sessions/${id}/input`,payload:{message:"must not send"}});expect(input.statusCode).toBe(409);expect(fetch).not.toHaveBeenCalled();
+    }finally{await f.close();}
+  });
+
+  it("persists an uncertain standalone stop independently of a completed snapshot and clears only on qualified terminal evidence",async()=>{
+    let terminal=false;const fetch=vi.fn(async(input:unknown)=>new Response(JSON.stringify({sessionId:"uncertain-native",state:String(input).endsWith("/start")||terminal?"completed":"running"}))),f=await fixture({integrationFetch:fetch});
+    let current=f.service;
+    try{
+      expect((await f.apply(config=>{config.agentProfiles=[{id:"http",alias:"HTTP",provider:"workbuddy",runnerId:"local",settings:{baseUrl:"http://127.0.0.1:9999",healthPath:"/health",startPath:"/start",statusPath:"/sessions/{sessionId}",inputPath:"/sessions/{sessionId}/input",cancelPath:"/sessions/{sessionId}/cancel"}}];})).statusCode).toBe(200);
+      const started=await f.start("http"),id=started.json().session.id,url=`/api/agents/profiles/http/sessions/${id}`;
+      expect((await current.app.inject({headers:OWNER,method:"POST",url:`${url}/cancel`})).statusCode).toBe(409);
+      expect((await f.apply(config=>{config.agentProfiles[0]!.enabled=false;})).json()).toMatchObject({code:"ACTIVE_AGENT_PROFILE"});
+      await current.stop();current=new ControllerService({dataDirectory:f.directory,ownerToken:"test-owner",withRunner:true,backgroundWorker:{enabled:false},secretStore:secrets,integrationFetch:fetch});await current.start({listen:false});
+      expect((await current.app.inject({headers:OWNER,url})).json().session).toMatchObject({stopState:"unconfirmed",actions:{input:{allowed:false}}});
+      expect((await current.app.inject({headers:OWNER,method:"POST",url:`${url}/input`,payload:{message:"late"}})).statusCode).toBe(409);
+      terminal=true;expect((await current.app.inject({headers:OWNER,url})).json().session).toMatchObject({stopState:"confirmed"});fetch.mockClear();
+      expect((await current.app.inject({headers:OWNER,method:"POST",url:`${url}/cancel`})).statusCode).toBe(200);expect(fetch).not.toHaveBeenCalled();
+      expect((await current.app.inject({headers:OWNER,method:"POST",url:`${url}/input`,payload:{message:"after stop"}})).statusCode).toBe(409);
+      const config=current.configuration.current().config;config.agentProfiles[0]!.enabled=false;const plan=current.configuration.buildPlan(config,"fixture","web");expect((await current.app.inject({headers:OWNER,method:"POST",url:`/api/config/plans/${plan.id}/apply`,payload:{confirmed:true}})).statusCode).toBe(200);
+    }finally{await current.stop();await f.close();}
+  });
   it("changes local catalog identity after a credential write and rejects a late old-context catalog",async()=>{
     const f=await fixture(),entered=Promise.withResolvers<void>(),gate=Promise.withResolvers<void>();let held=false;
     try{

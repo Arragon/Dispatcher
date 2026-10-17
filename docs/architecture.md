@@ -675,6 +675,23 @@ unavailable with manual inspection required. The session store rechecks current
 task/lease authority immediately before native spawn, and post-send checks still
 stop a newly owned child when authority changes after that boundary.
 
+Local Controller session records retain private versioned authority metadata
+alongside the existing adapter snapshot: the original applied account/repository
+context and requested/unconfirmed/confirmed stop state. Adapter updates preserve
+that metadata; old unbound rows are never silently attached to today's account.
+Changed or unknown standalone context permits saved history but prevents provider
+queries/input through new credentials. Live local handle cancellation remains a
+separate safe operation and never uses a recovered PID. Uncertain stop state
+occupies admission capacity and protects profile/credential changes even when the
+last native snapshot was terminal. A repeated confirmed stop replays its receipt.
+An owning adapter's qualified terminal evidence can confirm the stop; detached
+local history cannot. Pending/failed persistence also keeps an in-memory denial.
+Devin and HTTP adapters save STARTING before external creation requests, retaining
+uncertain startup rather than issuing an unrecorded retry. Their shared-store
+operations validate the exact profile owner. The shared session console view
+separates canonical task links from standalone history and exposes action flags
+without private authority hashes or paths.
+
 Controller-managed credential mutations have opaque persisted epochs keyed by
 hashed references. The epoch advances before touching the secret store, so an
 uncertain or failed write cannot keep old evidence current. A pending write

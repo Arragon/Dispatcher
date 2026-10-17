@@ -1,4 +1,4 @@
-import type {EvidenceState,ProfileConsoleView} from "@dispatcher/domain";
+import type {EvidenceState,ProfileConsoleView,NativeSessionConsoleView} from "@dispatcher/domain";
 import { lazy, Suspense, useEffect, useState } from "react";
 import Ajv2020 from "ajv/dist/2020.js";
 import Form from "@rjsf/core";
@@ -43,13 +43,7 @@ interface CompatibilityRow {
   unsupportedReasons: Record<string, string>;
 }
 
-interface SessionView {
-  id: string;
-  runId: string;
-  profileId?: string;
-  state: string;
-  updatedAt: string;
-}
+type SessionView=NativeSessionConsoleView;
 
 function evidenceText(evidence:EvidenceState|undefined,kind:"installation"|"compatibility"|"authentication"="authentication"):string{
   if(!evidence?.observedAt)return "未检查";
@@ -70,6 +64,9 @@ export default function AgentsPage(): React.JSX.Element {
   useEffect(()=>subscribeToEvents(()=>void profiles.refetch()),[profiles.refetch]);
   const compatibility = useQuery({ queryKey: ["adapter-compatibility"], queryFn: () => api<{ matrix: CompatibilityRow[] }>("/api/adapters/compatibility"), retry: false });
   const [drawer, setDrawer] = useState<"add" | "trial" | ProfileView>();
+  const [sessionDetail,setSessionDetail]=useState<SessionView>();
+  const [sessionBusy,setSessionBusy]=useState(false);
+  const [sessionMessage,setSessionMessage]=useState("");
   const [view, setView] = useState("accounts");
   const [confirmSave, setConfirmSave] = useState(false);
   const [search, setSearch] = useState("");
@@ -139,6 +136,15 @@ export default function AgentsPage(): React.JSX.Element {
     } catch (error) { setLoginResults((current) => ({ ...current, [id]: error instanceof Error ? error.message : "登录检查失败" })); }
     finally { setPendingProfiles((current) => { const next = new Set(current); next.delete(id); return next; }); }
   }
+  async function sessionAction(session:SessionView,action:"refresh"|"cancel"):Promise<void>{
+    if(sessionBusy||!session.profileId)return;setSessionBusy(true);setSessionMessage("");
+    const path=`/api/agents/profiles/${encodeURIComponent(session.profileId)}/sessions/${encodeURIComponent(session.id)}`;
+    try{
+      const result=await api<{session:SessionView}>(`${path}${action==="cancel"?"/cancel":""}`,action==="cancel"?{method:"POST"}:undefined);
+      setSessionDetail(result.session);setSessionMessage(action==="cancel"?"已收到原生停止确认。":"已读取当前会话证据。");
+    }catch(error){setSessionMessage(error instanceof Error?error.message:"会话操作失败；停止结果可能仍未确认。");}
+    finally{await profiles.refetch();setSessionBusy(false);}
+  }
   const configuredProfiles = profiles.data?.profiles ?? [];
   const selectedCompatibility = compatibility.data?.matrix.filter((row) => row.adapterId === selected.id) ?? [];
   const profileId = typeof draft.id === "string" && draft.id ? draft.id : undefined;
@@ -148,6 +154,7 @@ export default function AgentsPage(): React.JSX.Element {
   const filtered = configuredProfiles.filter((profile) => (!search || `${profile.alias} ${profile.provider}`.toLowerCase().includes(search.toLowerCase())) && (filter === "all" || (filter === "enabled" ? profile.state !== "DISABLED" : profile.state === "DISABLED")));
   const enabledCount = configuredProfiles.filter((profile) => profile.state !== "DISABLED").length;
   const detailProfile=drawer&&typeof drawer==="object"?(configuredProfiles.find(profile=>profile.id===drawer.id)??drawer):undefined;
+  const currentSession=sessionDetail?(profiles.data.sessions.find(session=>session.id===sessionDetail.id)??sessionDetail):undefined;
   return <section>
     <header className="page-header"><div><h1>Harness</h1><p>接入你的开发工具，让每个账号独立、安全地执行任务。</p></div><div className="page-actions"><button onClick={() => { setMessage(""); setDrawer("trial"); }}><Icon name="pulse"/>试运行</button><button className="primary" onClick={() => { setMessage(""); setDrawer("add"); }}><Icon name="plus"/>添加账号</button></div></header>
     <Tabs label="Harness" items={[["accounts",`已接入账号 ${configuredProfiles.length}`],["catalog",`工具目录 ${query.data.manifests.length}`],["capabilities","能力与兼容性"]]} value={view} onChange={setView}/>
@@ -158,11 +165,12 @@ export default function AgentsPage(): React.JSX.Element {
       {!filtered.length && <div className="page-state"><strong>{configuredProfiles.length ? "没有匹配的账号" : "暂无 Agent 账号"}</strong><p>{configuredProfiles.length ? "调整搜索或筛选条件。" : "添加当前机器上的 Agent，保留独立账号和原生登录信息。"}</p><button onClick={() => configuredProfiles.length ? (setFilter("all"), setSearch("")) : setDrawer("add")}>{configuredProfiles.length ? "清除筛选" : "添加账号"}</button></div>}
       <footer className="table-footer">显示 {filtered.length} 个账号 · 启用与登录验证分别记录，测试不会改变派发状态</footer>
     </div>
-    <div className="panel"><header className="panel-heading"><h2>最近 Agent 会话</h2><span>{profiles.data.sessions.length} 个会话</span></header>{profiles.data.sessions.length ? profiles.data.sessions.map((session) => <article key={session.id} className="runner-row"><div><strong>{configuredProfiles.find((profile) => profile.id === session.profileId)?.alias ?? session.profileId}</strong><p>{session.id} · {session.state}</p></div><small>{new Date(session.updatedAt).toLocaleString()}</small></article>) : <div className="empty-inline"><strong>暂无会话</strong><p>选择已启用的账号进行试运行，运行仍使用受管工作目录。</p><button onClick={() => { setMessage(""); setDrawer("trial"); }}>开始试运行</button></div>}</div>
+    <div className="panel"><header className="panel-heading"><h2>最近 Agent 会话</h2><span>{profiles.data.sessions.length} 个会话</span></header>{profiles.data.sessions.length ? profiles.data.sessions.map((session) => <article key={session.id} className="runner-row"><div><strong>{configuredProfiles.find((profile) => profile.id === session.profileId)?.alias ?? session.profileId}</strong><p>{session.id} · {session.state} · {session.canonical ? "任务会话" : "独立会话"}</p>{session.stopState === "unconfirmed" || session.stopState === "requested" ? <p role="status">停止尚未确认</p> : null}</div><small>{new Date(session.updatedAt).toLocaleString()}</small>{session.canonical && session.taskId ? <Link className="button-link" to={`/tasks?task=${encodeURIComponent(session.taskId)}`}>查看任务</Link> : <button onClick={()=>{setSessionDetail(session);setSessionMessage("");}}>查看会话</button>}</article>) : <div className="empty-inline"><strong>暂无会话</strong><p>选择已启用的账号进行试运行，运行仍使用受管工作目录。</p><button onClick={() => { setMessage(""); setDrawer("trial"); }}>开始试运行</button></div>}</div>
     </>}
     {view === "catalog" && <><div className="section-intro"><div><h2>选择要接入的工具</h2><p className="muted">来自当前 Controller 的适配器声明，安装与认证需在目标设备单独检查。</p></div></div><div className="catalog-grid">{query.data.manifests.map((manifest) => <article className="catalog-card" key={manifest.id}><div className="catalog-title"><ProviderMark provider={manifest.id}/><div><h3>{manifest.displayName}</h3><small>{manifest.id}</small></div></div><p>{manifest.backends.map((backend) => backend.kind).join(" / ") || "尚无执行后端"}</p><div className="tag-list">{manifest.platforms.map((platform) => <span className="pill" key={platform}>{platform}</span>)}</div><div className="catalog-footer"><span className="muted">{configuredProfiles.filter((profile) => profile.provider === manifest.id).length} 个同名提供方账号</span><button onClick={() => {setSelectedId(manifest.id);setDraft({});setConfirmSave(false);setMessage("");setDrawer("add");}}>接入工具</button></div></article>)}</div></>}
     {view === "capabilities" && <><Notice>能力表来自适配器声明，不代表当前安装版本、账号或设备已经实测通过。</Notice>{compatibility.isLoading ? <div className="page-state" role="status">正在读取能力表…</div> : compatibility.error ? <div className="page-state error" role="alert">能力表读取失败。<button onClick={() => void compatibility.refetch()}>重试</button></div> : <div className="panel table-wrap"><table><thead><tr><th>工具</th><th>执行后端</th><th>声明支持</th><th>限制与未支持原因</th></tr></thead><tbody>{compatibility.data?.matrix.map((row) => <tr key={`${row.adapterId}:${row.backendId}`}><td><strong>{row.displayName}</strong></td><td>{row.backendKind}<small>{row.backendId}</small></td><td><div className="tag-list">{row.capabilities.map((capability) => <span className="pill" key={capability}>{capability}</span>)}</div></td><td>{Object.entries(row.unsupportedReasons).map(([name,reason]) => <p key={name}>{name}：{reason}</p>)}</td></tr>)}</tbody></table>{!compatibility.data?.matrix.length && <EmptyState title="暂无能力声明" icon="plug"/>}</div>}</>}
     {message && !drawer && <p role="status">{message}</p>}
+    {currentSession && <Drawer title="独立 Agent 会话" onClose={()=>setSessionDetail(undefined)}><Notice>独立会话保留原始账号上下文。新任务请使用统一发布和预检。</Notice><dl><dt>会话</dt><dd>{currentSession.id}</dd><dt>原生状态</dt><dd>{currentSession.state}</dd><dt>账号上下文</dt><dd>{currentSession.contextState==="current"?"与启动时一致":currentSession.contextState==="changed"?"已变更，禁止继续操作":"历史上下文未知"}</dd><dt>停止确认</dt><dd>{currentSession.stopState==="confirmed"?"已确认":currentSession.stopState==="unconfirmed"||currentSession.stopState==="requested"?"尚未确认，继续输入与账号变更已阻止":"尚未请求"}</dd></dl><div className="secure-actions"><button disabled={sessionBusy||!currentSession.actions?.refresh?.allowed} onClick={()=>void sessionAction(currentSession,"refresh")}>查询原生状态</button><button disabled={sessionBusy||!currentSession.actions?.cancel?.allowed} onClick={()=>void sessionAction(currentSession,"cancel")}>停止会话</button></div><p>查询会读取所属工具的会话状态；停止需要原生终态证据。</p><p role="status">{sessionMessage}</p></Drawer>}
     {drawer === "add" && <Drawer title="添加 Agent 账号" onClose={() => setDrawer(undefined)}><div className="config-form"><label className="field-stack">Agent<select value={selected.id} disabled={busy} onChange={(event) => { setSelectedId(event.target.value); setDraft({}); setConfirmSave(false); setMessage(""); }}>{query.data.manifests.map((manifest) => <option key={manifest.id} value={manifest.id}>{manifest.displayName}</option>)}</select></label><Form schema={selected.configSchema} uiSchema={selected.uiSchema} formData={draft} validator={validator} disabled={busy} onChange={(event) => {setDraft((event.formData ?? {}) as Record<string, unknown>);setConfirmSave(false);setPlan(undefined);}} onSubmit={() => setMessage("草稿已通过校验，尚未保存账号。") }><button type="submit" disabled={busy}>校验草稿</button></Form>
       {secretNamespace && profileId ? <SecureInput namespace={secretNamespace} name={profileId} label={`${selected.displayName} credential`} onStored={(credentialRef) => setDraft((current) => ({ ...current, credentialRef }))} onDeleted={() => setDraft((current) => { const next = { ...current }; delete next.credentialRef; return next; })} /> : selected.secretFields.includes("credentialRef") ? <p className="notice">先填写账号 ID，再安全存储凭据。</p> : null}
       {selected.id !== "generic-mock" && <div className="secure-actions"><button disabled={busy} type="button" onClick={() => void discover()}>扫描并检查</button><button disabled={busy} type="button" className="primary" onClick={() => void saveProfile()}>生成账号配置计划</button></div>}</div>{confirmSave && plan && <div className="workflow-card"><h3>确认账号配置</h3><p>风险：{plan.risk} · {plan.changes.length} 项变更</p><ul className="plan-changes">{plan.changes.map((change,index)=><li key={index}>{change.path}</li>)}</ul><p>工具：{selected.displayName} · 账号：{String(draft.alias ?? draft.id ?? "未命名")} · 设备：{String(draft.runnerId ?? "local")}</p><p>保存后通过 ConfigPlan 生效；原生登录状态仍需单独测试。</p><button disabled={busy} className="primary" onClick={() => void applyProfile()}>确认保存账号</button><button disabled={busy} onClick={() => setConfirmSave(false)}>返回编辑</button></div>}<details><summary>能力与兼容性</summary><p>{selected.platforms.join(" · ")}</p><p>{selected.backends.map((backend) => `${backend.kind}: ${backend.capabilities.join(", ")}`).join("; ")}</p>{selectedCompatibility.map((row) => <p key={row.backendId}>{row.backendId}: {Object.values(row.unsupportedReasons).join(" · ") || "已声明能力均支持"}</p>)}</details><p role="status">{message}</p></Drawer>}

@@ -14,3 +14,9 @@ export interface ProfileConsoleView {
   executionSupport:"local-ready"|"remote-ready"|"unverified"|"unsupported";actions:Record<string,ActionAvailability>;
   limitations:string[];
 }
+export interface NativeSessionConsoleView {
+  id:string;runId:string;profileId?:string;state:string;createdAt:string;updatedAt:string;
+  canonical:boolean;taskId?:string;contextState:"current"|"changed"|"unknown";
+  stopState:"none"|"requested"|"unconfirmed"|"confirmed";
+  actions:Record<"input"|"cancel"|"refresh",ActionAvailability>;
+}

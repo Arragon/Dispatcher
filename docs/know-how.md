@@ -577,3 +577,13 @@
 - Preserve established error contracts while adding credential-specific
   conflicts. Shared ConfigPlan ACTIVE_AGENT_PROFILE remains its existing400;
   credential replacement conflicts use their own409 code.
+
+- A terminal adapter snapshot does not clear a later uncertain stop. Preserve
+  stop authority in the original session row across adapter saves and restart;
+  block further input, profile replacement and admission until qualified native
+  terminal evidence. For local tools, detached saved state is not that evidence.
+  Existing local diagnostics attached=true can qualify the live handle without
+  adding another process registry or trusting persisted PIDs.
+- Persist SDK/HTTP STARTING before an external create request. Bind the original
+  account context once, and never bind an old unqualified session merely because
+  its record is being updated under today's configuration.

@@ -83,22 +83,23 @@ export class LocalServiceAdapter implements AgentAdapter {
   }
 
   async start(input: { runId: string; workspacePath: string; backendId?: string; prompt?: string }): Promise<AdapterSession> {
-    const snapshot = await this.requestSnapshot(this.profile.startPath, {
-      method: "POST",
-      body: JSON.stringify({ runId: input.runId, workspacePath: input.workspacePath, prompt: input.prompt ?? "Inspect the task and report readiness." }),
-    });
     const now = new Date().toISOString();
     const session: AdapterSession = {
       id: randomUUID(),
       runId: input.runId,
       backendId: input.backendId ?? "local-service-http",
       workspacePath: input.workspacePath,
-      state: mapState(snapshot.state),
+      state: "STARTING",
       profileId: this.profile.id,
-      providerSessionId: snapshot.sessionId,
       createdAt: now,
       updatedAt: now,
     };
+    this.store.save(session);
+    const snapshot = await this.requestSnapshot(this.profile.startPath, {
+      method: "POST",
+      body: JSON.stringify({ runId: input.runId, workspacePath: input.workspacePath, prompt: input.prompt ?? "Inspect the task and report readiness." }),
+    });
+    session.state=mapState(snapshot.state);session.providerSessionId=snapshot.sessionId;session.updatedAt=new Date().toISOString();
     this.snapshots.set(session.id, snapshot);
     this.store.save(session);
     return structuredClone(session);
@@ -188,6 +189,7 @@ export class LocalServiceAdapter implements AgentAdapter {
   private require(id: string): AdapterSession {
     const session = this.store.load(id);
     if (!session) throw new AdapterContractError("SESSION_NOT_FOUND", `Unknown session ${id}`);
+    if(session.profileId!==this.profile.id)throw new AdapterContractError("SESSION_PROFILE_MISMATCH","Session belongs to another configured account");
     return session;
   }
   private update(id: string, changes: Partial<AdapterSession>): AdapterSession {
