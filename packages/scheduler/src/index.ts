@@ -70,11 +70,15 @@ export class CanonicalScheduler {
     workspacePath: string;
     generation?: number;
     runId?: string;
+    replacement?: Run;
     executionSelection?: ExecutionSelection;
     beforeStart?: () => Promise<void>;
     onRunStarting?: (run: Run, decision: RoutingDecision) => void;
   }): Promise<{ run: Run; decision: RoutingDecision }> {
-    if (input.task.state !== "READY" && input.task.state !== "QUEUED") throw new Error(`Task ${input.task.id} is not dispatchable from ${input.task.state}`);
+    if (input.replacement) {
+      const previous = input.replacement;
+      if (previous.state !== "SUPERSEDED" || previous.taskId !== input.task.id || input.task.currentRunId !== previous.id || !["RUNNING", "WAITING_USER", "WAITING_RESOURCE"].includes(input.task.state)) throw new Error("Replacement requires the current stopped Run and its canonical task");
+    } else if (input.task.state !== "READY" && input.task.state !== "QUEUED") throw new Error(`Task ${input.task.id} is not dispatchable from ${input.task.state}`);
     const decision = routeDeterministically(input.requirements, this.candidates());
     if (!decision.selected) throw new Error(decision.explanation);
     const runId = input.runId ?? randomUUID();
@@ -89,8 +93,8 @@ export class CanonicalScheduler {
       sessionId: `unstarted:${runId}`,
       resumePolicy: decision.selected.adapter.manifest.capabilities.resume ? "same-session" : "controlled-reroute",
       state: "STARTING",
-      attempt: 1,
-      generation: input.generation ?? 1,
+      attempt: input.replacement ? input.replacement.attempt + 1 : 1,
+      generation: input.replacement ? input.replacement.generation + 1 : input.generation ?? 1,
       leaseId: randomUUID(),
       taskRevision: input.taskRevision,
       contractRevision: input.contract.revision,

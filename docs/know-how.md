@@ -376,6 +376,13 @@
   newer revisions and silently attach an old answer to them. Reset the input on
   episode changes and fence current task/run/lease before and after adapter send.
 
+- Controlled reroute must stop/revoke the old owner before reserving and starting
+  its replacement. Keep frozen contract, verification and SCM snapshots; mutable
+  task/config state cannot reconstruct them. Rebind the managed workspace Run ID
+  without renaming its physical path/branch, and atomically record the transfer
+  with the new owner. Restart must skip transferred historical handles, or their
+  restore order can silently assign owning Git delivery to the previous Run.
+
 - Serve the HTML entry with no-cache; only hashed assets may be immutable.
   Missing asset paths must return 404 rather than the SPA HTML fallback.
   After rebuilding production assets, restart the static-file registration.

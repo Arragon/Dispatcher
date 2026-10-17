@@ -47,6 +47,21 @@ Slack input rechecks lease/session/binding authority after the adapter await;
 the consumed intervention and acknowledgement receipt commit with Run/task
 resume, so a reply retry cannot answer a subsequent question.
 
+Legacy same-Runner reroute shares canonical dispatch serialization and scheduler
+admission. It only replaces a running/waiting Run with frozen contract,
+verification and owning workspace evidence; publication/model changes still need
+a fresh review, and verification/delivery or uncertain phases cannot reroute.
+The common stop path revokes the old lease and drains native/owned command work
+before SUPERSEDED. Operator cancellation wins while that stop is pending. The
+scheduler then reserves a new STARTING Run and task binding before native start,
+retaining the complete frozen prompt, verification configuration and SCM target.
+An atomic workspace-transfer record moves the existing physical worktree/branch
+to the next Run/attempt; startup restores only its latest owner. A durable
+actor/workflow receipt replays the replacement identity after a lost start
+response. Pre/post-start authority checks stop stale children without reviving
+cancelled tasks. SCM preflight requalifies the original target/context, while
+unrelated changes since the old Run do not replace its frozen verification.
+
 Embedded Runner heartbeats renew non-terminal leases while verification or SCM
 calls are awaiting I/O. Renewal expiry is persisted and cannot revive expired,
 revoked, or older-generation authority. Startup failures retain a failed Run

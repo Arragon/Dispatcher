@@ -54,7 +54,6 @@ import {
   genericMockManifest,
   buildAdapterCompatibilityMatrix,
   manifestCapabilities,
-  assessManifestCapabilities,
   probeCodexProfile,
   probeQoderProfile,
   probeCursorProfile,
@@ -518,6 +517,7 @@ export class ControllerService {
   private dispatchQueue: Promise<void> = Promise.resolve();
   private readonly runAdvances = new Map<string, Promise<AdvanceResult>>();
   private readonly runCancellations = new Map<string, Promise<Run>>();
+  private readonly runReroutes = new Map<string, AbortController>();
   private readonly cancelledRunIds = new Set<string>();
   private readonly localCommands = new Map<string, { controller: AbortController; settled: Promise<void> }>();
   private readonly dispatchingRuns = new Set<string>();
@@ -684,6 +684,7 @@ export class ControllerService {
   async start(input: { listen?: boolean } = {}): Promise<void> {
     for (const value of this.database.listEntities<JsonValue>("workspace-handle")) {
       const handle=value as unknown as WorkspaceHandle;
+      if (this.database.getEntity("workspace-transfer", handle.runId)) continue;
       const config=this.configuration.current().config,repository=config.repositories.find(repository=>repository.id===handle.repositoryId);
       const recordedOwner=(value as Record<string,JsonValue>).runnerId;if(typeof recordedOwner==="string"&&recordedOwner!==(config.runners.find(runner=>runner.mode==="embedded")?.id??"local"))continue;
       if(repository&&config.runners.some(runner=>runner.id===repositoryRunnerId(config,repository)&&runner.mode==="remote"))continue;
@@ -1979,6 +1980,7 @@ export class ControllerService {
     if(!result||result.runId!==run.id||typeof result.settledAt!=="string"||!Number.isFinite(Date.parse(result.settledAt)))throw new AdapterContractError("REMOTE_RESULT_INVALID","Owning Runner did not confirm execution finalization");
   }
   private cancelRunExecution(run:Run):Promise<Run> {
+    this.runReroutes.get(run.id)?.abort();
     if (isTerminalRunState(run.state)) return Promise.resolve(run);
     const pending = this.runCancellations.get(run.id);
     if (pending) return pending;
@@ -1987,7 +1989,7 @@ export class ControllerService {
     this.runCancellations.set(run.id, cancellation);
     return cancellation;
   }
-  private async stopRunExecution(run:Run):Promise<Run> {
+  private async stopRunExecution(run:Run, terminalState: "CANCELLED" | "SUPERSEDED" = "CANCELLED"):Promise<Run> {
     const latest = this.database.getEntity<JsonValue>("run", run.id) as unknown as Run | undefined;
     if (latest && isTerminalRunState(latest.state)) return latest;
     const remote=this.configuration.current().config.runners.some(runner=>runner.id===run.runnerId&&runner.mode==="remote");
@@ -2028,7 +2030,8 @@ export class ControllerService {
     if(!current||current.leaseId!==run.leaseId||current.generation!==run.generation)throw new SemanticPolicyError("INVALID_INPUT","Run authority changed during cancellation");
     this.database.transaction(() => {
       if (!isTerminalRunState(current.state)) {
-        assertRunTransition(current.state, "CANCELLED"); current.state = "CANCELLED"; current.endedAt = this.now().toISOString();
+        const settledState = terminalState === "SUPERSEDED" && !this.runReroutes.get(run.id)?.signal.aborted ? "SUPERSEDED" : "CANCELLED";
+        assertRunTransition(current.state, settledState); current.state = settledState; current.endedAt = this.now().toISOString();
         delete current.recoveryState; delete current.recoveryReason;
         this.database.saveEntity("run", current.id, json(current));
       }
@@ -2403,6 +2406,118 @@ export class ControllerService {
     return result;
   }
 
+  private rerouteRun(runId: string, profileId: string, context: { actorId: string; workflowId: string }): Promise<{ supersededRunId: string; run: Run }> {
+    const result = this.dispatchQueue.then(() => this.performReroute(runId, profileId, context));
+    this.dispatchQueue = result.then(() => undefined, () => undefined);
+    return result;
+  }
+
+  private async performReroute(runId: string, profileId: string, context: { actorId: string; workflowId: string }): Promise<{ supersededRunId: string; run: Run }> {
+    const receiptId = contentHash(context), receipt = this.database.getEntity<JsonValue>("run-reroute", receiptId) as { previousRunId: string; profileId: string; runId: string } | undefined;
+    if (receipt) {
+      if (receipt.previousRunId !== runId || receipt.profileId !== profileId) throw new SemanticPolicyError("INVALID_INPUT", "Reroute identity already belongs to another replacement");
+      const run = this.database.getEntity<JsonValue>("run", receipt.runId) as unknown as Run | undefined;
+      if (!run) throw new SemanticPolicyError("INVALID_INPUT", "Reserved replacement requires operator inspection");
+      return { supersededRunId: runId, run };
+    }
+    await this.refreshLocalTrialSessions();
+    const run = this.database.getEntity<JsonValue>("run", runId) as unknown as Run | undefined;
+    const snapshot = this.configuration.current(), profile = snapshot.config.agentProfiles.find(entry => entry.id === profileId), adapter = this.agentAdapters.get(profileId);
+    const previousAdapter = run ? this.agentAdapters.get(run.profileId) : undefined;
+    const workspace = run?.worktree ? this.workspaces.get(run.worktree) : undefined;
+    const contract = this.database.getEntity<JsonValue>("run-contract", runId) as unknown as TaskContract | undefined;
+    const verification = this.database.getEntity<JsonValue>("run-verification-config", runId) as unknown as RepositoryConfig["verificationCommands"] | undefined;
+    const delivery = this.database.getEntity<JsonValue>("run-delivery-selection", runId) as unknown as ScmDeliverySelection | undefined;
+    const repository = workspace ? snapshot.config.repositories.find(entry => entry.id === workspace.repositoryId) : undefined;
+    if (!run || !["ACTIVE", "WAITING_USER", "RESOURCE_BLOCKED", "SUSPECTED_STALL"].includes(run.state) || run.executionSelection || !profile || !adapter || !previousAdapter || !workspace || workspace.runId !== run.id || workspace.taskId !== run.taskId || !contract || !Array.isArray(verification) || !repository) throw new SemanticPolicyError("INVALID_INPUT", "Legacy reroute requires a current Run with frozen context and an owned worktree; otherwise review a new publication");
+    if (profile.runnerId !== run.runnerId || previousAdapter instanceof RemoteNativeAdapter || adapter instanceof RemoteNativeAdapter) throw new SemanticPolicyError("INVALID_INPUT", "Rerouting across Runner authority requires a new reviewed publication");
+    if (run.recoveryReason === "NATIVE_OUTCOME_UNKNOWN" || this.runCancellations.has(run.id) || this.pendingConsoleInputs.has(run.sessionId)) throw new SemanticPolicyError("INVALID_INPUT", "Pending or uncertain native execution must settle before reroute");
+    if (contract.delivery.type === "pull-request" && !delivery && !this.options.gitTransport) throw new SemanticPolicyError("INVALID_INPUT", "The original Run has no frozen SCM target; review a new publication");
+    const requirements = { capabilities: run.requiredCapabilities ?? ["code", "git"] };
+    this.resolveProfileExecutionContext(profileId, repository.id, "start");
+    const admission = routeDeterministically(requirements, this.dispatchCandidates(profileId).filter(candidate => candidate.runnerId === run.runnerId).map(candidate => ({ ...candidate, activeRuns: Math.max(0, candidate.activeRuns - 1) })));
+    if (!admission.selected) throw new SemanticPolicyError("INVALID_INPUT", admission.explanation);
+    const controller = new AbortController(); this.runReroutes.set(run.id, controller);
+    this.pendingProfileStarts.set(profileId, (this.pendingProfileStarts.get(profileId) ?? 0) + 1);
+    let replacementId: string | undefined;
+    const assertTaskOwner = (stopped: boolean): void => {
+      const current = this.database.getEntity<JsonValue>("run", run.id) as unknown as Run | undefined;
+      const task = this.database.getCanonicalTask<JsonValue>(run.taskId)?.document as unknown as Task | undefined;
+      if (controller.signal.aborted || this.configuration.current().revision !== snapshot.revision || !current || current.generation !== run.generation || current.leaseId !== run.leaseId || current.state !== (stopped ? "SUPERSEDED" : run.state) || task?.currentRunId !== run.id || !["RUNNING", "WAITING_USER", "WAITING_RESOURCE"].includes(task.state)) throw new SemanticPolicyError("INVALID_INPUT", "Task or execution authority changed during reroute");
+      this.resolveProfileExecutionContext(profileId, repository.id, "start");
+    };
+    const checkDelivery = async (): Promise<void> => {
+      if (!delivery) return;
+      const current = await this.prepareScmDelivery({ delivery: { type: "pull-request", scmConnectorId: delivery.scmConnectorId, targetRepository: delivery.repository, baseBranch: delivery.baseBranch } }, repository);
+      if (contentHash({ ...current, configRevision: undefined, reviewedAt: undefined }) !== contentHash({ ...delivery, configRevision: undefined, reviewedAt: undefined })) throw new SemanticPolicyError("INVALID_INPUT", "The frozen SCM target changed before reroute");
+    };
+    try {
+      await checkDelivery(); assertTaskOwner(false);
+      this.runInputs.assertAvailable({ runId: run.id, sessionId: run.sessionId, generation: run.generation, authorityHash: contentHash({ runId: run.id, generation: run.generation, leaseId: run.leaseId, lastActivityAt: run.lastActivityAt }) });
+      this.cancelledRunIds.add(run.id);
+      const stopping = Promise.resolve().then(() => this.stopRunExecution(run, "SUPERSEDED")).finally(() => { this.runCancellations.delete(run.id); });
+      this.runCancellations.set(run.id, stopping);
+      const stopped = await stopping; assertTaskOwner(true);
+      await this.workspaces.restore(workspace); assertTaskOwner(true);
+      const task = this.database.getCanonicalTask<JsonValue>(run.taskId)!;
+      const scheduler = new CanonicalScheduler(() => this.dispatchCandidates(profileId).filter(candidate => candidate.runnerId === run.runnerId));
+      replacementId = randomUUID(); let reservedRevision: number | undefined;
+      const dispatched = await scheduler.dispatch({
+        task: task.document as unknown as Task, taskRevision: task.revision, contract, requirements, workspacePath: workspace.path, runId: replacementId, replacement: stopped,
+        onRunStarting: replacement => {
+          assertTaskOwner(true);
+          replacement.branch = workspace.branch; replacement.leaseExpiresAt = new Date(this.now().getTime() + 15 * 60_000).toISOString();
+          replacement.revokedLeaseIds = [...new Set([...(run.revokedLeaseIds ?? []), run.leaseId])];
+          if (typeof profile.settings?.model === "string") replacement.model = { id: profile.settings.model, source: "configuration" };
+          const handle = { ...workspace, runId: replacement.id, attempt: replacement.attempt };
+          this.database.transaction(() => {
+            this.database.saveEntity("run", replacement.id, json(replacement));
+            this.database.saveEntity("run-contract", replacement.id, json(contract));
+            this.database.saveEntity("run-verification-config", replacement.id, json(verification));
+            if (delivery) this.database.saveEntity("run-delivery-selection", replacement.id, json(delivery));
+            this.database.saveEntity("workspace-handle", replacement.id, json(handle));
+            this.database.saveEntity("workspace-transfer", run.id, json({ previousRunId: run.id, runId: replacement.id, taskId: run.taskId, path: workspace.path, transferredAt: this.now().toISOString() }));
+            const current = this.database.getCanonicalTask<JsonValue>(run.taskId)!;
+            reservedRevision = this.tasks.execute({ id: `reroute:${replacement.id}:bind`, taskId: run.taskId, baseRevision: current.revision, actor: context.actorId, command: { type: "task.set-current-run", runId: replacement.id } }).revision;
+            this.database.saveEntity("run-reroute", receiptId, json({ previousRunId: run.id, profileId, runId: replacement.id }));
+          });
+          this.restoreLeaseAuthority(replacement); this.dispatchingRuns.add(replacement.id);
+        },
+        beforeStart: async () => {
+          const handle = this.database.getEntity<JsonValue>("workspace-handle", replacementId!) as unknown as WorkspaceHandle;
+          await this.workspaces.restore(handle);
+          for (const scope of handle.scopePaths) await this.workspaces.assertPathAllowed(handle, scope);
+          await checkDelivery();
+          const current = this.database.getEntity<JsonValue>("run", replacementId!) as unknown as Run | undefined, currentTask = this.database.getCanonicalTask<JsonValue>(run.taskId);
+          if (controller.signal.aborted || this.configuration.current().revision !== snapshot.revision || current?.state !== "STARTING" || currentTask?.revision !== reservedRevision || (currentTask?.document as unknown as Task)?.currentRunId !== replacementId) throw new SemanticPolicyError("INVALID_INPUT", "Replacement authority changed before native startup");
+          this.fenceNativeSpawn(replacementId!, profileId);
+        },
+      });
+      try {
+        this.database.transaction(() => {
+          const current = this.database.getCanonicalTask<JsonValue>(run.taskId)!, task = current.document as unknown as Task;
+          if (controller.signal.aborted || task.currentRunId !== dispatched.run.id || current.revision !== reservedRevision) throw new SemanticPolicyError("INVALID_INPUT", "Task authority changed during replacement startup");
+          this.saveAdvancedRun(dispatched.run, "STARTING");
+          const nextState = dispatched.run.state === "FAILED" ? "FAILED" : dispatched.run.state === "ACTIVE" ? "RUNNING" : undefined;
+          if (nextState && task.state !== nextState) this.tasks.execute({ id: `reroute:${dispatched.run.id}:${nextState}`, taskId: run.taskId, baseRevision: current.revision, actor: context.actorId, command: { type: "task.transition", state: nextState } });
+        });
+      } catch (error) {
+        const sessions = (this.database.listEntities<JsonValue>("adapter-session") as unknown as AdapterSession[]).filter(session => session.runId === dispatched.run.id && session.profileId === profileId);
+        if (sessions.length === 1) try { await adapter.cancel(sessions[0]!.id); } catch (cleanupError) { this.app.log.warn({ error: redactValue(cleanupError), runId: dispatched.run.id }, "stale reroute cleanup is unconfirmed"); }
+        this.dispatchingRuns.delete(dispatched.run.id);
+        this.markRemoteUnavailable(dispatched.run.id, "Replacement startup authority changed; inspect the original native process", "NATIVE_OUTCOME_UNKNOWN", dispatched.run);
+        throw error;
+      }
+      this.fleetEvents.publish("run.changed", dispatched.run.id, { id: dispatched.run.id, state: dispatched.run.state });
+      return { supersededRunId: run.id, run: dispatched.run };
+    } finally {
+      if (replacementId) this.dispatchingRuns.delete(replacementId);
+      this.runReroutes.delete(run.id);
+      const pending = (this.pendingProfileStarts.get(profileId) ?? 1) - 1;
+      if (pending) this.pendingProfileStarts.set(profileId, pending); else this.pendingProfileStarts.delete(profileId);
+    }
+  }
+
   private registerSemanticTools(): void {
     this.semanticTools.register({
       name: "task.dispatch", description: "Dispatch a READY task to a configured agent profile", risk: "privileged", requiredRoles: ["operator"],
@@ -2518,53 +2633,7 @@ export class ControllerService {
     });
     this.semanticTools.register({
       name: "run.reroute", description: "Supersede a run with another configured profile", risk: "privileged", requiredRoles: ["operator"], input: { required: ["target", "profileId"], properties: { target: "string", profileId: "string" }, additionalProperties: false },
-      execute: async ({ target, profileId }, context) => {
-        const runId = String(target);
-        const nextProfileId = String(profileId);
-        const run = this.database.getEntity<JsonValue>("run", runId) as unknown as Run | undefined;
-        const profile = this.configuration.current().config.agentProfiles.find((entry) => entry.id === nextProfileId);
-        const nextAdapter = this.agentAdapters.get(nextProfileId);
-        const previousAdapter = run ? this.agentAdapters.get(run.profileId) : undefined;
-        const contract = run ? this.database.getTaskContract<JsonValue>(run.taskId) as unknown as TaskContract | undefined : undefined;
-        if (!run || isTerminalRunState(run.state) || !run.worktree || !profile || !nextAdapter || !previousAdapter || !contract) throw new SemanticPolicyError("INVALID_INPUT", `Run ${runId} cannot be rerouted to ${nextProfileId}`);
-        if(run.executionSelection)throw new SemanticPolicyError("INVALID_INPUT","Publication reroute requires a fresh account/model/workspace review and is not supported by the legacy reroute command");
-        if(profile.runnerId!==run.runnerId||previousAdapter instanceof RemoteNativeAdapter||nextAdapter instanceof RemoteNativeAdapter)throw new SemanticPolicyError("INVALID_INPUT","Rerouting an existing workspace across Runner authority requires a new reviewed publication");
-        const capabilityAssessment = assessManifestCapabilities(nextAdapter.manifest, run.requiredCapabilities ?? ["code", "git"]);
-        if (!capabilityAssessment.supported) throw new SemanticPolicyError("INVALID_INPUT", capabilityAssessment.explanation);
-        const session = await nextAdapter.start({ runId: randomUUID(), workspacePath: run.worktree, prompt: contract.goal });
-        try { await previousAdapter.cancel(run.sessionId); }
-        catch (error) { await nextAdapter.cancel(session.id); throw error; }
-        assertRunTransition(run.state, "SUPERSEDED");
-        run.state = "SUPERSEDED";
-        run.endedAt = new Date().toISOString();
-        run.recoveryReason = `Delivery authority revoked for controlled reroute to ${nextProfileId}`;
-        this.database.saveEntity("run", run.id, json(run));
-        const now = new Date().toISOString();
-        this.restoreLeaseAuthority(run);
-        this.leaseAuthority.revoke(run.id, run.leaseId, run.generation, `controlled reroute to ${nextProfileId}`, now);
-        this.persistLatestLeaseAudit(run.id);
-        const rerouted: Run = { ...run, id: session.runId, runnerId: profile.runnerId, providerId: profile.provider, profileId: nextProfileId, sessionId: session.id, ...(session.providerSessionId ? { providerSessionId: session.providerSessionId } : {}), resumePolicy: session.providerSessionId || nextAdapter.manifest.capabilities.resume ? "same-session" : "controlled-reroute", state: "ACTIVE", attempt: run.attempt + 1, generation: run.generation + 1, leaseId: randomUUID(), leaseExpiresAt: new Date(Date.parse(now) + 15 * 60_000).toISOString(), revokedLeaseIds: [...(run.revokedLeaseIds ?? []), run.leaseId], startedAt: now, lastActivityAt: now, verification: { state: "PENDING", commands: [...contract.verification] } };
-        delete rerouted.model;
-        delete rerouted.tokens;
-        delete rerouted.tokenScope;
-        delete rerouted.telemetryAt;
-        if (typeof profile.settings?.model === "string") rerouted.model = { id: profile.settings.model, source: "configuration" };
-        delete rerouted.endedAt;
-        delete rerouted.failureReason;
-        delete rerouted.resourceBlockReason;
-        rerouted.recoveryReason = `Controlled reroute from ${run.profileId}; prior lease ${run.leaseId} revoked`;
-        delete rerouted.activitySummary;
-        delete rerouted.prUrl;
-        this.database.saveEntity("run", rerouted.id, json(rerouted));
-        this.restoreLeaseAuthority(rerouted);
-        const stored = this.database.getCanonicalTask<JsonValue>(run.taskId);
-        if (!stored) throw new SemanticPolicyError("INVALID_INPUT", `Unknown task ${run.taskId}`);
-        const bound = this.tasks.execute({ id: `semantic:${context.workflowId}:bind`, taskId: run.taskId, baseRevision: stored.revision, actor: context.principal.id, command: { type: "task.set-current-run", runId: rerouted.id } });
-        if (["WAITING_USER", "WAITING_RESOURCE"].includes(bound.task.state)) this.tasks.execute({ id: `semantic:${context.workflowId}:running`, taskId: run.taskId, baseRevision: bound.revision, actor: context.principal.id, command: { type: "task.transition", state: "RUNNING" } });
-        this.fleetEvents.publish("run.changed", run.id, { id: run.id, state: run.state });
-        this.fleetEvents.publish("run.changed", rerouted.id, { id: rerouted.id, state: rerouted.state, profileId: rerouted.profileId });
-        return { supersededRunId: run.id, run: rerouted };
-      },
+      execute: async ({ target, profileId }, context) => this.rerouteRun(String(target), String(profileId), { actorId: context.principal.id, workflowId: context.workflowId }),
     });
     this.semanticTools.register({
       name: "profile.list", description: "List agent profiles", risk: "read", input: { additionalProperties: false },

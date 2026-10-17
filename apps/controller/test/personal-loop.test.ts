@@ -4,9 +4,9 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AgentAdapter, CodexBackend, CodexTurnResult } from "@dispatcher/adapters";
+import { AdapterContractError, type AgentAdapter, type CodexBackend, type CodexTurnResult } from "@dispatcher/adapters";
 import type { DispatcherConfig, SecretMetadata, SecretStore } from "@dispatcher/config";
-import type { Run, Task } from "@dispatcher/domain";
+import type { Run, Task, TaskContract } from "@dispatcher/domain";
 import type { JsonValue } from "@dispatcher/persistence";
 import { ControllerService } from "../src/service.js";
 
@@ -27,7 +27,7 @@ afterEach(async () => {
   }
 });
 
-async function setup(options: { realCodex?: boolean; executable?: string; verificationFails?: boolean; doneOnCiPassed?: boolean } = {}) {
+async function setup(options: { realCodex?: boolean; executable?: string; verificationFails?: boolean; doneOnCiPassed?: boolean; secondProfile?: boolean } = {}) {
   const directory = mkdtempSync(join(tmpdir(), "dispatcher-personal-loop-"));
   const fixture = { directory, services: [] as ControllerService[] };
   fixtures.push(fixture);
@@ -92,6 +92,7 @@ async function setup(options: { realCodex?: boolean; executable?: string; verifi
     { id: "github", definitionId: "scm.github", kind: "scm", displayName: "GitHub", enabled: true, credentialRef: "secret://github/token", settings: { apiBase: "https://github.invalid", doneOnCiPassed: options.doneOnCiPassed ?? false } },
   ];
   config.agentProfiles = [{ id: "orion", alias: "Orion", provider: "codex", runnerId: "local", settings: { codexHome: join(directory, "profile"), ...(options.executable ? { executable: options.executable } : {}) } }];
+  if (options.secondProfile) config.agentProfiles.push({ id: "vega", alias: "Vega", provider: "codex", runnerId: "local", settings: { codexHome: join(directory, "vega-profile") } });
   config.repositories = [{ id: "acme/repo", root, defaultBaseRef: "main", scopePaths: [], verificationCommands: [{ id: "check", file: process.execPath, args: ["-e", options.verificationFails ? "process.exit(1)" : "process.exit(0)"], required: true, timeoutMs: 5_000, outputLimitBytes: 1_024 }] }];
   const plan = (await service.app.inject({ headers: OWNER, method: "POST", url: "/api/config/plans", payload: { config } })).json().plan;
   expect((await service.app.inject({ headers: OWNER, method: "POST", url: `/api/config/plans/${plan.id}/apply`, payload: { confirmed: true } })).statusCode).toBe(200);
@@ -127,6 +128,74 @@ describe("personal Slack–Linear loop", () => {
   }
 
   const resumeContext = { principal: { id: "owner", roles: ["operator"], channel: "api" as const }, workflowId: "reviewed-resume", confirmed: true };
+
+  async function rerouteFixture() {
+    const f = await setup({ secondProfile: true });
+    const contract = f.service.database.getTaskContract<JsonValue>(f.taskId) as unknown as TaskContract;
+    f.service.database.saveTaskContract(f.taskId, JSON.parse(JSON.stringify({ ...contract, instructions: "Keep the frozen instructions", scope: ["README.md"], acceptanceCriteria: ["Frozen acceptance"], constraints: ["Keep the source checkout intact"], referenceLinks: ["https://example.invalid/frozen-spec"], delivery: { type: "commit", repository: "acme/repo" } })) as JsonValue);
+    expect((await f.service.app.inject({ headers: OWNER, method: "POST", url: `/api/tasks/${f.taskId}/dispatch`, payload: { profileId: "orion" } })).statusCode).toBe(201);
+    return f;
+  }
+
+  it("stops old ownership before a reserved reroute and retains frozen context through owning commit and restart", async () => {
+    const f = await rerouteFixture(), old = f.run(), adapters = (f.service as unknown as { agentAdapters: Map<string, AgentAdapter> }).agentAdapters;
+    const originalContract = f.service.database.getEntity("run-contract", old.id), verification = f.service.database.getEntity("run-verification-config", old.id);
+    f.service.database.saveTaskContract(old.taskId, { ...(originalContract as object), goal: "MUTATED task contract", verification: ["not-the-frozen-check"] } as JsonValue);
+    const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>(), cancel = adapters.get(old.profileId)!.cancel.bind(adapters.get(old.profileId)!);
+    vi.spyOn(adapters.get(old.profileId)!, "cancel").mockImplementation(async id => { entered.resolve(); await release.promise; return cancel(id); });
+    let observed: unknown;
+    f.control.onStart = () => { const id = f.task().currentRunId!; observed = { run: f.service.database.getEntity("run", id), old: f.service.database.getEntity("run", old.id), currentRunId: id }; };
+    const pending = f.service.semanticTools.execute("run.reroute", { target: old.id, profileId: "vega" }, { ...resumeContext, workflowId: "frozen-reroute" });
+    await entered.promise; const startsBeforeStop = f.starts.length; release.resolve();
+    const result = await pending as unknown as { run: Run };
+    expect(startsBeforeStop).toBe(1);
+    expect(observed).toMatchObject({ run: { id: result.run.id, state: "STARTING", profileId: "vega" }, old: { state: "SUPERSEDED" }, currentRunId: result.run.id });
+    expect(result.run).toMatchObject({ state: "ACTIVE", attempt: 2, generation: 2, worktree: old.worktree });
+    expect(f.service.database.getEntity("run-contract", result.run.id)).toEqual(originalContract);
+    expect(f.service.database.getEntity("run-verification-config", result.run.id)).toEqual(verification);
+    expect(f.service.workspaces.get(old.worktree!)).toMatchObject({ runId: result.run.id, taskId: old.taskId, attempt: 2 });
+    expect(f.starts[1]!.prompt).toContain("Keep the frozen instructions");expect(f.starts[1]!.prompt).toContain("Frozen acceptance");expect(f.starts[1]!.prompt).toContain("https://example.invalid/frozen-spec");expect(f.starts[1]!.prompt).not.toContain("MUTATED");
+    writeFileSync(join(old.worktree!, "README.md"), "rerouted implementation\n");f.control.turn = "completed";
+    const advanced = await f.service.app.inject({ headers: OWNER, method: "POST", url: `/api/runs/${result.run.id}/advance` });
+    expect(advanced.statusCode, advanced.body).toBe(200);expect(advanced.json()).toMatchObject({ run: { state: "COMPLETE", verification: { state: "PASSED" } }, task: { state: "REVIEW", currentRunId: result.run.id } });
+    expect(execFileSync("git", ["-C", old.worktree!, "show", "HEAD:README.md"], { encoding: "utf8" })).toBe("rerouted implementation\n");
+    await f.service.stop();const restored = await f.make();expect(restored.workspaces.get(old.worktree!)).toMatchObject({ runId: result.run.id, attempt: 2 });
+  });
+
+  it("lets task cancellation win while reroute is awaiting the original writer stop", async () => {
+    const f = await rerouteFixture(), old = f.run(), adapter = (f.service as unknown as { agentAdapters: Map<string, AgentAdapter> }).agentAdapters.get(old.profileId)!;
+    const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>(), cancel = adapter.cancel.bind(adapter);
+    vi.spyOn(adapter, "cancel").mockImplementation(async id => { entered.resolve(); await release.promise; return cancel(id); });
+    const reroute = f.service.semanticTools.execute("run.reroute", { target: old.id, profileId: "vega" }, { ...resumeContext, workflowId: "racing-reroute" }).then(value => ({ value }), error => ({ error }));
+    await entered.promise;
+    const cancelling = f.service.semanticTools.execute("task.cancel", { target: old.taskId }, { ...resumeContext, workflowId: "cancel-reroute" }).then(value => ({ value }), error => ({ error }));release.resolve();
+    const results = await Promise.all([reroute, cancelling]);expect(results[0]).toHaveProperty("error");expect(results[1]).toHaveProperty("value");
+    expect(f.starts).toHaveLength(1);expect(f.task()).toMatchObject({ state: "CANCELLED", currentRunId: old.id });expect(f.run().state).toBe("CANCELLED");
+  });
+
+  it("retains a reroute's reserved native owner after a lost start response and never starts its retry again", async () => {
+    const f = await rerouteFixture(), old = f.run(), adapter = (f.service as unknown as { agentAdapters: Map<string, AgentAdapter> }).agentAdapters.get("vega")!, start = adapter.start.bind(adapter);
+    adapter.start = async input => { await start(input); throw new AdapterContractError("COMMAND_OUTCOME_UNKNOWN", "start acknowledgement lost"); };
+    const context = { ...resumeContext, workflowId: "unknown-reroute" };
+    const first = await f.service.semanticTools.execute("run.reroute", { target: old.id, profileId: "vega" }, context) as unknown as { run: Run };
+    expect(first.run).toMatchObject({ state: "RUNNER_UNAVAILABLE", recoveryReason: "NATIVE_OUTCOME_UNKNOWN", generation: 2 });expect(f.task().currentRunId).toBe(first.run.id);
+    const repeated = await f.service.semanticTools.execute("run.reroute", { target: old.id, profileId: "vega" }, context) as unknown as { run: Run };
+    expect(repeated.run.id).toBe(first.run.id);expect(f.starts).toHaveLength(2);
+    await f.service.semanticTools.execute("run.cancel", { target: first.run.id }, { ...resumeContext, workflowId: "stop-unknown-reroute" });
+    expect(f.service.database.getEntity("run", first.run.id)).toMatchObject({ state: "CANCELLED" });
+  });
+
+  it("records a stopped replacement as unavailable when task authority changes during its start acknowledgement", async () => {
+    const f = await rerouteFixture(), old = f.run(), adapter = (f.service as unknown as { agentAdapters: Map<string, AgentAdapter> }).agentAdapters.get("vega")!, start = adapter.start.bind(adapter);
+    const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
+    adapter.start = async input => { const session = await start(input);entered.resolve();await release.promise;return session; };
+    const pending = f.service.semanticTools.execute("run.reroute", { target: old.id, profileId: "vega" }, { ...resumeContext, workflowId: "stale-reroute-start" }).then(value => ({ value }), error => ({ error }));
+    await entered.promise;const replacementId = f.task().currentRunId!, task = f.service.database.getCanonicalTask<Task>(old.taskId)!;
+    f.service.database.writeCanonicalTask(old.taskId, task.revision, { ...task.document, title: "Changed during native acknowledgement" });release.resolve();
+    expect(await pending).toHaveProperty("error");
+    expect(f.service.database.getEntity("run", replacementId)).toMatchObject({ state: "RUNNER_UNAVAILABLE", recoveryReason: "NATIVE_OUTCOME_UNKNOWN" });
+    expect(f.control.cancellations).toBe(2);expect(f.starts).toHaveLength(2);
+  });
 
   it.each(["operator", "resource-monitor"] as const)("does not revive a cancelled Run after %s resume starts a native turn", async source => {
     const f = await waitingFixture(), run = f.run();
