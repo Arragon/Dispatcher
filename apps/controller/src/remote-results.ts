@@ -1,6 +1,6 @@
 import {isGitDeliveryTarget,type GitDeliveryTarget} from "@dispatcher/domain";
 import { AdapterContractError } from "@dispatcher/adapters";
-import type { AccountModelCatalog,LocalCommitResult,RepositoryRefs } from "@dispatcher/domain";
+import type { AccountModelCatalog,LocalCommitResult,RepositoryRefs,RunGitDelivery } from "@dispatcher/domain";
 import type { RunnerLease, RunnerRunSnapshot } from "@dispatcher/runner";
 const object = (value: unknown): value is Record<string, unknown> => Boolean(value && typeof value === "object" && !Array.isArray(value));
 const text = (value: unknown, max = 200): value is string => typeof value === "string" && value.length > 0 && value.length <= max;
@@ -57,3 +57,11 @@ export function remoteCommitResult(value:unknown,expected:{runId:string;generati
 }
 
 export function remoteDeliveryTarget(value:unknown):GitDeliveryTarget{if(!isGitDeliveryTarget(value))throw new AdapterContractError("REMOTE_RESULT_INVALID","Owning Runner returned an invalid delivery target");return structuredClone(value);}
+
+export function remotePushResult(value:unknown,expected:{runId:string;generation:number;branch:string;target:GitDeliveryTarget}):RunGitDelivery{
+ const invalid=():never=>{throw new AdapterContractError("REMOTE_RESULT_INVALID","Owning Runner returned an invalid push receipt");};
+ if(!object(value)||!keys(value,["version","commit","push"])||value.version!==1||!object(value.push)||!keys(value.push,["version","runId","generation","commit","branch","target","pushedAt"]))return invalid();
+ const commit=remoteCommitResult(value.commit,{runId:expected.runId,generation:expected.generation,branch:expected.branch}),push=value.push,target=remoteDeliveryTarget(push.target);
+ if(push.version!==1||push.runId!==expected.runId||push.generation!==expected.generation||push.branch!==expected.branch||push.commit!==commit.commit||Object.entries(expected.target).some(([key,expected])=>target[key as keyof GitDeliveryTarget]!==expected)||typeof push.pushedAt!=="string"||!Number.isFinite(Date.parse(push.pushedAt)))return invalid();
+ return {version:1,commit,push:structuredClone(push) as unknown as RunGitDelivery["push"]};
+}

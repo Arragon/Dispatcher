@@ -49,7 +49,7 @@ export class DeliveryService {
     // Persist delivery before reading CI: an unavailable read must not repeat push/PR.
     this.database.transaction(() => { for (const evidence of values) this.save(evidence); });
     let ci: Awaited<ReturnType<ScmAdapter["getCiStatus"]>> | undefined;
-    try { ci = await adapter.getCiStatus(request.repository, pushed.commit); }
+    try { ci = await adapter.getCiStatus(request.repository, pushed.commit,request.signal); }
     catch { /* Read failures remain pending; durable reconcile retries separately. */ }
     if (ci) {
       const evidence = values[2]!;

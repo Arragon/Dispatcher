@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync,existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
@@ -19,10 +19,19 @@ async function setup(verificationFails = false,holdFirstReconcile = false,delive
   let clock=new Date();const now=()=>new Date(clock);
   let credential:string|undefined="fixture";
   const secrets={put:async(reference:string,value:string)=>{credential=value;return {reference,backend:"encrypted-local" as const,exists:true};},resolve:async()=>{if(!credential)throw new Error("Missing secret");return credential;},test:async()=>Boolean(credential),metadata:async()=>({exists:Boolean(credential)}),delete:async()=>{credential=undefined;}} as unknown as SecretStore;
+  const remoteScm:{bare?:string;created?:Record<string,unknown>;posts:number}={posts:0};
   const connectorRequests:string[]=[];
   const restores:ReturnType<typeof vi.spyOn>[]=[];
   const makeService=async()=>{
-    const instance=new ControllerService({dataDirectory:controllerData,host:"127.0.0.1",port:0,withRunner:true,ownerToken:"owner",clock:now,codexBackendFactory:localBackend,backgroundWorker:{enabled:false},secretStore:secrets,integrationFetch:async(input,init)=>{expect(init?.method??"GET").toBe("GET");const url=new URL(String(input));expect(url.hostname).toBe("api.github.com");connectorRequests.push(url.pathname);return new Response(JSON.stringify(url.pathname.endsWith("/branches/main")?{name:"main",commit:{sha:"a".repeat(40)}}:{full_name:"acme/repo",archived:false,disabled:false,permissions:{push:true}}));}});
+    const instance=new ControllerService({dataDirectory:controllerData,host:"127.0.0.1",port:0,withRunner:true,ownerToken:"owner",clock:now,codexBackendFactory:localBackend,backgroundWorker:{enabled:false},secretStore:secrets,integrationFetch:async(input,init)=>{
+      const url=new URL(String(input));expect(url.hostname).toBe("api.github.com");connectorRequests.push(url.pathname);
+      if(url.pathname.endsWith("/pulls")){
+        if(init?.method!=="POST")return new Response(JSON.stringify(remoteScm.created?[remoteScm.created]:[]));
+        if(!remoteScm.bare)throw new Error("Controlled remote was not configured");remoteScm.posts++;const body=JSON.parse(String(init.body)),sha=execFileSync("git",["--git-dir",remoteScm.bare,"rev-parse",`refs/heads/${body.head}`],{encoding:"utf8"}).trim();remoteScm.created={id:17,number:1,html_url:"https://github.com/acme/repo/pull/1",state:"open",body:body.body,head:{sha,ref:body.head,repo:{full_name:"acme/repo"}},base:{ref:body.base,repo:{full_name:"acme/repo"}}};return new Response(JSON.stringify(remoteScm.created));
+      }
+      expect(init?.method??"GET").toBe("GET");if(url.pathname.endsWith("/status")||url.pathname.endsWith("/check-runs"))return new Response(JSON.stringify(url.pathname.endsWith("/status")?{state:"pending",total_count:0,statuses:[]}:{total_count:0,check_runs:[]}));
+      return new Response(JSON.stringify(url.pathname.endsWith("/branches/main")?{name:"main",commit:{sha:"a".repeat(40)}}:{full_name:"acme/repo",archived:false,disabled:false,permissions:{push:true}}));
+    }});
     restores.push(vi.spyOn(instance.workspaces,"restore"));await instance.start();cleanups.push(()=>instance.stop());return instance;
   };
   let service=await makeService();
@@ -68,7 +77,7 @@ async function setup(verificationFails = false,holdFirstReconcile = false,delive
   const draft = { schemaVersion: 1, clientDraftId: "draft", projectId: "local:repo", repositoryId: "repo", description: "Write the result", scopePaths: ["."], acceptanceCriteria: ["result is correct"], startMode: "dispatch", execution: { profileId: "p", selectionMode: "manual", selectionType: "explicit-model", nativeModelId: "model", nativeParameters: {}, catalogRevision: catalog.revision, contextFingerprint: catalog.contextFingerprint }, delivery: { type: deliveryType,...(deliveryType==="pull-request"?{scmConnectorId:"chosen",targetRepository:"acme/repo",baseBranch:"main"}:{}) } };
   const preview = async (clientDraftId="draft") => (await service.app.inject({ method: "POST", url: "/api/task-publications/preview", headers, payload: {...draft,clientDraftId} })).json();
   const commit = (p: { publicationId: string; revision: number; confirmation: { reviewHash: string } }) => service.app.inject({ method: "POST", url: `/api/task-publications/${p.publicationId}/commit`, headers: { ...headers, "idempotency-key": "remote-publication" }, payload: { revision: p.revision, reviewHash: p.confirmation.reviewHash, confirmation: { accepted: true } } });
-  return {get service(){return service;},runtime,get client(){return client;},root,runnerData,controllerData,starts,catalogs,localBackend,createLocal,headers,preview,commit,gate,entered,control,connect,restartController,restores,now,connectorRequests,reconcileGate,reconcileEntered,verificationGate,verificationEntered,advanceClock:(ms:number)=>{clock=new Date(clock.getTime()+ms);}};
+  return {get service(){return service;},runtime,get client(){return client;},root,runnerData,controllerData,starts,catalogs,localBackend,createLocal,headers,preview,commit,gate,entered,control,connect,restartController,restores,now,remoteScm,connectorRequests,reconcileGate,reconcileEntered,verificationGate,verificationEntered,advanceClock:(ms:number)=>{clock=new Date(clock.getTime()+ms);}};
 }
 it("reads remote registered repository context and references without touching Controller Git or native execution",async()=>{
  const f=await setup();execFileSync("git",["-C",f.root,"branch","feature/remote-read"]);
@@ -303,5 +312,13 @@ it("blocks explicit commit on an older native Runner while preserving its none e
 
 it("qualifies remote PR origin on the owning Runner while SCM reads remain on Controller",async()=>{
  const f=await setup(false,false,"pull-request");execFileSync("git",["-C",f.root,"remote","add","origin","git@github.com:acme/repo.git"]);const local=vi.spyOn(f.service.workspaces,"deliveryTarget").mockRejectedValue(new Error("Controller cannot inspect foreign Git"));
- const p=await f.preview();expect(p.checks).toContainEqual(expect.objectContaining({id:"delivery",status:"passed"}));expect(p.effectiveDelivery).toMatchObject({scmConnectorId:"chosen",target:{host:"github.com",repository:"acme/repo"}});expect(p.canCommit).toBe(false);expect(f.connectorRequests).toEqual(["/repos/acme/repo","/repos/acme/repo/branches/main"]);expect(local).not.toHaveBeenCalled();expect(f.localBackend).not.toHaveBeenCalled();expect(f.starts).toHaveLength(0);expect(f.runtime.configuration.current().config.connectors).toEqual([]);
+ const p=await f.preview();expect(p.checks).toContainEqual(expect.objectContaining({id:"delivery",status:"passed"}));expect(p.effectiveDelivery).toMatchObject({scmConnectorId:"chosen",target:{host:"github.com",repository:"acme/repo"}});expect(p.canCommit).toBe(true);expect(f.connectorRequests).toEqual(["/repos/acme/repo","/repos/acme/repo/branches/main"]);expect(local).not.toHaveBeenCalled();expect(f.localBackend).not.toHaveBeenCalled();expect(f.starts).toHaveLength(0);expect(f.runtime.configuration.current().config.connectors).toEqual([]);
+});
+
+it("completes explicit remote PR delivery using only owning-Runner Git and selected Controller SCM APIs",async()=>{
+ const f=await setup(false,false,"pull-request"),bare=join(f.root,"..","remote.git"),ssh=join(f.root,"..","fixture-ssh");execFileSync("git",["init","--bare",bare],{stdio:"ignore"});f.remoteScm.bare=bare;
+ const git=(...args:string[])=>execFileSync("git",["-C",f.root,...args],{encoding:"utf8"}).trim();git("config","user.name","Fixture");git("config","user.email","fixture@example.invalid");writeFileSync(ssh,`#!${process.execPath}\nconst {spawnSync}=require('node:child_process');const result=spawnSync('git-receive-pack',[${JSON.stringify(bare)}],{stdio:'inherit'});process.exit(result.status??1);\n`);chmodSync(ssh,0o755);git("remote","add","origin","git@github.com:acme/repo.git");git("config","core.sshCommand",ssh);git("config","ssh.variant","ssh");git("push","origin","main");const source=git("rev-parse","HEAD");
+ const local=vi.spyOn(f.service["localGitDelivery"],"push").mockRejectedValue(new Error("Controller must not push remote work"));const p=await f.preview();expect(p.canCommit,p).toBe(true);const receipt=(await f.commit(p)).json();expect(receipt.state).toBe("STARTED");
+ const response=await f.service.app.inject({headers:f.headers,method:"POST",url:`/api/runs/${receipt.runId}/advance`});expect(response.json()).toMatchObject({run:{state:"COMPLETE",prUrl:"https://github.com/acme/repo/pull/1",verification:{state:"PASSED"}},task:{state:"REVIEW"}});
+ const result=f.service.database.getEntity("run-result",receipt.runId) as unknown as {push:{commit:string}};expect(result).toMatchObject({deliveryState:"complete",deliveryType:"pull-request",commit:{files:["result.txt"]},push:{target:{repository:"acme/repo"}}});expect(f.runtime.database.getEntity("native-execution",receipt.runId)).toMatchObject({delivery:{type:"pull-request"},push:{commit:result.push.commit},settledAt:expect.any(String)});expect(git("rev-parse","HEAD")).toBe(source);expect(local).not.toHaveBeenCalled();expect(f.createLocal).not.toHaveBeenCalled();expect(f.localBackend).not.toHaveBeenCalled();expect(f.remoteScm.posts).toBe(1);expect(f.starts).toHaveLength(1);
 });

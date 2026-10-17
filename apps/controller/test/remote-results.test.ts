@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { remoteCatalog, remoteRunInventory,remoteCommitResult,remoteDeliveryTarget } from "../src/remote-results.js";
+import { remoteCatalog, remoteRunInventory,remoteCommitResult,remoteDeliveryTarget,remotePushResult } from "../src/remote-results.js";
 const identity = { profileId: "p", runnerId: "remote", providerId: "codex" };
 function catalog() { return { ...identity, backendId: "codex-exec-json", contextFingerprint: "context", revision: "catalog", fetchedAt: new Date().toISOString(), freshness: "native-fresh", source: "native-rpc", selectionSupport: "explicit", entries: [{ id: "model", displayName: "Model", kind: "model", selectable: true, access: "unconfirmed", parameterOptions: { reasoningEffort: ["low"] }, parameterDefaults: { reasoningEffort: "low" } }] }; }
 it("rejects a foreign catalog identity, duplicate model identities and unknown provider payload fields", () => {
@@ -27,4 +27,11 @@ it("validates commit receipts against canonical ownership and rejects private or
 it("rejects unbounded or private fields from owning delivery target metadata",()=>{
  const target={version:1,host:"github.example",repository:"acme/repo",remoteFingerprint:"a".repeat(64)};expect(remoteDeliveryTarget(target)).toEqual(target);
  for(const patch of [{host:"git@private"},{host:"bad..host"},{repository:"../repo"},{remoteFingerprint:"bad"},{url:"ssh://private/target"}])expect(()=>remoteDeliveryTarget({...target,...patch})).toThrow(expect.objectContaining({code:"REMOTE_RESULT_INVALID"}));
+});
+
+it("qualifies a composite owning push receipt and rejects inconsistent identity, target or private fields",()=>{
+ const target={version:1 as const,host:"github.example",repository:"acme/repo",remoteFingerprint:"a".repeat(64)},expected={runId:"run",generation:1,branch:"dispatcher/task/run",target};
+ const commit={version:1,runId:expected.runId,generation:expected.generation,branch:expected.branch,commit:"a".repeat(40),files:["result.txt"],created:true,completedAt:"2026-10-16T12:00:00Z"};
+ const push={version:1,...expected,commit:commit.commit,pushedAt:"2026-10-16T12:01:00Z"},good={version:1,commit,push};expect(remotePushResult(good,expected)).toEqual(good);
+ for(const patch of [{generation:2},{commit:"b".repeat(40)},{target:{...target,remoteFingerprint:"b".repeat(64)}},{privatePayload:{token:"private"}}])expect(()=>remotePushResult({...good,push:{...push,...patch}},expected)).toThrow(expect.objectContaining({code:"REMOTE_RESULT_INVALID"}));
 });

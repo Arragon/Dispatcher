@@ -131,9 +131,9 @@ export class GitHubScmConnector implements ScmAdapter {
     if (!Number.isInteger(number) || number < 1) throw new ConnectorError("PERMANENT", "Invalid pull request number", { retryable: false, operation: "read" });
     return githubPullRequest(await this.request(`/repos/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.name)}/pulls/${number}`));
   }
-  async getCiStatus(repository: RepositoryRef, ref: string): Promise<{ state: "PENDING" | "PASSED" | "FAILED"; url?: string }> {
+  async getCiStatus(repository: RepositoryRef, ref: string,signal?:AbortSignal): Promise<{ state: "PENDING" | "PASSED" | "FAILED"; url?: string }> {
     const path = `/repos/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.name)}/commits/${encodeURIComponent(ref)}`;
-    const data = await this.request(`${path}/status`);
+    const data = await this.request(`${path}/status`,signal?{signal}:{});
     const value = data && typeof data === "object" ? data as Record<string, unknown> : {};
     // Combined status covers every context even when its statuses array is paginated.
     const statusCount = typeof value.total_count === "number" ? value.total_count : Array.isArray(value.statuses) ? value.statuses.length : value.state === "success" || value.state === "failure" || value.state === "error" ? 1 : 0;
@@ -141,7 +141,7 @@ export class GitHubScmConnector implements ScmAdapter {
     let checked = 0;
     let checkUrl: string | undefined;
     for (let page = 1; ; page += 1) {
-      const response = await this.request(`${path}/check-runs?filter=latest&per_page=100&page=${page}`);
+      const response = await this.request(`${path}/check-runs?filter=latest&per_page=100&page=${page}`,signal?{signal}:{});
       const checks = response && typeof response === "object" ? response as Record<string, unknown> : {};
       if (!Array.isArray(checks.check_runs) || typeof checks.total_count !== "number") throw new ConnectorError("TEMPORARY", "GitHub returned invalid check runs", { retryable: true, operation: "read" });
       for (const entry of checks.check_runs) {

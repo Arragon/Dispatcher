@@ -828,8 +828,7 @@ Controller verification and local commit share the owned-command cancellation
 slot. Both native authority and current canonical Task/Run binding must still
 match before verification/delivery. The console stores the explicit choice in
 its draft, displays it at review and shows the saved SHA separately from task
-acceptance. Explicit PR delivery remains unavailable
-until their separate qualified protocol paths are implemented.
+acceptance. Explicit PR delivery uses the separately reviewed selected-SCM path below.
 
 
 ## Owning Runner commit protocol
@@ -859,7 +858,7 @@ branch with no force, automatic tags or submodule push. Its own durable intent a
 receipt prevent blind repetition after an uncertain outcome. It preserves native
 Git authentication/hooks and drains the owned process group on cancellation.
 The native push protocol exposes this only to a frozen PR intent. Publication
-PR preflight and SCM API integration remain a separate step.
+preflight binds that same target to the selected Controller SCM API.
 
 ## Native Git delivery negotiation
 
@@ -898,7 +897,7 @@ token's Pull Requests write permission. Repository/branch API contracts follow
 the [GitHub REST docs](https://docs.github.com/en/rest/repos/repos#get-a-repository)
 and [branch docs](https://docs.github.com/en/rest/branches/branches#get-a-branch).
 SCM or credential context changes during reads cannot produce qualified evidence.
-PR execution remains blocked until the owned Git/API integration is complete.
+Explicit PR execution uses this selection through the owned Git/API path below.
 
 ## SCM create intents and request authority
 
@@ -918,3 +917,27 @@ explicit requests can require a matching repository/head/base/SHA, owned body
 marker and HTTPS PR URL. Invalid or changed receipts stay unknown. The provider
 reply is fenced again before recording completion/evidence. None of these checks
 merge a PR or imply CI/user acceptance.
+
+## Selected SCM execution and partial results
+
+Run reservation persists the reviewed ScmDeliverySelection independently of its
+TaskContract, and startup rechecks it before native execution. Delivery fences
+include the observed connector credential/config context. Local Git executes
+through LocalGitDelivery; remote Git executes through the owning native.run_push.
+A composite commit/push response is strictly checked against Run/generation,
+branch, target and scoped manifest before it becomes canonical metadata.
+
+DeliveryService receives a selected SCM bridge whose Git evidence is already
+confirmed; its provider methods use the exact frozen branch/SHA and PR marker.
+The Controller never runs Git for a remote workspace. Existing run-result saves
+the confirmed push before the PR request and advances to complete only after
+qualified PR evidence. A lost response therefore retains useful push evidence
+while its PR creation intent remains unknown. CI pending is preserved and Task
+completion remains REVIEW rather than implied acceptance.
+
+Git and Controller HTTP use sequential owned-command cancellation slots. The
+HTTP slot starts only after Git's process group has drained, and its abort
+settlement does not suppress a Git cleanup failure. CI reads receive the same
+abort signal. Completed Run results now explicitly include generation. Legacy
+external contracts without scmConnectorId retain their existing delivery adapter
+path rather than acquiring an implicit new SCM choice.

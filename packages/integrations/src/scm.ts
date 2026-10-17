@@ -42,7 +42,7 @@ export interface ScmAdapter extends ConnectorAdapter {
   push(repository: RepositoryRef, branch: string, idempotencyKey: string): Promise<{ commit: string }>;
   createOrGetPullRequest(request: DeliveryRequest): Promise<PullRequestStatus>;
   getPullRequest?(repository: RepositoryRef, number: number): Promise<PullRequestStatus>;
-  getCiStatus(repository: RepositoryRef, ref: string): Promise<{ state: "PENDING" | "PASSED" | "FAILED"; url?: string }>;
+  getCiStatus(repository: RepositoryRef, ref: string,signal?:AbortSignal): Promise<{ state: "PENDING" | "PASSED" | "FAILED"; url?: string }>;
 }
 
 export const fakeScmDefinition = createConnectorDefinition({

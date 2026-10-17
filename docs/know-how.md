@@ -652,3 +652,11 @@
 - Scope create identity to Run/generation, with nonce/connector/target bound as
   content. A fresh nonce must not authorize a second external write. Recheck
   authority after provider response awaits and before saving qualified evidence.
+
+- Save confirmed push facts in run-result before awaiting PR creation. A lost
+  provider response must not hide a completed Git transfer or imply PR success.
+- Start the HTTP cancellation slot only after the Git ownership promise has
+  drained. Aborted HTTP can settle with an unknown provider effect; that must
+  never normalize a failed OS process-group cleanup into a confirmed stop.
+- Composite remote push validation must pass only Run/generation/branch to the
+  commit validator; its separately frozen target belongs to the push receipt.

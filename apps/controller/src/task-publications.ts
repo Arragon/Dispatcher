@@ -115,7 +115,6 @@ export class PublicationService {
     if(existing){this.assertTaskBinding(existing.taskBinding);compiled.contract=structuredClone(existing.contract);}
     const checks:PublicationPreview["checks"]=[{id:"workspace",status:repository?"passed":"warning",message:repository?"Registered physical Git root and base commit verified":"No repository; task needs specification"}];
     if(deliveryCheck)checks.push(deliveryCheck);
-    if(draft.delivery.type==="pull-request")checks.push({id:"delivery-runtime",status:"blocked",code:"DELIVERY_UNSUPPORTED",message:"Owned PR/API execution is not qualified yet"});
     if(draft.delivery.type==="commit")checks.push({id:"delivery",status:"passed",message:"Create a local commit in the owning Runner's managed worktree; no push or pull request"});
     let selection:ExecutionSelection|undefined;
     let routingDecision:ModelRoutingDecision|undefined;

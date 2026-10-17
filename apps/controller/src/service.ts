@@ -1,4 +1,4 @@
-import type {ScmDeliverySelection} from "@dispatcher/domain";
+import type {RunGitDelivery,ScmDeliverySelection} from "@dispatcher/domain";
 import { resolveProfileExecutionContext } from "./execution-context.js";
 import { ProfileProbeService } from "./profile-probes.js";
 import { CredentialContext } from "./credential-context.js";
@@ -10,7 +10,7 @@ import type { ProfileConsoleView,NativeSessionConsoleView,RepositoryConsoleConte
 import { applyConfigEdits, consoleConfig, consoleConfigPlan } from "./config-edits.js";
 import {qualifyRoutingPolicy,type PolicyConfigEvidence} from "./policy-config.js";
 import {TaskClassifier} from "./task-classifier.js";
-import { remoteCatalog, remoteRunInventory,remoteRepositoryRefs,remoteCommitResult,remoteDeliveryTarget } from "./remote-results.js";
+import { remoteCatalog, remoteRunInventory,remoteRepositoryRefs,remoteCommitResult,remoteDeliveryTarget,remotePushResult } from "./remote-results.js";
 import { RemoteNativeAdapter } from "./remote-adapter.js";
 import { NATIVE_EXECUTION_CAPABILITY,NATIVE_GIT_DELIVERY_CAPABILITY,requiresNativeGitDelivery, type CommandPayload } from "@dispatcher/protocol";
 import { ModelRoutingService } from "./model-routing.js";
@@ -745,6 +745,8 @@ export class ControllerService {
     const remote = this.configuration.current().config.runners.some(runner => runner.id === run.runnerId && runner.mode === "remote");
     if (this.revokedRunnerCredentials.has(run.runnerId) || remote && !this.runnerCredentialContext(run.runnerId).usable) throw new ConnectorError("CONFLICT", "Owning Runner authorization is revoked", { retryable: false, operation: "delivery" });
     if (this.cancelledRunIds.has(run.id) || !current || current.generation !== run.generation || current.leaseId !== run.leaseId || !["VERIFYING", "DELIVERING"].includes(current.state)) throw new ConnectorError("CONFLICT", "Delivery authority rejected: stale or terminal run", { retryable: false, operation: "delivery" });
+    const scmSelection=this.database.getEntity<JsonValue>("run-delivery-selection",run.id) as unknown as ScmDeliverySelection|undefined;
+    if(scmSelection&&this.connectorConfigurationFingerprint(scmSelection.scmConnectorId)!==scmSelection.contextFingerprint)throw new ConnectorError("CONFLICT","Reviewed SCM context changed before delivery",{retryable:false,operation:"delivery"});
     this.restoreLeaseAuthority(run);
     try {
       this.leaseAuthority.fence(run.id, run.leaseId, run.generation, operation, this.now().toISOString());
@@ -1728,6 +1730,7 @@ export class ControllerService {
     }
 
     if (run.state !== "DELIVERING" || !run.worktree || !run.branch) throw new ConnectorError("CONFLICT", `Run ${run.id} is not ready for delivery`);
+    if(contract.delivery.type==="pull-request"&&contract.delivery.scmConnectorId)return this.deliverExplicitPr(run,contract);
     if(contract.delivery.type==="none"||contract.delivery.type==="commit") {
       const remote=this.agentAdapters.get(run.profileId) instanceof RemoteNativeAdapter;
       const workspace=remote?this.database.getEntity<JsonValue>("workspace-handle",run.id) as unknown as WorkspaceHandle|undefined:this.workspaces.get(run.worktree);
@@ -1746,7 +1749,7 @@ export class ControllerService {
           this.localCommands.set(run.id,{controller,settled});try{await settled;files=commit!.files;}finally{if(this.localCommands.get(run.id)?.controller===controller)this.localCommands.delete(run.id);}
         }
       }
-      const result={version:1,runId:run.id,taskId:run.taskId,runnerId:run.runnerId,deliveryType:contract.delivery.type,...(commit?{commit}:{}),worktree:run.worktree,branch:run.branch,baseCommit:workspace.baseRevision,files,verification:run.verification,summary:run.activitySummary??"",createdAt:this.now().toISOString()};
+      const result={version:1,runId:run.id,taskId:run.taskId,runnerId:run.runnerId,generation:run.generation,deliveryType:contract.delivery.type,...(commit?{commit}:{}),worktree:run.worktree,branch:run.branch,baseCommit:workspace.baseRevision,files,verification:run.verification,summary:run.activitySummary??"",createdAt:this.now().toISOString()};
       if(remote){this.fenceDelivery(run,"complete");await this.finalizeRemoteRun(run);}
       this.database.transaction(()=>{
         this.fenceDelivery(run,"complete");
@@ -1800,6 +1803,44 @@ export class ControllerService {
       task: this.database.getCanonicalTask<JsonValue>(run.taskId)!.document as unknown as Task,
       deliveries: this.database.listDeliveryEvidence<JsonValue>(run.taskId),
     };
+  }
+
+  private async deliverExplicitPr(run:Run,contract:TaskContract):Promise<AdvanceResult>{
+    const selected=this.database.getEntity<JsonValue>("run-delivery-selection",run.id) as unknown as ScmDeliverySelection|undefined;
+    if(!selected||selected.scmConnectorId!==contract.delivery.scmConnectorId||selected.repository!==contract.delivery.repository||selected.baseBranch!==contract.delivery.baseBranch)throw new ConnectorError("CONFLICT","Run has no matching reviewed SCM delivery selection",{retryable:false,operation:"delivery"});
+    this.fenceDelivery(run,"push");const remote=this.agentAdapters.get(run.profileId) instanceof RemoteNativeAdapter,workspace=remote?this.database.getEntity<JsonValue>("workspace-handle",run.id) as unknown as WorkspaceHandle|undefined:this.workspaces.get(run.worktree!);
+    if(!workspace)throw new WorkspacePolicyError("WORKSPACE_UNAVAILABLE","Managed delivery workspace is unavailable");
+    let git:RunGitDelivery;
+    if(remote)git=remotePushResult(await this.remoteRequest(run.runnerId,{type:"native.run_push",runId:run.id},run,`native-push:${run.id}:${run.generation}`),{runId:run.id,generation:run.generation,branch:workspace.branch,target:selected.target});
+    else{
+      const controller=new AbortController(),input={runId:run.id,generation:run.generation,leaseId:run.leaseId,workspace,message:commitMessage(contract.goal),signal:controller.signal,assertAuthority:()=>this.fenceDelivery(run,"push")};
+      const operation=(async()=>{const push=await this.localGitDelivery.push({...input,target:selected.target}),commit=await this.localGitDelivery.commit(input);return {version:1 as const,commit,push};})();
+      const settled=operation.then(()=>undefined);void settled.catch(()=>undefined);this.localCommands.set(run.id,{controller,settled});
+      try{git=await operation;}finally{if(this.localCommands.get(run.id)?.controller===controller)this.localCommands.delete(run.id);}
+    }
+    this.fenceDelivery(run,"push");assertPublicationScope(git.commit.files,workspace.scopePaths);
+    const previous=this.database.getEntity<JsonValue>("run-result",run.id) as {createdAt?:string}|undefined;
+    const result={version:1,runId:run.id,taskId:run.taskId,runnerId:run.runnerId,generation:run.generation,deliveryType:"pull-request",deliveryState:"pushed",commit:git.commit,push:git.push,worktree:run.worktree,branch:run.branch,baseCommit:workspace.baseRevision,files:git.commit.files,verification:run.verification,summary:run.activitySummary??"",createdAt:previous?.createdAt??this.now().toISOString()};
+    this.database.transaction(()=>{this.fenceDelivery(run,"push");this.database.saveEntity("run-result",run.id,json(result));});this.fleetEvents.publish("run.changed",run.id,{id:run.id,state:run.state});
+    const scm=this.connectors.get<ScmAdapter>(selected.scmConnectorId);if(!scm)throw new ConnectorError("CONFLICT","Selected SCM connector is unavailable",{retryable:false});
+    const bridge:ScmAdapter={definition:scm.definition,instance:scm.instance,probe:()=>scm.probe(),ensureBranch:async(_repository,branch)=>{this.fenceDelivery(run,"branch");if(branch!==workspace.branch)throw new ConnectorError("CONFLICT","Managed delivery branch changed",{retryable:false});},push:async()=>{this.fenceDelivery(run,"push");return {commit:git.push.commit};},createOrGetPullRequest:request=>scm.createOrGetPullRequest(request),getCiStatus:(repository,ref,signal)=>scm.getCiStatus(repository,ref,signal)};
+    const controller=new AbortController(),parts=selected.repository.split("/");
+    const api=Promise.resolve().then(()=>new DeliveryService(this.database).deliver(bridge,{idempotencyKey:`delivery:${run.id}:${run.generation}`,taskId:run.taskId,run,currentGeneration:run.generation,currentLeaseId:run.leaseId,repository:{owner:parts[0]!,name:parts[1]!},headBranch:workspace.branch,baseBranch:selected.baseBranch,title:contract.goal,body:`Verified by Agent Dispatcher run ${run.id}.`,verification:run.verification,expectedHeadCommit:git.push.commit,signal:controller.signal,assertAuthority:operation=>this.fenceDelivery(run,operation)}));
+    // Git has already drained its owned process group. This slot waits for HTTP
+    // cancellation; an uncertain provider write remains in the durable PR intent.
+    const settled=api.then(()=>undefined,error=>{if(!controller.signal.aborted)throw error;});void settled.catch(()=>undefined);this.localCommands.set(run.id,{controller,settled});
+    let delivery:Awaited<typeof api>;try{delivery=await api;}finally{if(this.localCommands.get(run.id)?.controller===controller)this.localCommands.delete(run.id);}
+    const pr=delivery.evidence.find(evidence=>evidence.kind==="pull-request");
+    if(!pr?.url)throw new ConnectorError("CONFLICT","Selected SCM did not confirm a PR receipt",{retryable:false});
+    const prUrl=pr.url;
+    if(remote){this.fenceDelivery(run,"complete");await this.finalizeRemoteRun(run);}
+    this.database.transaction(()=>{
+      this.fenceDelivery(run,"complete");const current=this.database.getCanonicalTask<JsonValue>(run.taskId)!;
+      assertRunTransition(run.state,"COMPLETE");run.state="COMPLETE";run.endedAt=this.now().toISOString();run.prUrl=prUrl;
+      this.saveAdvancedRun(run,"DELIVERING");this.database.saveEntity("run-result",run.id,json({...result,deliveryState:"complete",prUrl}));
+      this.tasks.execute({id:`run:${run.id}:review`,taskId:run.taskId,baseRevision:current.revision,actor:"run-worker",command:{type:"task.transition",state:"REVIEW"}});
+    });
+    this.fleetEvents.publish("run.changed",run.id,{id:run.id,state:run.state});return {waiting:false,run,task:this.database.getCanonicalTask<JsonValue>(run.taskId)!.document as unknown as Task,deliveries:this.database.listDeliveryEvidence<JsonValue>(run.taskId)};
   }
 
   private standaloneTrialSessions(): AdapterSession[] {
@@ -2159,7 +2200,9 @@ export class ControllerService {
     const repositoryRunner=repositoryRunnerId(this.configuration.current().config,repositoryConfig),remote=this.configuration.current().config.runners.some(runner=>runner.id===repositoryRunner&&runner.mode==="remote");
     if(body.profileId&&this.configuration.current().config.agentProfiles.find(profile=>profile.id===body.profileId)?.runnerId!==repositoryRunner)throw new PublicationError("RUNNER_REPOSITORY_MISMATCH",409,"Account and repository belong to different Runners");
     if(remote&&!publication?.selection)throw new PublicationError("REMOTE_SELECTION_REQUIRED",409,"Remote dispatch requires a reviewed native execution selection");
-    if(remote&&contract.delivery.type==="pull-request")throw new PublicationError("REMOTE_DELIVERY_UNAVAILABLE",409,"Remote execution currently requires local result delivery on the owning Runner");
+    const reviewedDelivery=publication?.deliverySelection;
+    if(contract.delivery.type==="pull-request"&&contract.delivery.scmConnectorId&&(!reviewedDelivery||reviewedDelivery.scmConnectorId!==contract.delivery.scmConnectorId||reviewedDelivery.repository!==contract.delivery.repository||reviewedDelivery.baseBranch!==contract.delivery.baseBranch))throw new PublicationError("SCM_REVIEW_REQUIRED",409,"Review the explicit SCM delivery before dispatch");
+    if(remote&&contract.delivery.type==="pull-request"&&!reviewedDelivery)throw new PublicationError("REMOTE_DELIVERY_UNAVAILABLE",409,"Remote PR delivery requires a reviewed owning target");
     const scheduler = new CanonicalScheduler(() => this.dispatchCandidates(body?.profileId).filter(candidate=>candidate.runnerId===repositoryRunner));
     const runId = randomUUID();
     const workspacePlan = {
@@ -2191,12 +2234,13 @@ export class ControllerService {
         ...(publication?.selection ? {executionSelection:publication.selection}:{}),
         beforeStart:async()=>{
           if(publication&&contentHash(this.database.getTaskContract(taskId))!==contentHash(publication.contract))throw new PublicationError("TASK_CHANGED",409,"Task contract changed before native startup");
+          if(reviewedDelivery&&publication){const current=await this.prepareScmDelivery(publication.draft,repositoryConfig);if(contentHash({...current,reviewedAt:undefined})!==contentHash({...reviewedDelivery,reviewedAt:undefined}))throw new PublicationError("SELECTION_CHANGED",409,"SCM target or context changed before native start");}
           if(remote){
             const reserved=this.database.getEntity<JsonValue>("run",runId) as unknown as Run|undefined;
             if(!reserved||reserved.state!=="STARTING")throw new PublicationError("RUN_CHANGED",409,"Remote workspace requires a reserved canonical Run");
             this.database.saveEntity("workspace-intent",runId,json({...workspacePlan,state:"CREATING",runnerId:repositoryRunner}));
             let prepared:unknown;
-            try{prepared=await this.remoteRequest(repositoryRunner,{type:"native.workspace_prepare",runId,profileId:reserved.profileId,plan:workspacePlan,verificationCommandIds:contract.verification,...(contract.delivery.type==="commit"?{delivery:{type:"commit" as const,message:commitMessage(contract.goal)}}:{})},reserved,`native-prepare:${runId}:${reserved.generation}`);}
+            try{prepared=await this.remoteRequest(repositoryRunner,{type:"native.workspace_prepare",runId,profileId:reserved.profileId,plan:workspacePlan,verificationCommandIds:contract.verification,...(contract.delivery.type==="commit"?{delivery:{type:"commit" as const,message:commitMessage(contract.goal)}}:contract.delivery.type==="pull-request"&&reviewedDelivery?{delivery:{type:"pull-request" as const,message:commitMessage(contract.goal),target:reviewedDelivery.target}}:{})},reserved,`native-prepare:${runId}:${reserved.generation}`);}
             catch(error){if(error instanceof AdapterContractError)throw error;throw new AdapterContractError("COMMAND_OUTCOME_UNKNOWN","Remote workspace preparation response is unconfirmed");}
             const actual=this.remoteWorkspace(prepared,workspacePlan,workspace);
             this.database.transaction(()=>{this.database.saveEntity("workspace-handle",runId,json({...actual,runnerId:repositoryRunner}));this.database.saveEntity("workspace-intent",runId,json({...workspacePlan,state:"CREATED",path:actual.path,runnerId:repositoryRunner}));});
@@ -2225,6 +2269,7 @@ export class ControllerService {
             if (!current || (current.document as unknown as Task).state !== "READY" || currentContract?.revision !== contract.revision) throw new TaskDispatchError("TASK_CHANGED", 409, "Task changed before dispatch reservation");
             if(publication && this.configuration.current().revision!==publication.configRevision)throw new PublicationError("SELECTION_CHANGED",409,"Configuration changed during workspace creation");
             this.database.saveEntity("run-contract",run.id,json(contract));
+            if(reviewedDelivery)this.database.saveEntity("run-delivery-selection",run.id,json(reviewedDelivery));
             this.database.saveEntity("run-verification-config",run.id,json(repositoryConfig.verificationCommands));
             this.database.saveEntity("run", run.id, json(run));
             if(publication)this.publications.markStarting(publication.owner,publication.preview.publicationId,run);
@@ -2843,7 +2888,7 @@ export class ControllerService {
       const id = `${run.id}:${run.generation}`;
       try {
         this.assertCurrentDeliveryRun(run);
-        const contract = this.database.getTaskContract<JsonValue>(run.taskId) as unknown as TaskContract | undefined;
+        const contract = (this.database.getEntity<JsonValue>("run-contract",run.id)??this.database.getTaskContract<JsonValue>(run.taskId)) as unknown as TaskContract | undefined;
         const [owner, name] = contract?.delivery.repository?.split("/") ?? [];
         if (!owner || !name) return;
         const evidence = this.database.listDeliveryEvidence<JsonValue>(run.taskId) as unknown as Array<{ kind: string; runId: string; connectorInstanceId: string }>;
