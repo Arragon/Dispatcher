@@ -384,3 +384,9 @@ input, textarea { caret-color:var(--accent); }
 @media(max-width:580px) { input,textarea,select { font-size:16px; } .drawer .details-grid { grid-template-columns:1fr; } .detail-toolbar { flex-wrap:wrap; } }
 .config-form .rjsf-array-item > div:first-child { flex:1; min-width:0; }
 .drawer > .panel-heading > button, .modal > .panel-heading > button { flex-shrink:0; white-space:nowrap; }
+
+.publish-page .field-error { display:block; margin:6px 0 10px; color:var(--danger); font-size:12px; line-height:1.5; }
+.publish-page .flush-panel > .field-error { margin-inline:22px; }
+.publish-page :is(input,textarea,select)[aria-invalid="true"] { border-color:var(--danger); }
+
+.detail-section .table-wrap table.usage-metrics { min-width:0; }
