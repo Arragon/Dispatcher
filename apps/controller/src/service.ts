@@ -3700,7 +3700,7 @@ export class ControllerService {
       if(!/^\d+$/.test(offset)||!/^\d+$/.test(limit)||Number(offset)>10_000||Number(limit)<1||Number(limit)>100)return reply.code(400).send({code:"INVALID_REF_PAGE"});
       return this.repositoryRefs(request.params.id,Number(offset),Number(limit));
     });
-    this.app.get("/api/task-publications/capabilities", async () => ({ schemaVersion: 1, startModes: ["create-only","dispatch"], deliveryTypes: ["none","commit"], selectionModes:["manual","policy-auto"], modelRouting:{classificationModes:["keyword","hybrid"],enabled:this.configuration.current().config.policies.modelRouting?.enabled===true}, projects: this.configuration.current().config.repositories.map(r => ({ id: `local:${r.id}`, repositoryId: r.id })) }));
+    this.app.get("/api/task-publications/capabilities", async () => ({ schemaVersion: 1, startModes: ["create-only","dispatch"], deliveryTypes: ["none","commit","pull-request"], selectionModes:["manual","policy-auto"], modelRouting:{classificationModes:["keyword","hybrid"],enabled:this.configuration.current().config.policies.modelRouting?.enabled===true}, projects: this.configuration.current().config.repositories.map(r => ({ id: `local:${r.id}`, repositoryId: r.id })) }));
     this.app.post<{ Body: PublishDraftV1 }>("/api/task-publications/preview", { schema: { body: publishDraftSchema } }, async request => {
       const principal = this.principalFor(request);
       if (!principal.roles.includes("operator")) throw new PublicationError("FORBIDDEN", 403, "Operator role required");

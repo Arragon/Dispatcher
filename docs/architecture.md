@@ -941,3 +941,19 @@ settlement does not suppress a Git cleanup failure. CI reads receive the same
 abort signal. Completed Run results now explicitly include generation. Legacy
 external contracts without scmConnectorId retain their existing delivery adapter
 path rather than acquiring an implicit new SCM choice.
+
+## Explicit PR console flow
+
+The existing publication composer preserves explicit SCM connector/repository/base
+fields in its versioned draft and backup, freezes existing-task delivery fields,
+and submits those fields only for PR delivery. Review shows the server's actual
+normalized host/target/base; confirmation stays disabled without its selection
+snapshot. Capability discovery now advertises PR alongside none and commit.
+
+Task detail reads confirmed results during delivery and recovery states and keeps
+Run/phase-scoped query caches. During delivery, bounded read-only polling and the
+existing shared event subscription refresh the saved push and current-Run delivery
+evidence. Push confirmation, PR receipt and CI evidence are shown independently;
+a saved push cannot imply an unpushed commit or an absent/confirmed PR. The frozen
+SCM identity filters the selected PR when available, and the same PR link is not
+rendered twice. Querying these views invokes no native inference or SCM mutation.

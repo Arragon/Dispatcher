@@ -1,7 +1,7 @@
 import { RoutingDecision } from "./RoutingDecision.js";
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import type { Task, TaskContract, Run, DeliveryEvidence,LocalCommitResult } from "@dispatcher/domain";
+import type { Task, TaskContract, Run, DeliveryEvidence,GitPushResult,LocalCommitResult } from "@dispatcher/domain";
 import type { FleetTaskInput, FleetProfileInput, FleetRunInput } from "@dispatcher/fleet";
 import { api, ApiError, subscribeToEvents } from "./api.js";
 import { Drawer } from "./Drawer.js";
@@ -10,20 +10,22 @@ import { Notice } from "./ui.js";
 import {UsagePanel} from "./UsagePanel.js";
 import { safeLink, stateLabel, terminalStates } from "./task-view.js";
 interface TaskView { executionIntent?:{publicationId:string}; revision:number; document:Task; contract?:TaskContract; deliveries:DeliveryEvidence[]; runs:Run[]; archive?:{revision:number;archivedAt?:string} }
-interface RunResult { worktree:string; branch:string; files:string[]; verification:Run["verification"]; summary?:string;commit?:LocalCommitResult }
+interface RunResult { worktree:string; branch:string; files:string[]; verification:Run["verification"]; summary?:string;deliveryType?:"none"|"commit"|"pull-request";deliveryState?:"pushed"|"complete";generation?:number;commit?:LocalCommitResult;push?:GitPushResult }
 function Lines({items,empty="未登记"}:{items?:string[];empty?:string}):React.JSX.Element {return items?.length ? <ul className="detail-list">{items.map((item,index)=><li key={index}>{item}</li>)}</ul> : <p className="muted">{empty}</p>;}
 export function TaskDetail({id,fallback,profiles,onClose,refresh}:{id:string;fallback?:FleetTaskInput;profiles:FleetProfileInput[];onClose:()=>void;refresh:()=>Promise<unknown>}):React.JSX.Element {
-  const query=useQuery({queryKey:["task-detail",id],queryFn:()=>api<TaskView>(`/api/tasks/${encodeURIComponent(id)}`),retry:false});
+  const query=useQuery({queryKey:["task-detail",id],queryFn:()=>api<TaskView>(`/api/tasks/${encodeURIComponent(id)}`),retry:false,refetchInterval:query=>query.state.data?.runs?.some(run=>run.id===query.state.data?.document?.currentRunId&&run.state==="DELIVERING")?1500:false});
   const [attempt,setAttempt]=useState("");
   const [busy,setBusy]=useState(false),[message,setMessage]=useState("");
   const data=query.data?.document ? query.data : undefined;
   const task=data ? {...data.document,revision:data.revision,archiveRevision:data.archive?.revision??0,...(data.archive?.archivedAt?{archivedAt:data.archive.archivedAt}:{})} : fallback;
   const currentId=task?.currentRunId;
   const runId=attempt||currentId;
-  const runQuery=useQuery({queryKey:["run-detail",runId],queryFn:()=>api<{run:Run;contract?:TaskContract}>(`/api/runs/${encodeURIComponent(runId!)}`),enabled:Boolean(runId),retry:false});
+  const runQuery=useQuery({queryKey:["run-detail",runId],queryFn:()=>api<{run:Run;contract?:TaskContract}>(`/api/runs/${encodeURIComponent(runId!)}`),enabled:Boolean(runId),retry:false,refetchInterval:query=>query.state.data?.run?.state==="DELIVERING"?1500:false});
   const run=runQuery.data?.run;
-  const result=useQuery({queryKey:["run-result",runId],queryFn:()=>api<{result:RunResult}>(`/api/runs/${encodeURIComponent(runId!)}/result`),enabled:Boolean(run&&terminalStates.has(run.state)),retry:false});
-  useEffect(()=>subscribeToEvents(()=>{void query.refetch();if(runId){void runQuery.refetch();if(run&&terminalStates.has(run.state))void result.refetch();}}),[query.refetch,runQuery.refetch,result.refetch,runId,run]);
+  const canReadResult=Boolean(run&&(terminalStates.has(run.state)||["DELIVERING","RESOURCE_BLOCKED","RUNNER_UNAVAILABLE"].includes(run.state)));
+  const result=useQuery({queryKey:["run-result",runId,run?.state],queryFn:()=>api<{result:RunResult}>(`/api/runs/${encodeURIComponent(runId!)}/result`),enabled:canReadResult,retry:false,refetchInterval:run?.state==="DELIVERING"?1500:false});
+  const savedResult=result.data?.result;
+  useEffect(()=>subscribeToEvents(()=>{void query.refetch();if(runId){void runQuery.refetch();if(canReadResult)void result.refetch();}}),[query.refetch,runQuery.refetch,result.refetch,runId,canReadResult]);
   async function reload():Promise<void>{await Promise.all([query.refetch(),...(runId?[runQuery.refetch()]:[]),refresh()]);}
   async function archive():Promise<void>{
     if(!task||!data||busy)return;setBusy(true);setMessage("");
@@ -36,6 +38,7 @@ export function TaskDetail({id,fallback,profiles,onClose,refresh}:{id:string;fal
   const frozenContract=runQuery.data?.contract;
   const contract=attempt&&attempt!==currentId?frozenContract:frozenContract??data?.contract;
   const selection=run?.executionSelection;
+  const confirmedPr=data?.deliveries?.find(delivery=>delivery.runId===runId&&delivery.kind==="pull-request"&&(!contract?.delivery.scmConnectorId||delivery.connectorInstanceId===contract.delivery.scmConnectorId)&&Boolean(safeLink(delivery.url)));
   return <Drawer title={task?.title??(query.isLoading?"正在读取任务…":"任务详情")} onClose={onClose}>
     <div className="detail-toolbar"><span className="muted">{id}</span><button disabled={query.isFetching} onClick={()=>void reload()}>刷新详情</button></div>
     {query.error&&<Notice tone="error">{query.error instanceof ApiError&&query.error.status===404?"任务不存在或已不可访问。":"任务详情读取失败，当前内容可能已过期。"}<button onClick={()=>void reload()}>重试读取</button></Notice>}
@@ -49,7 +52,13 @@ export function TaskDetail({id,fallback,profiles,onClose,refresh}:{id:string;fal
       <h3>验证证据</h3><p>{run.verification?.state??"未提供"} · {run.verification?.summary??"没有验证摘要"}</p><Lines items={run.verification?.commands}/></>}
       </section>
       <section className="detail-section"><h3>{frozenContract?"运行冻结契约":"任务契约"}</h3>{contract?<><p>{contract.goal}</p><h4>验收条件</h4><Lines items={contract.acceptanceCriteria}/><h4>允许修改范围</h4><Lines items={contract.scope}/><h4>约束</h4><Lines items={contract.constraints} empty="未登记额外约束"/>{Boolean(contract.referenceLinks?.length)&&<><h4>参考链接</h4>{contract.referenceLinks?.map(link=>safeLink(link)?<p key={link}><a href={safeLink(link)} target="_blank" rel="noreferrer">{link}</a></p>:<p key={link}>历史链接不可打开</p>)}</>}</>:<p>此记录没有可用的冻结契约。</p>}</section>
-      <section className="detail-section"><h3>交付与修改文件</h3>{result.isFetching?<p role="status">正在读取结果…</p>:result.data?<><p>{result.data.result.worktree} · {result.data.result.branch}</p>{result.data.result.commit&&<><p>{result.data.result.commit.created?"本次本地提交":"现有提交（未新增）"} · 未自动推送</p><code>{result.data.result.commit.commit}</code></>}<Lines items={result.data.result.files} empty="没有文件变更"/></>:result.error instanceof ApiError&&result.error.code==="RUN_RESULT_UNAVAILABLE"?<p>尚无本地结果回执。</p>:result.error?<Notice tone="error">结果读取失败。<button onClick={()=>void result.refetch()}>重试读取结果</button></Notice>:<p>运行结束后读取本地结果。</p>}{data.deliveries?.filter(delivery=>!runId||delivery.runId===runId).map(delivery=><p key={delivery.id}>{delivery.kind} · {delivery.state}{safeLink(delivery.url)&&<> · <a href={safeLink(delivery.url)} target="_blank" rel="noreferrer">查看交付</a></>}</p>)}<Notice>Run 完成、验证通过与任务验收分别记录；任务为 REVIEW 时仍需人工验收。</Notice></section>
+      <section className="detail-section"><h3>交付与修改文件</h3>{result.isFetching&&!savedResult?<p role="status">正在读取结果…</p>:savedResult?<>
+        <p>{savedResult.worktree} · {savedResult.branch}</p>
+        {savedResult.commit&&<><p>{savedResult.commit.created?"本次本地提交":"现有提交（未新增）"}{!savedResult.push&&" · 未自动推送"}</p><code>{savedResult.commit.commit}</code></>}
+        {savedResult.push&&<><p>已确认推送</p><p>{savedResult.push.target.host}/{savedResult.push.target.repository}</p><p className="muted">推送确认时间：{savedResult.push.pushedAt}</p></>}
+        {savedResult.deliveryType==="pull-request"&&(confirmedPr?<p><span>{confirmedPr.state==="MERGED"?"PR 已合并":confirmedPr.state==="FAILED"?"PR 已关闭":"PR 已创建"}</span> · <a href={safeLink(confirmedPr.url)} target="_blank" rel="noreferrer">查看已确认 PR</a></p>:<p>PR 回执未确认</p>)}
+        <Lines items={savedResult.files} empty="没有文件变更"/>
+      </>:result.error instanceof ApiError&&result.error.code==="RUN_RESULT_UNAVAILABLE"?<p>尚无本地结果回执。</p>:result.error?<Notice tone="error">结果读取失败。<button onClick={()=>void result.refetch()}>重试读取结果</button></Notice>:<p>运行结束后读取本地结果。</p>}{data.deliveries?.filter(delivery=>(!runId||delivery.runId===runId)&&!(savedResult?.deliveryType==="pull-request"&&delivery.id===confirmedPr?.id)).map(delivery=><p key={delivery.id}>{delivery.kind} · {delivery.state}{safeLink(delivery.url)&&<> · <a href={safeLink(delivery.url)} target="_blank" rel="noreferrer">查看交付</a></>}</p>)}<Notice>Run 完成、验证通过与任务验收分别记录；任务为 REVIEW 时仍需人工验收。</Notice></section>
       {run&&<UsagePanel key={run.id} runId={run.id}/>}
       <TaskActions key={`${id}:${data.revision}:${currentId}:${activeRun?.state}:${activeRun?.lastActivityAt}`} task={task} {...(actionsRun?{run:actionsRun}:{})} profiles={profiles} refresh={reload} publicationTask={Boolean(data.executionIntent)}/>
     </>}

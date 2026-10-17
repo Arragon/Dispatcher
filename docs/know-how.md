@@ -660,3 +660,9 @@
   never normalize a failed OS process-group cleanup into a confirmed stop.
 - Composite remote push validation must pass only Run/generation/branch to the
   commit validator; its separately frozen target belongs to the push receipt.
+
+- A push receipt alone cannot establish PR or CI state. Use the selected Run's
+  actual delivery evidence for the PR label/link, including while CI is pending.
+- Result reads must include delivery/recovery phases, not just terminal Runs.
+  Bind query caches to the chosen Run/phase so previous attempts cannot supply
+  a different attempt's result; preserve known facts during background refresh.
