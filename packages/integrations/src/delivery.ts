@@ -1,18 +1,25 @@
-import { randomUUID } from "node:crypto";
+import { createHash,randomUUID } from "node:crypto";
 import type { DeliveryEvidence } from "@dispatcher/domain";
 import type { DispatcherDatabase, JsonValue } from "@dispatcher/persistence";
 import { ConnectorError } from "./contracts.js";
-import { assertDeliveryGate, deliveryEvidence, type DeliveryRequest, type RepositoryRef, type ScmAdapter } from "./scm.js";
+import { assertDeliveryGate, deliveryEvidence, type DeliveryRequest, type RepositoryRef, type ScmAdapter, type PullRequestStatus } from "./scm.js";
 
 function json(value: unknown): JsonValue {
   return JSON.parse(JSON.stringify(value)) as JsonValue;
 }
+
+interface PrIntent {version:1;binding:string;commit:string;state:"PENDING"|"COMPLETE";pullRequest?:PullRequestStatus}
+const digest=(value:unknown)=>createHash("sha256").update(JSON.stringify(value)).digest("hex");
 
 export class DeliveryService {
   constructor(private readonly database: DispatcherDatabase) {}
 
   async deliver(adapter: ScmAdapter, request: DeliveryRequest): Promise<{ evidence: DeliveryEvidence[]; duplicate: boolean }> {
     assertDeliveryGate(request);
+    const identity={taskId:request.taskId,runId:request.run.id,generation:request.run.generation},intentId=digest(identity);
+    const binding=digest({...identity,connectorInstanceId:adapter.instance.id,idempotencyKey:request.idempotencyKey,leaseId:request.run.leaseId,repository:{owner:request.repository.owner,name:request.repository.name},headBranch:request.headBranch,baseBranch:request.baseBranch,title:request.title,body:request.body,expectedHeadCommit:request.expectedHeadCommit});
+    const intent=this.database.getEntity<JsonValue>("scm-pr-intent",intentId) as unknown as PrIntent|undefined;
+    if(intent&&intent.binding!==binding)throw new ConnectorError("CONFLICT","PR identity is bound to a different target or request",{retryable:false,operation:"delivery"});
     const existing = (this.database.listDeliveryEvidence<JsonValue>(request.taskId) as unknown as DeliveryEvidence[])
       .filter((item) => item.runId === request.run.id && item.connectorInstanceId === adapter.instance.id && item.metadata.idempotencyKey === request.idempotencyKey);
     const existingPullRequest = existing.find((item) => item.connectorInstanceId === adapter.instance.id && item.metadata.idempotencyKey === request.idempotencyKey && item.kind === "pull-request");
@@ -25,7 +32,13 @@ export class DeliveryService {
     request.assertAuthority?.("push");
     const pushed = await adapter.push(request.repository, request.headBranch, `${request.idempotencyKey}:push`);
     request.assertAuthority?.("pull-request");
-    const pullRequest = await adapter.createOrGetPullRequest(request);
+    if(intent&&intent.commit!==pushed.commit)throw new ConnectorError("CONFLICT","Frozen PR commit changed",{retryable:false,operation:"delivery"});
+    const pullRequest=intent?.state==="COMPLETE"&&intent.pullRequest?intent.pullRequest:await adapter.createOrGetPullRequest({...request,creationAllowed:!intent&&request.creationAllowed!==false,beforeCreate:()=>{
+      if(!this.database.createEntityIfAbsent("scm-pr-intent",intentId,json({version:1,binding,commit:pushed.commit,state:"PENDING"})))throw new ConnectorError("CONFLICT","Another PR create intent already owns this request",{retryable:false,operation:"delivery"});
+      request.beforeCreate?.();
+    }});
+    request.assertAuthority?.("complete");
+    this.database.saveEntity("scm-pr-intent",intentId,json({version:1,binding,commit:pushed.commit,state:"COMPLETE",pullRequest}));
     const now = new Date().toISOString();
     const metadata = { idempotencyKey: request.idempotencyKey, generation: request.run.generation };
     const values = [

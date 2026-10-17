@@ -644,3 +644,11 @@
 - Repository metadata permission is not proof of native SSH/Git authentication or
   a token's PR write scope. Treat absent permission fields as unconfirmed and keep
   the actual execution checks explicit. none/commit must not call SCM preflight.
+
+- A read failure before POST and a lost POST response have different retry rights.
+  Persist provider create intent at the actual send boundary after secret awaits;
+  otherwise either a harmless read failure poisons retries or a lost write can
+  be repeated. Missing lookup evidence after a possible POST is still unknown.
+- Scope create identity to Run/generation, with nonce/connector/target bound as
+  content. A fresh nonce must not authorize a second external write. Recheck
+  authority after provider response awaits and before saving qualified evidence.

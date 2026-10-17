@@ -899,3 +899,22 @@ the [GitHub REST docs](https://docs.github.com/en/rest/repos/repos#get-a-reposit
 and [branch docs](https://docs.github.com/en/rest/branches/branches#get-a-branch).
 SCM or credential context changes during reads cannot produce qualified evidence.
 PR execution remains blocked until the owned Git/API integration is complete.
+
+## SCM create intents and request authority
+
+DeliveryService owns one PR creation identity per Task/Run/generation. Connector,
+idempotency key, lease, target, branches and payload are bound content, so changing
+a retry nonce or target cannot escape an unresolved intent. The adapter invokes
+beforeCreate after credential resolution and immediately before POST; an atomic
+create-if-absent persists PENDING first. A failed preceding GET creates no intent
+and can safely retry. A possible POST can only reconcile an existing PR, never
+automatically create again when the lookup is empty. Qualified completion is
+persisted before delivery evidence and CI reads. Existing legacy delivery evidence
+without these newer intents remains replayable under its original contract.
+
+GitHub rechecks authority after credential and response-body awaits, supports
+abort signals and keeps fetch exception text out of public diagnostics. Qualified
+explicit requests can require a matching repository/head/base/SHA, owned body
+marker and HTTPS PR URL. Invalid or changed receipts stay unknown. The provider
+reply is fenced again before recording completion/evidence. None of these checks
+merge a PR or imply CI/user acceptance.

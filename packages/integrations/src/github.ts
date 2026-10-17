@@ -107,14 +107,25 @@ export class GitHubScmConnector implements ScmAdapter {
   }
   async createOrGetPullRequest(request: DeliveryRequest): Promise<PullRequestStatus> {
     assertDeliveryGate(request);
-    const repositoryPath = `/repos/${encodeURIComponent(request.repository.owner)}/${encodeURIComponent(request.repository.name)}`;
-    const existing = await this.request(`${repositoryPath}/pulls?state=all&head=${encodeURIComponent(`${request.repository.owner}:${request.headBranch}`)}`);
-    if (Array.isArray(existing) && existing.length) return githubPullRequest(existing[0]);
-    const created = await this.request(`${repositoryPath}/pulls`, {
-      method: "POST",
-      body: JSON.stringify({ title: request.title, body: `${request.body}\n\n<!-- dispatcher:${request.idempotencyKey} -->`, head: request.headBranch, base: request.baseBranch }),
-    });
-    return githubPullRequest(created);
+    const authority=()=>{if(request.signal?.aborted)throw new ConnectorError("CONFLICT","PR operation was cancelled",{retryable:false,operation:"delivery"});request.assertAuthority?.("pull-request");},repositoryPath=`/repos/${encodeURIComponent(request.repository.owner)}/${encodeURIComponent(request.repository.name)}`;
+    const existing=await this.request(`${repositoryPath}/pulls?state=all&head=${encodeURIComponent(`${request.repository.owner}:${request.headBranch}`)}&base=${encodeURIComponent(request.baseBranch)}&per_page=100`,{...(request.signal?{signal:request.signal}:{})},authority);
+    if(!Array.isArray(existing)||existing.length>100)throw new ConnectorError("PERMANENT","GitHub returned invalid PR lookup metadata",{retryable:false,operation:"read"});
+    for(const candidate of existing){if(!request.expectedHeadCommit)return githubPullRequest(candidate);try{return this.qualifiedPullRequest(candidate,request);}catch{/* A different or changed PR is not this creation receipt. */}}
+    if(existing.length||request.creationAllowed===false)throw new ConnectorError("CONFLICT","PR creation outcome is unconfirmed; reconcile the existing request before creating another",{retryable:false,operation:"delivery"});
+    const created=await this.request(`${repositoryPath}/pulls`,{
+      method:"POST",...(request.signal?{signal:request.signal}:{}),
+      body:JSON.stringify({title:request.title,body:`${request.body}\n\n<!-- dispatcher:${request.idempotencyKey} -->`,head:request.headBranch,base:request.baseBranch}),
+    },authority,request.beforeCreate);
+    return request.expectedHeadCommit?this.qualifiedPullRequest(created,request):githubPullRequest(created);
+  }
+  private qualifiedPullRequest(value:unknown,request:DeliveryRequest):PullRequestStatus{
+    const invalid=():never=>{throw new ConnectorError("CONFLICT","PR receipt does not match its frozen repository, branches, commit or marker",{retryable:false,operation:"delivery"});};
+    const object=(value:unknown):Record<string,unknown>=>value&&typeof value==="object"&&!Array.isArray(value)?value as Record<string,unknown>:{};
+    const row=object(value),head=object(row.head),base=object(row.base),repository=`${request.repository.owner}/${request.repository.name}`.toLowerCase();let url:URL,api:URL;
+    try{url=new URL(String(row.html_url));api=new URL(this.apiBase);}catch{return invalid();}
+    const path=url.pathname.split("/"),number=Number(path[4]),host=api.hostname==="api.github.com"?"github.com":api.hostname;
+    if(url.protocol!=="https:"||url.username||url.password||url.search||url.hash||url.hostname!==host||path.length!==5||`${path[1]}/${path[2]}`.toLowerCase()!==repository||path[3]!=="pull"||!Number.isSafeInteger(number)||number<1||row.number!==number||!["open","closed"].includes(String(row.state))||typeof row.body!=="string"||!row.body.includes(`<!-- dispatcher:${request.idempotencyKey} -->`)||typeof request.expectedHeadCommit!=="string"||!/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(request.expectedHeadCommit)||head.sha!==request.expectedHeadCommit||head.ref!==request.headBranch||base.ref!==request.baseBranch||String(object(head.repo).full_name).toLowerCase()!==repository||String(object(base.repo).full_name).toLowerCase()!==repository)return invalid();
+    return githubPullRequest(value);
   }
   async getPullRequest(repository: RepositoryRef, number: number): Promise<PullRequestStatus> {
     if (!Number.isInteger(number) || number < 1) throw new ConnectorError("PERMANENT", "Invalid pull request number", { retryable: false, operation: "read" });
@@ -147,24 +158,25 @@ export class GitHubScmConnector implements ScmAdapter {
     return { state, ...(url ? { url } : {}) };
   }
 
-  private async request(path: string, init: RequestInit = {}): Promise<unknown> {
-    const token = await this.options.resolveSecret(this.options.credentialRef);
+  private async request(path: string, init: RequestInit = {},authorize?:()=>void,beforeWrite?:()=>void): Promise<unknown> {
+    const token = await this.options.resolveSecret(this.options.credentialRef);authorize?.();beforeWrite?.();
     let response: Response;
     try {
       response = await this.fetch(`${this.apiBase}${path}`, {
         ...init,
         headers: { accept: "application/vnd.github+json", authorization: `Bearer ${token}`, "content-type": "application/json", ...init.headers },
       });
-    } catch (error) {
-      throw new ConnectorError("TEMPORARY", error instanceof Error ? error.message : "GitHub request failed", { retryable: true, operation: "delivery" });
+    } catch {
+      throw new ConnectorError("TEMPORARY", "GitHub request failed", { retryable: true, operation: "delivery" });
     }
+    authorize?.();
     if (response.status === 429 || response.status === 403 && response.headers.has("x-ratelimit-reset")) {
       throw new ConnectorError("RATE_LIMITED", "GitHub rate limit reached", { retryable: true, operation: "delivery" });
     }
     if (response.status === 401 || response.status === 403) throw new ConnectorError("AUTH", "GitHub authentication failed", { retryable: false, operation: "auth" });
     if (response.status >= 500) throw new ConnectorError("TEMPORARY", `GitHub returned ${response.status}`, { retryable: true, operation: "delivery" });
     if (!response.ok) throw new ConnectorError("PERMANENT", `GitHub returned ${response.status}`, { retryable: false, operation: "delivery" });
-    return response.status === 204 ? {} : response.json();
+    const result=response.status===204?{}:await response.json();authorize?.();return result;
   }
 }
 

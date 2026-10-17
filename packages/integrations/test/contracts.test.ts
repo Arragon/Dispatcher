@@ -279,8 +279,14 @@ describe("SCM delivery contract", () => {
     const input = request();
     input.assertAuthority = (operation) => operations.push(operation);
     await new DeliveryService(database).deliver(new FakeScmConnector(), input);
-    expect(operations).toEqual(["branch", "push", "pull-request", "complete"]);
+    expect(operations).toEqual(["branch", "push", "pull-request", "complete", "complete"]);
     database.close();
+  });
+
+  it("does not persist completion evidence after authority changes during a provider reply",async()=>{
+    const database=new DispatcherDatabase(":memory:"),adapter=new FakeScmConnector(),entered=Promise.withResolvers<void>(),gate=Promise.withResolvers<void>(),original=adapter.createOrGetPullRequest.bind(adapter),input=request();let revoked=false;
+    adapter.createOrGetPullRequest=async request=>{const result=await original(request);entered.resolve();await gate.promise;return result;};input.assertAuthority=()=>{if(revoked)throw new ConnectorError("CONFLICT","Lease revoked",{retryable:false});};
+    try{const pending=new DeliveryService(database).deliver(adapter,input),rejected=expect(pending).rejects.toMatchObject({code:"CONFLICT"});await entered.promise;revoked=true;gate.resolve();await rejected;expect(adapter.pullRequests).toHaveLength(1);expect(database.listDeliveryEvidence(input.taskId)).toEqual([]);expect(database.listEntities("scm-pr-intent")).toContainEqual(expect.objectContaining({state:"PENDING"}));}finally{gate.resolve();database.close();}
   });
 
   it("persists CI changes after delivery without repeating push or PR creation", async () => {
