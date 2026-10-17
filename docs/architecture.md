@@ -669,6 +669,14 @@ standalone legacy sessions retain their separate compatibility contract.
 No message text is persisted in the receipt. The browser retains its pending
 draft/ID in session storage for explicit retry or receipt lookup.
 
+Operator resume and automatic resource recovery use the same canonical
+continuation gate and durable run-input receipts. They bind the original waiting
+episode, task revision, session and lease before native resume, then recheck them
+after the await and atomically advance Run/task/conversation with the accepted
+receipt. Cancellation or a changed owner stops the stale continuation; a lost
+acknowledgement remains unconfirmed and blocks another resume/input. A cancelled,
+failed or mismatched native session cannot establish ACTIVE execution.
+
 Cancellation revokes canonical authority before requesting physical stop. A
 missing local process handle cannot confirm termination: the Run remains
 unavailable with manual inspection required. The session store rechecks current

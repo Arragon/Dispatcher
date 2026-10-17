@@ -1565,22 +1565,12 @@ export class ControllerService {
         continue;
       }
       try {
-        await this.validateRunSelection(run);
-        await adapter.resume(run.sessionId);
+        await this.resumeCanonicalRun(run, { actorId: "resource-monitor", commandId: decision.idempotencyKey, recoveryReason: decision.reason });
       } catch (error) {
         const reason = `Same-session resume failed: ${error instanceof Error ? error.message : "unknown error"}; controlled reroute requires operator approval`;
         this.database.saveEntity("resource-recovery", decision.idempotencyKey, json({ runId: run.id, profileId, action: "REROUTE_REQUIRED", reason, revokeLeaseId: run.leaseId, recordedAt: new Date().toISOString() }));
         outcomes.push({ runId: run.id, action: "REROUTE_REQUIRED", reason });
         continue;
-      }
-      assertRunTransition(run.state, "ACTIVE");
-      run.state = "ACTIVE";
-      run.recoveryReason = decision.reason;
-      run.lastActivityAt = new Date().toISOString();
-      delete run.resourceBlockReason;
-      this.database.saveEntity("run", run.id, json(run), run.lastActivityAt);
-      if (taskRecord && task?.state === "WAITING_RESOURCE") {
-        this.tasks.execute({ id: decision.idempotencyKey, taskId: run.taskId, baseRevision: taskRecord.revision, actor: "resource-monitor", command: { type: "task.transition", state: "RUNNING" } });
       }
       this.database.saveEntity("resource-recovery", decision.idempotencyKey, json({ ...decision, runId: run.id, profileId, assessment, recoveredAt: run.lastActivityAt }));
       this.attentionNotifications.recover(run.taskId);
@@ -1590,6 +1580,72 @@ export class ControllerService {
       outcomes.push({ runId: run.id, action: decision.action, reason: decision.reason });
     }
     return outcomes;
+  }
+
+  private async resumeCanonicalRun(run: Run, context: { actorId: string; commandId: string; recoveryReason?: string }): Promise<Run> {
+    const adapter = this.agentAdapters.get(run.profileId);
+    if (!adapter) throw new AdapterContractError("PROFILE_NOT_FOUND", "The original profile is unavailable");
+    const state = run.state, taskRecord = this.database.getCanonicalTask<JsonValue>(run.taskId), binding = this.runConversation(run);
+    const authority = { runId: run.id, generation: run.generation, leaseId: run.leaseId, lastActivityAt: run.lastActivityAt };
+    const input: RunInputIdentity = { inputId: `resume-${contentHash(context.commandId)}`, actorId: context.actorId, runId: run.id, profileId: run.profileId, sessionId: run.sessionId, generation: run.generation, authorityHash: contentHash(authority), payloadHash: contentHash({ operation: "resume", authority, taskRevision: taskRecord?.revision }) };
+    const assertAuthority = (): void => {
+      const current = this.database.getEntity<JsonValue>("run", run.id) as unknown as Run | undefined;
+      const task = this.database.getCanonicalTask<JsonValue>(run.taskId);
+      if (this.cancelledRunIds.has(run.id) || this.pendingSessionCancellations.has(run.sessionId) || !current || current.state !== state || current.generation !== authority.generation || current.leaseId !== authority.leaseId || current.lastActivityAt !== authority.lastActivityAt || current.sessionId !== input.sessionId || current.profileId !== input.profileId || !task || task.revision !== taskRecord?.revision || (task.document as unknown as Task).currentRunId !== run.id || !["RUNNING", "WAITING_USER", "WAITING_RESOURCE"].includes((task.document as unknown as Task).state)) throw new ConnectorError("CONFLICT", "Run authority changed before continuation", { retryable: false });
+      this.resolveProfileExecutionContext(run.profileId, undefined, "resume");
+      this.restoreLeaseAuthority(current);
+      try { this.leaseAuthority.fence(current.id, current.leaseId, current.generation, "user-input", this.now().toISOString()); }
+      finally { this.persistLatestLeaseAudit(current.id); }
+      if (binding) {
+        const latest = this.database.getEntity<JsonValue>("messaging-conversation", binding.id) as unknown as ConversationBinding | undefined;
+        if (!latest || latest.revision !== binding.revision || latest.runId !== run.id || latest.generation !== run.generation) throw new ConnectorError("CONFLICT", "Conversation changed before continuation", { retryable: false });
+      }
+    };
+    if (this.pendingConsoleInputs.has(run.sessionId)) throw new InputReceiptError("INPUT_PENDING", "Native input is already pending");
+    this.runInputs.assertAvailable(input);
+    assertAuthority();
+    this.pendingConsoleInputs.add(run.sessionId);
+    let reserved = false, sent = false;
+    try {
+      await this.validateRunSelection(run);
+      assertAuthority();
+      this.runInputs.reserve(input); reserved = true;
+      sent = true;
+      const session = await adapter.resume(run.sessionId);
+      try {
+        assertAuthority();
+        if (session.id !== input.sessionId || session.runId !== run.id || ["CANCELLED", "FAILED"].includes(session.state)) throw new AdapterContractError("SESSION_DETACHED", "Native response did not confirm the original continuation");
+      } catch (error) {
+        try { await adapter.cancel(input.sessionId); }
+        catch (cleanupError) { this.app.log.warn({ error: redactValue(cleanupError), runId: run.id }, "stale resume cleanup failed"); }
+        throw error;
+      }
+      this.database.transaction(() => {
+        assertAuthority();
+        assertRunTransition(state, "ACTIVE"); run.state = "ACTIVE"; run.lastActivityAt = this.now().toISOString();
+        delete run.resourceBlockReason; delete run.recoveryState; delete run.recoveryReason;
+        if (context.recoveryReason) run.recoveryReason = context.recoveryReason;
+        this.saveAdvancedRun(run, state);
+        if (binding?.state === "WAITING_USER") this.conversations.resume(binding.id, { expectedRevision: binding.revision, generation: run.generation });
+        const task = this.database.getCanonicalTask<JsonValue>(run.taskId)!;
+        if (["WAITING_USER", "WAITING_RESOURCE"].includes((task.document as unknown as Task).state)) this.tasks.execute({ id: context.commandId, taskId: run.taskId, baseRevision: task.revision, actor: context.actorId, command: { type: "task.transition", state: "RUNNING" } });
+        this.runInputs.finish(input, "ACCEPTED");
+      });
+      this.attentionNotifications.recover(run.taskId);
+      this.fleetEvents.publish("run.changed", run.id, { id: run.id, state: run.state, lastActivityAt: run.lastActivityAt });
+      return run;
+    } catch (error) {
+      if (reserved) {
+        let receipt;
+        try { receipt = this.runInputs.finish(input, sent ? "OUTCOME_UNKNOWN" : "REJECTED"); }
+        catch (recordError) { this.app.log.warn({ error: redactValue(recordError), runId: run.id }, "resume receipt remains unconfirmed"); }
+        if (sent && receipt?.state !== "ACCEPTED") {
+          this.markRemoteUnavailable(run.id, "Native resume outcome is unconfirmed; inspect the original session", "NATIVE_OUTCOME_UNKNOWN", run);
+          throw new InputReceiptError("INPUT_OUTCOME_UNKNOWN", "Native resume outcome is unconfirmed; inspect the original session before continuing");
+        }
+      }
+      throw error;
+    } finally { this.runInputs.release(input); this.pendingConsoleInputs.delete(input.sessionId); }
   }
 
   private async notifyResourceRecovery(run: Run, idempotencyKey: string): Promise<void> {
@@ -2457,19 +2513,7 @@ export class ControllerService {
         if (!run || !["WAITING_USER", "RESOURCE_BLOCKED", "RUNNER_UNAVAILABLE", "SUSPECTED_STALL"].includes(run.state)) throw new SemanticPolicyError("INVALID_INPUT", `Run ${runId} is not resumable`);
         if(run.state==="RUNNER_UNAVAILABLE"&&this.configuration.current().config.runners.some(runner=>runner.id===run.runnerId&&runner.mode==="remote"))throw new SemanticPolicyError("INVALID_INPUT","Owning Runner must reconcile native ownership before resuming");
         if(run.recoveryReason==="NATIVE_OUTCOME_UNKNOWN")throw new SemanticPolicyError("INVALID_INPUT","Native execution outcome is unknown; inspect the original session before resuming");
-        const adapter = this.agentAdapters.get(run.profileId);
-        if (!adapter) throw new SemanticPolicyError("INVALID_INPUT", `Profile ${run.profileId} is unavailable`);
-        await this.validateRunSelection(run);
-        await adapter.resume(run.sessionId);
-        assertRunTransition(run.state, "ACTIVE");
-        run.state = "ACTIVE";
-        run.lastActivityAt = new Date().toISOString();
-        this.database.saveEntity("run", run.id, json(run));
-        const stored = this.database.getCanonicalTask<JsonValue>(run.taskId);
-        const task = stored?.document as unknown as Task | undefined;
-        if (stored && task && ["WAITING_USER", "WAITING_RESOURCE"].includes(task.state)) this.tasks.execute({ id: `semantic:${context.workflowId}`, taskId: run.taskId, baseRevision: stored.revision, actor: context.principal.id, command: { type: "task.transition", state: "RUNNING" } });
-        this.fleetEvents.publish("run.changed", run.id, { id: run.id, state: run.state, lastActivityAt: run.lastActivityAt });
-        return run;
+        return this.resumeCanonicalRun(run, { actorId: context.principal.id, commandId: `semantic:${context.workflowId}` });
       },
     });
     this.semanticTools.register({

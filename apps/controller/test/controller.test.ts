@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SecretAccessContext, SecretMetadata, SecretStore } from "@dispatcher/config";
-import type { CodexBackend, DevinBackend } from "@dispatcher/adapters";
+import type { AgentAdapter, CodexBackend, DevinBackend } from "@dispatcher/adapters";
 import { RemoteRunnerClient } from "@dispatcher/runner";
 import { ControllerService } from "../src/service.js";
 import { LifecycleManager } from "../src/lifecycle.js";
@@ -480,8 +480,9 @@ describe("ControllerService", () => {
     const plan = await service.app.inject({ headers: OWNER,  method: "POST", url: "/api/config/plans", payload: { config: current.config } });
     expect((await service.app.inject({ headers: OWNER,  method: "POST", url: `/api/config/plans/${plan.json().plan.id}/apply`, payload: { confirmed: true } })).statusCode).toBe(200);
     const workspace = await service.workspaces.create({ repositoryId: "acme/repo", taskId: "task-quota", runId: "run-quota", attempt: 1, baseRef: "main", scopePaths: [] });
-    const started = await service.app.inject({ headers: OWNER,  method: "POST", url: "/api/agents/profiles/atlas/runs", payload: { workspacePath: workspace.path, prompt: "work" } });
-    const sessionId = started.json().session.id as string;
+    // This fixture binds a canonical Run below; preserve that identity in its native session.
+    const adapter = (service as unknown as { agentAdapters: Map<string, AgentAdapter> }).agentAdapters.get("atlas")!;
+    const sessionId = (await adapter.start({ runId: "run-quota", workspacePath: workspace.path, prompt: "work" })).id;
     service.database.writeCanonicalTask("task-quota", 0, {
       id: "task-quota", projectId: "project", title: "Quota task", state: "RUNNING", currentRunId: "run-quota",
       createdAt: "2026-09-22T00:00:00.000Z", updatedAt: "2026-09-22T00:00:00.000Z",

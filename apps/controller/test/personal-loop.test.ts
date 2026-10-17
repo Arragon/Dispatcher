@@ -126,6 +126,54 @@ describe("personal Slack–Linear loop", () => {
     return f;
   }
 
+  const resumeContext = { principal: { id: "owner", roles: ["operator"], channel: "api" as const }, workflowId: "reviewed-resume", confirmed: true };
+
+  it.each(["operator", "resource-monitor"] as const)("does not revive a cancelled Run after %s resume starts a native turn", async source => {
+    const f = await waitingFixture(), run = f.run();
+    if (source === "resource-monitor") {
+      f.service.database.saveEntity("run", run.id, JSON.parse(JSON.stringify({ ...run, state: "RESOURCE_BLOCKED" })) as JsonValue);
+      const task = f.service.database.getCanonicalTask<Task>(run.taskId)!;
+      f.service.database.writeCanonicalTask(run.taskId, task.revision, { ...task.document, state: "WAITING_RESOURCE" });
+    }
+    f.control.turn = "running";
+    f.control.onStart = () => f.service.database.saveEntity("run", run.id, JSON.parse(JSON.stringify({ ...run, state: "CANCELLED" })) as JsonValue);
+    if (source === "operator") {
+      await expect(f.service.semanticTools.execute("run.resume", { target: run.id }, resumeContext)).rejects.toThrow();
+    } else {
+      const adapter = (f.service as unknown as { agentAdapters: Map<string, AgentAdapter> }).agentAdapters.get(run.profileId)!;
+      adapter.usage = async () => ({ state: "AVAILABLE", source: "probe", confidence: "high", checkedAt: f.control.now.toISOString() });
+      expect((await f.service.app.inject({ headers: OWNER, method: "POST", url: `/api/resources/${run.profileId}/probe` })).statusCode).toBe(200);
+    }
+    expect(f.run().state).toBe("CANCELLED");
+    expect(f.task().state).toBe(source === "operator" ? "WAITING_USER" : "WAITING_RESOURCE");
+    expect(f.control.cancellations).toBe(1);
+    expect(f.starts).toHaveLength(2);
+    expect(f.service.database.listEntities("run-input")).toContainEqual(expect.objectContaining({ runId: run.id, state: "OUTCOME_UNKNOWN" }));
+  });
+
+  it("retains an uncertain resume acknowledgement and prevents another native continuation", async () => {
+    const f = await waitingFixture(), run = f.run();
+    const adapter = (f.service as unknown as { agentAdapters: Map<string, AgentAdapter> }).agentAdapters.get(run.profileId)!;
+    const resume = adapter.resume.bind(adapter);
+    adapter.resume = async sessionId => { await resume(sessionId); throw new Error("resume acknowledgement lost"); };
+    f.control.turn = "running";
+    await expect(f.service.semanticTools.execute("run.resume", { target: run.id }, resumeContext)).rejects.toMatchObject({ code: "INPUT_OUTCOME_UNKNOWN" });
+    expect(f.run()).toMatchObject({ state: "RUNNER_UNAVAILABLE", recoveryReason: "NATIVE_OUTCOME_UNKNOWN" });
+    await expect(f.service.semanticTools.execute("run.resume", { target: run.id }, { ...resumeContext, workflowId: "retry-resume" })).rejects.toThrow();
+    expect(f.starts).toHaveLength(2);
+    expect(f.service.database.listEntities("run-input")).toContainEqual(expect.objectContaining({ runId: run.id, state: "OUTCOME_UNKNOWN" }));
+  });
+
+  it("does not mark a cancelled native resume response as ACTIVE", async () => {
+    const f = await waitingFixture(), run = f.run();
+    const adapter = (f.service as unknown as { agentAdapters: Map<string, AgentAdapter> }).agentAdapters.get(run.profileId)!;
+    adapter.resume = async sessionId => adapter.cancel(sessionId);
+    await expect(f.service.semanticTools.execute("run.resume", { target: run.id }, resumeContext)).rejects.toThrow();
+    expect(f.run().state).not.toBe("ACTIVE");
+    expect(f.task().state).toBe("WAITING_USER");
+    expect(f.starts).toHaveLength(1);
+  });
+
   it("retries only the consumed answer's acknowledgement after restart", async () => {
     const f = await waitingFixture();
     f.control.turn = "running";
