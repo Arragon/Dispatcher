@@ -4,10 +4,29 @@ import type { CodexReadRequest } from "./codex-catalog.js";
 import { CursorAdapter, KiroAdapter, probeCursorProfile, probeKiroProfile, type CliAgentBackend, type CliAgentProfile, type NativeProbeContext, type CredentialResolver } from "./ecosystem-cli.js";
 import { AntigravityAdapter, GrokAdapter, OpenCodeAdapter, PiAdapter, QoderCnAdapter, WorkBuddyCliAdapter, ZCodeAdapter, isNativeCliProvider, probeNativeCliProfile, type NativeCliProvider } from "./native-cli.js";
 import type { SessionStore } from "./generic.js";
+import {homedir} from "node:os";
+import {join} from "node:path";
 
 /** Structural registration contract; adapters do not depend on configuration or persistence. */
 export interface NativeProfileRegistration {
   id: string; alias: string; provider: string; enabled?: boolean; credentialRef?: string; settings?: Record<string, unknown>;
+}
+/** Native account locations used by our registered adapters/catalogs; owning host only. */
+export function nativePrivatePaths(profiles:readonly NativeProfileRegistration[]):string[]{
+  const paths=new Set<string>();
+  for(const profile of profiles){
+    for(const key of ["codexHome","configDir"])if(typeof profile.settings?.[key]==="string"&&profile.settings[key])paths.add(profile.settings[key]);
+    if(profile.provider==="cursor")paths.add(join(homedir(),".cursor"));
+    if(profile.provider==="qoder-cn"&&!profile.settings?.configDir)paths.add(join(homedir(),".qoder-cn"));
+    if(profile.provider==="grok")paths.add(join(homedir(),".grok"));
+    if(profile.provider==="opencode")paths.add(join(process.env.XDG_DATA_HOME??join(homedir(),".local","share"),"opencode"));
+    if(profile.provider==="antigravity"){
+      paths.add(join(homedir(),".gemini","config"));
+      if(process.env.AGY_ADC_AUTH==="true")paths.add(process.env.GOOGLE_APPLICATION_CREDENTIALS??join(homedir(),".config","gcloud","application_default_credentials.json"));
+    }
+    if(process.platform==="darwin"&&["antigravity","grok"].includes(profile.provider))paths.add(join(homedir(),"Library","Keychains"));
+  }
+  return [...paths];
 }
 export interface NativeProfileFactoryOptions {
   store?: SessionStore; resolveCredential?: CredentialResolver;

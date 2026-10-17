@@ -603,3 +603,11 @@
 - Cancelling a directory dialog must retain its ownership slot until the OS
   operation settles and discard a late path. Native window visibility and
   chooser-process launch/cancellation are separate acceptance evidence.
+
+- Keep test repositories, Dispatcher data and native account homes as siblings.
+  A fixture that treats the temporary parent as its data/account directory now
+  correctly violates private-path protection. Preserve the original assertions
+  and move those fixture locations rather than bypassing the production guard.
+- Scope comparisons must resolve symlink aliases and existing ancestors of
+  missing paths. Apply the same private-path rule to actual result files under
+  a whole-repository scope; hide native private path details in resolution errors.

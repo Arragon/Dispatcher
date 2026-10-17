@@ -23,7 +23,7 @@ async function fixture(options: Partial<ConstructorParameters<typeof ControllerS
   writeFileSync(join(repository, "README.md"), "fixture\n");
   execFileSync("git", ["-C", repository, "add", "."]);
   execFileSync("git", ["-C", repository, "commit", "-m", "fixture"]);
-  const service = new ControllerService({ dataDirectory: directory, ownerToken: "test-owner", withRunner: true, secretStore: secrets, backgroundWorker: { enabled: false }, ...options });
+  const service = new ControllerService({ dataDirectory: join(directory,"controller"), ownerToken: "test-owner", withRunner: true, secretStore: secrets, backgroundWorker: { enabled: false }, ...options });
   await service.start({ listen: false });
   const apply = async (mutate: (config: DispatcherConfig) => void) => {
     const config = structuredClone(service.configuration.current().config);
@@ -71,7 +71,7 @@ describe("all-provider adapter lifecycle", () => {
       const started=await f.start("http"),id=started.json().session.id,url=`/api/agents/profiles/http/sessions/${id}`;
       expect((await current.app.inject({headers:OWNER,method:"POST",url:`${url}/cancel`})).statusCode).toBe(409);
       expect((await f.apply(config=>{config.agentProfiles[0]!.enabled=false;})).json()).toMatchObject({code:"ACTIVE_AGENT_PROFILE"});
-      await current.stop();current=new ControllerService({dataDirectory:f.directory,ownerToken:"test-owner",withRunner:true,backgroundWorker:{enabled:false},secretStore:secrets,integrationFetch:fetch});await current.start({listen:false});
+      await current.stop();current=new ControllerService({dataDirectory:f.service.options.dataDirectory,ownerToken:"test-owner",withRunner:true,backgroundWorker:{enabled:false},secretStore:secrets,integrationFetch:fetch});await current.start({listen:false});
       expect((await current.app.inject({headers:OWNER,url})).json().session).toMatchObject({stopState:"unconfirmed",actions:{input:{allowed:false}}});
       expect((await current.app.inject({headers:OWNER,method:"POST",url:`${url}/input`,payload:{message:"late"}})).statusCode).toBe(409);
       terminal=true;expect((await current.app.inject({headers:OWNER,url})).json().session).toMatchObject({stopState:"confirmed"});fetch.mockClear();

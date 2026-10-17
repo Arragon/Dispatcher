@@ -786,3 +786,20 @@ candidate is displayed first and enters a new repository draft only on explicit
 selection, retaining ConfigPlan review/apply. Neither cancel nor selection writes
 configuration or creates a workspace. Actual Git validity, private path scope,
 account/model and execution approval remain subsequent owning-device checks.
+
+## Owning-process private path scope
+
+WorkspaceManager receives private-path policy from its owning composition,
+never a browser/transport request. It includes that Controller/Runner data
+location, configured native account directories (including disabled accounts),
+and default locations actually used by the qualified adapters/catalogs. Foreign
+Runner account paths are not resolved on Controller. WorkspaceManager compares
+physical paths, including existing ancestors for missing descendants, at
+registered-root/declared-scope checks, immediately before worktree creation and
+when validating each actual result file. Frozen workspace roots remain usable
+after a registration is removed; the owning process private-path policy remains
+active independently of that registration. Private-path resolution failures fail
+closed with a static reason and do not expose account paths. A whole-repository
+scope cannot authorize delivery of a changed file inside an account directory.
+This is a repository and delivery scope boundary; native tools still own their
+OS permissions and it is not an arbitrary filesystem sandbox.

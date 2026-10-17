@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
-import { join } from "node:path";
-import type { AdapterSession, AgentAdapter, SessionStore } from "@dispatcher/adapters";
+import { join,resolve } from "node:path";
+import {nativePrivatePaths,type AdapterSession,type AgentAdapter,type SessionStore} from "@dispatcher/adapters";
 import { ConfigurationEngine, repositoryRunnerId, type AgentProfileConfig, type DispatcherConfig, type RepositoryConfig } from "@dispatcher/config";
 import type { AccountModelCatalog, ExecutionSelection, ModelCatalogContext } from "@dispatcher/domain";
 import { redactValue } from "@dispatcher/observability";
@@ -120,6 +120,7 @@ export class NativeRunnerRuntime {
       if (!profile || !repository || this.registration(profile, repository) !== record.registrationHash) throw new NativeRunnerError("RUNNER_CONFIGURATION_BUSY", "An active or uncertain execution still owns this registration");
     }
     const registry = new RepositoryRegistry();
+    const privatePaths=[resolve(this.options.dataDirectory),...nativePrivatePaths(config.agentProfiles.filter(profile=>profile.runnerId===this.options.runnerId))];
     for (const repository of config.repositories.filter(r => repositoryRunnerId(config, r) === this.options.runnerId)) registry.register(repository);
     const next = new Map<string, AgentAdapter>();
     for (const profile of profiles) {
@@ -130,7 +131,7 @@ export class NativeRunnerRuntime {
     }
     this.config = structuredClone(config);
     this.adapters = next;
-    this.workspaces = new WorkspaceManager(registry, join(this.options.dataDirectory, "worktrees"));
+    this.workspaces = new WorkspaceManager(registry, join(this.options.dataDirectory, "worktrees"),()=>privatePaths);
   }
 
   private sessionStore(): SessionStore {

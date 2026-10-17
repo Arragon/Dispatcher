@@ -67,16 +67,32 @@ export class RepositoryRegistry {
 
 export class WorkspaceManager {
   private readonly managed = new Map<string, WorkspaceHandle>();
-  constructor(private readonly registry: RepositoryRegistry, private readonly worktreeRoot: string) {}
+  constructor(private readonly registry: RepositoryRegistry, private readonly worktreeRoot: string,private readonly owningPrivatePaths:()=>readonly string[]=()=>[]) {}
 
   get(path: string): WorkspaceHandle | undefined {
     const workspace = this.managed.get(resolve(path));
     return workspace ? structuredClone(workspace) : undefined;
   }
+  private async physicalCandidate(path:string):Promise<string>{
+    let ancestor=resolve(path);
+    for(;;){
+      try{return resolve(await realpath(ancestor),relative(ancestor,resolve(path)));}
+      catch(error){if(!error||typeof error!=="object"||!("code" in error)||!["ENOENT","ENOTDIR"].includes(String(error.code)))throw error;const parent=dirname(ancestor);if(parent===ancestor)throw error;ancestor=parent;}
+    }
+  }
+  private async assertPublicScope(repository:RepositoryRecord,scopePaths:string[]):Promise<void>{
+    const privatePaths=this.owningPrivatePaths();
+    if(!privatePaths.length)return;
+    try{
+      const root=await this.physicalCandidate(repository.root),candidates=await Promise.all([root,...scopePaths.map(path=>resolve(root,path))].map(path=>this.physicalCandidate(path)));
+      for(const path of privatePaths){const privatePath=await this.physicalCandidate(isAbsolute(path)?path:resolve(root,path));if(candidates.some(candidate=>within(privatePath,candidate)))throw new WorkspacePolicyError("PRIVATE_PATH_SCOPE","Repository or requested scope enters an owning-process private directory");}
+    }catch(error){if(error instanceof WorkspacePolicyError)throw error;throw new WorkspacePolicyError("PRIVATE_PATH_CHECK_UNAVAILABLE","Owning-process private path boundary could not be verified");}
+  }
 
   async refs(repositoryId:string,offset=0,limit=50) {
     if(!Number.isSafeInteger(offset)||offset<0||offset>10_000||!Number.isSafeInteger(limit)||limit<1||limit>100)throw new WorkspacePolicyError("INVALID_REF_PAGE","Ref offset/limit are outside the supported range");
-    const repository=this.registry.get(repositoryId),root=await realpath(repository.root),signal=AbortSignal.timeout(8_000);
+    const repository=this.registry.get(repositoryId);await this.assertPublicScope(repository,[]);
+    const root=await realpath(repository.root),signal=AbortSignal.timeout(8_000);
     const top=(await execute("git",["-C",root,"rev-parse","--show-toplevel"],{signal,timeout:8_000,maxBuffer:1024*1024})).stdout.trim();
     if(await realpath(top)!==root)throw new WorkspacePolicyError("INVALID_REPOSITORY_ROOT","Registered root must be the physical Git root");
     const output=(await execute("git",["-C",root,"for-each-ref",`--count=${offset+limit+1}`,"--sort=refname","--format=%(refname)%09%(objectname)","refs/heads","refs/remotes","refs/tags"],{signal,timeout:8_000,maxBuffer:2*1024*1024})).stdout;
@@ -96,6 +112,7 @@ export class WorkspaceManager {
 
   async inspect(plan: Pick<WorkspacePlan, "repositoryId" | "baseRef" | "scopePaths"> & { targetBranch?: string }): Promise<{ baseCommit: string; root: string }> {
     const repository = this.registry.get(plan.repositoryId);
+    await this.assertPublicScope(repository,plan.scopePaths);
     const root = await realpath(repository.root);
     const top = (await execute("git", ["-C", root, "rev-parse", "--show-toplevel"])).stdout.trim();
     if (await realpath(top) !== root) throw new WorkspacePolicyError("INVALID_REPOSITORY_ROOT", "Registered root must be the physical Git root");
@@ -135,6 +152,7 @@ export class WorkspaceManager {
     await mkdir(this.worktreeRoot,{recursive:true});
     const root=await realpath(this.worktreeRoot);
     if(!within(root,handle.path))throw new WorkspacePolicyError("WORKSPACE_PATH_ESCAPE","Managed root changed after planning");
+    await this.assertPublicScope(this.registry.get(plan.repositoryId),plan.scopePaths);
     options.beforeCreate?.();
     try{await execute("git",["-C",handle.repositoryRoot!,"worktree","add","-b",handle.branch,handle.path,handle.baseRevision]);}
     catch(error){throw new WorkspacePolicyError("WORKTREE_CREATE_FAILED",error instanceof Error?error.message:"Worktree creation failed");}
@@ -170,6 +188,10 @@ export class WorkspaceManager {
   }
 
   async assertPathAllowed(workspace: WorkspaceHandle, candidate: string): Promise<string> {
+    let repository:RepositoryRecord;
+    try{repository=this.registry.get(workspace.repositoryId);}
+    catch(error){if(!(error instanceof WorkspacePolicyError)||error.code!=="REPOSITORY_NOT_FOUND"||!workspace.repositoryRoot)throw error;repository={id:workspace.repositoryId,root:workspace.repositoryRoot};}
+    await this.assertPublicScope({...repository,root:workspace.repositoryRoot??repository.root},[candidate]);
     const workspaceRoot = await realpath(workspace.path);
     const absolute = resolve(workspaceRoot, candidate);
     if (!within(workspaceRoot, absolute)) throw new WorkspacePolicyError("PATH_OUT_OF_SCOPE", "Path escapes worktree");

@@ -321,7 +321,7 @@ describe("ControllerService", () => {
     execFileSync("git", ["-C", repositoryRoot, "commit", "-m", "fixture"]);
     const starts: Array<{ codexHome: string; workspacePath: string }> = [];
     const service = new ControllerService({ ownerToken: TEST_OWNER_TOKEN,
-      dataDirectory: directory,
+      dataDirectory: join(directory,"controller"),
       withRunner: true,
       secretStore: new FakeSecretStore(),
       codexBackendFactory: () => ({
@@ -389,7 +389,7 @@ describe("ControllerService", () => {
         };
       },
     };
-    const service = new ControllerService({ ownerToken: TEST_OWNER_TOKEN, dataDirectory: directory, withRunner: true, secretStore: new FakeSecretStore(), codexBackendFactory: () => backend });
+    const service = new ControllerService({ ownerToken: TEST_OWNER_TOKEN, dataDirectory: join(directory,"controller"), withRunner: true, secretStore: new FakeSecretStore(), codexBackendFactory: () => backend });
     await service.start({ listen: false });
     const current = (await service.app.inject({ headers: OWNER,  method: "GET", url: "/api/config" })).json();
     // This fixture runs a waiting session and a verification session concurrently.
@@ -472,7 +472,7 @@ describe("ControllerService", () => {
           : { state: "failed", summary: "quota", providerSessionId: "thread-quota", events: [{ type: "resource", state: "QUOTA_EXHAUSTED", reason: "quota exhausted", resetsAt: "2026-09-23T01:00:00.000Z", source: "error", confidence: "high" }] },
       }),
     };
-    const service = new ControllerService({ ownerToken: TEST_OWNER_TOKEN, dataDirectory: directory, withRunner: true, secretStore: new FakeSecretStore(), codexBackendFactory: () => backend });
+    const service = new ControllerService({ ownerToken: TEST_OWNER_TOKEN, dataDirectory: join(directory,"controller"), withRunner: true, secretStore: new FakeSecretStore(), codexBackendFactory: () => backend });
     await service.start({ listen: false });
     const current = (await service.app.inject({ headers: OWNER,  method: "GET", url: "/api/config" })).json();
     current.config.agentProfiles = [{ id: "atlas", provider: "codex", alias: "Atlas", runnerId: "local", settings: { codexHome: "/profiles/atlas" } }];

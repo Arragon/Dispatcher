@@ -38,7 +38,7 @@ describe("native harness Controller composition", () => {
       return backend;
     });
     const codexCalls = vi.fn(() => ({ start: vi.fn(() => ({ status: () => "running" as const, result: async () => ({ state: "completed" as const, summary: "done", events: [], providerSessionId: "codex-exact" }), cancel: async () => undefined })) }));
-    const service = new ControllerService({ codexBackendFactory: codexCalls, dataDirectory: directory, ownerToken: "test-owner", withRunner: true, secretStore: secrets, cliBackendFactory: calls });
+    const service = new ControllerService({ codexBackendFactory: codexCalls, dataDirectory: join(directory,"controller"), ownerToken: "test-owner", withRunner: true, secretStore: secrets, cliBackendFactory: calls });
     try {
       await service.start({ listen: false });
       const current = (await service.app.inject({ method: "GET", url: "/api/config", headers: OWNER })).json().config;

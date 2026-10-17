@@ -29,6 +29,7 @@ import fastifyStatic from "@fastify/static";
 import {
   CodexAdapter,
   createNativeProfileAdapter,
+  nativePrivatePaths,
   probeNativeProfile,
   codexManifest,
   QoderAdapter,
@@ -493,6 +494,7 @@ export class ControllerService {
   private readonly trialReservations = new Map<string, { runnerId: string; workspacePath: string }>();
   private readonly pendingSessionCancellations = new Map<string, Promise<AdapterSession>>();
   private readonly uncertainSessionStops = new Set<string>();
+  private localPrivatePaths:readonly string[]=[];
   private readonly revokedRunnerCredentials = new Set<string>();
   private readonly runnerCredentialOperations = new Set<string>();
   private readonly rawWebhookBodies = new WeakMap<object, Uint8Array>();
@@ -544,7 +546,7 @@ export class ControllerService {
     }
     this.resourceRegistry.restore(this.database.listEntities<JsonValue>("resource-signal") as unknown as ResourceSnapshot[]);
     this.resourceProbes.restore(this.database.listEntities<JsonValue>("resource-probe-schedule") as unknown as ResourceProbeSchedule[]);
-    this.workspaces = new WorkspaceManager(this.repositories, join(options.dataDirectory, "worktrees"));
+    this.workspaces = new WorkspaceManager(this.repositories, join(options.dataDirectory, "worktrees"),()=>this.localPrivatePaths);
     this.tasks = new CanonicalTaskService(this.database, () => this.now());
     this.projections = new ProjectionWorker(this.database, this.connectors);
     this.secrets = options.secretStore ?? createDefaultSecretStore({ dataDirectory: options.dataDirectory });
@@ -993,6 +995,8 @@ export class ControllerService {
     }
     this.llm.configure(llmConfiguration(config.internalLlm));
     this.repositories.clear();
+    const privatePaths=[resolve(this.options.dataDirectory),...nativePrivatePaths(config.agentProfiles.filter(profile=>!config.runners.some(runner=>runner.id===profile.runnerId&&runner.mode==="remote")))];
+    this.localPrivatePaths=privatePaths;
     for (const repository of config.repositories) {
       if (config.runners.some(runner => runner.id === repositoryRunnerId(config,repository) && runner.mode === "remote")) continue;
       this.repositories.register({

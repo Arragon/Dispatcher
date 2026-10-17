@@ -22,7 +22,7 @@ function fixture() {
   let completed = false;
   const catalog: AccountModelCatalog = { profileId: "p", runnerId: "remote", providerId: "codex", backendId: "codex-exec-json", contextFingerprint: "context", revision: "catalog", fetchedAt: now.toISOString(), freshness: "native-fresh", source: "native-rpc", selectionSupport: "explicit", entries: [{ id: "model", displayName: "Model", kind: "model", selectable: true, access: "account-listed", parameterOptions: { reasoningEffort: ["low"] } }] };
   const options = { runnerId: "remote", dataDirectory: join(directory, "data"), monitorIntervalMs: 0, now: () => now, createAdapter: (_profile: unknown, store: SessionStore) => {
-    const adapter = new CodexAdapter({ id: "p", alias: "P", codexHome: directory }, { start: input => {
+    const adapter = new CodexAdapter({ id: "p", alias: "P", codexHome: join(directory,"native-account") }, { start: input => {
       starts++; writeFileSync(join(input.workspacePath, "result.txt"), "runner-ok\n");
       return { processId: 1234, status: () => completed ? "completed" : "running", cancel: async () => { cancellations++; completed = true; }, result: async () => ({ state: completed ? "completed" : "waiting", summary: "done", providerSessionId: "native-session", events: [] }) };
     } }, store);
@@ -33,7 +33,7 @@ function fixture() {
   cleanups.push(() => runtime.close());
   const config = structuredClone(defaultDispatcherConfig);
   config.runners = [{ id: "remote", displayName: "Remote", mode: "remote", capacity: 1, tags: [], credentialRef: "secret://runner/fixture/remote" }];
-  config.agentProfiles = [{ id: "p", alias: "P", provider: "codex", runnerId: "remote", settings: { codexHome: directory } }];
+  config.agentProfiles = [{ id: "p", alias: "P", provider: "codex", runnerId: "remote", settings: { codexHome: join(directory,"native-account") } }];
   config.repositories = [{ id: "repo", runnerId: "remote", root, defaultBaseRef: "main", scopePaths: ["."], verificationCommands: [{ id: "check", file: process.execPath, args: ["-e", "if(require('node:fs').readFileSync('result.txt','utf8')!=='runner-ok\\n')process.exit(1)"], required: true, timeoutMs: 3000, outputLimitBytes: 1000 }] }];
   const apply = () => runtime.configuration.applyPlan(runtime.configuration.buildPlan(config, "fixture", "cli").id, { confirmed: true });
   const plan = { repositoryId: "repo", taskId: "task", runId: "run", attempt: 1, baseRef: "main", scopePaths: ["."] };
@@ -213,6 +213,15 @@ it("reads references only from its registered repository without starting a nati
  const f=fixture();f.apply();execFileSync("git",["-C",f.root,"branch","feature/ref-read"]);
  const refs=await f.call({type:"native.repository_refs",repositoryId:"repo",offset:0,limit:1});expect(refs).toMatchObject({offset:0,limit:1,nextOffset:1,refs:[{name:"refs/heads/feature/ref-read",kind:"branch"}]});
  await expect(f.call({type:"native.repository_refs",repositoryId:"unknown",offset:0,limit:10})).rejects.toMatchObject({code:"REPOSITORY_UNAVAILABLE"});
+ expect(f.starts()).toBe(0);
+});
+it("rejects owning Runner data/account roots before repository reads or workspace creation",async()=>{
+ const f=fixture();
+ for(const root of [f.options.dataDirectory,join(f.directory,"native-account")]){
+  f.config.repositories[0]!.root=root;f.apply();
+  await expect(f.call({type:"native.repository_refs",repositoryId:"repo",offset:0,limit:10})).rejects.toMatchObject({code:"PRIVATE_PATH_SCOPE"});
+  await expect(f.call({type:"native.workspace_plan",profileId:"p",plan:f.plan})).rejects.toMatchObject({code:"PRIVATE_PATH_SCOPE"});
+ }
  expect(f.starts()).toBe(0);
 });
 
