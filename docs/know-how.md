@@ -79,6 +79,11 @@
 - Unix child `close` does not prove its process group exited. A tool descendant
   can ignore SIGTERM with detached stdio; retain SIGKILL escalation until the
   group has stopped. Awaited cancellation also fences profile replacement.
+  Apply the same rule to ProcessManager process/PTY handles, including normal
+  parent exit. Keep them active and delay result acknowledgement until owned
+  group absence is observed. A permission-uncertain presence check is still
+  potentially alive: retain the bounded deadline and fail unconfirmed unless a
+  later check proves absence; never translate EPERM directly into success.
 - ConfigPlan apply must preserve unchanged adapter instances for every provider: replacing
   them drops live process handles. Reject replacement/removal while startup,
   follow-up or cancellation is pending, and keep the typed runtime rejection

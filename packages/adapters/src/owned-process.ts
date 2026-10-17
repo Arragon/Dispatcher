@@ -1,20 +1,34 @@
 import { execFile, type ChildProcess } from "node:child_process";
 
+interface OwnedTerminalProcess {
+  pid: number;
+  kill(signal?: string): void;
+  onExit(listener: () => void): unknown;
+}
+
 /** Owns only a child created by this process, never a recovered or inferred PID. */
 export class OwnedProcessGroup {
   private stopping?:Promise<void>;
   private drained=false;
   private exited=false;
-  constructor(private readonly child:ChildProcess){
-    child.once("exit",()=>{this.exited=true;void this.stop().catch(()=>undefined);});
-    child.once("error",()=>{if(!child.pid)this.drained=true;});
+  constructor(private readonly child:ChildProcess|OwnedTerminalProcess){
+    const exited=()=>{this.exited=true;void this.stop().catch(()=>undefined);};
+    if ("once" in child) {
+      child.once("exit", exited);
+      child.once("error",()=>{if(!child.pid)this.drained=true;});
+    } else child.onExit(exited);
   }
   stop():Promise<void>{return this.stopping??=this.drain();}
   private alive():boolean {
     if(this.drained||!this.child.pid)return false;
     if(process.platform==="win32")return !this.exited;
     try{process.kill(-this.child.pid,0);return true;}
-    catch(error){if((error as NodeJS.ErrnoException).code==="ESRCH")return false;throw error;}
+    catch(error){
+      if((error as NodeJS.ErrnoException).code==="ESRCH")return false;
+      // Permission uncertainty is not absence; retain the original bounded stop deadline.
+      if((error as NodeJS.ErrnoException).code==="EPERM")return true;
+      throw error;
+    }
   }
   private signal(signal:NodeJS.Signals):void {
     try{if(process.platform!=="win32"&&this.child.pid)process.kill(-this.child.pid,signal);else this.child.kill(signal);}

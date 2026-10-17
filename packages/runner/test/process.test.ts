@@ -88,3 +88,24 @@ it.each(["process", "pty"] as const)("binds Generic CLI PWD to its managed cwd i
     expect(JSON.parse(result.stdoutTail.trim())).toEqual({ pwd: root, cwd: realpathSync(root) });
   } finally { await manager.shutdown(); }
 });
+it.each([
+  ["process", "cancel"], ["pty", "cancel"], ["process", "complete"], ["pty", "complete"],
+] as const)("waits for owned descendants in %s mode before %s acknowledgement", async (mode, action) => {
+  const root = directory(), ready = join(root, "descendant.pid"), manager = new ProcessManager(join(root, "logs"));
+  const descendant = `process.on('SIGTERM',()=>{});process.on('SIGHUP',()=>{});require('node:fs').writeFileSync(${JSON.stringify(ready)},String(process.pid));setInterval(()=>{},1000)`;
+  const body = `require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(descendant)}],{stdio:'ignore'}).unref();${action === "complete" ? `const t=setInterval(()=>{if(require('node:fs').existsSync(${JSON.stringify(ready)})){clearInterval(t);process.exit(0)}},10)` : "setInterval(()=>{},1000)"}`;
+  const handle = await manager.start({ runId: "owned", file: process.execPath, args: ["-e", body], cwd: root, mode });
+  const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+  let pid: number | undefined, timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await vi.waitFor(() => expect(existsSync(ready)).toBe(true)); pid = Number(readFileSync(ready, "utf8"));
+    if (action === "cancel") expect(await Promise.race([handle.cancel().then(() => true), new Promise<boolean>(resolve => { timer = setTimeout(() => resolve(false), 3000); })])).toBe(true);
+    const result = await handle.result();
+    expect(result.classification).toBe(action === "cancel" ? "cancelled" : "success");
+    expect(alive(pid)).toBe(false);
+  } finally {
+    if (timer) clearTimeout(timer);
+    for (const owned of [pid, handle.pid]) if (owned && alive(owned)) process.kill(owned, "SIGKILL");
+    await manager.shutdown();
+  }
+});

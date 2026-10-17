@@ -1,4 +1,5 @@
 import { spawn as spawnProcess } from "node:child_process";
+import { OwnedProcessGroup } from "@dispatcher/adapters";
 import { chmodSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { arch, platform } from "node:os";
@@ -118,6 +119,8 @@ export class ProcessManager {
     let classification: ExitClassification | undefined;
     let settled = false;
     const child = spawnProcess(input.file, input.args, { cwd: input.cwd, env: { ...process.env, PWD: input.cwd }, shell: false, detached: platform() !== "win32", stdio: ["pipe", "pipe", "pipe"] });
+    const ownership = new OwnedProcessGroup(child);
+    let rejectResult: (error: unknown) => void = () => undefined;
     const spawned = new Promise<void>((resolve, reject) => {
       child.once("error", reject);
       child.once("spawn", resolve);
@@ -128,27 +131,9 @@ export class ProcessManager {
     };
     let idleTimer: ReturnType<typeof setTimeout> | undefined;
     const terminate = (reason: ExitClassification): void => {
-      if (settled || child.exitCode !== null) return;
-      classification = reason;
-      try {
-        if (platform() !== "win32") process.kill(-child.pid!, "SIGTERM");
-        else {
-          const command = processTreeKillCommand(child.pid!, "win32")!;
-          spawnProcess(command.file, command.args, { shell: false, stdio: "ignore" });
-        }
-      } catch { child.kill("SIGTERM"); }
-      const force = setTimeout(() => {
-        if (child.exitCode === null) {
-          try {
-            if (platform() !== "win32") process.kill(-child.pid!, "SIGKILL");
-            else {
-              const command = processTreeKillCommand(child.pid!, "win32", true)!;
-              spawnProcess(command.file, command.args, { shell: false, stdio: "ignore" });
-            }
-          } catch { child.kill("SIGKILL"); }
-        }
-      }, 2_000);
-      force.unref();
+      if (settled) return;
+      classification ??= reason;
+      void ownership.stop().catch(rejectResult);
     };
     const resetIdle = (): void => {
       if (!input.idleTimeoutMs) return;
@@ -161,9 +146,11 @@ export class ProcessManager {
     resetIdle();
     const timeout = input.timeoutMs ? setTimeout(() => terminate("timeout"), input.timeoutMs) : undefined;
     timeout?.unref();
-    const resultPromise = new Promise<ProcessResult>((resolve) => {
+    const resultPromise = new Promise<ProcessResult>((resolve, reject) => {
+      rejectResult = reject;
       child.on("error", (error) => { classification ??= "spawn-error"; stderr.write(error.message); });
-      child.on("close", (code, signal) => {
+      child.on("close", (code, signal) => { void (async () => {
+        await ownership.stop();
         settled = true;
         if (timeout) clearTimeout(timeout);
         if (idleTimer) clearTimeout(idleTimer);
@@ -171,7 +158,7 @@ export class ProcessManager {
         const resolved = classification ?? (signal ? "signal" : code === 0 ? "success" : "nonzero");
         emit("lifecycle", resolved);
         resolve({ sessionId: id, exitCode: code, signal: signal as NodeJS.Signals | null, classification: resolved, stdoutTail: stdout.tail(), stderrTail: stderr.tail(), durationMs: Date.now() - startedAt });
-      });
+      })().catch(reject); });
     });
     await spawned;
     if (child.pid === undefined) throw new Error("Process did not receive a pid");
@@ -204,6 +191,7 @@ export class ProcessManager {
       rows: 40,
       useConpty: platform() === "win32",
     });
+    const ownership = new OwnedProcessGroup(terminal);
     const emit = (stream: ActivityEvent["stream"], text: string): void => {
       const event = { sessionId: id, stream, summary: stripAnsi(redact(text)).slice(-500), occurredAt: new Date().toISOString() };
       for (const listener of listeners) listener(event);
@@ -211,11 +199,12 @@ export class ProcessManager {
     let idleTimer: ReturnType<typeof setTimeout> | undefined;
     let timeout: ReturnType<typeof setTimeout> | undefined;
     let resolveResult: (result: ProcessResult) => void = () => undefined;
-    const resultPromise = new Promise<ProcessResult>((resolve) => { resolveResult = resolve; });
+    let rejectResult: (error: unknown) => void = () => undefined;
+    const resultPromise = new Promise<ProcessResult>((resolve, reject) => { resolveResult = resolve; rejectResult = reject; });
     const terminate = (reason: ExitClassification): void => {
       if (settled) return;
-      classification = reason;
-      terminal.kill();
+      classification ??= reason;
+      void ownership.stop().catch(rejectResult);
     };
     const resetIdle = (): void => {
       if (!input.idleTimeoutMs) return;
@@ -228,7 +217,8 @@ export class ProcessManager {
       emit("stdout", data);
       resetIdle();
     });
-    terminal.onExit(({ exitCode, signal }) => {
+    terminal.onExit(({ exitCode, signal }) => { void (async () => {
+      await ownership.stop();
       settled = true;
       if (idleTimer) clearTimeout(idleTimer);
       if (timeout) clearTimeout(timeout);
@@ -236,7 +226,7 @@ export class ProcessManager {
       const resolved = classification ?? (signal ? "signal" : exitCode === 0 ? "success" : "nonzero");
       emit("lifecycle", resolved);
       resolveResult({ sessionId: id, exitCode, signal: null, classification: resolved, stdoutTail: output.tail(), stderrTail: "", durationMs: Date.now() - startedAt });
-    });
+    })().catch(rejectResult); });
     resetIdle();
     if (input.timeoutMs) {
       timeout = setTimeout(() => terminate("timeout"), input.timeoutMs);

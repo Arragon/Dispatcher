@@ -3,7 +3,9 @@ import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
-import { CodexCliBackend, QoderCliBackend, SpawnCliAgentBackend, SpawnProcessExecutor } from "../src/index.js";
+import { EventEmitter } from "node:events";
+import type { ChildProcess } from "node:child_process";
+import { CodexCliBackend, QoderCliBackend, SpawnCliAgentBackend, SpawnProcessExecutor, OwnedProcessGroup } from "../src/index.js";
 function alive(pid:number):boolean {try{process.kill(pid,0);return true;}catch{return false;}}
 async function startOwned(kind: "codex" | "structured" | "qoder" | "generic", root: string, body: string): Promise<{ cancel(): Promise<void>; result(): Promise<{ state: string }>; processId?: number }> {
   if (kind === "codex") return new CodexCliBackend().start({ executable: process.execPath, codexHome: root, workspacePath: root, prompt: "fixture" });
@@ -37,4 +39,39 @@ it.each(["codex","structured","qoder","generic"] as const)("drains background de
   let pid:number|undefined;
   try{expect(await turn.result()).toMatchObject({state:"completed"});pid=Number(readFileSync(ready,"utf8"));expect(alive(pid)).toBe(false);}
   finally{if(pid&&alive(pid))process.kill(pid,"SIGKILL");await turn.cancel();rmSync(root,{recursive:true,force:true});}
+});
+
+it("keeps checking uncertain group presence and acknowledges only an observed absence", async () => {
+  const pid = 123456789, original = process.kill;
+  let observations = 0;
+  const signals: Array<string | number | undefined> = [];
+  const kill = vi.spyOn(process, "kill").mockImplementation((target, signal) => {
+    if (target !== -pid) return original(target, signal);
+    signals.push(signal);
+    if (signal === 0) {
+      observations++;
+      if (observations === 2) throw Object.assign(new Error("permission uncertain"), { code: "EPERM" });
+      if (observations >= 3) throw Object.assign(new Error("absent"), { code: "ESRCH" });
+    }
+    return true;
+  });
+  try {
+    const child = Object.assign(new EventEmitter(), { pid, kill: () => true }) as ChildProcess;
+    await new OwnedProcessGroup(child).stop();
+    expect(observations).toBe(3); expect(signals).toContain("SIGTERM"); expect(signals).not.toContain("SIGKILL");
+  } finally { kill.mockRestore(); }
+});
+it("never confirms termination while group presence remains permission-uncertain", async () => {
+  const pid = 123456789, original = process.kill;
+  vi.useFakeTimers();
+  const kill = vi.spyOn(process, "kill").mockImplementation((target, signal) => {
+    if (target !== -pid) return original(target, signal);
+    if (signal === 0) throw Object.assign(new Error("permission uncertain"), { code: "EPERM" });
+    return true;
+  });
+  try {
+    const child = Object.assign(new EventEmitter(), { pid, kill: () => true }) as ChildProcess;
+    const rejection = expect(new OwnedProcessGroup(child).stop()).rejects.toThrow("termination is unconfirmed");
+    await vi.advanceTimersByTimeAsync(4100); await rejection;
+  } finally { kill.mockRestore(); vi.useRealTimers(); }
 });
