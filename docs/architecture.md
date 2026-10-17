@@ -767,3 +767,22 @@ shape; it never interprets a foreign filesystem path. Older/offline Runners
 return explicit unavailability rather than local fallback. The shared frontend
 reference picker queries only on explicit request and retains native ref names;
 repository context is shown independently from account/model readiness.
+
+## Local directory selection bridge
+
+Directory selections are authenticated administrator operations restricted to a
+loopback peer and the running embedded Runner identity. Existing same-origin,
+CSRF and rate-limit checks remain in force. Request schemas allow only purpose
+and registered Runner/repository identifiers. The macOS bridge invokes a fixed
+OS choose-folder program after checking console-session ownership; no request
+can supply scripts, argv, dialog prompts or starting paths. Other platforms,
+SSH/headless sessions and remote Runner requests return explicit unavailability.
+
+Only one dialog is owned at a time. Cancellation retains the active slot until
+the operation settles and discards a late selected path. Shutdown aborts/waits
+for the owned operation. Bounded memory records expire and are not execution or
+repository authority; restart cannot silently recover or reopen a dialog. The
+candidate is displayed first and enters a new repository draft only on explicit
+selection, retaining ConfigPlan review/apply. Neither cancel nor selection writes
+configuration or creates a workspace. Actual Git validity, private path scope,
+account/model and execution approval remain subsequent owning-device checks.

@@ -9,3 +9,7 @@ export interface RepositoryConsoleContext {
   scopePaths:string[];verificationCommands:Array<{id:string;required:boolean}>;
   actions:Record<"publish"|"refs",ActionAvailability>;
 }
+export interface DirectorySelection {
+  id:string;runnerId:string;purpose:"repository";state:"pending"|"cancelling"|"selected"|"cancelled"|"unavailable";
+  createdAt:string;path?:string;reasonCode?:string;
+}

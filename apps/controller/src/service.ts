@@ -1,6 +1,7 @@
 import { resolveProfileExecutionContext } from "./execution-context.js";
 import { ProfileProbeService } from "./profile-probes.js";
 import { CredentialContext } from "./credential-context.js";
+import {DirectorySelections,type DirectoryPicker} from "./local-directories.js";
 import {RunInputReceipts,InputReceiptError,type RunInputIdentity} from "./run-inputs.js";
 import {UsageObservations,UsageObservationError} from "./usage-observations.js";
 import {buildDiagnostics,diagnosticChecks} from "./diagnostics.js";
@@ -168,6 +169,7 @@ import { LifecycleManager, type ServiceModule } from "./lifecycle.js";
 import { MESSAGING_INBOX_KIND, MessagingInbox, type MessagingInboxRecord } from "./messaging-inbox.js";
 
 export interface ControllerOptions {
+  directoryPicker?:DirectoryPicker;
   dataDirectory: string;
   withRunner?: boolean;
   host?: string;
@@ -480,6 +482,7 @@ export class ControllerService {
   private readonly pendingConsoleInputs = new Set<string>();
   private readonly profileProbes:ProfileProbeService;
   private readonly credentialContext:CredentialContext;
+  private readonly directorySelections:DirectorySelections;
   private readonly runInputs:RunInputReceipts;
   private readonly usageObservations:UsageObservations;
   private readonly secureLinks: SecureDashboardLinkIssuer;
@@ -526,6 +529,7 @@ export class ControllerService {
     this.database = new DispatcherDatabase(join(options.dataDirectory, "dispatcher.sqlite"));
     this.profileProbes=new ProfileProbeService(this.database,()=>this.now());
     this.credentialContext=new CredentialContext(this.database);
+    this.directorySelections=new DirectorySelections(options.directoryPicker);
     this.runInputs=new RunInputReceipts(this.database,()=>this.now());
     this.usageObservations=new UsageObservations(this.database,()=>this.now());
     this.agentProcesses = new ProcessManager(join(options.dataDirectory, "agent-logs"));
@@ -696,6 +700,7 @@ export class ControllerService {
   async stop(): Promise<void> {
     if (this.stopping) return this.stopping;
     this.stopping = (async () => {
+      await this.directorySelections.close();
       await this.lifecycle.stop();
       await Promise.allSettled([...this.remoteLifecycleJobs.values()]);
       await this.profileProbes.drain();
@@ -3592,6 +3597,19 @@ export class ControllerService {
       if(this.configuration.current().revision!==snapshot.revision)throw new PublicationError("ROUTING_DECISION_STALE",409,"Configuration changed during classification trial");
       return {trial:true,source:policy?"draft":"applied",decision};
     });
+    const localPickerRequest=(request:{ip:string})=>{
+      if(!["127.0.0.1","::1","::ffff:127.0.0.1"].includes(request.ip)||!this.principalFor(request).roles.includes("admin"))throw new ConfigPlanError("NATIVE_PICKER_UNAVAILABLE","Directory selection requires the local administrator's desktop console");
+    };
+    this.app.post<{Body:{purpose:"repository";runnerId?:string;repositoryId?:string}}>("/api/local/directory-selections",{schema:{body:{type:"object",additionalProperties:false,required:["purpose"],properties:{purpose:{const:"repository"},runnerId:{type:"string",minLength:1,maxLength:200},repositoryId:{type:"string",minLength:1,maxLength:200}}}}},async(request,reply)=>{
+      localPickerRequest(request);
+      const config=this.configuration.current().config,repository=request.body.repositoryId?config.repositories.find(repository=>repository.id===request.body.repositoryId):undefined;
+      if(request.body.repositoryId&&!repository)return reply.code(404).send({code:"REPOSITORY_NOT_FOUND"});
+      const runnerId=request.body.runnerId??(repository?repositoryRunnerId(config,repository):this.embeddedRunner?.runner.id);
+      if(!runnerId||runnerId!==this.embeddedRunner?.runner.id||repository&&repositoryRunnerId(config,repository)!==runnerId||!config.runners.some(runner=>runner.id===runnerId&&runner.mode==="embedded"))return reply.code(409).send({code:"NATIVE_PICKER_UNAVAILABLE",message:"Select a registered repository on the owning Runner; the Controller cannot open a remote device's dialog"});
+      return reply.code(201).send({selection:this.directorySelections.begin(runnerId)});
+    });
+    this.app.get<{Params:{id:string}}>("/api/local/directory-selections/:id",async(request,reply)=>{localPickerRequest(request);const selection=this.directorySelections.get(request.params.id);return selection?{selection}:reply.code(404).send({code:"DIRECTORY_SELECTION_NOT_FOUND"});});
+    this.app.delete<{Params:{id:string}}>("/api/local/directory-selections/:id",async(request,reply)=>{localPickerRequest(request);const selection=this.directorySelections.cancel(request.params.id);return selection?{selection}:reply.code(404).send({code:"DIRECTORY_SELECTION_NOT_FOUND"});});
     this.app.get<{Params:{id:string}}>("/api/repositories/:id/context",async request=>this.repositoryContext(request.params.id));
     this.app.get<{Params:{id:string};Querystring:{offset?:string;limit?:string}}>("/api/repositories/:id/refs",async(request,reply)=>{
       const {offset="0",limit="50"}=request.query;
@@ -3885,7 +3903,7 @@ export class ControllerService {
         ? 409
         : error instanceof LlmRuntimeError
           ? error.code === "SELECTION_CHANGED" ? 409 : error.code === "NO_AVAILABLE_PROFILE" ? 503 : 400
-        : error instanceof ConfigPlanError && ["PROFILE_CONTEXT_CHANGED","CONNECTOR_CONTEXT_CHANGED","REMOTE_DRAFT_PROBE_UNAVAILABLE","RUNNER_CREDENTIAL_BUSY","CREDENTIAL_CHANGE_PENDING","CREDENTIAL_IN_USE"].includes(error.code)?409:error instanceof ConfigPlanError || error instanceof ConfigValidationError
+        : error instanceof ConfigPlanError && ["PROFILE_CONTEXT_CHANGED","CONNECTOR_CONTEXT_CHANGED","REMOTE_DRAFT_PROBE_UNAVAILABLE","RUNNER_CREDENTIAL_BUSY","CREDENTIAL_CHANGE_PENDING","CREDENTIAL_IN_USE","NATIVE_PICKER_UNAVAILABLE","NATIVE_PICKER_BUSY"].includes(error.code)?409:error instanceof ConfigPlanError || error instanceof ConfigValidationError
           ? 400
           : semanticStatus ?? workspaceStatus ?? connectorStatus ?? secretStatus ?? (error && typeof error === "object" && "validation" in error ? 400 : 500);
       const code = error instanceof UsageObservationError||error instanceof InputReceiptError||error instanceof AdapterContractError||error instanceof PublicationError || error instanceof TaskDispatchError || error instanceof RevisionConflictError || error instanceof ConfigPlanError || error instanceof SecretStoreError || error instanceof LlmRuntimeError || error instanceof ConnectorError || error instanceof WorkspacePolicyError || error instanceof SemanticPolicyError

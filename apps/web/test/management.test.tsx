@@ -126,3 +126,11 @@ it("loads bounded repository refs only on request and preserves the chosen base 
  await screen.findByRole("option",{name:"refs/heads/feature/selected · aaaaaaaaaa"});await userEvent.selectOptions(screen.getByLabelText("选择已读取引用"),"refs/heads/feature/selected");expect((screen.getByLabelText("基准引用") as HTMLInputElement).value).toBe("refs/heads/feature/selected");
  expect(fetch.mock.calls.map(([path])=>String(path))).toEqual(["/api/repositories/registered/refs?offset=0&limit=50"]);expect(fetch.mock.calls.every(([,init])=>!init?.method)).toBe(true);
 });
+
+it("uses a native directory only as an explicit candidate and never applies configuration",async()=>{
+ const {default:Picker}=await import("../src/LocalDirectoryPicker.js");const selected=vi.fn();let choice="selected";
+ const fetch=vi.spyOn(globalThis,"fetch").mockImplementation(async()=>new Response(JSON.stringify({selection:{id:"selection",purpose:"repository",runnerId:"local",createdAt:"2026-10-16",state:choice,...(choice==="selected"?{path:"/candidate/project"}:{})}})));
+ const view=mount(<Picker runners={[{id:"local",mode:"embedded"}]} onSelect={selected}/>);expect(fetch).not.toHaveBeenCalled();await userEvent.click(screen.getByRole("button",{name:"打开本机目录对话框"}));expect(await screen.findByText("/candidate/project")).toBeTruthy();expect(selected).not.toHaveBeenCalled();await userEvent.click(screen.getByRole("button",{name:"填入新仓库草稿"}));expect(selected).toHaveBeenCalledWith({root:"/candidate/project",runnerId:"local"});
+ expect(fetch.mock.calls.filter(([,init])=>init?.method==="POST").map(([path])=>String(path))).toEqual(["/api/local/directory-selections"]);view.unmount();choice="cancelled";selected.mockClear();
+ mount(<Picker runners={[{id:"local",mode:"embedded"}]} onSelect={selected}/>);await userEvent.click(screen.getByRole("button",{name:"打开本机目录对话框"}));expect(await screen.findByText("已取消，配置没有变更。")).toBeTruthy();expect(selected).not.toHaveBeenCalled();
+});

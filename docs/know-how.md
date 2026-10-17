@@ -595,3 +595,11 @@
   separate identities. Ref browsing reads current local/Runner refs without
   fetching; only publication review freezes the selected base commit. Preserve
   historical Project rows when a repository registration is removed.
+
+- A browser's selected directory belongs to the browser device. The native
+  directory bridge must be loopback-only and owned by the embedded Controller
+  desktop, never interpreted as a remote Runner directory. Use only a fixed OS
+  dialog command; selected paths remain candidates until ConfigPlan registration.
+- Cancelling a directory dialog must retain its ownership slot until the OS
+  operation settles and discard a late path. Native window visibility and
+  chooser-process launch/cancellation are separate acceptance evidence.
