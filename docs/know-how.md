@@ -619,3 +619,10 @@
 - Hash explicit immutable workspace fields for delivery identity, not arbitrary
   object property order or incidental plan timestamps. The post-commit scoped
   file manifest, not a pre-hook snapshot, belongs with the saved commit SHA.
+
+- Freeze remote delivery intent during workspace preparation. Preserve the old
+  plan hash when intent is omitted, and never grant commit permission to an old
+  none execution. Verification permission belongs to the completed native turn;
+  clear it before another input and block input once delivery starts.
+- Remote cancellation must await both native handles and the owning Git command
+  group. A revoked lease or a transport timeout does not prove hooks terminated.

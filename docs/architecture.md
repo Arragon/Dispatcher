@@ -828,5 +828,21 @@ Controller verification and local commit share the owned-command cancellation
 slot. Both native authority and current canonical Task/Run binding must still
 match before verification/delivery. The console stores the explicit choice in
 its draft, displays it at review and shows the saved SHA separately from task
-acceptance. Owning remote commit and explicit PR delivery remain unavailable
+acceptance. Explicit PR delivery remains unavailable
 until their separate qualified protocol paths are implemented.
+
+
+## Owning Runner commit protocol
+
+An optional delivery intent is frozen with native.workspace_prepare before any
+worktree mutation. Omitting it preserves existing none plan hashes; an old
+execution cannot acquire commit authority later. native.run_commit accepts only
+a Run identity and fenced envelope, never roots, commands or replacement messages.
+The Runner requires a successful native turn and successful frozen required
+verification, invalidates verification on new input, and prevents new native
+turns once delivery has started. Its owned Git process service records the real
+commit receipt. A crash during delivery becomes unknown; a completed durable
+receipt replays without repeating Git. Lease revocation and shutdown abort and
+await owned command groups before acknowledging stop. The Controller validates
+Run/generation/branch/SHA and scope before saving the canonical result. It never
+runs Git against the remote repository and none/commit never push.

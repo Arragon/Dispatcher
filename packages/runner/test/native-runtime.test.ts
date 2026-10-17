@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
@@ -39,7 +39,7 @@ function fixture() {
   const plan = { repositoryId: "repo", taskId: "task", runId: "run", attempt: 1, baseRef: "main", scopePaths: ["."] };
   const selection: ExecutionSelection = { version: 1, mode: "manual", source: "explicit", profileId: "p", runnerId: "remote", providerId: "codex", backendId: "codex-exec-json", selectionType: "explicit-model", requestedModel: "model", nativeParameters: {}, catalogRevision: "catalog", contextFingerprint: "context", configRevision: 1, selectedAt: now.toISOString() };
   const call = async (payload: CommandPayload, messageId = `command-${++sequence}`, overrides = {}) => runtime.handle(payload, createEnvelope({ kind: "command", runnerId: "remote", traceId: "trace", messageId, sequence: ++sequence, leaseId: "lease", generation: 1, leaseExpiresAt: "2026-10-16T12:01:00Z", ...overrides, payload }));
-  const prepare = () => call({ type: "native.workspace_prepare", runId: "run", profileId: "p", plan, verificationCommandIds: ["check"] });
+  const prepare = (delivery?: {type:"commit";message:string}) => call({ type: "native.workspace_prepare", runId: "run", profileId: "p", plan, verificationCommandIds: ["check"], ...(delivery?{delivery}:{}) } as CommandPayload);
   const start = () => call({ type: "run.start", runId: "run", execution: { version: 1, profileId: "p", workspaceId: "run", prompt: "write result", selection } });
   return { runtime, options, config, apply, plan, selection, catalog, call, prepare, start, directory, root, starts: () => starts, cancellations: () => cancellations, complete: () => { completed = true; }, expire: () => { now = new Date("2026-10-16T12:02:00Z"); } };
 }
@@ -263,4 +263,52 @@ it("does not acknowledge revocation until the verification process group has sto
   const alive=()=>{try{process.kill(pid!,0);return true;}catch{return false;}};
   try{await vi.waitFor(()=>expect(existsSync(join(workspace.path,ready))).toBe(true));pid=Number(readFileSync(join(workspace.path,ready),"utf8"));await f.call({type:"lease.revoke",leaseId:"lease",generation:1,reason:"operator cancellation"});expect(alive()).toBe(false);await rejected;}
   finally{if(pid&&alive())process.kill(pid,"SIGKILL");}
+});
+
+
+it("commits only the frozen explicit intent after successful verification on the owning Runner",async()=>{
+ const f=fixture();f.apply();execFileSync("git",["-C",f.root,"config","user.name","Fixture"]);execFileSync("git",["-C",f.root,"config","user.email","fixture@example.invalid"]);
+ const source=execFileSync("git",["-C",f.root,"rev-parse","HEAD"],{encoding:"utf8"}).trim();
+ const workspace=await f.prepare({type:"commit",message:"Dispatcher: explicit remote commit"}) as {path:string;branch:string};
+ const commit={type:"native.run_commit",runId:"run"} as CommandPayload;
+ await expect(f.call(commit)).rejects.toMatchObject({code:"EXECUTION_NOT_COMPLETE"});await f.start();f.complete();await f.call({type:"native.run",runId:"run",action:"status"});
+ await expect(f.call(commit)).rejects.toMatchObject({code:"VERIFICATION_REQUIRED"});
+ await f.call({type:"native.run_verify",runId:"run"});
+ const result=await f.call(commit,"commit") as {commit:string};expect(result).toMatchObject({version:1,runId:"run",generation:1,branch:workspace.branch,created:true,files:["result.txt"]});
+ expect(execFileSync("git",["-C",workspace.path,"rev-parse","HEAD"],{encoding:"utf8"}).trim()).toBe(result.commit);
+ expect(execFileSync("git",["-C",f.root,"rev-parse","HEAD"],{encoding:"utf8"}).trim()).toBe(source);
+ expect(execFileSync("git",["-C",workspace.path,"rev-list","--count",`${source}..HEAD`],{encoding:"utf8"}).trim()).toBe("1");
+ expect(await f.call(commit,"commit")).toEqual(result);expect(await f.call(commit,"new-transport-id")).toEqual(result);
+ await expect(f.call({type:"native.run",runId:"run",action:"send",message:"mutate after commit"})).rejects.toMatchObject({code:"DELIVERY_STARTED"});
+ await expect(f.call(commit,"stale",{generation:2})).rejects.toBeDefined();expect(f.starts()).toBe(1);
+});
+
+it("cannot add commit authority to an existing none execution or use failed verification",async()=>{
+ const f=fixture();f.config.repositories[0]!.verificationCommands[0]!.args=["-e","process.exit(1)"];f.apply();await f.prepare();
+ await expect(f.prepare({type:"commit",message:"late permission"})).rejects.toMatchObject({code:"EXECUTION_CONFLICT"});
+ await expect(f.call({type:"native.run_commit",runId:"run"} as CommandPayload)).rejects.toMatchObject({code:"DELIVERY_NOT_SELECTED"});
+ const g=fixture();g.config.repositories[0]!.verificationCommands[0]!.args=["-e","process.exit(1)"];g.apply();const workspace=await g.prepare({type:"commit",message:"blocked"}) as {path:string};await g.start();g.complete();await g.call({type:"native.run",runId:"run",action:"status"});
+ expect(await g.call({type:"native.run_verify",runId:"run"})).toMatchObject([{status:"failed"}]);
+ await expect(g.call({type:"native.run_commit",runId:"run"} as CommandPayload)).rejects.toMatchObject({code:"VERIFICATION_REQUIRED"});
+ expect(execFileSync("git",["-C",workspace.path,"diff","--cached","--name-only"],{encoding:"utf8"}).trim()).toBe("");
+});
+
+
+it("waits for the owning Git hook group to stop before acknowledging remote lease revocation",async()=>{
+ const f=fixture();f.apply();execFileSync("git",["-C",f.root,"config","user.name","Fixture"]);execFileSync("git",["-C",f.root,"config","user.email","fixture@example.invalid"]);
+ const ready=join(f.directory,"hook.pid"),hook=join(f.root,".git","hooks","pre-commit");writeFileSync(hook,`#!${process.execPath}\nconst fs=require('node:fs');process.on('SIGTERM',()=>{});fs.writeFileSync(${JSON.stringify(ready)},String(process.pid));setInterval(()=>{},1000);\n`);chmodSync(hook,0o755);
+ const workspace=await f.prepare({type:"commit",message:"cancel owned remote commit"}) as {path:string};await f.start();f.complete();await f.call({type:"native.run",runId:"run",action:"status"});await f.call({type:"native.run_verify",runId:"run"});
+ const committing=f.call({type:"native.run_commit",runId:"run"});const rejected=expect(committing).rejects.toBeDefined();
+ await expect.poll(()=>existsSync(ready),{timeout:5000}).toBe(true);const pid=Number(readFileSync(ready,"utf8"));
+ expect(await f.call({type:"lease.revoke",leaseId:"lease",generation:1,reason:"operator cancel"})).toMatchObject({revokedAt:expect.any(String)});await rejected;
+ let absent=false;try{process.kill(pid,0);}catch(error){absent=Boolean(error&&typeof error==="object"&&"code" in error&&error.code==="ESRCH");}expect(absent).toBe(true);
+ expect(execFileSync("git",["-C",workspace.path,"rev-list","--count","main..HEAD"],{encoding:"utf8"}).trim()).toBe("0");expect(f.runtime.database.getEntity("native-execution","run")).toMatchObject({state:"CANCELLED",deliveryState:"unknown"});
+});
+
+it("invalidates prior verification on new native input and restores completed commit receipts after restart",async()=>{
+ const f=fixture();f.apply();execFileSync("git",["-C",f.root,"config","user.name","Fixture"]);execFileSync("git",["-C",f.root,"config","user.email","fixture@example.invalid"]);
+ await f.prepare({type:"commit",message:"verified latest turn"});await f.start();f.complete();await f.call({type:"native.run",runId:"run",action:"status"});await f.call({type:"native.run_verify",runId:"run"});await f.call({type:"native.run",runId:"run",action:"send",message:"one more turn"});await f.call({type:"native.run",runId:"run",action:"status"});
+ await expect(f.call({type:"native.run_commit",runId:"run"})).rejects.toMatchObject({code:"VERIFICATION_REQUIRED"});await f.call({type:"native.run_verify",runId:"run"});
+ const result=await f.call({type:"native.run_commit",runId:"run"},"commit-before-restart");f.runtime.close();const restored=new NativeRunnerRuntime(f.options);cleanups.push(()=>restored.close());
+ const payload:CommandPayload={type:"native.run_commit",runId:"run"};expect(await restored.handle(payload,createEnvelope({kind:"command",runnerId:"remote",traceId:"restart",messageId:"commit-before-restart",sequence:999,leaseId:"lease",generation:1,leaseExpiresAt:"2026-10-16T12:01:00Z",payload}))).toEqual(result);expect(f.starts()).toBe(2);
 });

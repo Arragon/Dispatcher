@@ -63,7 +63,7 @@ export interface ProtocolEnvelope<TPayload extends ProtocolPayload = ProtocolPay
 }
 
 const commandTypes = new Set<CommandPayload["type"]>([
-  "native.repository","native.repository_refs","native.workspace_plan","native.workspace_prepare","native.model_catalog","native.profile_probe","native.run","native.run_verify","native.run_files","native.run_finalize",
+  "native.repository","native.repository_refs","native.workspace_plan","native.workspace_prepare","native.model_catalog","native.profile_probe","native.run","native.run_verify","native.run_commit","native.run_files","native.run_finalize",
   "run.start",
   "run.send_input",
   "run.pause",

@@ -11,7 +11,7 @@ import { NativeRunnerRuntime, RemoteRunnerClient, RunnerJournal } from "@dispatc
 import { ControllerService } from "../src/service.js";
 const cleanups: Array<() => void | Promise<void>> = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
-async function setup(verificationFails = false,holdFirstReconcile = false) {
+async function setup(verificationFails = false,holdFirstReconcile = false,deliveryType:"none"|"commit"="none") {
   const directory = mkdtempSync(join(tmpdir(), "remote-execution-")); cleanups.push(() => rmSync(directory, { recursive: true, force: true }));
   const root = join(directory, "repo"); execFileSync("git", ["init", "-b", "main", root], { stdio: "ignore" }); execFileSync("git", ["-C", root, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "--allow-empty", "-m", "base"], { stdio: "ignore" });
   const controllerData = join(directory, "controller"), runnerData = join(directory, "runner");
@@ -63,7 +63,7 @@ async function setup(verificationFails = false,holdFirstReconcile = false) {
   await connect();
   const restartController=async()=>{await client.stop();await service.stop();service=await makeService();return service;};
   const createLocal = vi.spyOn(service.workspaces, "create"), headers = { authorization: "Bearer owner" };
-  const draft = { schemaVersion: 1, clientDraftId: "draft", projectId: "local:repo", repositoryId: "repo", description: "Write the result", scopePaths: ["."], acceptanceCriteria: ["result is correct"], startMode: "dispatch", execution: { profileId: "p", selectionMode: "manual", selectionType: "explicit-model", nativeModelId: "model", nativeParameters: {}, catalogRevision: catalog.revision, contextFingerprint: catalog.contextFingerprint }, delivery: { type: "none" } };
+  const draft = { schemaVersion: 1, clientDraftId: "draft", projectId: "local:repo", repositoryId: "repo", description: "Write the result", scopePaths: ["."], acceptanceCriteria: ["result is correct"], startMode: "dispatch", execution: { profileId: "p", selectionMode: "manual", selectionType: "explicit-model", nativeModelId: "model", nativeParameters: {}, catalogRevision: catalog.revision, contextFingerprint: catalog.contextFingerprint }, delivery: { type: deliveryType } };
   const preview = async (clientDraftId="draft") => (await service.app.inject({ method: "POST", url: "/api/task-publications/preview", headers, payload: {...draft,clientDraftId} })).json();
   const commit = (p: { publicationId: string; revision: number; confirmation: { reviewHash: string } }) => service.app.inject({ method: "POST", url: `/api/task-publications/${p.publicationId}/commit`, headers: { ...headers, "idempotency-key": "remote-publication" }, payload: { revision: p.revision, reviewHash: p.confirmation.reviewHash, confirmation: { accepted: true } } });
   return {get service(){return service;},runtime,get client(){return client;},root,runnerData,controllerData,starts,catalogs,localBackend,createLocal,headers,preview,commit,gate,entered,control,connect,restartController,restores,now,reconcileGate,reconcileEntered,verificationGate,verificationEntered,advanceClock:(ms:number)=>{clock=new Date(clock.getTime()+ms);}};
@@ -277,4 +277,19 @@ it("keeps a Runner revoked in memory when the durable identity write fails", asy
     const advanced = await f.service.app.inject({ method: "POST", url: `/api/runs/${receipt.runId}/advance`, headers: f.headers });
     expect(advanced.statusCode).not.toBe(200); expect(f.service.database.getEntity("run-result", receipt.runId)).toBeUndefined(); expect(f.starts).toHaveLength(1);
   } finally { save.mockRestore(); }
+});
+
+
+it("delivers an explicit remote commit through the owning Runner with no Controller Git or push",async()=>{
+ const f=await setup(false,false,"commit");execFileSync("git",["-C",f.root,"config","user.name","Fixture"]);execFileSync("git",["-C",f.root,"config","user.email","fixture@example.invalid"]);
+ execFileSync("git",["-C",f.root,"remote","add","origin","https://example.invalid/never-push/repo.git"]);
+ const source=execFileSync("git",["-C",f.root,"rev-parse","HEAD"],{encoding:"utf8"}).trim();
+ const local=vi.spyOn(f.service["localGitDelivery"],"commit").mockRejectedValue(new Error("Controller must not commit remote work"));
+ const p=await f.preview();expect(p.canCommit,p).toBe(true);const receipt=(await f.commit(p)).json();expect(receipt.state).toBe("STARTED");
+ const advanced=await f.service.app.inject({method:"POST",url:`/api/runs/${receipt.runId}/advance`,headers:f.headers});expect(advanced.json()).toMatchObject({run:{state:"COMPLETE",verification:{state:"PASSED"}},task:{state:"REVIEW"}});
+ const result=f.service.database.getEntity("run-result",receipt.runId) as unknown as {commit:{commit:string}};expect(result).toMatchObject({deliveryType:"commit",commit:{created:true,runId:receipt.runId,generation:1,files:["result.txt"]}});
+ expect(execFileSync("git",["-C",f.starts[0]!.workspacePath,"rev-parse","HEAD"],{encoding:"utf8"}).trim()).toBe(result.commit.commit);expect(execFileSync("git",["-C",f.root,"rev-parse","HEAD"],{encoding:"utf8"}).trim()).toBe(source);
+ expect(f.runtime.database.getEntity("native-execution",receipt.runId)).toMatchObject({delivery:{type:"commit"},deliveryState:"complete",settledAt:expect.any(String)});
+ expect(f.runtime.database.getEntity("native-operation",`native-commit:${receipt.runId}:1`)).toMatchObject({state:"COMPLETE",result:result.commit});expect(local).not.toHaveBeenCalled();expect(f.localBackend).not.toHaveBeenCalled();expect(f.createLocal).not.toHaveBeenCalled();
+ expect((await f.commit(p)).json()).toEqual(receipt);expect(f.starts).toHaveLength(1);
 });

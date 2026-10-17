@@ -13,6 +13,12 @@ describe("Runner Protocol v1", () => {
     expect(()=>parseEnvelope({...envelope,leaseId:undefined,generation:undefined,leaseExpiresAt:undefined,payload:{type:"native.model_catalog",profileId:"account",repositoryId:"repo",reason:"open"}})).not.toThrow();
     expect(()=>parseEnvelope({...envelope,protocolVersion:"1.1"})).toThrowError(expect.objectContaining({code:"UNSUPPORTED_PROTOCOL"}));
   });
+  it("allows only frozen bounded commit intent and an authority-bound command without executable overrides",()=>{
+    const base=createEnvelope({kind:"command",runnerId:"remote",traceId:"trace",messageId:"prepare",sequence:1,leaseId:"lease",generation:1,leaseExpiresAt:"2026-10-16T20:00:00Z",payload:{type:"native.workspace_prepare",runId:"run",profileId:"p",plan:{repositoryId:"repo",taskId:"task",runId:"run",attempt:1,baseRef:"main",scopePaths:["."]},verificationCommandIds:[],delivery:{type:"commit",message:"Explicit commit"}}});
+    expect(()=>parseEnvelope(base)).not.toThrow();
+    for(const delivery of [{type:"commit",message:""},{type:"commit",message:"x".repeat(1001)},{type:"commit",message:"hi",args:["push"]},{type:"pull-request"}])expect(()=>parseEnvelope({...base,payload:{...base.payload,delivery}})).toThrow();
+    const commit={...base,payload:{type:"native.run_commit",runId:"run"}};expect(()=>parseEnvelope(commit)).not.toThrow();expect(()=>parseEnvelope({...commit,leaseId:undefined})).toThrow();expect(()=>parseEnvelope({...commit,payload:{...commit.payload,message:"changed"}})).toThrow();
+  });
   it("binds a native start selection to the descriptor's profile, Runner and managed workspace",()=>{
     const selection={version:1,mode:"manual",source:"explicit",profileId:"account",runnerId:"runner",providerId:"codex",backendId:"codex-exec-json",selectionType:"explicit-model",requestedModel:"model",catalogRevision:"catalog",contextFingerprint:"context",configRevision:1,nativeParameters:{},selectedAt:"2026-10-16T20:00:00Z"};
     const execution={version:1,profileId:"account",workspaceId:"run",prompt:"Original\n任务",selection};

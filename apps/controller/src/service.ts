@@ -9,7 +9,7 @@ import type { ProfileConsoleView,NativeSessionConsoleView,RepositoryConsoleConte
 import { applyConfigEdits, consoleConfig, consoleConfigPlan } from "./config-edits.js";
 import {qualifyRoutingPolicy,type PolicyConfigEvidence} from "./policy-config.js";
 import {TaskClassifier} from "./task-classifier.js";
-import { remoteCatalog, remoteRunInventory,remoteRepositoryRefs } from "./remote-results.js";
+import { remoteCatalog, remoteRunInventory,remoteRepositoryRefs,remoteCommitResult } from "./remote-results.js";
 import { RemoteNativeAdapter } from "./remote-adapter.js";
 import { NATIVE_EXECUTION_CAPABILITY, type CommandPayload } from "@dispatcher/protocol";
 import { ModelRoutingService } from "./model-routing.js";
@@ -455,6 +455,7 @@ function localServiceProfile(body: EcosystemProfileBody): LocalServiceProfileCon
   };
 }
 
+function commitMessage(goal:string):string{return `Dispatcher: ${goal.split(/\r?\n/)[0]!.slice(0,160)}`;}
 export class ControllerService {
   readonly app: FastifyInstance;
   readonly database: DispatcherDatabase;
@@ -1734,9 +1735,14 @@ export class ControllerService {
       let files=resultFiles as string[];if(remote)assertPublicationScope(files,workspace.scopePaths);
       let commit:Awaited<ReturnType<LocalGitDelivery["commit"]>>|undefined;
       if(contract.delivery.type==="commit"){
-        if(remote)throw new LocalGitDeliveryError("REMOTE_COMMIT_UNAVAILABLE","Owning Runner commit is not qualified yet");
-        const controller=new AbortController(),settled=(async()=>{commit=await this.localGitDelivery.commit({runId:run.id,generation:run.generation,leaseId:run.leaseId,workspace,message:`Dispatcher: ${contract.goal.split(/\r?\n/)[0]!.slice(0,160)}`,assertAuthority:()=>this.fenceDelivery(run,"commit"),signal:controller.signal});})();
-        this.localCommands.set(run.id,{controller,settled});try{await settled;files=commit!.files;}finally{if(this.localCommands.get(run.id)?.controller===controller)this.localCommands.delete(run.id);}
+        if(remote){
+          this.fenceDelivery(run,"commit");
+          commit=remoteCommitResult(await this.remoteRequest(run.runnerId,{type:"native.run_commit",runId:run.id},run,`native-commit:${run.id}:${run.generation}`),{runId:run.id,generation:run.generation,branch:workspace.branch});
+          this.fenceDelivery(run,"commit");assertPublicationScope(commit.files,workspace.scopePaths);files=commit.files;
+        }else{
+          const controller=new AbortController(),settled=(async()=>{commit=await this.localGitDelivery.commit({runId:run.id,generation:run.generation,leaseId:run.leaseId,workspace,message:commitMessage(contract.goal),assertAuthority:()=>this.fenceDelivery(run,"commit"),signal:controller.signal});})();
+          this.localCommands.set(run.id,{controller,settled});try{await settled;files=commit!.files;}finally{if(this.localCommands.get(run.id)?.controller===controller)this.localCommands.delete(run.id);}
+        }
       }
       const result={version:1,runId:run.id,taskId:run.taskId,runnerId:run.runnerId,deliveryType:contract.delivery.type,...(commit?{commit}:{}),worktree:run.worktree,branch:run.branch,baseCommit:workspace.baseRevision,files,verification:run.verification,summary:run.activitySummary??"",createdAt:this.now().toISOString()};
       if(remote){this.fenceDelivery(run,"complete");await this.finalizeRemoteRun(run);}
@@ -2134,7 +2140,7 @@ export class ControllerService {
     const repositoryRunner=repositoryRunnerId(this.configuration.current().config,repositoryConfig),remote=this.configuration.current().config.runners.some(runner=>runner.id===repositoryRunner&&runner.mode==="remote");
     if(body.profileId&&this.configuration.current().config.agentProfiles.find(profile=>profile.id===body.profileId)?.runnerId!==repositoryRunner)throw new PublicationError("RUNNER_REPOSITORY_MISMATCH",409,"Account and repository belong to different Runners");
     if(remote&&!publication?.selection)throw new PublicationError("REMOTE_SELECTION_REQUIRED",409,"Remote dispatch requires a reviewed native execution selection");
-    if(remote&&contract.delivery.type!=="none")throw new PublicationError("REMOTE_DELIVERY_UNAVAILABLE",409,"Remote execution currently requires local result delivery on the owning Runner");
+    if(remote&&contract.delivery.type==="pull-request")throw new PublicationError("REMOTE_DELIVERY_UNAVAILABLE",409,"Remote execution currently requires local result delivery on the owning Runner");
     const scheduler = new CanonicalScheduler(() => this.dispatchCandidates(body?.profileId).filter(candidate=>candidate.runnerId===repositoryRunner));
     const runId = randomUUID();
     const workspacePlan = {
@@ -2171,7 +2177,7 @@ export class ControllerService {
             if(!reserved||reserved.state!=="STARTING")throw new PublicationError("RUN_CHANGED",409,"Remote workspace requires a reserved canonical Run");
             this.database.saveEntity("workspace-intent",runId,json({...workspacePlan,state:"CREATING",runnerId:repositoryRunner}));
             let prepared:unknown;
-            try{prepared=await this.remoteRequest(repositoryRunner,{type:"native.workspace_prepare",runId,profileId:reserved.profileId,plan:workspacePlan,verificationCommandIds:contract.verification},reserved,`native-prepare:${runId}:${reserved.generation}`);}
+            try{prepared=await this.remoteRequest(repositoryRunner,{type:"native.workspace_prepare",runId,profileId:reserved.profileId,plan:workspacePlan,verificationCommandIds:contract.verification,...(contract.delivery.type==="commit"?{delivery:{type:"commit" as const,message:commitMessage(contract.goal)}}:{})},reserved,`native-prepare:${runId}:${reserved.generation}`);}
             catch(error){if(error instanceof AdapterContractError)throw error;throw new AdapterContractError("COMMAND_OUTCOME_UNKNOWN","Remote workspace preparation response is unconfirmed");}
             const actual=this.remoteWorkspace(prepared,workspacePlan,workspace);
             this.database.transaction(()=>{this.database.saveEntity("workspace-handle",runId,json({...actual,runnerId:repositoryRunner}));this.database.saveEntity("workspace-intent",runId,json({...workspacePlan,state:"CREATED",path:actual.path,runnerId:repositoryRunner}));});

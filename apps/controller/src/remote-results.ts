@@ -1,5 +1,5 @@
 import { AdapterContractError } from "@dispatcher/adapters";
-import type { AccountModelCatalog,RepositoryRefs } from "@dispatcher/domain";
+import type { AccountModelCatalog,LocalCommitResult,RepositoryRefs } from "@dispatcher/domain";
 import type { RunnerLease, RunnerRunSnapshot } from "@dispatcher/runner";
 const object = (value: unknown): value is Record<string, unknown> => Boolean(value && typeof value === "object" && !Array.isArray(value));
 const text = (value: unknown, max = 200): value is string => typeof value === "string" && value.length > 0 && value.length <= max;
@@ -47,4 +47,10 @@ export function remoteRunInventory(value: unknown, runnerId: string): NativeRunO
     if(row.workspace!==undefined&&!text(row.workspace,4000)||row.sessionId!==undefined&&!text(row.sessionId)||row.startCommandHash!==undefined&&(typeof row.startCommandHash!=="string"||!/^[a-f0-9]{64}$/.test(row.startCommandHash))||row.lease.revokedAt!==undefined&&(typeof row.lease.revokedAt!=="string"||!Number.isFinite(Date.parse(row.lease.revokedAt)))||row.settledAt!==undefined&&(typeof row.settledAt!=="string"||!Number.isFinite(Date.parse(row.settledAt))))return invalid();
     return {runId:row.runId,runnerId,profileId:row.profileId,generation:Number(row.generation),leaseId:row.leaseId,nativeState:String(row.state),attached:row.attached,resultAvailable:row.resultAvailable,lease:structuredClone(row.lease) as unknown as RunnerLease,...(row.workspace?{workspace:String(row.workspace)}:{}),...(row.sessionId?{sessionId:String(row.sessionId)}:{}),...(row.startCommandHash?{startCommandHash:String(row.startCommandHash)}:{}),...(row.settledAt?{settledAt:String(row.settledAt)}:{})};
   });
+}
+
+export function remoteCommitResult(value:unknown,expected:{runId:string;generation:number;branch:string}):LocalCommitResult{
+ const invalid=():never=>{throw new AdapterContractError("REMOTE_RESULT_INVALID","Owning Runner returned an invalid commit receipt");};
+ if(!object(value)||!keys(value,["version","runId","generation","commit","branch","files","created","completedAt"])||value.version!==1||Object.entries(expected).some(([key,expected])=>value[key]!==expected)||typeof value.commit!=="string"||!/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(value.commit)||typeof value.created!=="boolean"||typeof value.completedAt!=="string"||!Number.isFinite(Date.parse(value.completedAt))||!Array.isArray(value.files)||value.files.length>5000||value.files.some(file=>typeof file!=="string"||!file||file.length>4000||file.includes(String.fromCharCode(0))||/^[/\\]|^[a-z]:/i.test(file)||file.split(/[\\/]/).some(segment=>segment===".."||segment===".git"))||new Set(value.files).size!==value.files.length)return invalid();
+ return structuredClone(value) as unknown as LocalCommitResult;
 }
