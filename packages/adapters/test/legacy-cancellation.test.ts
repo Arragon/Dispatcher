@@ -57,3 +57,37 @@ it("waits for a pending HTTP input before the stop request and blocks later inpu
   finish(); await sent; expect((await cancelled).state).toBe("CANCELLED");
   expect(calls.filter(url => url.endsWith("/cancel"))).toHaveLength(1);
 });
+it.each(["qoder", "generic"] as const)("records STARTING before any %s execution and stops an owned start if persistence fails", async kind => {
+  const cancel = vi.fn(async () => undefined), start = vi.fn();
+  const execution: ProcessExecution = { id: "process", send: async () => undefined, cancel, status: async () => ({ state: "running" }), result: async () => ({ state: "cancelled", summary: "stopped" }) };
+  const turn = { cancel, status: () => "running" as const, result: async () => ({ state: "cancelled" as const, summary: "stopped", events: [] }) };
+  for (const rejectedState of ["STARTING", "RUNNING"]) {
+    const store = new MemorySessionStore();
+    const persistence = { load: (id: string) => store.load(id), save: (session: Parameters<typeof store.save>[0]) => { if (session.state === rejectedState) throw new Error("authority or disk failure"); store.save(session); } };
+    const adapter = kind === "qoder" ? new QoderAdapter({ id: "p", alias: "P" }, { start: () => { start(); return turn; } }, persistence) : new GenericCliAdapter({ start: async () => { start(); return execution; } }, { file: "fixture", args: [] }, persistence, "p");
+    await expect(adapter.start({ runId: "run", workspacePath: "/work" })).rejects.toThrow("authority or disk failure");
+    expect(start).toHaveBeenCalledTimes(rejectedState === "STARTING" ? 0 : 1);
+    expect(cancel).toHaveBeenCalledTimes(rejectedState === "STARTING" ? 0 : 1);
+  }
+});
+it("cancels a Generic executor that returns after an uncertain startup stop", async () => {
+  let finish!: (execution: ProcessExecution) => void;
+  const pending = new Promise<ProcessExecution>(resolve => { finish = resolve; });
+  const store = new MemorySessionStore(), cancel = vi.fn(async () => undefined);
+  let sessionId: string | undefined;
+  const adapter = new GenericCliAdapter({ start: () => pending }, { file: "fixture", args: [] }, { load: id => store.load(id), save: session => { store.save(session); sessionId = session.id; } }, "p");
+  const started = adapter.start({ runId: "run", workspacePath: "/work" });
+  await vi.waitFor(() => expect(sessionId).toBeDefined());
+  await expect(adapter.cancel(sessionId!)).rejects.toMatchObject({ code: "SESSION_DETACHED" });
+  finish({ id: "process", cancel, send: async () => undefined, status: async () => ({ state: "running" }), result: async () => ({ state: "cancelled", summary: "stopped" }) });
+  await expect(started).rejects.toMatchObject({ code: "SESSION_CANCELLED" }); expect(cancel).toHaveBeenCalledOnce();
+});
+
+it.each(["qoder", "generic"] as const)("isolates shared persisted %s sessions from a different configured account", async kind => {
+  const store = new MemorySessionStore();
+  const execution: ProcessExecution = { id: "process", send: async () => undefined, cancel: async () => undefined, status: async () => ({ state: "running" }), result: async () => ({ state: "completed", summary: "private result" }) };
+  const make = (id: string) => kind === "qoder" ? new QoderAdapter({ id, alias: id }, { start: () => ({ status: () => "completed", cancel: async () => undefined, result: async () => ({ state: "completed", summary: "private result", events: [] }) }) }, store) : new GenericCliAdapter({ start: async () => execution }, { file: "fixture", args: [] }, store, id);
+  const session = await make("a").start({ runId: "run", workspacePath: "/private-work" });
+  const other = make("b");
+  for (const operation of [() => other.status(session.id), () => other.result(session.id), () => other.send(session.id, "wrong account"), () => other.cancel(session.id)]) await expect(operation()).rejects.toMatchObject({ code: "SESSION_PROFILE_MISMATCH" });
+});

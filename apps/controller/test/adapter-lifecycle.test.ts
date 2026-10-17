@@ -32,7 +32,7 @@ async function fixture(options: Partial<ConstructorParameters<typeof ControllerS
   };
   await apply(config => { config.agentProfiles = []; config.repositories = [{ id: "fixture", root: repository, defaultBaseRef: "main", scopePaths: [], verificationCommands: [] }]; });
   const workspace = await service.workspaces.create({ repositoryId: "fixture", taskId: "trial", runId: "trial", attempt: 1, baseRef: "main", scopePaths: [] });
-  const start = (id: string) => service.app.inject({ method: "POST", url: `/api/agents/profiles/${id}/runs`, headers: OWNER, payload: { workspacePath: workspace.path, prompt: "hello" } });
+  const start = (id: string, path = workspace.path) => service.app.inject({ method: "POST", url: `/api/agents/profiles/${id}/runs`, headers: OWNER, payload: { workspacePath: path, prompt: "hello" } });
   return { service, apply, start, workspace, directory, close: async () => { await service.stop(); rmSync(directory, { recursive: true, force: true }); } };
 }
 
@@ -52,8 +52,12 @@ describe("all-provider adapter lifecycle", () => {
       ]; })).statusCode).toBe(200);
       const adapters = (f.service as unknown as { agentAdapters: Map<string, AgentAdapter> }).agentAdapters;
       const originals = new Map(adapters);
+      await f.apply(config => { config.runners[0]!.capacity = 8; });
+      expect(f.service.runners.list()[0]!.capacity).toBe(8);
       const sessions = new Map<string, string>();
-      for (const id of ["qoder", "devin", "http"]) { const response = await f.start(id); expect(response.statusCode, response.body).toBe(201); sessions.set(id, response.json().session.id); }
+      for (const id of ["qoder", "devin", "http"]) {
+        const workspace = await f.service.workspaces.create({ repositoryId: "fixture", taskId: id, runId: id, attempt: 1, baseRef: "main", scopePaths: [] });
+        const response = await f.start(id, workspace.path); expect(response.statusCode, response.body).toBe(201); sessions.set(id, response.json().session.id); }
       expect((await f.apply(config => { config.runners[0]!.displayName = "Renamed device"; })).statusCode).toBe(200);
       expect(qoderFactory).toHaveBeenCalledTimes(1);
       expect(devinFactory).toHaveBeenCalledTimes(1);
@@ -167,6 +171,84 @@ describe("all-provider adapter lifecycle", () => {
       expect(f.service.database.getEntity("run-result", "run")).toBeUndefined();
       expect(f.service.database.getEntity("task-publication", "publication")).toMatchObject({ receipt: { state: "STARTED" } });
     } finally { for (const pid of [child, parent]) if (pid && alive(pid)) process.kill(pid, "SIGKILL"); await advancing; await f.close(); }
+  });
+
+  it("reserves standalone capacity/workspace before provider awaits and offers an explicit standalone cancel", async () => {
+    let finish!: () => void, entered!: () => void;
+    const gate = new Promise<void>(resolve => { finish = resolve; });
+    const admitted = new Promise<void>(resolve => { entered = resolve; });
+    const create = vi.fn(async () => { entered(); await gate; return { sessionId: "native", status: "running", pullRequests: [] }; });
+    const f = await fixture({ devinBackendFactory: () => ({ health: async () => ({ ok: true }), create, get: async () => ({ sessionId: "native", status: "completed", pullRequests: [] }), send: async () => { throw new Error("unused"); } }) });
+    let started: ReturnType<typeof f.start> | undefined;
+    try {
+      await f.apply(config => { config.agentProfiles = [{ id: "devin", alias: "Devin", provider: "devin", runnerId: "local", credentialRef: "secret://devin/account", settings: { organizationId: "org-fixture" } }]; });
+      const second = await f.service.workspaces.create({ repositoryId: "fixture", taskId: "trial-2", runId: "trial-2", attempt: 1, baseRef: "main", scopePaths: [] });
+      started = f.start("devin"); void started.then(() => undefined); await admitted;
+      expect((await Promise.race([f.start("devin"), new Promise<undefined>(resolve => setTimeout(resolve, 500))]))?.json()).toMatchObject({ code: "TRIAL_WORKSPACE_BUSY" });
+      expect((await f.start("devin", second.path)).json()).toMatchObject({ code: "RUNNER_CAPACITY_EXHAUSTED" });
+      expect(create).toHaveBeenCalledOnce();
+      const now = new Date().toISOString();
+      f.service.database.writeCanonicalTask("queued", 0, { id: "queued", projectId: "fixture", title: "Queued", state: "READY", labels: [], createdAt: now, updatedAt: now });
+      f.service.database.saveTaskContract("queued", { version: 1, revision: 1, goal: "done", scope: ["README.md"], acceptanceCriteria: ["done"], verification: [], constraints: [], delivery: { type: "none", repository: "fixture" } });
+      const dispatch = () => f.service.app.inject({ method: "POST", url: "/api/tasks/queued/dispatch", headers: OWNER, payload: { profileId: "devin" } });
+      expect((await dispatch()).json()).toMatchObject({ code: "DISPATCH_UNAVAILABLE" });
+      expect(create).toHaveBeenCalledOnce();
+      finish(); const response = await started; expect(response.statusCode).toBe(201);
+      const cancelled = await f.service.app.inject({ method: "POST", url: `/api/agents/profiles/devin/sessions/${response.json().session.id}/cancel`, headers: OWNER });
+      expect(cancelled.json()).toMatchObject({ code: "UNSUPPORTED_CAPABILITY" });
+      await f.service.app.inject({ method: "GET", url: `/api/agents/profiles/devin/sessions/${response.json().session.id}`, headers: OWNER });
+      const canonical = await dispatch(); expect(canonical.statusCode, canonical.body).toBe(201);
+      expect(create).toHaveBeenCalledTimes(2);
+      expect((await f.start("devin", second.path)).json()).toMatchObject({ code: "RUNNER_CAPACITY_EXHAUSTED" });
+    } finally { finish?.(); await started; await f.close(); }
+  });
+
+  it("rejects a canonical worktree and a foreign Runner before any legacy native start", async () => {
+    const start = vi.fn<QoderBackend["start"]>(() => ({ status: () => "completed", cancel: async () => undefined, result: async () => ({ state: "completed", summary: "done", events: [] }) }));
+    const f = await fixture({ qoderBackendFactory: () => ({ start }) });
+    try {
+      await f.apply(config => { config.agentProfiles = [{ id: "qoder", alias: "Qoder", provider: "qoder", runnerId: "local" }]; });
+      f.service.database.saveEntity("run", "canonical", { id: "canonical", profileId: "qoder", state: "COMPLETE", worktree: f.workspace.path });
+      expect((await f.start("qoder")).json()).toMatchObject({ code: "CANONICAL_WORKSPACE_OWNED" });
+      await f.apply(config => { config.runners.push({ id: "remote", displayName: "Remote", mode: "remote", capacity: 1, tags: [], credentialRef: "secret://runner/remote" }); config.agentProfiles[0]!.runnerId = "remote"; });
+      expect((await f.start("qoder")).json()).toMatchObject({ code: "CANONICAL_EXECUTION_REQUIRED" });
+      expect(start).not.toHaveBeenCalled();
+    } finally { await f.close(); }
+  });
+
+  it("keeps a pending standalone stop bound to its account and routes canonical sessions to canonical cancellation", async () => {
+    let finish!: () => void;
+    const gate = new Promise<void>(resolve => { finish = resolve; });
+    const stops = vi.fn(async () => { await gate; });
+    const f = await fixture({ integrationFetch: async input => { const stopping = String(input).endsWith("/cancel"); if (stopping) await stops(); return new Response(JSON.stringify({ sessionId: "native", state: stopping ? "cancelled" : "completed" })); } });
+    let cancelled: ReturnType<typeof f.service.app.inject> | undefined;
+    try {
+      await f.apply(config => { config.agentProfiles = [{ id: "http", alias: "HTTP", provider: "workbuddy", runnerId: "local", settings: { baseUrl: "http://127.0.0.1:9999", healthPath: "/health", startPath: "/start", statusPath: "/sessions/{sessionId}", inputPath: "/sessions/{sessionId}/input", cancelPath: "/sessions/{sessionId}/cancel" } }]; });
+      const session = (await f.start("http")).json().session;
+      const stop = (profileId: string) => f.service.app.inject({ method: "POST", url: `/api/agents/profiles/${profileId}/sessions/${session.id}/cancel`, headers: OWNER });
+      expect((await stop("other")).statusCode).toBe(404);
+      cancelled = stop("http"); void cancelled.then(() => undefined); await vi.waitFor(() => expect(stops).toHaveBeenCalledOnce());
+      expect((await f.apply(config => { config.agentProfiles[0]!.enabled = false; })).json()).toMatchObject({ code: "ACTIVE_AGENT_PROFILE" });
+      finish(); expect((await cancelled).json()).toMatchObject({ session: { state: "CANCELLED" }, canonical: false });
+      expect(stops).toHaveBeenCalledOnce();
+      f.service.database.saveEntity("run", "canonical", { id: "canonical", profileId: "http", sessionId: session.id, state: "COMPLETE" });
+      expect((await stop("http")).json()).toMatchObject({ code: "CANONICAL_EXECUTION_REQUIRED" });
+      expect(stops).toHaveBeenCalledOnce();
+    } finally { finish?.(); await cancelled; await f.close(); }
+  });
+
+  it("finds an already persisted native session when cancellation overtakes the canonical startup acknowledgement", async () => {
+    const cancel = vi.fn(async () => undefined);
+    const f = await fixture({ qoderBackendFactory: () => ({ start: () => ({ status: () => "running", cancel, result: async () => ({ state: "cancelled", summary: "stopped", events: [] }) }) }) });
+    try {
+      await f.apply(config => { config.agentProfiles = [{ id: "qoder", alias: "Qoder", provider: "qoder", runnerId: "local" }]; });
+      const session = (await f.start("qoder")).json().session;
+      const now = new Date().toISOString();
+      f.service.database.writeCanonicalTask("startup", 0, { id: "startup", projectId: "fixture", title: "Task", state: "QUEUED", currentRunId: session.runId, labels: [], createdAt: now, updatedAt: now });
+      f.service.database.saveEntity("run", session.runId, { id: session.runId, taskId: "startup", runnerId: "local", providerId: "qoder", profileId: "qoder", sessionId: `unstarted:${session.runId}`, state: "STARTING", attempt: 1, generation: 1, leaseId: "lease", taskRevision: 1, contractRevision: 1, startedAt: now, lastActivityAt: now, verification: { state: "PENDING", commands: [] } });
+      expect(await f.service.semanticTools.execute("run.cancel", { target: session.runId }, { principal: { id: "operator", roles: ["operator"], channel: "api" }, workflowId: "cancel-startup", confirmed: true })).toMatchObject({ state: "CANCELLED", sessionId: session.id });
+      expect(cancel).toHaveBeenCalledOnce();
+    } finally { await f.close(); }
   });
 
 });

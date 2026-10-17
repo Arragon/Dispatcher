@@ -392,6 +392,8 @@ describe("ControllerService", () => {
     const service = new ControllerService({ ownerToken: TEST_OWNER_TOKEN, dataDirectory: directory, withRunner: true, secretStore: new FakeSecretStore(), codexBackendFactory: () => backend });
     await service.start({ listen: false });
     const current = (await service.app.inject({ headers: OWNER,  method: "GET", url: "/api/config" })).json();
+    // This fixture runs a waiting session and a verification session concurrently.
+    current.config.runners[0].capacity = 2;
     current.config.agentProfiles = [{ id: "atlas", provider: "codex", alias: "Atlas", runnerId: "local", settings: { codexHome: "/profiles/atlas" } }];
     current.config.repositories = [{
       id: "acme/repo",

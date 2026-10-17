@@ -37,6 +37,12 @@ The scheduler calls back before starting the adapter so Controller can reserve
 STARTING Run, QUEUED task, currentRunId and dispatch receipt in one transaction.
 The completion transaction rechecks current authority and task revision.
 Non-terminal Runs occupy runner capacity, including waiting and verification.
+The compatibility standalone-session start route is limited to the owning
+Embedded Runner and an independent managed worktree. It reserves capacity before
+provider awaits, shares occupancy with canonical scheduling, and rejects all
+canonical worktrees. Applied capacity/display changes update the Controller-owned
+Embedded Runner report; remote capacity remains its owning Runner report. Its explicit cancellation route cannot cancel canonical
+sessions; those require Run lease revocation and verification cleanup.
 Slack input rechecks lease/session/binding authority after the adapter await;
 the consumed intervention and acknowledgement receipt commit with Run/task
 resume, so a reply retry cannot answer a subsequent question.

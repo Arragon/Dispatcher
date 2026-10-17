@@ -109,7 +109,10 @@ describe("native harness Controller composition", () => {
       const matrix = (await service.app.inject({ method: "GET", url: "/api/adapters/compatibility", headers: OWNER })).json().matrix;
       expect(matrix.find((row: { adapterId: string }) => row.adapterId === "opencode")).toMatchObject({ session: { resume: true, pause: false }, resource: true });
       runningProvider = "grok";
-      const active = await service.app.inject({ method: "POST", url: "/api/agents/profiles/grok/runs", headers: OWNER, payload: { workspacePath: workspace.path, prompt: "long-running task" } });
+      // The Codex fixture is still active, so Grok must own a separate writable worktree.
+      const grokWorkspace = await service.workspaces.create({ repositoryId: "fixture", taskId: "active-grok", runId: "active-grok", attempt: 1, baseRef: "main", scopePaths: [] });
+      const active = await service.app.inject({ method: "POST", url: "/api/agents/profiles/grok/runs", headers: OWNER, payload: { workspacePath: grokWorkspace.path, prompt: "long-running task" } });
+      expect(active.statusCode, active.body).toBe(201);
       const sessionId: string = active.json().session.id;
       const configuredBefore = calls.mock.calls.length;
       const added = await service.app.inject({ method: "POST", url: "/api/agents/pi/profiles", headers: OWNER, payload: { id: "pi-second", alias: "Pi second", executable } });

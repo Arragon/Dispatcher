@@ -110,6 +110,14 @@
 - Routing capabilities come from the selected AdapterManifest backend plus the
   Runner, never from provider-brand conditionals. Persist required capabilities
   on the Run so manual reroute is checked by the same hard gate.
+- Keep standalone trial reservations separate from startup profile-change guards:
+  a provider can await creation before any session row exists. Count reservations,
+  unresolved independent sessions and nonterminal canonical Runs together; exclude
+  canonical sessions by both explicit session ID and matching Run/profile identity
+  so a STARTING session does not consume a second slot before its acknowledgement.
+  Refresh only attached local handles before admission/config replacement, never
+  issue HTTP/remote provider queries as part of capacity accounting. Replay a
+  committed dispatch before any refresh, and keep unresolved detached occupancy.
 - One Run owns one writable worktree. Canonicalize every candidate path against
   the real worktree root, then enforce declared scope paths; lexical prefix
   checks alone do not stop symlink escape.

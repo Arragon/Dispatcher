@@ -162,12 +162,17 @@ export class GenericCliAdapter implements AgentAdapter {
   async start(input: { runId: string; workspacePath: string; backendId?: string; prompt?: string }): Promise<AdapterSession> {
     const id = randomUUID();
     const command = renderCommand(this.template, { prompt: input.prompt ?? "", sessionId: id, workspace: input.workspacePath });
+    const now = new Date().toISOString();
+    const session: AdapterSession = { id, runId: input.runId, backendId: input.backendId ?? (this.template.mode === "pty" ? "restricted-pty" : "structured-cli"), workspacePath: input.workspacePath, state: "STARTING", ...(this.profileId ? { profileId: this.profileId } : {}), createdAt: now, updatedAt: now };
+    this.store.save(session);
     const execution = await this.executor.start({ ...command, cwd: input.workspacePath, runId: input.runId, ...(this.template.mode ? { mode: this.template.mode } : {}) });
     this.executions.set(id, execution);
-    const now = new Date().toISOString();
-    const session: AdapterSession = { id, runId: input.runId, backendId: input.backendId ?? (this.template.mode === "pty" ? "restricted-pty" : "structured-cli"), workspacePath: input.workspacePath, state: "RUNNING", ...(this.profileId ? { profileId: this.profileId } : {}), createdAt: now, updatedAt: now };
-    this.store.save(session);
-    return structuredClone(session);
+    if (this.cancelledSessions.has(id)) {
+      await execution.cancel(); this.transition(id, "CANCELLED");
+      throw new AdapterContractError("SESSION_CANCELLED", "CLI startup was cancelled before the process attached");
+    }
+    try { return this.transition(id, "RUNNING"); }
+    catch (error) { this.cancelledSessions.add(id); await execution.cancel(); throw error; }
   }
 
   async send(sessionId: string, message: string): Promise<AdapterEvent> {
@@ -181,8 +186,8 @@ export class GenericCliAdapter implements AgentAdapter {
   async resume(): Promise<AdapterSession> { throw new AdapterContractError("UNSUPPORTED_CAPABILITY", "Generic CLI does not declare resume support"); }
   async cancel(sessionId: string): Promise<AdapterSession> {
     const session = this.require(sessionId), execution = this.executions.get(sessionId);
-    if (!execution && ["STARTING", "RUNNING", "PAUSED"].includes(session.state)) throw new AdapterContractError("SESSION_DETACHED", "CLI process termination cannot be confirmed by this runtime");
     this.cancelledSessions.add(sessionId);
+    if (!execution && ["STARTING", "RUNNING", "PAUSED"].includes(session.state)) throw new AdapterContractError("SESSION_DETACHED", "CLI process termination cannot be confirmed by this runtime");
     if (execution) await execution.cancel();
     return this.transition(sessionId, "CANCELLED");
   }
@@ -204,7 +209,7 @@ export class GenericCliAdapter implements AgentAdapter {
   }
   async diagnostics(sessionId: string): Promise<Record<string, unknown>> { const session = this.require(sessionId); return { sessionId, backendId: session.backendId, mode: this.template.mode ?? "headless", attached: this.executions.has(sessionId) }; }
 
-  private require(id: string): AdapterSession { const session = this.store.load(id); if (!session) throw new AdapterContractError("SESSION_NOT_FOUND", `Unknown session ${id}`); return session; }
+  private require(id: string): AdapterSession { const session = this.store.load(id); if (!session) throw new AdapterContractError("SESSION_NOT_FOUND", `Unknown session ${id}`); if (this.profileId && session.profileId !== this.profileId) throw new AdapterContractError("SESSION_PROFILE_MISMATCH", "Session belongs to a different configured account"); return session; }
   private transition(id: string, state: AdapterSession["state"]): AdapterSession { const current = this.require(id); const updated = { ...current, state, updatedAt: new Date().toISOString() }; this.store.save(updated); return structuredClone(updated); }
 }
 

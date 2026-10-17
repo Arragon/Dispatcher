@@ -151,10 +151,12 @@ export class QoderAdapter implements AgentAdapter {
   async start(input: { runId: string; workspacePath: string; backendId?: string; prompt?: string }): Promise<AdapterSession> {
     const now = new Date().toISOString();
     const providerSessionId = randomUUID();
-    const session: AdapterSession = { id: randomUUID(), runId: input.runId, backendId: input.backendId ?? "qoder-cli-json", workspacePath: input.workspacePath, state: "RUNNING", profileId: this.profile.id, providerSessionId, createdAt: now, updatedAt: now };
-    this.turns.set(session.id, this.backend.start({ executable: this.profile.executable ?? "qoder", workspacePath: input.workspacePath, prompt: input.prompt ?? "Inspect the task context and report readiness.", providerSessionId, resume: false, ...(this.profile.configDir ? { configDir: this.profile.configDir } : {}), ...(this.profile.model ? { model: this.profile.model } : {}) }));
+    const session: AdapterSession = { id: randomUUID(), runId: input.runId, backendId: input.backendId ?? "qoder-cli-json", workspacePath: input.workspacePath, state: "STARTING", profileId: this.profile.id, providerSessionId, createdAt: now, updatedAt: now };
     this.store.save(session);
-    return structuredClone(session);
+    const turn = this.backend.start({ executable: this.profile.executable ?? "qoder", workspacePath: input.workspacePath, prompt: input.prompt ?? "Inspect the task context and report readiness.", providerSessionId, resume: false, ...(this.profile.configDir ? { configDir: this.profile.configDir } : {}), ...(this.profile.model ? { model: this.profile.model } : {}) });
+    this.turns.set(session.id, turn);
+    try { return this.update(session.id, { state: "RUNNING" }); }
+    catch (error) { this.cancelledSessions.add(session.id); await turn.cancel(); throw error; }
   }
   async send(sessionId: string, message: string): Promise<AdapterEvent> {
     this.assertSendable(sessionId);
@@ -184,7 +186,7 @@ export class QoderAdapter implements AgentAdapter {
   }
   async status(sessionId: string): Promise<AdapterSession> { const session = this.require(sessionId); const turn = this.turns.get(sessionId); return !turn || turn.status() === "running" ? structuredClone(session) : this.finish(sessionId); }
   async result(sessionId: string): Promise<AdapterResult> { const session = await this.finish(sessionId); const result = await this.turns.get(sessionId)?.result(); return { sessionId, state: session.state, summary: result?.summary ?? `Qoder session ${session.state.toLowerCase()}`, artifacts: [] }; }
-  async usage(sessionId: string): Promise<Record<string, unknown>> { const result = await this.turns.get(sessionId)?.result(); return result?.events.filter((event) => event.type === "resource").at(-1) ?? { state: "UNKNOWN", source: "probe", confidence: "low" }; }
+  async usage(sessionId: string): Promise<Record<string, unknown>> { this.require(sessionId); const result = await this.turns.get(sessionId)?.result(); return result?.events.filter((event) => event.type === "resource").at(-1) ?? { state: "UNKNOWN", source: "probe", confidence: "low" }; }
   async diagnostics(sessionId: string): Promise<Record<string, unknown>> { const session = this.require(sessionId); return { sessionId, profileId: session.profileId, alias: this.profile.alias, providerSessionId: session.providerSessionId, attached: this.turns.has(sessionId), resumable: true }; }
 
   private async finish(sessionId: string): Promise<AdapterSession> {
@@ -196,7 +198,7 @@ export class QoderAdapter implements AgentAdapter {
     if (this.cancelledSessions.has(sessionId)) return structuredClone(this.require(sessionId));
     return this.update(sessionId, { state: result.state === "completed" ? "COMPLETED" : result.state === "cancelled" ? "CANCELLED" : result.state === "waiting" ? "PAUSED" : "FAILED" });
   }
-  private require(id: string): AdapterSession { const session = this.store.load(id); if (!session) throw new AdapterContractError("SESSION_NOT_FOUND", `Unknown session ${id}`); return session; }
+  private require(id: string): AdapterSession { const session = this.store.load(id); if (!session) throw new AdapterContractError("SESSION_NOT_FOUND", `Unknown session ${id}`); if (session.profileId !== this.profile.id) throw new AdapterContractError("SESSION_PROFILE_MISMATCH", "Session belongs to a different configured account"); return session; }
   private update(id: string, changes: Partial<AdapterSession>): AdapterSession { const updated = { ...this.require(id), ...changes, updatedAt: new Date().toISOString() }; this.store.save(updated); return structuredClone(updated); }
 }
 

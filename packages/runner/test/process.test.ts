@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -77,4 +77,14 @@ describe("VerificationRegistry", () => {
     expect(registry.blocksDelivery([optional])).toBe(false);
     await expect(registry.run("raw command", process.cwd())).rejects.toThrow(/not registered/);
   });
+});
+
+it.each(["process", "pty"] as const)("binds Generic CLI PWD to its managed cwd in %s mode", async mode => {
+  const root = directory(), manager = new ProcessManager(join(root, "logs"));
+  try {
+    const handle = await manager.start({ runId: "pwd", file: process.execPath, args: ["-e", "console.log(JSON.stringify({pwd:process.env.PWD,cwd:process.cwd()}))"], cwd: root, mode });
+    const result = await handle.result();
+    expect(result.classification).toBe("success");
+    expect(JSON.parse(result.stdoutTail.trim())).toEqual({ pwd: root, cwd: realpathSync(root) });
+  } finally { await manager.shutdown(); }
 });
