@@ -43,3 +43,10 @@ it("keeps existing-task SCM choices read-only and sends only execution review fi
  vi.spyOn(globalThis,"fetch").mockImplementation(async(input,init)=>{if(init?.method==="POST"){posts.push(JSON.parse(String(init.body)));return new Response(JSON.stringify({publicationId:"existing-review",revision:1,canCommit:false,effectiveTask:{title:"Existing",description:"Frozen body",contractState:"READY",missing:[]},checks:[],confirmation:{required:true,reviewHash:"hash",reasons:[]}}));}const path=String(input);return new Response(JSON.stringify(path==="/api/tasks/existing"?task:path.includes("/models")?{entries:[],selectionSupport:"native-default-only"}:{...config,config:{...config.config,agentProfiles:[{id:"codex",provider:"codex",alias:"Account",runnerId:"local",enabled:true}]}}));});
  mount(<PublishPage/>,"/publish?task=existing");await screen.findByRole("heading",{name:"审阅现有任务"});expect((screen.getByLabelText("SCM 连接器") as HTMLSelectElement).disabled).toBe(true);expect((screen.getByLabelText("远端仓库") as HTMLInputElement).readOnly).toBe(true);expect((screen.getByLabelText("PR 基准分支") as HTMLInputElement).value).toBe("release");await userEvent.click(screen.getByRole("button",{name:"检查并审阅"}));await screen.findByRole("dialog",{name:"审阅任务草稿"});expect(posts[0]).toMatchObject({expectedRevision:5,execution:{profileId:"codex"}});expect(posts[0]).not.toHaveProperty("delivery");
 });
+
+it("keeps the selected repository visible when console projection omits its private root",async()=>{
+ const repository={id:"repo",defaultBaseRef:"main",scopePaths:["."],verificationCommands:[]};
+ vi.spyOn(globalThis,"fetch").mockResolvedValue(new Response(JSON.stringify({...config,config:{...config.config,repositories:[repository]}})));
+ mount(<PublishPage/>);await screen.findByRole("option",{name:"repo"});await userEvent.selectOptions(screen.getByLabelText("项目仓库"),"repo");
+ expect(screen.queryByText("尚未选择项目")).toBeNull();expect(screen.getAllByText("repo").length).toBeGreaterThan(0);
+});
