@@ -258,7 +258,11 @@ importers:
 
   packages/shared: {}
 
-  packages/workspace: {}
+  packages/workspace:
+    dependencies:
+      '@dispatcher/domain':
+        specifier: workspace:*
+        version: link:../domain
 
 packages:
 

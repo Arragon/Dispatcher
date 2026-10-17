@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
+  "dependencies": { "@dispatcher/domain": "workspace:*" },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",

@@ -846,3 +846,17 @@ receipt replays without repeating Git. Lease revocation and shutdown abort and
 await owned command groups before acknowledging stop. The Controller validates
 Run/generation/branch/SHA and scope before saving the canonical result. It never
 runs Git against the remote repository and none/commit never push.
+
+## Explicit owning Git push primitive
+
+Workspace inspection can normalize the owning origin's single fetch/push identity
+without returning its URL. The frozen target contains host/repository and a
+configuration fingerprint. Credential-bearing URLs, unsafe paths, non-HTTPS/non-Git
+SSH URLs, multiple push URLs and mismatched fetch/push identities fail closed.
+The push primitive revalidates that target, commits through the existing owned
+service, checks clean branch/SHA/scope, then pushes exactly that SHA to the managed
+branch with no force, automatic tags or submodule push. Its own durable intent and
+receipt prevent blind repetition after an uncertain outcome. It preserves native
+Git authentication/hooks and drains the owned process group on cancellation.
+This primitive is not yet exposed through publication or native push commands;
+explicit PR integration remains a separate step.

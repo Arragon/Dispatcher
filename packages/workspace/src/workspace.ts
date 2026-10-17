@@ -1,3 +1,5 @@
+import {createHash} from "node:crypto";
+import type {GitDeliveryTarget} from "@dispatcher/domain";
 import { execFile } from "node:child_process";
 import { mkdir, realpath, stat } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
@@ -108,6 +110,31 @@ export class WorkspaceManager {
       refs.push({name,commit,kind});
     }
     return {refs,offset,limit,...(all.length>offset+limit?offset+limit<=10_000?{nextOffset:offset+limit}:{truncated:true}:{})};
+  }
+
+  async deliveryTarget(repositoryId:string):Promise<GitDeliveryTarget>{
+    const {root}=await this.inspect({repositoryId,baseRef:"HEAD",scopePaths:[]});return (await this.deliveryRemote(root)).target;
+  }
+  async resolvePushTarget(workspace:WorkspaceHandle,expected:GitDeliveryTarget):Promise<string>{
+    await this.restore(workspace);const current=await this.deliveryRemote(workspace.path);
+    if(expected.version!==1||current.target.host!==expected.host||current.target.repository!==expected.repository||current.target.remoteFingerprint!==expected.remoteFingerprint)throw new WorkspacePolicyError("DELIVERY_TARGET_CHANGED","Owning repository push target changed; review again");
+    return current.url;
+  }
+  private async deliveryRemote(cwd:string):Promise<{target:GitDeliveryTarget;url:string}>{
+    const invalid=():never=>{throw new WorkspacePolicyError("INVALID_DELIVERY_REMOTE","Delivery requires one matching credential-free HTTPS or Git SSH origin fetch/push target");};
+    let urls:string[];
+    try{const signal=AbortSignal.timeout(8000);urls=await Promise.all([["remote","get-url","--all","origin"],["remote","get-url","--push","--all","origin"]].map(async args=>{const value=(await execute("git",args,{cwd,signal,timeout:8000,maxBuffer:8192})).stdout.trim();if(!value||value.includes("\n"))return invalid();return value;}));}catch{return invalid();}
+    const identity=(raw:string):{host:string;repository:string}=>{
+      if(raw.length>4000||/[\\%\s?#]/.test(raw))return invalid();
+      let host:string,path:string;const scp=/^git@([a-zA-Z0-9.-]+):([^:]+)$/.exec(raw);
+      if(scp){host=scp[1]!.toLowerCase();path=scp[2]!;}
+      else{let url:URL;try{url=new URL(raw);}catch{return invalid();}if(!["https:","ssh:"].includes(url.protocol)||url.password||url.protocol==="https:"&&url.username||url.protocol==="ssh:"&&url.username!=="git"||raw.split("/").some(part=>part==="."||part===".."))return invalid();host=url.hostname.toLowerCase();path=url.pathname.replace(/^\//,"");}
+      path=path.replace(/\/$/,"").replace(/\.git$/,"");const parts=path.split("/");
+      if(!/^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/.test(host)||parts.length!==2||parts.some(part=>! /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,99}$/.test(part)||part==="."||part===".."))return invalid();
+      return {host,repository:path.toLowerCase()};
+    };
+    const fetch=identity(urls[0]!),push=identity(urls[1]!);if(fetch.host!==push.host||fetch.repository!==push.repository)return invalid();
+    return {target:{version:1,...push,remoteFingerprint:createHash("sha256").update(JSON.stringify(urls)).digest("hex")},url:urls[1]!};
   }
 
   async inspect(plan: Pick<WorkspacePlan, "repositoryId" | "baseRef" | "scopePaths"> & { targetBranch?: string }): Promise<{ baseCommit: string; root: string }> {

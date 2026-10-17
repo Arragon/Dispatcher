@@ -626,3 +626,10 @@
   clear it before another input and block input once delivery starts.
 - Remote cancellation must await both native handles and the owning Git command
   group. A revoked lease or a transport timeout does not prove hooks terminated.
+
+- Freeze both the repository identity and the actual origin configuration before
+  explicit push. Use a literal commit SHA/refspec and disable automatic tags and
+  submodule pushes; never rely on mutable HEAD or the current default push refspec.
+- Real Git transfer can be tested without a network write by a fixture-only SSH
+  command connected to an isolated bare receive-pack. This validates Git transfer
+  and process ownership, not a real SSH server, account authorization or GitHub PR.
