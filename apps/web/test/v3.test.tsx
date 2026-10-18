@@ -102,6 +102,7 @@ it("imports only a supported local draft and performs no publication request", a
   await screen.findByRole("option",{name:/repo/});
   const backup=new File([JSON.stringify({schemaVersion:1,title:"Recovered title",description:"Recovered complete body",startMode:"create-only",token:"must-not-be-retained"})],"draft.json",{type:"application/json"});
   await userEvent.upload(screen.getByLabelText("导入任务草稿"),backup);
+  await screen.findByText("草稿已导入并保存在当前浏览器，尚未创建任务。");
   expect((await screen.findByLabelText("任务标题") as HTMLInputElement).value).toBe("Recovered title");
   expect((screen.getByLabelText("任务说明") as HTMLTextAreaElement).value).toBe("Recovered complete body");
   expect(localStorage.getItem("dispatcher.publication-draft.v1")).not.toContain("must-not-be-retained");

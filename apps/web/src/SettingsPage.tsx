@@ -48,17 +48,19 @@ function OwnerPasswordSettings(): React.JSX.Element {
     <small role="status">{message}</small>
   </form>;
 }
-export default function SettingsPage({sectionId,entityId, embedded = false,onDraftChange}: {sectionId?: string;entityId?:string; embedded?: boolean;onDraftChange?:(draft:Record<string,unknown>)=>void} = {}): React.JSX.Element {
+export default function SettingsPage({sectionId,entityId,initialEntity,onApplied, embedded = false,onDraftChange}: {sectionId?: string;entityId?:string;initialEntity?:Record<string,unknown>;onApplied?:()=>void; embedded?: boolean;onDraftChange?:(draft:Record<string,unknown>)=>void} = {}): React.JSX.Element {
   const client = useQueryClient();
   const configQuery = useQuery({ queryKey: ["config"], queryFn: () => api<ConfigResponse<ConfigDocument>>("/api/config?view=console") });
   const schemaQuery = useQuery({ queryKey: ["config-schema"], queryFn: () => api<SchemaResponse>("/api/config/schema") });
   const dirty = useRef(false);
+  const creationIndex=useRef<number|undefined>(undefined);
+  const entityMode=entityId!==undefined||initialEntity!==undefined;
   const [section, setSection] = useState(sectionId ?? "");
   const baseRevision = useRef<number | undefined>(undefined);
   const [conflict, setConflict] = useState(false);
   const [draft, setDraft] = useState<ConfigDocument>();
   const [plan, setPlan] = useState<Plan>();
-  const planKey=`dispatcher-config-plan:${sectionId??"all"}${entityId!==undefined?`:${entityId}`:""}`;
+  const planKey=`dispatcher-config-plan:${sectionId??"all"}${entityId!==undefined?`:${entityId}`:initialEntity!==undefined?":new":""}`;
   const [trackedPlanId,setTrackedPlanId]=useState<string|undefined>(()=>{try{return sessionStorage.getItem(planKey)??undefined;}catch{return;}});
   const [appliedPlanId, setAppliedPlanId] = useState<string>();
   const [busy, setBusy] = useState(false);
@@ -74,7 +76,7 @@ export default function SettingsPage({sectionId,entityId, embedded = false,onDra
       else{setPlan(undefined);setMessage(result.plan.state==="ROLLED_BACK"?"服务端确认此计划已回滚。":dirty.current?"草稿已修改，原计划仅供状态核对。请重新生成计划。":"计划当前无法应用，请重新载入当前配置后编辑。");if(result.plan.state==="ROLLED_BACK")trackPlan(undefined);}
     }catch(error){setMessage(error instanceof Error?error.message:"计划状态查询失败，编号仍保留。");}finally{setBusy(false);}
   }
-  useEffect(() => { if (configQuery.data && !dirty.current) { setDraft(structuredClone(configQuery.data.config)); baseRevision.current = configQuery.data.revision; } }, [configQuery.data]);
+  useEffect(() => { if (configQuery.data && !dirty.current) { setDraft(structuredClone(configQuery.data.config));if(initialEntity!==undefined)creationIndex.current=Array.isArray(configQuery.data.config[sectionId??""])?(configQuery.data.config[sectionId??""] as unknown[]).length:0; baseRevision.current = configQuery.data.revision; } }, [configQuery.data]);
   useEffect(()=>{if(draft)onDraftChange?.(draft);},[draft,onDraftChange]);
   function edit(changes: Record<string, unknown>): void {
     dirty.current = true; setPlan(undefined); setMessage("草稿已修改，需要重新生成计划。");
@@ -105,7 +107,7 @@ export default function SettingsPage({sectionId,entityId, embedded = false,onDra
     try {
       await api(`/api/config/plans/${plan.id}/apply?view=console`, { method: "POST", body: JSON.stringify({ confirmed: plan.requiresConfirmation }) });
       setAppliedPlanId(plan.id); setPlan(undefined); dirty.current = false;
-      await configQuery.refetch(); await refreshConfiguration(client); setMessage("配置已应用并记录审计。");
+      await configQuery.refetch(); await refreshConfiguration(client); setMessage("配置已应用并记录审计。");onApplied?.();
     } catch (error) { setMessage(error instanceof Error ? error.message : "应用失败，请检查当前配置版本。"); if(error instanceof ApiError && error.status===409) {setConflict(true);setPlan(undefined);} }
     finally { setBusy(false); }
   }
@@ -122,7 +124,7 @@ export default function SettingsPage({sectionId,entityId, embedded = false,onDra
   async function reloadCurrent():Promise<void>{
     if(busy||!window.confirm("重新载入会放弃当前未提交的配置草稿，继续吗？"))return;
     setBusy(true);
-    try{const current=await configQuery.refetch();if(current.error||!current.data)throw current.error??new Error("配置读取失败");setDraft(structuredClone(current.data.config));baseRevision.current=current.data.revision;dirty.current=false;setConflict(false);setPlan(undefined);setMessage("已载入当前配置，可重新编辑。");}
+    try{const current=await configQuery.refetch();if(current.error||!current.data)throw current.error??new Error("配置读取失败");setDraft(structuredClone(current.data.config));if(initialEntity!==undefined)creationIndex.current=Array.isArray(current.data.config[sectionId??""])?(current.data.config[sectionId??""] as unknown[]).length:0;baseRevision.current=current.data.revision;dirty.current=false;setConflict(false);setPlan(undefined);setMessage("已载入当前配置，可重新编辑。");}
     catch(error){setMessage(error instanceof Error?error.message:"配置读取失败，草稿保留");}finally{setBusy(false);}
   }
   if (configQuery.isLoading || schemaQuery.isLoading) return <div className="page-state" role="status">正在读取配置…</div>;
@@ -136,17 +138,30 @@ export default function SettingsPage({sectionId,entityId, embedded = false,onDra
   const appliedProfiles=Array.isArray(configQuery.data.config.agentProfiles)?configQuery.data.config.agentProfiles as Array<{id?:string}>:[];
   const accountItems=(item:{id?:string}|undefined):UiSchema=>({...profileItems,id:{...(profileItems?.id as UiSchema),"ui:readonly":Boolean(item?.id&&appliedProfiles.some(profile=>profile.id===item.id))},enabled:{"ui:widget":"NativeEnabled"}});
   const entries=Array.isArray(currentDraft[currentSection??""])?currentDraft[currentSection??""] as Array<Record<string,unknown>>:[];
-  const entityIndex=entityId===undefined?-1:entries.findIndex(entry=>entry.id===entityId);
+  if(initialEntity!==undefined&&creationIndex.current===undefined)creationIndex.current=entries.length;
+  const entityIndex=entityId!==undefined?entries.findIndex(entry=>entry.id===entityId):creationIndex.current??-1;
+  const formEntity=entries[entityIndex]??initialEntity;
+  const credential=typeof formEntity?.credentialRef==="string"?/^secret:\/\/([^/]+)\/(.+)$/.exec(formEntity.credentialRef):undefined;
+  const secretNamespace=credential?.[1]??(typeof formEntity?.definitionId==="string"?formEntity.definitionId.split(".")[1]:undefined);
+  const secretName=credential?.[2]??(typeof formEntity?.id==="string"?formEntity.id:undefined);
   if(entityId!==undefined&&entityIndex<0)return <Notice tone="error">当前配置中没有此条目，请关闭编辑器并刷新列表。</Notice>;
   const rawSection=currentSection?properties[currentSection]:undefined;
   const itemSchema=rawSection&&typeof rawSection==="object"&&!Array.isArray(rawSection.items)&&typeof rawSection.items==="object"?rawSection.items:undefined;
   const entitySchema=itemSchema?displaySchema({...schemaQuery.data.schema,...itemSchema,title:sectionNames[currentSection??""]}):undefined;
-  const entityUi=currentSection==="agentProfiles"?accountItems(entries[entityIndex]):{...(schemaQuery.data.uiSchema[currentSection??""]?.items as UiSchema|undefined),id:{"ui:readonly":true}};
-  function editEntity(value:Record<string,unknown>):void{edit({[currentSection!]:entries.map((entry,index)=>index===entityIndex?{...value,id:entityId}:entry)});}
+  if(currentSection==="connectors"&&entitySchema?.properties?.definitionId){
+    const choices=[{const:"task.linear",title:"Linear · 任务"},{const:"scm.github",title:"GitHub · 代码交付"},{const:"messaging.slack",title:"Slack · 消息"}];
+    if(typeof formEntity?.definitionId==="string"&&!choices.some(choice=>choice.const===formEntity.definitionId))choices.push({const:formEntity.definitionId,title:formEntity.definitionId});
+    entitySchema.properties.definitionId={type:"string",title:"连接平台",oneOf:choices};
+  }
+  const entityUi=currentSection==="agentProfiles"?accountItems(entries[entityIndex]):{...(schemaQuery.data.uiSchema[currentSection??""]?.items as UiSchema|undefined),id:{"ui:readonly":entityId!==undefined},...(currentSection==="connectors"?{credentialRef:{"ui:widget":"text","ui:title":"安全凭据引用","ui:help":"只填写 secret:// 引用，不能填写 Token 或密码。"},definitionId:{"ui:readonly":entityId!==undefined},kind:{"ui:widget":"hidden"}}:{})};
+  function editEntity(value:Record<string,unknown>):void{
+    const next=entityId!==undefined?{...value,id:entityId}:currentSection==="connectors"&&typeof value.definitionId==="string"?{...value,kind:value.definitionId.split(".")[0]}:value;
+    edit({[currentSection!]:entityIndex<entries.length?entries.map((entry,index)=>index===entityIndex?next:entry):[...entries,next]});
+  }
   return <section aria-label={embedded ? `${sectionNames[sectionId ?? ""] ?? "配置"}编辑` : "设置"}>{!embedded && <header className="page-header"><div><h1>设置</h1><p>按分区编辑草稿，审阅变更后再应用。配置版本 {configQuery.data.revision}</p></div><span className="pill"><Icon name="shield" size={12}/>ConfigPlan</span></header>}
     <div className={embedded ? "" : "settings-workspace"}>
     {!sectionId && <nav className="settings-sections" aria-label="设置分区">{sections.map((key) => <button key={key} disabled={busy} aria-pressed={currentSection === key} onClick={() => setSection(key)}>{sectionNames[key] ?? key}</button>)}</nav>}
-    <div className={embedded ? "settings-layout embedded-settings" : "settings-layout"}><div className="panel config-form">{currentSection==="repositories"&&<LocalDirectoryPicker runners={Array.isArray(currentDraft.runners)?currentDraft.runners as Array<{id:string;mode:string}>:[]} onSelect={candidate=>entityId!==undefined?editEntity({...entries[entityIndex],root:candidate.root,runnerId:candidate.runnerId}):edit({repositories:[...(Array.isArray(currentDraft.repositories)?currentDraft.repositories:[]),{id:"",root:candidate.root,runnerId:candidate.runnerId,defaultBaseRef:"main",scopePaths:[],verificationCommands:[]}]})}/>}<Form key={currentSection ?? "all"} schema={entityId!==undefined&&entitySchema?entitySchema:sectionSchema} uiSchema={entityId!==undefined?entityUi:{...schemaQuery.data.uiSchema,agentProfiles:{...schemaQuery.data.uiSchema.agentProfiles,items:accountItems},policies:{...schemaQuery.data.uiSchema.policies,modelRouting:{"ui:field":"PolicyRoutingField"}}}} fields={{PolicyRoutingField}} widgets={{NativeEnabled:NativeEnabledWidget}} validator={validator} formData={entityId!==undefined?entries[entityIndex]:currentSection ? { [currentSection]: currentDraft[currentSection] } : currentDraft} disabled={busy} noHtml5Validate experimental_defaultFormStateBehavior={{ emptyObjectFields: "skipDefaults", arrayMinItems: { populate: "never" }, allOf: "skipDefaults" }} onChange={({ formData }) => entityId!==undefined?editEntity(formData as Record<string,unknown>):edit(formData as Record<string, unknown>)} onSubmit={() => void buildPlan()}><button type="submit" className="primary" disabled={busy}>预览配置变更</button></Form><Notice>其他分区的草稿保留；私有账号目录已隐藏并保留，修改时需明确重新填写。已有账号 ID 保持固定，审阅后才会生效。</Notice></div>
+    <div className={embedded ? "settings-layout embedded-settings" : "settings-layout"}><div className="panel config-form">{currentSection==="repositories"&&<LocalDirectoryPicker runners={Array.isArray(currentDraft.runners)?currentDraft.runners as Array<{id:string;mode:string}>:[]} onSelect={candidate=>entityMode?editEntity({...formEntity,root:candidate.root,runnerId:candidate.runnerId}):edit({repositories:[...(Array.isArray(currentDraft.repositories)?currentDraft.repositories:[]),{id:"",root:candidate.root,runnerId:candidate.runnerId,defaultBaseRef:"main",scopePaths:[],verificationCommands:[]}]})}/>}<Form key={currentSection ?? "all"} schema={entityMode&&entitySchema?entitySchema:sectionSchema} uiSchema={entityMode?entityUi:{...schemaQuery.data.uiSchema,agentProfiles:{...schemaQuery.data.uiSchema.agentProfiles,items:accountItems},policies:{...schemaQuery.data.uiSchema.policies,modelRouting:{"ui:field":"PolicyRoutingField"}}}} fields={{PolicyRoutingField}} widgets={{NativeEnabled:NativeEnabledWidget}} validator={validator} formData={entityMode?formEntity:currentSection ? { [currentSection]: currentDraft[currentSection] } : currentDraft} disabled={busy} noHtml5Validate experimental_defaultFormStateBehavior={{ emptyObjectFields: "skipDefaults", arrayMinItems: { populate: "never" }, allOf: "skipDefaults" }} onChange={({ formData }) => entityMode?editEntity(formData as Record<string,unknown>):edit(formData as Record<string, unknown>)} onSubmit={() => void buildPlan()}><button type="submit" className="primary" disabled={busy}>预览配置变更</button></Form>{entityMode&&currentSection==="connectors"&&secretNamespace&&secretName&&<fieldset disabled={busy}><h3>此连接的安全凭据</h3><SecureInput namespace={secretNamespace} name={secretName} label="连接凭据" onStored={reference=>editEntity({...formEntity,credentialRef:reference})} onDeleted={()=>{const next={...formEntity,enabled:false};delete (next as Record<string,unknown>).credentialRef;editEntity(next);}}/><p>安全存储仅保存凭据；引用变更仍需预览并应用配置计划。</p></fieldset>}<Notice>其他分区的草稿保留；私有账号目录已隐藏并保留，修改时需明确重新填写。已有账号 ID 保持固定，审阅后才会生效。</Notice></div>
     <aside className="settings-aside"><div className="panel plan-card" aria-live="polite">{trackedPlanId&&<button disabled={busy} onClick={()=>void checkStoredPlan()}>核对上次配置计划</button>}<h2>{plan ? "审阅配置计划" : appliedPlanId ? "已应用的计划" : "尚无待应用计划"}</h2><p>{message || "编辑字段后生成计划，草稿不会自动生效。"}</p>{conflict && <button disabled={busy} onClick={()=>void reloadCurrent()}>重新载入当前配置</button>}{plan && <><p>风险：{plan.risk} · {plan.changes.length} 项变更</p><ul className="plan-changes">{plan.changes.map((change, index) => <li key={index}>{change.path}{change.after!==undefined?` → ${JSON.stringify(change.after)}`:""}</li>)}</ul></>}{plan && plan.changes.length > 0 && <button disabled={busy} className="primary" onClick={() => void applyPlan()}>{plan.requiresConfirmation ? "确认并应用" : "应用计划"}</button>}{appliedPlanId && <button disabled={busy} onClick={() => void rollbackPlan()}>回滚上次计划</button>}</div>
     {!embedded && <OwnerPasswordSettings />}
     {!embedded && currentDraft.integrations?.linear && <fieldset disabled={busy} className="panel"><h2>安全凭据</h2><p>凭据直接存入安全存储，不进入普通配置草稿。</p><SecureInput namespace="linear" name="main" label="Linear credential" onStored={(reference) => updateLinearCredential(reference)} onDeleted={() => updateLinearCredential()} /></fieldset>}</aside></div></div>

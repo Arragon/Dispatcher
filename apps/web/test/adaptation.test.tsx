@@ -155,3 +155,8 @@ it("opens a linkable Harness account detail with dedicated tabs and account-scop
   expect(screen.getByRole("link",{name:"返回 Harness"}).getAttribute("href")).toBe("/harnesses");expect(screen.getByRole("tab",{name:"账号与登录"})).toBeTruthy();expect(screen.getByRole("tab",{name:"执行设置"})).toBeTruthy();expect(screen.getByRole("tab",{name:"原生模型"})).toBeTruthy();expect(screen.getByRole("tab",{name:"能力与限制"})).toBeTruthy();
   expect(screen.getByText(/own-session/)).toBeTruthy();expect(screen.queryByText(/foreign-session/)).toBeNull();await userEvent.click(screen.getByRole("tab",{name:"原生模型"}));expect(screen.getByRole("link",{name:"打开此账号的原生模型目录"}).getAttribute("href")).toBe("/models?profile=account");
 });
+it("filters Harness accounts to the device selected by the management context link",async()=>{
+ const {default:AgentsPage}=await import("../src/AgentsPage.js");
+ vi.spyOn(globalThis,"fetch").mockImplementation(async input=>new Response(JSON.stringify(String(input).includes("manifests")?{manifests:[{id:"codex",displayName:"Codex",platforms:[],configSchema:{type:"object"},uiSchema:{},secretFields:[],backends:[],capabilities:{}}]}:String(input).includes("compatibility")?{matrix:[]}:{profiles:[{id:"selected",alias:"Selected account",provider:"codex",runnerId:"two",state:"CONFIGURED"},{id:"other",alias:"Other account",provider:"codex",runnerId:"one",state:"CONFIGURED"}],sessions:[]})));
+ mount(<AgentsPage/>,"/harnesses?runner=two");expect(await screen.findByText("Selected account")).toBeTruthy();expect(screen.queryByText("Other account")).toBeNull();await userEvent.click(screen.getByRole("button",{name:"显示全部设备账号"}));expect(await screen.findByText("Other account")).toBeTruthy();
+});

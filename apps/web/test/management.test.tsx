@@ -145,3 +145,49 @@ it("edits only the selected account while preserving sibling profiles and protec
   await userEvent.clear(alias);await userEvent.type(alias,"Changed account");await userEvent.click(screen.getByRole("button",{name:"预览配置变更"}));await screen.findByRole("button",{name:"确认并应用"});
   expect(plans).toEqual([{baseRevision:4,edits:[{op:"replace",path:"/agentProfiles/1/alias",entityId:"second",value:"Changed account"}]}]);
 });
+it("creates a single device through a reviewed append without displaying existing device forms",async()=>{
+  const plans:unknown[]=[];
+  const config={revision:2,config:{runners:[{id:"local",displayName:"Keep me",mode:"embedded",capacity:1,tags:[]}]}};
+  const item={type:"object",required:["id","displayName"],properties:{id:{type:"string",minLength:1},displayName:{type:"string",minLength:1},mode:{type:"string"},capacity:{type:"integer"},tags:{type:"array",items:{type:"string"}}}};
+  const schema={schema:{type:"object",properties:{runners:{type:"array",items:item}}},uiSchema:{}};
+  vi.spyOn(globalThis,"fetch").mockImplementation(async(input,init)=>{
+    if(init?.method==="POST"){plans.push(JSON.parse(String(init.body)));return new Response(JSON.stringify({plan:{id:"new-device",risk:"privileged",requiresConfirmation:true,changes:[{path:"/runners/-"}]}}));}
+    return new Response(JSON.stringify(String(input)==="/api/config/schema"?schema:config));
+  });
+  mount(<SettingsPage sectionId="runners" initialEntity={{id:"",displayName:"",mode:"remote",capacity:1,tags:[]}} embedded/>);
+  await userEvent.type(await screen.findByLabelText(/标识/),"remote");await userEvent.type(screen.getByLabelText(/显示名称/),"New device");expect(screen.queryByDisplayValue("Keep me")).toBeNull();expect(plans).toHaveLength(0);
+  await userEvent.click(screen.getByRole("button",{name:"预览配置变更"}));await screen.findByRole("button",{name:"确认并应用"});
+  expect(plans).toEqual([{baseRevision:2,edits:[{op:"add",path:"/runners/-",value:{id:"remote",displayName:"New device",mode:"remote",capacity:1,tags:[]}}]}]);
+});
+it("opens the clicked device editor and exposes its account and diagnostic context links",async()=>{
+ const rows=[{id:"one",displayName:"One",mode:"remote",capacity:1,tags:[]},{id:"two",displayName:"Two",mode:"remote",capacity:2,tags:[]}];
+ const item={type:"object",properties:{id:{type:"string"},displayName:{type:"string"},capacity:{type:"integer"}}};
+ const schema={schema:{type:"object",properties:{runners:{type:"array",items:item}}},uiSchema:{}};
+ vi.spyOn(globalThis,"fetch").mockImplementation(async input=>new Response(JSON.stringify(String(input)==="/api/config/schema"?schema:String(input)==="/api/config?view=console"?{revision:1,config:{runners:rows,agentProfiles:[]}}:{runners:[]})));
+ mount(<DevicesPage/>);const card=(await screen.findByRole("heading",{name:"Two"})).closest("article")!;
+ expect(within(card).getByRole("link",{name:"查看账号"}).getAttribute("href")).toBe("/harnesses?runner=two");expect(within(card).getByRole("link",{name:"设备诊断"}).getAttribute("href")).toBe("/diagnostics?runner=two");
+ await userEvent.click(within(card).getByRole("button",{name:"编辑配置"}));expect((await screen.findByLabelText("显示名称") as HTMLInputElement).value).toBe("Two");expect(screen.queryByDisplayValue("One")).toBeNull();
+});
+it.each(["repositories","connectors"] as const)("binds the %s row editor to its selected entity",async section=>{
+ const {default:RepositoriesPage}=await import("../src/RepositoriesPage.js"),{default:IntegrationsPage}=await import("../src/IntegrationsPage.js");
+ const config={revision:3,config:{runners:[],repositories:["first","second"].map(id=>({id,root:`/${id}`,defaultBaseRef:"main",scopePaths:["."],verificationCommands:[]})),connectors:["first","second"].map(id=>({id,displayName:`${id} connection`,kind:"scm",definitionId:"scm.github",enabled:true,settings:{}}))}};
+ const item=section==="repositories"?{type:"object",properties:{id:{type:"string"},root:{type:"string"},defaultBaseRef:{type:"string"}}}:{type:"object",properties:{id:{type:"string"},displayName:{type:"string"},definitionId:{type:"string"},kind:{type:"string"},enabled:{type:"boolean"},credentialRef:{type:"string"}}};
+ const schema={schema:{type:"object",properties:{[section]:{type:"array",items:item}}},uiSchema:{}};
+ const posts:unknown[]=[];vi.spyOn(globalThis,"fetch").mockImplementation(async(input,init)=>{
+  if(init?.method==="POST"){posts.push(JSON.parse(String(init.body)));return new Response(JSON.stringify({plan:{id:"row",risk:"sensitive",requiresConfirmation:true,changes:[{path:`/${section}/1`}]}}));}
+  const path=String(input);return new Response(JSON.stringify(path==="/api/config/schema"?schema:path==="/api/fleet/connectors"?{connectors:config.config.connectors.map(c=>({...c,health:"UNKNOWN",checkedAt:"2026-10-18T12:00:00Z"}))}:path.includes("dead-letters")?{deadLetters:[]}:config));
+ });
+ mount(section==="repositories"?<RepositoriesPage/>:<IntegrationsPage/>);
+ const card=(await screen.findByText(section==="repositories"?"second":"second connection")).closest("article")!;
+ await userEvent.click(within(card).getByRole("button",{name:section==="repositories"?"编辑仓库":"编辑连接与凭据"}));const dialog=await screen.findByRole("dialog");
+ const id=await within(dialog).findByLabelText("标识");expect((id as HTMLInputElement).value).toBe("second");expect(within(dialog).queryByDisplayValue("first")).toBeNull();expect(posts).toHaveLength(0);
+ const field=within(dialog).getByLabelText(section==="repositories"?"基准分支":"显示名称");await userEvent.clear(field);await userEvent.type(field,"Changed");await userEvent.click(within(dialog).getByRole("button",{name:"预览配置变更"}));await within(dialog).findByRole("button",{name:"确认并应用"});
+ expect(posts).toEqual([{baseRevision:3,edits:[{op:"replace",path:`/${section}/1/${section==="repositories"?"defaultBaseRef":"displayName"}`,entityId:"second",value:"Changed"}]}]);
+});
+it("does not turn a creation form into an existing entity after a concurrent configuration reload",async()=>{
+ let changed=false;const original={revision:1,config:{runners:[{id:"local",displayName:"Local"}]}},latest={revision:2,config:{runners:[{id:"local",displayName:"Local"},{id:"concurrent",displayName:"Other device"}]}};
+ const schema={schema:{type:"object",properties:{runners:{type:"array",items:{type:"object",properties:{id:{type:"string"},displayName:{type:"string"}}}}}},uiSchema:{}};
+ vi.spyOn(window,"confirm").mockReturnValue(true);vi.spyOn(globalThis,"fetch").mockImplementation(async input=>new Response(JSON.stringify(String(input)==="/api/config/schema"?schema:changed?latest:original)));
+ mount(<SettingsPage sectionId="runners" initialEntity={{id:"",displayName:""}} embedded/>);await userEvent.type(await screen.findByLabelText("标识"),"draft");changed=true;
+ await userEvent.click(screen.getByRole("button",{name:"预览配置变更"}));await userEvent.click(await screen.findByRole("button",{name:"重新载入当前配置"}));expect((screen.getByLabelText("标识") as HTMLInputElement).value).toBe("");expect(screen.queryByDisplayValue("Other device")).toBeNull();
+});

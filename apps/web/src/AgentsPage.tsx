@@ -59,6 +59,7 @@ export default function AgentsPage(): React.JSX.Element {
   const client=useQueryClient();
   const [params,setParams]=useSearchParams();
   const detailId=params.get("profile")??"";
+  const runnerFilter=params.get("runner")??"";
   const [detailTab,setDetailTab]=useState("overview");
   const accountDetail=useQuery({queryKey:["agent-profile",detailId],queryFn:()=>api<{profile:ProfileView}>(`/api/agents/profiles/${encodeURIComponent(detailId)}`),enabled:Boolean(detailId),retry:false});
   const [plan,setPlan]=useState<ProfilePlan>();
@@ -159,7 +160,7 @@ export default function AgentsPage(): React.JSX.Element {
   const secretNamespace = selected.id === "workbuddy-codebuddy"
     ? draft.provider === "workbuddy" || draft.provider === "codebuddy" ? draft.provider : undefined
     : selected.secretFields.includes("credentialRef") ? selected.id : undefined;
-  const filtered = configuredProfiles.filter((profile) => (!search || `${profile.alias} ${profile.provider}`.toLowerCase().includes(search.toLowerCase())) && (filter === "all" || (filter === "enabled" ? profile.state !== "DISABLED" : profile.state === "DISABLED")));
+  const filtered = configuredProfiles.filter((profile) => (!runnerFilter||profile.runnerId===runnerFilter)&&(!search || `${profile.alias} ${profile.provider}`.toLowerCase().includes(search.toLowerCase())) && (filter === "all" || (filter === "enabled" ? profile.state !== "DISABLED" : profile.state === "DISABLED")));
   const enabledCount = configuredProfiles.filter((profile) => profile.state !== "DISABLED").length;
   const detailProfile=detailId?(accountDetail.data?.profile??configuredProfiles.find(profile=>profile.id===detailId)):undefined;
   const currentSession=sessionDetail?(profiles.data.sessions.find(session=>session.id===sessionDetail.id)??sessionDetail):undefined;
@@ -168,6 +169,7 @@ export default function AgentsPage(): React.JSX.Element {
     <header className="page-header"><div><h1>Harness</h1><p>接入你的开发工具，让每个账号独立、安全地执行任务。</p></div><div className="page-actions"><button onClick={() => { setMessage(""); setDrawer("trial"); }}><Icon name="pulse"/>试运行</button><button className="primary" onClick={() => { setMessage("");setAccountStep(0);setPlan(undefined);setConfirmSave(false); setDrawer("add"); }}><Icon name="plus"/>添加账号</button></div></header>
     <Tabs label="Harness" items={[["accounts",`已接入账号 ${configuredProfiles.length}`],["catalog",`工具目录 ${query.data.manifests.length}`],["capabilities","能力与兼容性"]]} value={view} onChange={setView}/>
     {view === "accounts" && <>
+    {runnerFilter&&<Notice>当前设备：{runnerFilter}<button onClick={()=>setParams({})}>显示全部设备账号</button></Notice>}
     <Notice>账号启用、原生登录与资源可用性分别记录。测试登录仅检查所选账号，不会启动开发任务。</Notice>
     <div className="panel table-wrap"><div className="toolbar account-toolbar" style={{padding: "0 16px"}}><input aria-label="搜索账号或 Agent" placeholder="搜索账号或 Agent…" value={search} onChange={(event) => setSearch(event.target.value)} /><div className="segments">{[["all", `全部 ${configuredProfiles.length}`], ["enabled", `已启用 ${enabledCount}`], ["disabled", `已停用 ${configuredProfiles.length - enabledCount}`]].map(([value, label]) => <button key={value} aria-pressed={filter === value} onClick={() => setFilter(value!)}>{label}</button>)}</div></div>
       <table className="account-table" aria-label="Agent 账号"><thead><tr><th>账号</th><th>Agent</th><th>设备</th><th>派发状态</th><th>最近登录检查</th><th>操作</th></tr></thead><tbody>{filtered.map((profile) => <tr key={profile.id}><td><div className="account-name"><ProviderMark provider={profile.provider}/><strong>{profile.alias}</strong></div></td><td data-label="Agent">{profile.provider}</td><td data-label="设备">{profile.runnerId === "local" ? "本机" : profile.runnerId}</td><td data-label="派发状态"><span className={`status status-${profile.state.toLowerCase()}`}>{stateLabel(profile.state)}</span></td><td data-label="最近登录检查" aria-live="polite">{loginResults[profile.id] ?? evidenceText(profile.authentication)}</td><td><div className="secure-actions"><button disabled={pendingProfiles.has(profile.id)||profile.actions?.test?.allowed===false} title={profile.actions?.test?.message} onClick={() => void testProfile(profile.id)} aria-label={`测试 ${profile.alias} 登录`}>测试登录</button><button onClick={() => {setMessage("");setDetailTab("overview");setParams({profile:profile.id});}} aria-label={`${profile.alias} 详情`}>详情</button></div></td></tr>)}</tbody></table>
