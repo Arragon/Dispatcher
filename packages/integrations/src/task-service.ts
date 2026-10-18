@@ -6,7 +6,7 @@ import type { FieldOwner, TaskFieldMapping, TaskProjection } from "./task-platfo
 
 export type TaskCommand =
   | { type: "task.create"; task: Task; bindings?: ExternalBinding[] }
-  | { type: "task.update"; changes: Partial<Pick<Task, "title" | "description" | "state" | "priority" | "assignee" | "labels" | "dueAt" | "platformExtensions">> }
+  | { type: "task.update"; changes: Partial<Pick<Task, "projectId" | "title" | "description" | "state" | "priority" | "assignee" | "labels" | "dueAt" | "platformExtensions">> }
   | { type: "task.assign"; assignee?: string }
   | { type: "task.comment"; body: string }
   | { type: "task.transition"; state: TaskState }

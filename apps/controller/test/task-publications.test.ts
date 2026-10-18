@@ -325,3 +325,71 @@ it("returns safe draft field locations for schema and semantic validation failur
  const f=await setup(),title=await f.preview({...f.draft,title:"😀".repeat(161),execution:{...f.draft.execution,nativeParameters:{privateFieldCanary:"private-value-canary"}}});expect(title.statusCode).toBe(400);expect(title.json()).toMatchObject({code:"INVALID_DRAFT",fieldErrors:[{path:"/title",code:"too-long"}]});expect(title.body).not.toContain("private-value-canary");
  const blank=await f.preview({...f.draft,description:"   "});expect(blank.json()).toMatchObject({fieldErrors:[{path:"/description",code:"required"}]});const link=await f.preview({...f.draft,referenceLinks:["javascript:bad"]});expect(link.json()).toMatchObject({fieldErrors:[{path:"/referenceLinks",code:"invalid"}]});expect(f.starts).toHaveLength(0);expect(f.service.database.listCanonicalTasks()).toHaveLength(0);
 });
+
+it("completes an inbox NEEDS_SPEC task and executes the reviewed contract under its original identity",async()=>{
+  const f=await setup();
+  const initial={...f.draft,repositoryId:"",projectId:"local:inbox",scopePaths:[],verificationCommandIds:[],acceptanceCriteria:[],referenceLinks:["https://example.invalid/spec"]};
+  const created=(await f.commit((await f.preview(initial)).json())).json();
+  const before=f.service.database.getCanonicalTask(created.taskId)!;
+  expect(before.document).toMatchObject({state:"NEEDS_SPEC",projectId:"local:inbox"});
+  const context=(await f.service.app.inject({headers:OWNER,url:`/api/tasks/${created.taskId}`})).json();
+  expect(context.publicationDraft).toMatchObject({description:initial.description,referenceLinks:initial.referenceLinks});
+  const draft={...f.draft,title:"Completed specification",description:"Execute completed specification",startMode:"dispatch",execution:{...f.draft.execution,profileId:"codex-local"}};
+  const preview=await f.service.app.inject({headers:OWNER,method:"POST",url:`/api/tasks/${created.taskId}/publications/preview`,payload:{expectedRevision:before.revision,execution:draft.execution,draft}});
+  expect(preview.statusCode).toBe(200);expect(preview.json()).toMatchObject({canCommit:true,effectiveTask:{contractState:"READY"},taskBinding:{taskId:created.taskId,taskRevision:before.revision}});
+  expect(f.service.database.getCanonicalTask(created.taskId)).toEqual(before);expect(f.starts).toHaveLength(0);
+  const receipt=(await f.commit(preview.json(),"complete-spec")).json();expect(receipt).toMatchObject({state:"STARTED",taskId:created.taskId});
+  expect(f.service.database.listCanonicalTasks()).toHaveLength(1);expect(f.starts).toHaveLength(1);
+  expect(f.service.database.getCanonicalTask(created.taskId)?.document).toMatchObject({title:draft.title,description:draft.description,projectId:"local:repo"});
+  expect(f.service.database.getTaskContract(created.taskId)).toMatchObject({instructions:draft.description,acceptanceCriteria:["works"],verification:["check"],workspace:{repositoryId:"repo"}});
+  expect((await f.commit(preview.json(),"complete-spec")).json()).toEqual(receipt);expect(f.starts).toHaveLength(1);
+  f.control.completed=true;
+  expect((await f.service.app.inject({headers:OWNER,method:"POST",url:`/api/runs/${receipt.runId}/advance`})).json()).toMatchObject({run:{state:"COMPLETE",verification:{state:"PASSED"}}});
+});
+it("saves partial specification on the same task and restores its fields after restart",async()=>{
+  const f=await setup(),initial={...f.draft,acceptanceCriteria:[]};
+  const created=(await f.commit((await f.preview(initial)).json())).json(),before=f.service.database.getCanonicalTask(created.taskId)!;
+  const draft={...initial,title:"Partial draft",referenceLinks:["https://example.invalid/partial"]};
+  const p=(await f.service.app.inject({headers:OWNER,method:"POST",url:`/api/tasks/${created.taskId}/publications/preview`,payload:{expectedRevision:before.revision,execution:draft.execution,draft}})).json();
+  expect(p).toMatchObject({canCommit:true,effectiveTask:{contractState:"NEEDS_SPEC"}});expect((await f.commit(p,"partial-spec")).json()).toMatchObject({state:"TASK_CREATED",taskId:created.taskId});
+  await f.service.stop();const restarted=await f.make();const context=(await restarted.app.inject({headers:OWNER,url:`/api/tasks/${created.taskId}`})).json();
+  expect(context).toMatchObject({revision:before.revision+1,document:{state:"NEEDS_SPEC",title:"Partial draft"},publicationDraft:{referenceLinks:draft.referenceLinks}});expect(restarted.database.listCanonicalTasks()).toHaveLength(1);expect(f.starts).toHaveLength(0);
+});
+it("rejects stale or archived specification reviews and refuses to edit a READY contract",async()=>{
+  const f=await setup(),created=(await f.commit((await f.preview({...f.draft,acceptanceCriteria:[]})).json())).json();
+  const current=f.service.database.getCanonicalTask(created.taskId)!;
+  const payload={expectedRevision:current.revision,execution:f.draft.execution,draft:f.draft};
+  const url=`/api/tasks/${created.taskId}/publications/preview`;
+  const p=await f.service.app.inject({headers:OWNER,method:"POST",url,payload});expect(p.statusCode).toBe(200);
+  f.service.tasks.execute({id:"concurrent-spec-edit",taskId:created.taskId,baseRevision:current.revision,actor:"operator",command:{type:"task.update",changes:{description:"Newer content"}}});
+  expect((await f.commit(p.json(),"stale-spec")).json().code).toBe("TASK_CHANGED");
+  expect(f.service.database.getCanonicalTask(created.taskId)?.document).toMatchObject({description:"Newer content",state:"NEEDS_SPEC"});expect(f.service.database.getTaskContract(created.taskId)).toBeUndefined();
+  f.service.database.saveEntity("task-archive",created.taskId,{archivedAt:new Date().toISOString(),revision:1});
+  expect((await f.service.app.inject({headers:OWNER,method:"POST",url,payload:{...payload,expectedRevision:current.revision+1}})).statusCode).toBe(409);
+  const ready=(await f.commit((await f.preview({...f.draft,clientDraftId:"ready"})).json(),"ready-spec")).json();
+  expect((await f.service.app.inject({headers:OWNER,method:"POST",url:`/api/tasks/${ready.taskId}/publications/preview`,payload:{...payload,expectedRevision:1}})).json().code).toBe("TASK_SPECIFICATION_LOCKED");
+});
+it("rolls back canonical specification and receipts when saving the compiled contract fails",async()=>{
+  const f=await setup(),created=(await f.commit((await f.preview({...f.draft,acceptanceCriteria:[]})).json())).json(),before=f.service.database.getCanonicalTask(created.taskId)!;
+  const p=(await f.service.app.inject({headers:OWNER,method:"POST",url:`/api/tasks/${created.taskId}/publications/preview`,payload:{expectedRevision:before.revision,execution:f.draft.execution,draft:{...f.draft,title:"Must roll back"}}})).json();
+  const save=vi.spyOn(f.service.database,"saveTaskContract").mockImplementationOnce(()=>{throw new Error("Fixture contract write failed");});
+  expect((await f.commit(p,"rollback-spec")).statusCode).toBe(500);save.mockRestore();
+  expect(f.service.database.getCanonicalTask(created.taskId)).toEqual(before);expect(f.service.database.getTaskContract(created.taskId)).toBeUndefined();expect(f.service.database.listCanonicalTasks()).toHaveLength(1);
+  expect((await f.commit(p,"rollback-spec")).json()).toMatchObject({state:"TASK_CREATED",taskId:created.taskId});expect(f.service.database.getCanonicalTask(created.taskId)?.document).toMatchObject({state:"READY",title:"Must roll back"});
+});
+it("requires fresh approval after saving a completed specification without dispatch",async()=>{
+  const f=await setup(),created=(await f.commit((await f.preview({...f.draft,acceptanceCriteria:[]})).json())).json();
+  const url=`/api/tasks/${created.taskId}/publications/preview`;
+  const p=(await f.service.app.inject({headers:OWNER,method:"POST",url,payload:{expectedRevision:1,execution:f.draft.execution,draft:f.draft}})).json();
+  expect((await f.commit(p,"save-complete")).json()).toMatchObject({state:"TASK_CREATED",taskId:created.taskId});expect(f.starts).toHaveLength(0);
+  const ready=f.service.database.getCanonicalTask(created.taskId)!;expect(ready.document).toMatchObject({state:"READY"});
+  const stale=await f.service.app.inject({headers:OWNER,method:"POST",url,payload:{expectedRevision:1,execution:{...f.draft.execution,profileId:"codex-local"}}});expect(stale.json().code).toBe("TASK_CHANGED");
+  const execution={...f.draft.execution,profileId:"codex-local"};
+  const reviewed=(await f.service.app.inject({headers:OWNER,method:"POST",url,payload:{expectedRevision:ready.revision,execution}})).json();expect(reviewed.canCommit).toBe(true);
+  expect((await f.commit(reviewed,"dispatch-completed")).json()).toMatchObject({state:"STARTED",taskId:created.taskId});expect(f.starts).toHaveLength(1);expect(f.service.database.listCanonicalTasks()).toHaveLength(1);
+});
+it("returns field errors for malformed specification fields without changing the original task",async()=>{
+  const f=await setup(),created=(await f.commit((await f.preview({...f.draft,acceptanceCriteria:[]})).json())).json();
+  const response=await f.service.app.inject({headers:OWNER,method:"POST",url:`/api/tasks/${created.taskId}/publications/preview`,payload:{expectedRevision:1,execution:f.draft.execution,draft:{...f.draft,description:5}}});
+  expect(response.statusCode).toBe(400);expect(response.json()).toMatchObject({code:"INVALID_DRAFT",fieldErrors:[{path:"/description",code:"invalid"}]});expect(f.service.database.getCanonicalTask(created.taskId)?.revision).toBe(1);expect(f.starts).toHaveLength(0);
+});

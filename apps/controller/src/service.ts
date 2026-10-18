@@ -2257,7 +2257,7 @@ export class ControllerService {
     const stored = this.database.getCanonicalTask<JsonValue>(taskId);
     const contract = this.database.getTaskContract<JsonValue>(taskId) as unknown as TaskContract | undefined;
     if (!stored || !contract) throw new TaskDispatchError("TASK_NOT_FOUND", 404, `Unknown task or contract ${taskId}`);
-    if(publication&&(contentHash(contract)!==contentHash(publication.contract)||publication.taskBinding&&stored.revision!==publication.taskBinding.taskRevision))throw new PublicationError("TASK_CHANGED",409,"Task contract changed after publication approval");
+    if(publication&&(contentHash(contract)!==contentHash(publication.contract)||publication.taskBinding&&stored.revision!==publication.taskBinding.taskRevision+(publication.taskBinding.specification?1:0)))throw new PublicationError("TASK_CHANGED",409,"Task contract changed after publication approval");
     if ((stored.document as unknown as Task).state !== "READY") throw new TaskDispatchError("TASK_NOT_READY", 409, `Task ${taskId} is not dispatchable from ${(stored.document as unknown as Task).state}; READY is required`);
     if (body?.profileId && !this.agentAdapters.has(body.profileId)) throw new TaskDispatchError("PROFILE_NOT_FOUND", 404, `Unknown profile ${body.profileId}`);
     if ((this.database.getEntity<JsonValue>("task-archive", taskId) as { archivedAt?: string } | undefined)?.archivedAt) throw new TaskDispatchError("TASK_ARCHIVED", 409, "Restore the task before dispatch");
@@ -3885,12 +3885,13 @@ export class ControllerService {
       if (!task) return reply.code(404).send({ code: "TASK_NOT_FOUND" });
       return { ...task, contract: this.database.getTaskContract<JsonValue>(request.params.id), deliveries: this.database.listDeliveryEvidence<JsonValue>(request.params.id),
         executionIntent:this.database.getEntity<JsonValue>("task-execution-intent",request.params.id),
+        publicationDraft:this.publications.draftForTask(this.principalFor(request).id,request.params.id),
         archive: this.database.getEntity<JsonValue>("task-archive", request.params.id),
         runs: this.database.listEntities<JsonValue>("run").filter(value => (value as unknown as Run).taskId === request.params.id) };
     });
-    this.app.post<{Params:{id:string};Body:{expectedRevision:number;execution:PublishDraftV1["execution"]}}>("/api/tasks/:id/publications/preview",{schema:{body:{type:"object",additionalProperties:false,required:["expectedRevision","execution"],properties:{expectedRevision:{type:"integer",minimum:1},execution:publishDraftSchema.properties.execution}}}},async request=>{
+    this.app.post<{Params:{id:string};Body:{expectedRevision:number;execution:PublishDraftV1["execution"];draft?:PublishDraftV1}}>("/api/tasks/:id/publications/preview",{schema:{body:{type:"object",additionalProperties:false,required:["expectedRevision","execution"],properties:{expectedRevision:{type:"integer",minimum:1},execution:publishDraftSchema.properties.execution,draft:publishDraftSchema}}}},async request=>{
       const principal=this.principalFor(request);if(!principal.roles.includes("operator"))throw new PublicationError("FORBIDDEN",403,"Operator role required");
-      return this.publications.previewTask(principal.id,request.params.id,request.body.expectedRevision,request.body.execution);
+      return this.publications.previewTask(principal.id,request.params.id,request.body.expectedRevision,request.body.execution,request.body.draft);
     });
     this.app.post<{ Params: { id: string }; Body: TaskDispatchBody }>("/api/tasks/:id/dispatch", async (request, reply) => {
       return reply.code(201).send(await this.dispatchTask(request.params.id, request.body ?? {}));

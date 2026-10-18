@@ -693,3 +693,10 @@
   canonical input paths and static codes; never echo validator data/unknown keys.
   Focus the existing affected control and open its collapsed details section so
   a field error is actionable without changing or discarding the user's draft.
+
+- NEEDS_SPEC publication tasks may have no TaskContract at all. Restore editable
+  inputs from their owned publication draft, not current configuration defaults.
+  Bind the completion review to the pre-save task revision/contract hash; update
+  specification and receipt atomically and check the post-save revision at dispatch.
+  Keep composer drafts per Task and revision. Newer canonical data must not silently
+  replace unsaved browser edits; explicit reload/discard restores the saved version.

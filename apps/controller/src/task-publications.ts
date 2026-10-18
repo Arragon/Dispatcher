@@ -23,7 +23,8 @@ export function publicationValidationFields(input:unknown):PublicationFieldError
     if(!value||typeof value!=="object")continue;
     const row=value as {instancePath?:unknown;keyword?:unknown;params?:{missingProperty?:unknown}};
     if(typeof row.instancePath!=="string")continue;
-    const pointer=row.instancePath+(row.keyword==="required"&&typeof row.params?.missingProperty==="string"?`/${row.params.missingProperty}`:"");
+    const instancePath=row.instancePath.replace(/^\/draft(?=\/|$)/,"");
+    const pointer=instancePath+(row.keyword==="required"&&typeof row.params?.missingProperty==="string"?`/${row.params.missingProperty}`:"");
     const path=draftFields.find(field=>pointer===field||pointer.startsWith(`${field}/`));
     if(path&&!fields.has(path))fields.set(path,{path,code:row.keyword==="required"?"required":["maxLength","maxItems"].includes(String(row.keyword))?"too-long":"invalid"});
   }
@@ -34,7 +35,7 @@ export interface PublicationRecord {
   owner: string; draft: PublishDraftV1; preview: PublicationPreview; configRevision: number;
   deliverySelection?:ScmDeliverySelection;
   selection?: ExecutionSelection; contract?: TaskContract; baseCommit?: string; repository?: RepositoryConfig; receipt?: PublicationReceipt;
-  taskBinding?:{taskId:string;taskRevision:number;contractHash:string};
+  taskBinding?:{taskId:string;taskRevision:number;contractHash:string;specification?:boolean};
 }
 export function assertPublicationScope(scopes:string[],allowed:string[]):void {
   if(allowed.length && scopes.some(scope=>!allowed.some(parent=>{const rel=posix.relative(parent,scope);return rel===""||(!rel.startsWith("../")&&rel!==".."&&!posix.isAbsolute(rel));})))throw inputError("INVALID_SCOPE","Requested scope exceeds registered scope","/scopePaths");
@@ -91,19 +92,33 @@ export class PublicationService {
   }
   private assertTaskBinding(binding:NonNullable<PublicationRecord["taskBinding"]>):void {
     const stored=this.db.getCanonicalTask<JsonValue>(binding.taskId),task=stored?.document as unknown as Task|undefined;
-    if(!stored||stored.revision!==binding.taskRevision||task?.state!=="READY"||contentHash(this.db.getTaskContract(binding.taskId))!==binding.contractHash)throw new PublicationError("TASK_CHANGED",409,"Task or contract changed; review this task again");
+    if(!stored||stored.revision!==binding.taskRevision||(binding.specification?task?.state!=="NEEDS_SPEC"||Boolean(task?.currentRunId)||Boolean(task?.bindings?.length):task?.state!=="READY")||Boolean((this.db.getEntity<JsonValue>("task-archive",binding.taskId) as {archivedAt?:string}|undefined)?.archivedAt)||contentHash(this.db.getTaskContract(binding.taskId))!==binding.contractHash)throw new PublicationError("TASK_CHANGED",409,"Task or contract changed; review this task again");
   }
-  async previewTask(owner:string,taskId:string,expectedRevision:number,execution:PublishDraftV1["execution"]):Promise<PublicationPreview>{
+  draftForTask(owner:string,taskId:string):PublishDraftV1|undefined {
+    const task=this.db.getCanonicalTask<JsonValue>(taskId)?.document as unknown as Task|undefined;
+    const intent=this.db.getEntity<JsonValue>("task-execution-intent",taskId) as {publicationId:string}|undefined;
+    const record=intent?this.db.getEntity<JsonValue>("task-publication",intent.publicationId) as unknown as PublicationRecord|undefined:undefined;
+    if(task?.state!=="NEEDS_SPEC"||record?.owner!==owner)return undefined;
+    return {...structuredClone(record.draft),title:task.title,description:task.description??record.draft.description};
+  }
+  async previewTask(owner:string,taskId:string,expectedRevision:number,execution:PublishDraftV1["execution"],specification?:PublishDraftV1):Promise<PublicationPreview>{
     const stored=this.db.getCanonicalTask<JsonValue>(taskId),task=stored?.document as unknown as Task|undefined;
     const contract=this.db.getTaskContract<JsonValue>(taskId) as unknown as TaskContract|undefined;
     const intent=this.db.getEntity<JsonValue>("task-execution-intent",taskId) as {publicationId:string}|undefined;
-    if(!stored||!task||!contract?.workspace||!intent)throw new PublicationError("TASK_REVIEW_UNAVAILABLE",409,"Task does not have a local publication workspace contract");
+    if(!stored||!task||!intent)throw new PublicationError("TASK_REVIEW_UNAVAILABLE",409,"Task does not have a local publication workspace contract");
     this.record(owner,intent.publicationId);
-    const taskBinding={taskId,taskRevision:expectedRevision,contractHash:contentHash(contract)};this.assertTaskBinding(taskBinding);
+    if(specification&&task.state!=="NEEDS_SPEC")throw new PublicationError("TASK_SPECIFICATION_LOCKED",409,"Only an unexecuted NEEDS_SPEC task can be completed here");
+    const taskBinding={taskId,taskRevision:expectedRevision,contractHash:contentHash(contract),...(task.state==="NEEDS_SPEC"?{specification:true}:{})};this.assertTaskBinding(taskBinding);
+    if(taskBinding.specification){
+      if(!specification)throw new PublicationError("TASK_SPECIFICATION_REQUIRED",400,"Supply the completed task draft");
+      const draft={...structuredClone(specification),clientDraftId:`task:${taskId}:${expectedRevision}`,execution:structuredClone(execution)};
+      return this.preview(owner,draft,{taskBinding});
+    }
+    if(!contract?.workspace)throw new PublicationError("TASK_REVIEW_UNAVAILABLE",409,"Task has no frozen workspace contract");
     const draft:PublishDraftV1={schemaVersion:1,clientDraftId:`task:${taskId}:${expectedRevision}`,title:task.title,description:contract.instructions??task.description??"",projectId:task.projectId,repositoryId:contract.workspace.repositoryId,baseRef:contract.workspace.baseRef,...(contract.workspace.targetBranch?{targetBranch:contract.workspace.targetBranch}:{}),scopePaths:contract.scope,acceptanceCriteria:contract.acceptanceCriteria,referenceLinks:contract.referenceLinks??[],verificationCommandIds:contract.verification,startMode:"dispatch",execution:structuredClone(execution),delivery:{type:contract.delivery.type,...(contract.delivery.scmConnectorId?{scmConnectorId:contract.delivery.scmConnectorId}:{}),...(contract.delivery.repository?{targetRepository:contract.delivery.repository}:{}),...(contract.delivery.baseBranch?{baseBranch:contract.delivery.baseBranch}:{})}};
     return this.preview(owner,draft,{taskBinding,contract});
   }
-  async preview(owner: string, draft: PublishDraftV1,existing?:{taskBinding:NonNullable<PublicationRecord["taskBinding"]>;contract:TaskContract}): Promise<PublicationPreview> {
+  async preview(owner: string, draft: PublishDraftV1,existing?:{taskBinding:NonNullable<PublicationRecord["taskBinding"]>;contract?:TaskContract}): Promise<PublicationPreview> {
     if (!draft.description.trim()) throw inputError("INVALID_DRAFT","Task description must not be blank","/description","required");
     for (const [values,max,path] of [[draft.acceptanceCriteria,8000,"/acceptanceCriteria"],[draft.referenceLinks??[],2000,"/referenceLinks"],[draft.scopePaths??[],4000,"/scopePaths"]] as const) if (Array.from(values.join("\n")).length > max) throw inputError("INVALID_DRAFT","Draft field exceeds its length limit",path,"too-long");
     for (const link of draft.referenceLinks??[]) { let url: URL; try {url=new URL(link);} catch {throw inputError("INVALID_LINK","Invalid reference link","/referenceLinks");} if (!["http:","https:"].includes(url.protocol)||url.username||url.password) throw inputError("INVALID_LINK","References require http(s) without credentials","/referenceLinks"); }
@@ -119,7 +134,7 @@ export class PublicationService {
     const baseRef=draft.baseRef??repository?.defaultBaseRef??"";
     let baseCommit: string|undefined;
     let workspaceCheck:PublicationPreview["checks"][number]={id:"workspace",status:"warning",message:"No repository; task needs specification"};
-    if(repository) { try { baseCommit=(await this.workspaces.inspect({repositoryId:repository.id,baseRef:existing?.contract.workspace?.baseCommit??baseRef,scopePaths:scopes,...(draft.targetBranch?{targetBranch:draft.targetBranch}:{})})).baseCommit;workspaceCheck={id:"workspace",status:"passed",message:"Registered physical Git root and base commit verified"}; } catch(error) {
+    if(repository) { try { baseCommit=(await this.workspaces.inspect({repositoryId:repository.id,baseRef:existing?.contract?.workspace?.baseCommit??baseRef,scopePaths:scopes,...(draft.targetBranch?{targetBranch:draft.targetBranch}:{})})).baseCommit;workspaceCheck={id:"workspace",status:"passed",message:"Registered physical Git root and base commit verified"}; } catch(error) {
       if(error instanceof WorkspacePolicyError){const path=["INVALID_TARGET_BRANCH","BRANCH_EXISTS"].includes(error.code)?"/targetBranch":error.code==="INVALID_BASE_REF"?"/baseRef":["INVALID_SCOPE","SYMLINK_ESCAPE","PRIVATE_PATH_SCOPE","PRIVATE_PATH_CHECK_UNAVAILABLE"].includes(error.code)?"/scopePaths":"/repositoryId";throw inputError("INVALID_WORKSPACE",error.message,path);}
       if(draft.startMode==="dispatch")throw new PublicationError("INVALID_WORKSPACE",400,error instanceof Error?error.message:"Repository cannot be inspected");
       workspaceCheck={id:"workspace",status:"warning",code:"WORKSPACE_UNVERIFIED",message:"Repository execution context is unverified; task creation is allowed and dispatch requires a fresh owning Git check"};
@@ -132,7 +147,7 @@ export class PublicationService {
     const first=draft.description.split(/\r?\n/).find(line=>line.trim())?.trim()??"Task";
     const chars=Array.from(first); const title=draft.title?.trim() || chars.slice(0,80).join("")+(chars.length>80?"…":"");
     const compiled=new TaskContractCompiler().compile({externalId:draft.clientDraftId,title,description:draft.description,labels:[],dependencies:[],...(repository?{repository:repository.id}:{}),scope:scopes,acceptanceCriteria:draft.acceptanceCriteria.filter(s=>s.trim()),verification,constraints:[],delivery:{type:draft.delivery.type},extensions:{}},1,repository?{delivery:{type:draft.delivery.type,...(draft.delivery.type==="pull-request"?{...(draft.delivery.targetRepository?{repository:draft.delivery.targetRepository.toLowerCase()}:{}),...(draft.delivery.baseBranch?{baseBranch:draft.delivery.baseBranch}:{}),...(draft.delivery.scmConnectorId?{scmConnectorId:draft.delivery.scmConnectorId}:{})}:{})},workspace:{repositoryId:repository.id,baseRef,...(baseCommit?{baseCommit}:{}),...(draft.targetBranch?{targetBranch:draft.targetBranch}:{})},...(draft.referenceLinks?{referenceLinks:draft.referenceLinks}:{})}:undefined);
-    if(existing){this.assertTaskBinding(existing.taskBinding);compiled.contract=structuredClone(existing.contract);}
+    if(existing){this.assertTaskBinding(existing.taskBinding);if(existing.contract)compiled.contract=structuredClone(existing.contract);}
     const checks:PublicationPreview["checks"]=[workspaceCheck];
     if(deliveryCheck)checks.push(deliveryCheck);
     if(draft.delivery.type==="commit")checks.push({id:"delivery",status:"passed",message:"Create a local commit in the owning Runner's managed worktree; no push or pull request"});
@@ -208,6 +223,12 @@ export class PublicationService {
       }
       if(!this.db.createEntityIfAbsent("operation-receipt",receiptId,json({requestHash,publicationId:id})))throw new PublicationError("IDEMPOTENCY_CONFLICT",409,"Commit already reserved");
       const taskId=r.taskBinding?.taskId??randomUUID();
+      if(r.taskBinding?.specification){
+        const now=this.now().toISOString();
+        if(!this.db.getEntity("project",r.draft.projectId))this.db.saveEntity("project",r.draft.projectId,json({id:r.draft.projectId,name:r.repository?.id??"本地收件箱",...(r.repository?{repository:r.repository.id}:{}),revision:1,updatedAt:now}));
+        this.tasks.execute({id:`publication:${id}:specification`,taskId,baseRevision:r.taskBinding.taskRevision,actor:owner,command:{type:"task.update",changes:{projectId:r.draft.projectId,title:r.preview.effectiveTask.title,description:r.draft.description,state:r.preview.effectiveTask.contractState}}});
+        if(r.contract)this.db.saveTaskContract(taskId,json(r.contract));
+      }
       if(!r.taskBinding){const now=this.now().toISOString();const task:Task={id:taskId,projectId:r.draft.projectId,title:r.preview.effectiveTask.title,description:r.draft.description,state:r.preview.effectiveTask.contractState,createdAt:now,updatedAt:now};
         if(!this.db.getEntity("project",task.projectId))this.db.saveEntity("project",task.projectId,json({id:task.projectId,name:r.repository?.id??"本地收件箱",...(r.repository?{repository:r.repository.id}:{}),revision:1,updatedAt:now}));
         this.tasks.execute({id:`publication:${id}`,taskId,baseRevision:0,actor:owner,command:{type:"task.create",task}});

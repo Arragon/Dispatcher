@@ -296,8 +296,14 @@ new evidence and supersedes the old publication review without changing a Run.
 Create-only local tasks re-enter the same publication composer and receipt service
 through a task-bound preview. The server reconstructs instructions and workspace
 from the canonical contract, binds task revision plus contract hash, and commits
-an execution intent for that existing Task. It never creates a second Task or
-rewrites its contract. Startup rechecks the approved contract; source branch
+an execution intent for that existing Task. READY contracts remain frozen.
+Unexecuted local NEEDS_SPEC tasks can supply a schema-validated specification to
+that same preview. It binds actor ownership, task revision, contract hash and
+unarchived state; preview makes no canonical edit. Confirmation atomically updates
+the original Task (including its repository-backed project), compiled contract,
+execution intent and receipt. Partial saves remain NEEDS_SPEC and reload from the
+owned publication draft. Completed saves become READY; immediate dispatch checks
+the post-save revision and reviewed contract. No second Task is created. Startup rechecks the approved contract; source branch
 movement does not replace an existing task's frozen base commit.
 Enabled routing changes qualify concrete native targets before ConfigPlan creation
 and compare fresh catalog evidence again before apply. This I/O remains outside

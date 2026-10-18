@@ -61,3 +61,38 @@ it("focuses local validation errors and opens the affected collapsed field witho
 it("locates server field errors while preserving the draft",async()=>{
  vi.spyOn(globalThis,"fetch").mockImplementation(async(_input,init)=>new Response(JSON.stringify(init?.method==="POST"?{code:"INVALID_DRAFT",message:"Task draft invalid",fieldErrors:[{path:"/targetBranch",code:"invalid",message:"Invalid target branch"}]}:config),{status:init?.method==="POST"?400:200}));mount(<PublishPage/>);await screen.findByRole("option",{name:/repo/});await userEvent.type(screen.getByLabelText("任务说明"),"Preserved body");await userEvent.click(screen.getByRole("button",{name:"检查并审阅"}));const branch=screen.getByLabelText("目标分支（可选）");expect(branch.getAttribute("aria-invalid")).toBe("true");expect(branch.closest("details")?.open).toBe(true);expect(document.getElementById(branch.getAttribute("aria-describedby")!)?.closest("details")).toBe(branch.closest("details"));expect(document.activeElement).toBe(branch);expect((screen.getByLabelText("任务说明")as HTMLTextAreaElement).value).toBe("Preserved body");
 });
+
+it("edits an incomplete task, retains a failed preflight draft and confirms dispatch under the original task ID",async()=>{
+ const posts:Array<{path:string;body:Record<string,unknown>}>=[];
+ const task={revision:2,document:{id:"incomplete",projectId:"local:inbox",title:"Incomplete",description:"Original body",state:"NEEDS_SPEC"},publicationDraft:{schemaVersion:1,clientDraftId:"original",repositoryId:"",referenceLinks:["https://example.invalid/spec"],acceptanceCriteria:[],delivery:{type:"none"},execution:{selectionMode:"manual"}},executionIntent:{execution:{selectionMode:"manual"}}};
+ vi.spyOn(globalThis,"fetch").mockImplementation(async(input,init)=>{
+  const path=String(input);if(init?.method==="POST"){
+   const body=JSON.parse(String(init.body));posts.push({path,body});
+   if(posts.length===1)return new Response(JSON.stringify({code:"INVALID_DRAFT",message:"Review scope",fieldErrors:[{path:"/description",code:"invalid"}]}),{status:400});
+   return new Response(JSON.stringify(path.endsWith("/commit")?{publicationId:"completed-review",state:"STARTED",taskId:"incomplete"}:{publicationId:"completed-review",revision:1,canCommit:true,taskBinding:{taskId:"incomplete",taskRevision:2},effectiveTask:{title:"Incomplete",description:"Original body completed",contractState:"READY",missing:[]},checks:[],confirmation:{required:true,reviewHash:"completed",reasons:[]}}));
+  }
+  return new Response(JSON.stringify(path==="/api/tasks/incomplete"?task:path.includes("/models")?{entries:[],selectionSupport:"native-default-only"}:{...config,config:{...config.config,agentProfiles:[{id:"codex",provider:"codex",alias:"Account",runnerId:"local",enabled:true}]}}));
+ });
+ mount(<PublishPage/>,"/publish?task=incomplete");await screen.findByRole("heading",{name:"完善现有任务"});
+ expect((screen.getByLabelText("任务说明") as HTMLTextAreaElement).value).toBe("Original body");
+ await userEvent.type(screen.getByLabelText("任务说明")," completed");await userEvent.selectOptions(screen.getByLabelText("项目仓库"),"repo");
+ await userEvent.click(screen.getByText("验收与参考",{exact:true}));expect((screen.getByLabelText("参考链接（每行一条）") as HTMLTextAreaElement).value).toBe("https://example.invalid/spec");
+ await userEvent.type(screen.getByLabelText("验收条件（每行一条）"),"works");await userEvent.selectOptions(screen.getByLabelText("Harness 账号"),"codex");await userEvent.selectOptions(screen.getByLabelText("执行方式"),"dispatch");
+ await userEvent.click(screen.getByRole("button",{name:"检查并审阅"}));await screen.findByText("Review scope");expect((screen.getByLabelText("任务说明") as HTMLTextAreaElement).value).toBe("Original body completed");
+ await userEvent.click(screen.getByRole("button",{name:"检查并审阅"}));const review=await screen.findByRole("dialog",{name:"审阅任务草稿"});
+ expect(posts[1]).toMatchObject({path:"/api/tasks/incomplete/publications/preview",body:{expectedRevision:2,draft:{description:"Original body completed",repositoryId:"repo",acceptanceCriteria:["works"],startMode:"dispatch"}}});
+ await userEvent.click(within(review).getByRole("button",{name:"确认并启动执行"}));expect((await screen.findByRole("link",{name:"查看已创建任务"})).getAttribute("href")).toBe("/tasks?task=incomplete");expect(posts.map(p=>p.path)).not.toContain("/api/task-publications/preview");
+});
+it("restores a task-specific incomplete draft without replacing the new-task draft",async()=>{
+ localStorage.setItem("dispatcher.publication-draft.v1",JSON.stringify({description:"Unrelated new task"}));
+ localStorage.setItem("dispatcher.publication-draft.v1:incomplete",JSON.stringify({existingTaskId:"incomplete",existingTaskRevision:"2",title:"My edit",description:"Unsaved detail",acceptance:"Unsaved acceptance"}));
+ vi.spyOn(globalThis,"fetch").mockImplementation(async input=>new Response(JSON.stringify(String(input)==="/api/tasks/incomplete"?{revision:2,document:{id:"incomplete",state:"NEEDS_SPEC",title:"Old title",description:"Old body"},publicationDraft:{repositoryId:"",acceptanceCriteria:[],execution:{},delivery:{type:"none"}}}:config)));
+ mount(<PublishPage/>,"/publish?task=incomplete");await screen.findByRole("heading",{name:"完善现有任务"});expect((screen.getByLabelText("任务说明") as HTMLTextAreaElement).value).toBe("Unsaved detail");expect(JSON.parse(localStorage.getItem("dispatcher.publication-draft.v1")!).description).toBe("Unrelated new task");
+});
+it("reloads a conflicting original task only after preserving the draft until explicit discard",async()=>{
+ localStorage.setItem("dispatcher.publication-draft.v1:incomplete",JSON.stringify({existingTaskId:"incomplete",existingTaskRevision:"2",description:"Unsaved edits"}));
+ const confirm=vi.spyOn(window,"confirm").mockReturnValue(true);
+ vi.spyOn(globalThis,"fetch").mockImplementation(async input=>new Response(JSON.stringify(String(input)==="/api/tasks/incomplete"?{revision:3,document:{id:"incomplete",state:"NEEDS_SPEC",title:"New title",description:"New body"},publicationDraft:{repositoryId:"",acceptanceCriteria:[],execution:{},delivery:{type:"none"}}}:config)));
+ mount(<PublishPage/>,"/publish?task=incomplete");await screen.findByRole("heading",{name:"完善现有任务"});expect((screen.getByLabelText("任务说明") as HTMLTextAreaElement).value).toBe("Unsaved edits");
+ await userEvent.click(screen.getByRole("button",{name:"重新读取任务"}));expect(confirm).toHaveBeenCalled();expect((screen.getByLabelText("任务说明") as HTMLTextAreaElement).value).toBe("New body");
+});
