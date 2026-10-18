@@ -393,3 +393,13 @@ it("returns field errors for malformed specification fields without changing the
   const response=await f.service.app.inject({headers:OWNER,method:"POST",url:`/api/tasks/${created.taskId}/publications/preview`,payload:{expectedRevision:1,execution:f.draft.execution,draft:{...f.draft,description:5}}});
   expect(response.statusCode).toBe(400);expect(response.json()).toMatchObject({code:"INVALID_DRAFT",fieldErrors:[{path:"/description",code:"invalid"}]});expect(f.service.database.getCanonicalTask(created.taskId)?.revision).toBe(1);expect(f.starts).toHaveLength(0);
 });
+it("exports applied configuration references without native settings, command arguments or URL credentials",async()=>{
+ const f=await setup(),config=f.service.configuration.current().config;
+ config.repositories[0]!.remote="https://user:private-pass@example.invalid/repo?token=private-query#private-fragment";
+ config.connectors=[{id:"github",kind:"scm",definitionId:"scm.github",displayName:"GitHub",enabled:false,credentialRef:"secret://github/opaque-reference",settings:{apiBase:"https://github.example",custom:"private-custom-setting"}}];
+ const plan=f.service.configuration.buildPlan(config,"owner","web");await f.service.configuration.applyPlan(plan.id,{confirmed:true});
+ const before=f.service.configuration.current();const response=await f.service.app.inject({headers:OWNER,url:"/api/config/export"});expect(response.statusCode).toBe(200);
+ const exported=response.json();expect(exported).toMatchObject({schemaVersion:1,revision:before.revision,config:{connectors:[{id:"github",credentialRef:"secret://github/opaque-reference"}],repositories:[{id:"repo",remote:"https://example.invalid/repo"}]}});
+ expect(JSON.stringify(exported)).not.toMatch(/private-pass|private-query|private-fragment|private-custom-setting|process.exit/);expect(JSON.stringify(exported)).not.toContain(String(before.config.agentProfiles[0]?.settings?.codexHome));expect(exported.config.agentProfiles[0]).not.toHaveProperty("settings");expect(exported.config.repositories[0]).not.toHaveProperty("root");expect(exported.config.repositories[0].verificationCommands[0]).not.toHaveProperty("args");expect(exported.omittedPaths.length).toBeGreaterThan(0);
+ expect(f.service.configuration.current()).toEqual(before);expect(f.starts).toHaveLength(0);expect((await f.service.app.inject({url:"/api/config/export"})).statusCode).toBe(401);
+});

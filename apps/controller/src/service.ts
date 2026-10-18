@@ -7,7 +7,7 @@ import {RunInputReceipts,InputReceiptError,type RunInputIdentity} from "./run-in
 import {UsageObservations,UsageObservationError,type UsageContext} from "./usage-observations.js";
 import {buildDiagnostics,diagnosticChecks} from "./diagnostics.js";
 import type { ProfileConsoleView,NativeSessionConsoleView,RepositoryConsoleContext,RepositoryRefs,DeliveryEvidence } from "@dispatcher/domain";
-import { applyConfigEdits, consoleConfig, consoleConfigPlan } from "./config-edits.js";
+import { applyConfigEdits, consoleConfig,exportConsoleConfig, consoleConfigPlan } from "./config-edits.js";
 import {qualifyRoutingPolicy,type PolicyConfigEvidence} from "./policy-config.js";
 import {TaskClassifier} from "./task-classifier.js";
 import { remoteCatalog, remoteRunInventory,remoteRepositoryRefs,remoteCommitResult,remoteDeliveryTarget,remotePushResult } from "./remote-results.js";
@@ -4012,6 +4012,7 @@ export class ControllerService {
     });
 
     this.app.get<{Querystring:{view?:string}}>("/api/config", async (request,reply) => {if(request.query.view!==undefined&&request.query.view!=="console")return reply.code(400).send({code:"CONFIG_VIEW_INVALID"});const current=this.configuration.current();return request.query.view==="console"?{...current,...consoleConfig(current.config)}:current;});
+    this.app.get("/api/config/export",async()=>{const current=this.configuration.current();return {schemaVersion:1,revision:current.revision,exportedAt:this.now().toISOString(),...exportConsoleConfig(current.config)};});
     this.app.get("/api/config/schema", async () => ({ schema: dispatcherConfigSchema, uiSchema: dispatcherConfigUiSchema }));
     this.app.get("/api/config/audit", async () => ({ audit: this.database.listAudit() }));
 

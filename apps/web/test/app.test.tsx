@@ -49,7 +49,7 @@ describe("Dashboard shell", () => {
     await userEvent.click(screen.getByRole("button", { name: "下一步：扫描与验证" }));
     await userEvent.click(screen.getByRole("button", { name: "扫描并检查" }));
     expect(await screen.findByText(/Authentication remains unverified/)).toBeTruthy();
-    expect(screen.queryByText(/health check passed/)).toBeNull();
+    expect(screen.queryByText(/健康检查通过/)).toBeNull();
   });
   it("reviews a revision-bound configuration plan before changing account dispatch", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
@@ -65,7 +65,7 @@ describe("Dashboard shell", () => {
     expect(await screen.findByText("kite")).toBeTruthy();
     expect(screen.queryByRole("option", { name: "kite (codex)" })).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: "kite 详情" }));
-    await userEvent.click(screen.getByRole("button", { name: "Enable dispatch for kite" }));
+    await userEvent.click(screen.getByRole("button", { name: "启用 kite 派发" }));
     await screen.findByRole("heading",{name:"审阅派发状态变更"});expect(fetchMock.mock.calls.some(([path])=>String(path).includes("/apply")||String(path).endsWith("/enabled"))).toBe(false);
     const planned=fetchMock.mock.calls.find(([path])=>path==="/api/config/plans");expect(JSON.parse(String(planned?.[1]?.body))).toEqual({baseRevision:3,edits:[{op:"replace",path:"/agentProfiles/0/enabled",entityId:"kite",value:true}]});
     await userEvent.click(screen.getByRole("button",{name:"确认并应用派发变更"}));expect(fetchMock.mock.calls).toContainEqual(["/api/config/plans/activation/apply?view=console",expect.objectContaining({method:"POST",body:JSON.stringify({confirmed:true})})]);
@@ -83,7 +83,7 @@ describe("Dashboard shell", () => {
     render(<SecureInput namespace="linear" name="main" label="Linear credential" />);
     const input = screen.getByLabelText("Linear credential") as HTMLInputElement;
     await userEvent.type(input, "canary-secret-value");
-    await userEvent.click(screen.getByRole("button", { name: "Store" }));
+    await userEvent.click(screen.getByRole("button", { name: "安全保存" }));
     expect(fetchMock).toHaveBeenCalledOnce();
     expect(input.value).toBe("");
     expect(window.location.href).not.toContain("canary-secret-value");
@@ -94,10 +94,10 @@ describe("Dashboard shell", () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true, secret: { lastTestedAt: "2026-09-16T00:00:00.000Z" } }), { status: 200 }))
       .mockResolvedValueOnce(new Response(null, { status: 204 }));
     render(<SecureInput namespace="linear" name="main" label="Linear credential" />);
-    await userEvent.click(screen.getByRole("button", { name: "Test connection" }));
-    expect(await screen.findByText(/Connection test passed/)).toBeTruthy();
-    await userEvent.click(screen.getByRole("button", { name: "Delete" }));
-    expect(await screen.findByText("Not configured")).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "检查凭据" }));
+    expect(await screen.findByText(/凭据检查通过/)).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "删除凭据" }));
+    expect(await screen.findByText("尚未配置")).toBeTruthy();
     expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method])).toEqual([
       ["/api/secrets/linear/main/test", "POST"],
       ["/api/secrets/linear/main", "DELETE"],

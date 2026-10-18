@@ -74,7 +74,7 @@ export default function SetupWizard(): React.JSX.Element {
       <ol className="stepper" aria-label="Setup progress">{steps.map((label, index) => <li key={label} className={index < step ? "done" : index === step ? "current" : ""}>{label}</li>)}</ol>
       <div className="panel wizard-card">
         <div className="wizard-symbol"><Icon name={setup.data.state.completed ? "check" : step === 0 ? "branch" : step === 1 ? "shield" : step === 2 ? "device" : step === 3 ? "link" : "model"} size={29}/></div>
-        {step === 0 ? <><h2>为你的工作区设置身份</h2><p>使用一个稳定的标识，连接本机 Controller 与执行设备。</p><label>Controller ID<input disabled={busy} value={controllerId} pattern="[a-z0-9][a-z0-9._-]*" onChange={(event) => {setControllerId(event.target.value);setPlan(undefined);}} /></label></> : null}
+        {step === 0 ? <><h2>为你的工作区设置身份</h2><p>使用一个稳定的标识，连接本机 Controller 与执行设备。</p><label>控制台 ID<input disabled={busy} value={controllerId} pattern="[a-z0-9][a-z0-9._-]*" onChange={(event) => {setControllerId(event.target.value);setPlan(undefined);}} /></label></> : null}
         {step === 1 ? <div><h2>本地管理与登录</h2><p>使用本地 admin 密码、一次性登录链接或 owner token 进入控制台。</p></div> : null}
         {step === 2 ? <><h2>识别本机执行设备</h2><label>设备显示名称<input disabled={busy} value={runnerName} onChange={(event) => {setRunnerName(event.target.value);setPlan(undefined);}} /></label><Notice>设备名称不会改变 Harness 账号或原生登录。</Notice></> : null}
         {step === 3 ? <div><h2>连接任务、代码和消息平台</h2><p>在设置中查看现有集成，安全保存凭据后再启用所需连接。</p><Link to="/integrations">打开集成设置</Link></div> : null}

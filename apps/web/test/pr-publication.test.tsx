@@ -96,3 +96,8 @@ it("reloads a conflicting original task only after preserving the draft until ex
  mount(<PublishPage/>,"/publish?task=incomplete");await screen.findByRole("heading",{name:"完善现有任务"});expect((screen.getByLabelText("任务说明") as HTMLTextAreaElement).value).toBe("Unsaved edits");
  await userEvent.click(screen.getByRole("button",{name:"重新读取任务"}));expect(confirm).toHaveBeenCalled();expect((screen.getByLabelText("任务说明") as HTMLTextAreaElement).value).toBe("New body");
 });
+it("retains an incomplete task's explicit policy type instead of silently enabling another semantic analysis",async()=>{
+ const task={revision:1,document:{id:"incomplete",title:"Original",description:"Body",state:"NEEDS_SPEC"},publicationDraft:{repositoryId:"repo",acceptanceCriteria:[],execution:{selectionMode:"policy-auto",profileId:"p",taskTypeId:"fix"},delivery:{type:"none"}},executionIntent:{execution:{selectionMode:"policy-auto",profileId:"p",taskTypeId:"fix"}}};
+ const fetch=vi.spyOn(globalThis,"fetch").mockImplementation(async input=>new Response(JSON.stringify(String(input)==="/api/tasks/incomplete"?task:{...config,config:{...config.config,agentProfiles:[{id:"p",alias:"P",provider:"codex",runnerId:"local",enabled:true}],policies:{modelRouting:{enabled:true,classificationMode:"hybrid",taskTypes:[{id:"fix",name:"修复",enabled:true}]}}}})));
+ mount(<PublishPage/>,"/publish?task=incomplete");await screen.findByRole("heading",{name:"完善现有任务"});expect((screen.getByLabelText("任务类型") as HTMLSelectElement).value).toBe("fix");expect(screen.queryByRole("button",{name:"分析并审阅（调用内部模型）"})).toBeNull();expect(fetch.mock.calls.every(([,init])=>!init?.method||init.method==="GET")).toBe(true);
+});

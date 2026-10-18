@@ -202,6 +202,13 @@ runtime configuration and records a classified failed plan. Explicit rollback
 uses the same runtime verification and audit boundary; if rollback fails, the
 active canonical revision is preserved and the failure is classified.
 
+The authenticated `GET /api/config/export` exports an applied-revision reference
+snapshot, independently of browser drafts. It reuses the console projection and
+omits private paths, arbitrary provider/connector settings and executable/argument
+payloads; URL credentials, queries and fragments are removed. Opaque credential
+references remain references and are never resolved. Omission paths and generation
+time make the reduced scope explicit; this snapshot is not a full restore document.
+
 Configuration contains only `secret://namespace/name` references. On macOS,
 secret values use Login Keychain. Other platforms require an explicit
 `DISPATCHER_SECRET_STORE_KEY` and use an AES-256-GCM local envelope with 0600

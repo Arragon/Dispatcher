@@ -59,7 +59,7 @@ it("previews wizard changes before applying and persists the applied revision",a
     if(init?.method==="POST"){posts.push({path,body:JSON.parse(String(init.body))});return new Response(JSON.stringify(path.endsWith("/plans")?{plan:{id:"step-plan",requiresConfirmation:true,risk:"sensitive",changes:[{path:"controller.id"}]}}:{revision:5}));}
     return new Response(JSON.stringify(path==="/api/setup?view=console"?{state:{step:0,configRevision:4,completed:false},config}:config));
   });
-  mount(<SetupWizard/>);await userEvent.type(await screen.findByLabelText("Controller ID"),"-new");await userEvent.click(screen.getByRole("button",{name:"保存并继续"}));
+  mount(<SetupWizard/>);await userEvent.type(await screen.findByLabelText("控制台 ID"),"-new");await userEvent.click(screen.getByRole("button",{name:"保存并继续"}));
   expect(await screen.findByText("审阅本步骤配置")).toBeTruthy();expect(posts).toHaveLength(1);expect(posts[0]?.body.baseRevision).toBe(4);
   await userEvent.click(screen.getByRole("button",{name:"确认应用本步骤"}));
   expect(posts[2]).toMatchObject({path:"/api/setup",body:{step:1,configRevision:5,completed:false}});
@@ -83,10 +83,10 @@ it("reloads a conflicted settings draft when the newer config is already cached"
   vi.spyOn(window,"confirm").mockReturnValue(true);
   vi.spyOn(globalThis,"fetch").mockImplementation(async input=>new Response(JSON.stringify(String(input).endsWith("/schema")?{schema:{type:"object",properties:{controller:{type:"object",properties:{id:{type:"string",title:"Controller ID"}}}}},uiSchema:{}}:{revision,config:{controller:{id:revision===1?"original":"updated"}}})));
   render(<QueryClientProvider client={client}><SettingsPage/></QueryClientProvider>);
-  const field=await screen.findByLabelText("Controller ID");await userEvent.type(field,"-mine");
+  const field=await screen.findByLabelText("控制台 ID");await userEvent.type(field,"-mine");
   revision=2;await act(async()=>{client.setQueryData(["config"],{revision,config:{controller:{id:"updated"}}});});
   await userEvent.click(screen.getByRole("button",{name:"预览配置变更"}));await userEvent.click(await screen.findByRole("button",{name:"重新载入当前配置"}));
-  await waitFor(()=>expect((screen.getByLabelText("Controller ID") as HTMLInputElement).value).toBe("updated"));
+  await waitFor(()=>expect((screen.getByLabelText("控制台 ID") as HTMLInputElement).value).toBe("updated"));
 });
 it("reloads conflicted internal-model drafts from a structurally unchanged cache",async()=>{
   const {default:LlmPage}=await import("../src/LlmPage.js");
@@ -104,7 +104,7 @@ it("reloads conflicted internal-model drafts from a structurally unchanged cache
 it("locks wizard inputs while its reviewed configuration is being prepared",async()=>{
   const {default:SetupWizard}=await import("../src/SetupWizard.js");
   vi.spyOn(globalThis,"fetch").mockImplementation(async(input,init)=>{if(init?.method==="POST")return new Promise<Response>(()=>undefined);const config={revision:1,config:{controller:{id:"controller",adminStrategy:"local"},runners:[{displayName:"Local"}]}};return new Response(JSON.stringify(String(input)==="/api/setup?view=console"?{state:{step:0,completed:false},config}:config));});
-  mount(<SetupWizard/>);const field=await screen.findByLabelText("Controller ID");await userEvent.type(field,"-a");await userEvent.click(screen.getByRole("button",{name:"保存并继续"}));
+  mount(<SetupWizard/>);const field=await screen.findByLabelText("控制台 ID");await userEvent.type(field,"-a");await userEvent.click(screen.getByRole("button",{name:"保存并继续"}));
   expect(field).toHaveProperty("disabled",true);
 });
 it("opens a canonical task while Fleet is unavailable",async()=>{

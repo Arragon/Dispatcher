@@ -63,7 +63,7 @@ it("refuses to build a configuration plan when the editing base revision changed
     return new Response(JSON.stringify({plan:{id:"unsafe",changes:[{path:"controller.id"}]}}));
   });
   mount(<SettingsPage/>);
-  const field=await screen.findByLabelText("Controller ID");
+  const field=await screen.findByLabelText("控制台 ID");
   await userEvent.type(field,"changed");
   await userEvent.click(screen.getByRole("button",{name:"预览配置变更"}));
   expect(await screen.findByText(/配置版本已改变/)).toBeTruthy();
@@ -74,7 +74,7 @@ it("keeps a scoped repository editor within the same ConfigPlan review path", as
   mount(<SettingsPage sectionId="repositories" embedded/>);
   expect(await screen.findByText("Registered repositories")).toBeTruthy();
   expect(screen.queryByText("控制台登录密码")).toBeNull();
-  expect(within(screen.getByRole("region")).queryByLabelText("Controller ID")).toBeNull();
+  expect(within(screen.getByRole("region")).queryByLabelText("控制台 ID")).toBeNull();
 });
 it("preserves a custom default model pool when adding a model and reviews before applying", async () => {
   const {default:LlmPage}=await import("../src/LlmPage.js");
@@ -190,4 +190,11 @@ it("does not turn a creation form into an existing entity after a concurrent con
  vi.spyOn(window,"confirm").mockReturnValue(true);vi.spyOn(globalThis,"fetch").mockImplementation(async input=>new Response(JSON.stringify(String(input)==="/api/config/schema"?schema:changed?latest:original)));
  mount(<SettingsPage sectionId="runners" initialEntity={{id:"",displayName:""}} embedded/>);await userEvent.type(await screen.findByLabelText("标识"),"draft");changed=true;
  await userEvent.click(screen.getByRole("button",{name:"预览配置变更"}));await userEvent.click(await screen.findByRole("button",{name:"重新载入当前配置"}));expect((screen.getByLabelText("标识") as HTMLInputElement).value).toBe("");expect(screen.queryByDisplayValue("Other device")).toBeNull();
+});
+it("downloads only the server's applied configuration reference export while preserving an unsaved draft",async()=>{
+ const blobs:Blob[]=[];const OriginalURL=URL;vi.stubGlobal("URL",class extends OriginalURL{static override createObjectURL(blob:Blob){blobs.push(blob);return "blob:export";}static override revokeObjectURL(){}});vi.spyOn(HTMLAnchorElement.prototype,"click").mockImplementation(()=>undefined);
+ const snapshot={schemaVersion:1,revision:4,config:{controller:{id:"applied"}},omittedPaths:["/agentProfiles/0/settings"]};const calls:string[]=[];
+ vi.spyOn(globalThis,"fetch").mockImplementation(async(input,init)=>{calls.push(`${init?.method??"GET"} ${input}`);return new Response(JSON.stringify(String(input)==="/api/config/export"?snapshot:String(input)==="/api/config/schema"?{schema:{type:"object",properties:{controller:{type:"object",properties:{id:{type:"string",title:"Controller ID"}}}}},uiSchema:{}}:{revision:4,config:{controller:{id:"applied"}}}));});
+ mount(<SettingsPage/>);const field=await screen.findByLabelText("控制台 ID");await userEvent.clear(field);await userEvent.type(field,"UNSAVED-DRAFT");await userEvent.click(screen.getByRole("button",{name:"导出配置引用"}));await screen.findByText("已导出已应用配置的脱敏引用快照。");
+ expect(blobs).toHaveLength(1);const text=await new Promise<string>((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(String(reader.result));reader.onerror=reject;reader.readAsText(blobs[0]!);});expect(JSON.parse(text)).toEqual(snapshot);expect(text).not.toContain("UNSAVED-DRAFT");expect((field as HTMLInputElement).value).toBe("UNSAVED-DRAFT");expect(calls.every(call=>call.startsWith("GET "))).toBe(true);
 });

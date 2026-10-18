@@ -18,6 +18,23 @@ function consoleValue(input:unknown):{value:unknown;protectedPaths:string[]}{
   return {value:visit(input,""),protectedPaths};
 }
 export function consoleConfig(config:DispatcherConfig):{config:DispatcherConfig;protectedPaths:string[]}{const result=consoleValue(config);return {config:result.value as DispatcherConfig,protectedPaths:result.protectedPaths};}
+/** Reference snapshot only: never a restorable backup of private execution configuration. */
+export function exportConsoleConfig(config:DispatcherConfig):{config:unknown;omittedPaths:string[]}{
+  const safe=consoleConfig(config),omitted=new Set(safe.protectedPaths);
+  const visit=(value:unknown,path:string):unknown=>{
+    if(Array.isArray(value))return value.map((entry,index)=>visit(entry,`${path}/${index}`));
+    if(object(value))return Object.fromEntries(Object.entries(value).flatMap(([key,entry])=>{
+      const location=`${path}/${pointer(key)}`;
+      if(["settings","root","file","args"].includes(key)){omitted.add(location);return [];}
+      return [[key,visit(entry,location)]];
+    }));
+    if(typeof value==="string"&&!value.startsWith("secret://")&&/^[a-z][a-z0-9+.-]*:\/\//i.test(value)){
+      try{const url=new URL(value);if(url.username||url.password||url.search||url.hash){url.username="";url.password="";url.search="";url.hash="";omitted.add(path);return url.toString();}}catch{omitted.add(path);return undefined;}
+    }
+    return value;
+  };
+  return {config:visit(safe.config,""),omittedPaths:[...omitted].sort()};
+}
 export function consoleConfigPlan(plan:ConfigPlan):ConfigPlan{return {...plan,changes:plan.changes.map(change=>({...change,before:consoleValue(change.before).value as typeof change.before,after:consoleValue(change.after).value as typeof change.after}))};}
 function segments(path:string):string[]{
   if(!path.startsWith("/")||path.length>2000||/~(?![01])/u.test(path))return fail("CONFIG_EDIT_PATH","Config edits require a strict JSON Pointer");

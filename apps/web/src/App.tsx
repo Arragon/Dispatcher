@@ -46,22 +46,22 @@ export function SecureInput({
   onDeleted?: () => void;
 }): React.JSX.Element {
   const input = useRef<HTMLInputElement>(null);
-  const [status, setStatus] = useState("Not configured");
+  const [status, setStatus] = useState("尚未配置");
   const [busy, setBusy] = useState(false);
   async function submit(event: FormEvent): Promise<void> {
     event.preventDefault();
     const value = input.current?.value;
     if (!value) return;
     setBusy(true);
-    setStatus("Saving securely…");
+    setStatus("正在安全保存…");
     try {
-      const result = await api<{ secret: { backend: string; reference: string } }>(`/api/secrets/${namespace}/${name}`, { method: "PUT", body: JSON.stringify({ value }) });
+      const result = await api<{ secret: { backend: string; reference: string } }>(`/api/secrets/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`, { method: "PUT", body: JSON.stringify({ value }) });
       if (input.current) input.current.value = "";
       onStored?.(result.secret.reference);
-      setStatus(`Stored in ${result.secret.backend}`);
+      setStatus(`已保存到 ${result.secret.backend}`);
     } catch {
       if (input.current) input.current.value = "";
-      setStatus("Secret could not be stored");
+      setStatus("凭据保存失败，请重试");
     } finally {
       setBusy(false);
     }
@@ -69,12 +69,12 @@ export function SecureInput({
 
   async function testConnection(): Promise<void> {
     setBusy(true);
-    setStatus("Testing stored credential…");
+    setStatus("正在检查已存储凭据…");
     try {
-      const result = await api<{ ok: boolean; secret: { lastTestedAt: string | null } }>(`/api/secrets/${namespace}/${name}/test`, { method: "POST" });
-      setStatus(result.ok ? `Connection test passed at ${result.secret.lastTestedAt ?? "now"}` : "Connection test failed or credential is missing");
+      const result = await api<{ ok: boolean; secret: { lastTestedAt: string | null } }>(`/api/secrets/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/test`, { method: "POST" });
+      setStatus(result.ok ? `凭据检查通过 · ${result.secret.lastTestedAt ?? "刚刚"}` : "凭据检查未通过或尚未配置");
     } catch {
-      setStatus("Connection test could not run");
+      setStatus("凭据检查暂不可用");
     } finally {
       setBusy(false);
     }
@@ -82,14 +82,14 @@ export function SecureInput({
 
   async function deleteSecret(): Promise<void> {
     setBusy(true);
-    setStatus("Deleting stored credential…");
+    setStatus("正在删除已存储凭据…");
     try {
-      await api(`/api/secrets/${namespace}/${name}`, { method: "DELETE" });
+      await api(`/api/secrets/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`, { method: "DELETE" });
       if (input.current) input.current.value = "";
       onDeleted?.();
-      setStatus("Not configured");
+      setStatus("尚未配置");
     } catch {
-      setStatus("Stored credential could not be deleted");
+      setStatus("凭据删除失败，已应用引用可能仍在使用");
     } finally {
       setBusy(false);
     }
@@ -97,8 +97,8 @@ export function SecureInput({
   return (
     <form className="secure-input" onSubmit={(event) => void submit(event)}>
       <label htmlFor={`secret-${namespace}-${name}`}>{label}</label>
-      <div><input ref={input} id={`secret-${namespace}-${name}`} type="password" autoComplete="off" required /><button type="submit" disabled={busy}>Store</button></div>
-      <div className="secure-actions"><button type="button" disabled={busy} onClick={() => void testConnection()}>Test connection</button><button type="button" disabled={busy} onClick={() => void deleteSecret()}>Delete</button></div>
+      <div><input ref={input} id={`secret-${namespace}-${name}`} type="password" autoComplete="off" required /><button type="submit" disabled={busy}>安全保存</button></div>
+      <div className="secure-actions"><button type="button" disabled={busy} onClick={() => void testConnection()}>检查凭据</button><button type="button" disabled={busy} onClick={() => void deleteSecret()}>删除凭据</button></div>
       <small aria-live="polite">{status}</small>
     </form>
   );

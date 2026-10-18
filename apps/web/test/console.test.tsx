@@ -59,7 +59,7 @@ it("retains hidden settings and invalidates a reviewed plan after the draft chan
     return new Response(null, {status:204});
   });
   render(<QueryClientProvider client={new QueryClient({defaultOptions:{queries:{retry:false}}})}><SettingsPage /></QueryClientProvider>);
-  const id = await screen.findByLabelText("Controller ID");
+  const id = await screen.findByLabelText("控制台 ID");
   await userEvent.clear(id); await userEvent.type(id,"changed");
   await userEvent.click(screen.getByRole("button", {name:"预览配置变更"}));
   expect(await screen.findByRole("button", {name:"确认并应用"})).toBeTruthy();
@@ -69,7 +69,7 @@ it("retains hidden settings and invalidates a reviewed plan after the draft chan
   await userEvent.click(screen.getByRole("button", {name:"Agent 账号"}));
   expect((screen.getByDisplayValue("kite") as HTMLInputElement).readOnly).toBe(true);
   await userEvent.click(screen.getByRole("button", {name:"控制台"}));
-  expect((screen.getByLabelText("Controller ID") as HTMLInputElement).value).toBe("changed2");
+  expect((screen.getByLabelText("控制台 ID") as HTMLInputElement).value).toBe("changed2");
   expect(fetchMock.mock.calls.some(([path]) => String(path).includes("/apply"))).toBe(false);
 });
 
@@ -178,7 +178,7 @@ it.each([false,true])("refreshes a rolled-back config without discarding a newer
  });
  render(<QueryClientProvider client={new QueryClient({defaultOptions:{queries:{retry:false}}})}><SettingsPage/></QueryClientProvider>);
  await userEvent.click(await screen.findByRole("button",{name:"核对上次配置计划"}));await screen.findByRole("button",{name:"回滚上次计划"});
- const field=screen.getByRole("textbox",{name:"Controller ID"});
+ const field=screen.getByRole("textbox",{name:"控制台 ID"});
  if(dirty){await userEvent.clear(field);await userEvent.type(field,"new-unsubmitted-draft");}
  await userEvent.click(screen.getByRole("button",{name:"回滚上次计划"}));await screen.findByText(/配置已回滚/);
  expect((field as HTMLInputElement).value).toBe(dirty?"new-unsubmitted-draft":"original");
