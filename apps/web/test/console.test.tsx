@@ -90,7 +90,7 @@ it("keeps login evidence in the checked account row and prevents duplicate check
     if (String(input).endsWith("/test")) return new Promise<Response>((resolve) => {complete=resolve;});
     return new Response(JSON.stringify({matrix:[]}));
   });
-  render(<QueryClientProvider client={new QueryClient()}><AgentsPage /></QueryClientProvider>);
+  render(<QueryClientProvider client={new QueryClient()}><MemoryRouter><AgentsPage /></MemoryRouter></QueryClientProvider>);
   const check = await screen.findByRole("button",{name:"测试 ronna 登录"});
   await userEvent.click(check); await userEvent.click(check);
   expect(fetchMock.mock.calls.filter(([path]) => String(path).endsWith("/test"))).toHaveLength(1);

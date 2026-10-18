@@ -39,12 +39,15 @@ describe("Dashboard shell", () => {
       if (input === "/api/adapters/manifests") return new Response(JSON.stringify({ manifests: [{ id: "opencode", displayName: "OpenCode", platforms: ["darwin"], configSchema: { type: "object", properties: {} }, uiSchema: {}, secretFields: [], backends: [], capabilities: {} }] }));
       if (input === "/api/agents/profiles") return new Response(JSON.stringify({ profiles: [], sessions: [] }));
       if (input === "/api/adapters/compatibility") return new Response(JSON.stringify({ matrix: [] }));
+      if (input === "/api/config?view=console") return new Response(JSON.stringify({revision:1,config:{runners:[{id:"local",displayName:"Local",mode:"embedded"}]}}));
       return new Response(JSON.stringify({ installed: true, compatible: true, authenticated: false, authentication: "unknown", version: "2.0.21", diagnostic: "Authentication remains unverified." }));
     });
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(<QueryClientProvider client={client}><MemoryRouter><AgentsPage /></MemoryRouter></QueryClientProvider>);
     await userEvent.click((await screen.findAllByRole("button", { name: "添加账号" }))[0]!);
-    await userEvent.click(await screen.findByRole("button", { name: "扫描并检查" }));
+    await userEvent.click(await screen.findByRole("button", { name: "下一步：配置账号" }));
+    await userEvent.click(screen.getByRole("button", { name: "下一步：扫描与验证" }));
+    await userEvent.click(screen.getByRole("button", { name: "扫描并检查" }));
     expect(await screen.findByText(/Authentication remains unverified/)).toBeTruthy();
     expect(screen.queryByText(/health check passed/)).toBeNull();
   });

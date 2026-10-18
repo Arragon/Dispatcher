@@ -3,7 +3,7 @@ import type { QueryClient } from "@tanstack/react-query";
 
 /** All projections affected by an applied configuration share this refresh boundary. */
 export async function refreshConfiguration(client: QueryClient): Promise<void> {
-  const keys = new Set(["config", "setup", "llm", "fleet", "runners", "agent-profiles", "fleet-connectors", "resources", "native-models"]);
+  const keys = new Set(["config", "setup", "llm", "fleet", "runners", "agent-profiles", "agent-profile", "fleet-connectors", "resources", "native-models"]);
   await client.invalidateQueries({ predicate: query => keys.has(String(query.queryKey[0])) });
 }
 

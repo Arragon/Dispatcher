@@ -134,3 +134,14 @@ it("uses a native directory only as an explicit candidate and never applies conf
  expect(fetch.mock.calls.filter(([,init])=>init?.method==="POST").map(([path])=>String(path))).toEqual(["/api/local/directory-selections"]);view.unmount();choice="cancelled";selected.mockClear();
  mount(<Picker runners={[{id:"local",mode:"embedded"}]} onSelect={selected}/>);await userEvent.click(screen.getByRole("button",{name:"打开本机目录对话框"}));expect(await screen.findByText("已取消，配置没有变更。")).toBeTruthy();expect(selected).not.toHaveBeenCalled();
 });
+it("edits only the selected account while preserving sibling profiles and protected fields",async()=>{
+  const plans:unknown[]=[];const config={revision:4,protectedPaths:["/agentProfiles/1/settings/codexHome"],config:{agentProfiles:[{id:"first",provider:"codex",alias:"Other account",runnerId:"local"},{id:"second",provider:"codex",alias:"Selected account",runnerId:"local",settings:{model:"m"}}]}};
+  vi.spyOn(globalThis,"fetch").mockImplementation(async(input,init)=>{
+    if(init?.method==="POST"){plans.push(JSON.parse(String(init.body)));return new Response(JSON.stringify({plan:{id:"single",risk:"sensitive",requiresConfirmation:true,changes:[{path:"/agentProfiles/1/alias"}]}}));}
+    const item={type:"object",properties:{id:{type:"string"},provider:{type:"string"},alias:{type:"string"},runnerId:{type:"string"},settings:{type:"object",properties:{model:{type:"string"}}}}};
+    return new Response(JSON.stringify(String(input)==="/api/config/schema"?{schema:{type:"object",properties:{agentProfiles:{type:"array",items:item}}},uiSchema:{}}:config));
+  });
+  mount(<SettingsPage sectionId="agentProfiles" entityId="second" embedded/>);const alias=await screen.findByLabelText("别名");expect(screen.getAllByLabelText("别名")).toHaveLength(1);expect((alias as HTMLInputElement).value).toBe("Selected account");expect((screen.getByLabelText("标识") as HTMLInputElement).readOnly).toBe(true);
+  await userEvent.clear(alias);await userEvent.type(alias,"Changed account");await userEvent.click(screen.getByRole("button",{name:"预览配置变更"}));await screen.findByRole("button",{name:"确认并应用"});
+  expect(plans).toEqual([{baseRevision:4,edits:[{op:"replace",path:"/agentProfiles/1/alias",entityId:"second",value:"Changed account"}]}]);
+});

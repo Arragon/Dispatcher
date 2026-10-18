@@ -35,11 +35,13 @@ it("reviews a Harness configuration plan and routes trials through canonical pub
   vi.spyOn(globalThis,"fetch").mockImplementation(async(input,init)=>{
     const path=String(input);
     if(init?.method==="POST"){posted.push({path,body:JSON.parse(String(init.body))});return new Response(JSON.stringify(path.split("?")[0]!.endsWith("/apply")?{revision:2}:{plan:{id:"review",risk:"sensitive",requiresConfirmation:true,changes:[{path:"agentProfiles"}]}}));}
-    return new Response(JSON.stringify(path.includes("manifests")?{manifests:[{id:"codex",displayName:"Codex",platforms:[],configSchema:{type:"object",properties:{id:{type:"string",title:"账号 ID"},alias:{type:"string",title:"别名"},codexHome:{type:"string",title:"配置目录"}}},uiSchema:{},secretFields:[],backends:[],capabilities:{}}]}:path.includes("compatibility")?{matrix:[]}:{revision:1,profiles:[],sessions:[]}));
+    return new Response(JSON.stringify(path.includes("manifests")?{manifests:[{id:"codex",displayName:"Codex",platforms:[],configSchema:{type:"object",properties:{id:{type:"string",title:"账号 ID"},alias:{type:"string",title:"别名"},codexHome:{type:"string",title:"配置目录"}}},uiSchema:{},secretFields:[],backends:[],capabilities:{}}]}:path.includes("compatibility")?{matrix:[]}:path.includes("/api/config?")?{revision:1,config:{runners:[{id:"local",displayName:"Local",mode:"embedded"}]}}:{revision:1,profiles:[],sessions:[]}));
   });
   mount(<AgentsPage/>);
   await userEvent.click((await screen.findAllByRole("button",{name:"添加账号"}))[0]!);
+  await userEvent.click(screen.getByRole("button",{name:"下一步：配置账号"}));
   await userEvent.type(screen.getByLabelText("账号 ID"),"account");await userEvent.type(screen.getByLabelText("别名"),"Account");await userEvent.type(screen.getByLabelText("配置目录"),"/private/account");
+  await userEvent.click(screen.getByRole("button",{name:"下一步：扫描与验证"}));
   await userEvent.click(screen.getByRole("button",{name:"生成账号配置计划"}));
   expect(await screen.findByRole("button",{name:"确认保存账号"})).toBeTruthy();
   expect(posted).toEqual([{path:"/api/agents/codex/profiles",body:expect.objectContaining({previewOnly:true,baseRevision:1})}]);
@@ -144,4 +146,12 @@ it("separates canonical task links from standalone controls and exposes uncertai
  const dialog=screen.getByRole("dialog",{name:"独立 Agent 会话"});expect(within(dialog).getByText("尚未确认，继续输入与账号变更已阻止")).toBeTruthy();expect(await within(dialog).findByText("尚无已验证的原生用量；缺失值不按 0 计算。")).toBeTruthy();expect(fetch.mock.calls.some(([path])=>String(path).includes("sessionId=standalone"))).toBe(true);
  await userEvent.click(within(dialog).getByRole("button",{name:"停止会话"}));expect(await within(dialog).findByText("已确认")).toBeTruthy();expect((within(dialog).getByRole("button",{name:"停止会话"}) as HTMLButtonElement).disabled).toBe(true);
  expect(fetch.mock.calls.filter(([,init])=>init?.method==="POST").map(([path])=>String(path))).toEqual(["/api/agents/profiles/p/sessions/standalone/cancel"]);
+});
+it("opens a linkable Harness account detail with dedicated tabs and account-scoped sessions",async()=>{
+  const {default:AgentsPage}=await import("../src/AgentsPage.js");
+  const profile={id:"account",alias:"Account",provider:"codex",runnerId:"local",state:"CONFIGURED",capabilities:["code"],defaultModel:{id:"native-model"}};
+  vi.spyOn(globalThis,"fetch").mockImplementation(async input=>new Response(JSON.stringify(String(input).includes("manifests")?{manifests:[{id:"codex",displayName:"Codex",platforms:[],configSchema:{type:"object"},uiSchema:{},secretFields:[],backends:[],capabilities:{}}]}:String(input).includes("compatibility")?{matrix:[]}:String(input)==="/api/agents/profiles/account"?{profile}:{profiles:[profile],sessions:[{id:"own-session",profileId:"account",state:"COMPLETED",createdAt:"2026-10-18T12:00:00Z",canonical:false},{id:"foreign-session",profileId:"other",state:"COMPLETED",createdAt:"2026-10-18T12:00:00Z",canonical:false}]})));
+  mount(<AgentsPage/>,"/harnesses?profile=account");await screen.findByRole("heading",{name:"Account"});
+  expect(screen.getByRole("link",{name:"返回 Harness"}).getAttribute("href")).toBe("/harnesses");expect(screen.getByRole("tab",{name:"账号与登录"})).toBeTruthy();expect(screen.getByRole("tab",{name:"执行设置"})).toBeTruthy();expect(screen.getByRole("tab",{name:"原生模型"})).toBeTruthy();expect(screen.getByRole("tab",{name:"能力与限制"})).toBeTruthy();
+  expect(screen.getByText(/own-session/)).toBeTruthy();expect(screen.queryByText(/foreign-session/)).toBeNull();await userEvent.click(screen.getByRole("tab",{name:"原生模型"}));expect(screen.getByRole("link",{name:"打开此账号的原生模型目录"}).getAttribute("href")).toBe("/models?profile=account");
 });
