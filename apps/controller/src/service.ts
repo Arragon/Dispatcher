@@ -2302,6 +2302,14 @@ export class ControllerService {
     return {version:1,mode:automatic?"policy-auto":"manual",source:automatic?"policy":explicit?requestedSource==="account-default"?"account-default":"explicit":"native-default",selectionType:explicit?"explicit-model":"native-default",...(explicit?{requestedModel:automatic?routingDecision!.target!.modelId:draft.execution.nativeModelId!,catalogRevision:catalog.revision}:{}),profileId:profile.id,runnerId:profile.runnerId,providerId:profile.provider,backendId,nativeParameters,...(routingDecision?{routingDecision}:{}),contextFingerprint:catalog.contextFingerprint,configRevision:snapshot.revision,selectedAt:this.now().toISOString()};
   }
 
+  private compileLegacyRunSelection(run:Run,repositoryId:string,adapter:AgentAdapter):ExecutionSelection {
+    const scope=this.resolveProfileExecutionContext(run.profileId,repositoryId,"start");
+    const defaults=adapter.legacyInvocationDefaults?.();
+    const backendId=defaults?.backendId??(adapter.manifest.backends.length===1?adapter.manifest.backends[0]!.id:undefined);
+    if(!backendId||!adapter.manifest.backends.some(backend=>backend.id===backendId))throw new PublicationError("NATIVE_BACKEND_UNAVAILABLE",409,"The owning adapter has no unambiguous legacy execution backend");
+    return {version:1,mode:"legacy",source:"legacy-config",profileId:run.profileId,runnerId:run.runnerId,providerId:run.providerId,backendId,selectionType:defaults?.model?"explicit-model":"native-default",...(defaults?.model?{requestedModel:defaults.model}:{}),nativeParameters:{},contextFingerprint:scope.fingerprint,configRevision:scope.configRevision,selectedAt:this.now().toISOString()};
+  }
+
   private async validateRunSelection(run:Run):Promise<void> {
     const registeredContract=(this.database.getEntity<JsonValue>("run-contract",run.id)??this.database.getTaskContract<JsonValue>(run.taskId)) as unknown as TaskContract|undefined;
     this.resolveProfileExecutionContext(run.profileId,registeredContract?.workspace?.repositoryId,"resume");
@@ -2310,6 +2318,12 @@ export class ControllerService {
     const selection=run.executionSelection;
     const contract=this.database.getEntity<JsonValue>("run-contract",run.id) as unknown as TaskContract|undefined;
     if(!contract?.workspace||!run.worktree)throw new PublicationError("RUN_CONTEXT_UNAVAILABLE",409,"Frozen run context is unavailable");
+    if(selection.mode==="legacy"){
+      if(selection.source!=="legacy-config"||this.resolveProfileExecutionContext(run.profileId,contract.workspace.repositoryId,"resume").fingerprint!==selection.contextFingerprint)throw new PublicationError("SELECTION_CHANGED",409,"Legacy invocation context changed; review the original Run before continuing");
+      const current=this.database.getEntity<JsonValue>("run",run.id) as unknown as Run|undefined;
+      if(!current||current.state!==run.state||current.generation!==run.generation||current.leaseId!==run.leaseId||current.sessionId!==run.sessionId||contentHash(current.executionSelection)!==contentHash(selection))throw new PublicationError("RUN_CHANGED",409,"Run authority changed before continuation");
+      return;
+    }
     const catalog=await this.modelCatalog(run.profileId,contract.workspace.repositoryId,"before-start",run.worktree);
     if(catalog.failure?.code==="NATIVE_AUTH_REQUIRED"||catalog.runnerId!==selection.runnerId||catalog.contextFingerprint!==selection.contextFingerprint)throw new PublicationError("SELECTION_CHANGED",409,"Native account or project context changed before continuation");
     if(selection.selectionType==="explicit-model"&&(catalog.freshness!=="native-fresh"||catalog.revision!==selection.catalogRevision))throw new PublicationError("SELECTION_CHANGED",409,"Native model catalog changed before continuation");
@@ -2387,13 +2401,14 @@ export class ControllerService {
     this.database.saveEntity("workspace-intent",runId,json({...workspacePlan,state:remote?"PLANNED":"CREATING",runnerId:repositoryRunner}));
     const workspace=remote?this.remoteWorkspace(await this.remoteRequest(repositoryRunner,{type:"native.workspace_plan",profileId:publication!.selection!.profileId,plan:workspacePlan}),workspacePlan):await this.workspaces.create(workspacePlan);
     if(!remote)this.database.transaction(()=>{this.database.saveEntity("workspace-handle",runId,json(workspace));this.database.saveEntity("workspace-intent",runId,json({...workspacePlan,state:"CREATED",path:workspace.path}));});
+    const runContract:TaskContract={...contract,workspace:{...contract.workspace,repositoryId,baseRef:workspace.baseRef,baseCommit:workspace.baseRevision}};
     let dispatched: Awaited<ReturnType<CanonicalScheduler["dispatch"]>>;
     this.dispatchingRuns.add(runId);
     try {
       dispatched = await scheduler.dispatch({
         task: stored.document as unknown as Task,
         taskRevision: stored.revision,
-        contract,
+        contract:runContract,
         requirements: {
           capabilities: ["code", "git", ...(body?.capabilities ?? [])],
           ...(body?.runnerTags?.length ? { runnerTags: body.runnerTags } : {}),
@@ -2419,6 +2434,8 @@ export class ControllerService {
             if(contentHash({...selection,selectedAt:undefined})!==contentHash({...publication.selection,selectedAt:undefined}))throw new PublicationError("SELECTION_CHANGED",409,"Selection changed before native startup");
             if(this.configuration.current().revision!==publication.configRevision)throw new PublicationError("SELECTION_CHANGED",409,"Configuration changed before native startup");
           }
+          const selectionRun=this.database.getEntity<JsonValue>("run",runId) as unknown as Run|undefined;
+          if(selectionRun?.executionSelection?.mode==="legacy")await this.validateRunSelection(selectionRun);
           const reserved=this.database.getEntity<JsonValue>("run",runId) as unknown as Run|undefined;
           const currentTask=this.database.getCanonicalTask<JsonValue>(taskId)?.document as unknown as Task|undefined;
           if(reserved?.state!=="STARTING"||currentTask?.state!=="QUEUED"||currentTask.currentRunId!==runId)throw new PublicationError("RUN_CHANGED",409,"Task or run changed during preflight");
@@ -2426,6 +2443,7 @@ export class ControllerService {
         runId,
         onRunStarting: (run, decision) => {
           this.resolveProfileExecutionContext(run.profileId,repositoryId,"start");
+          if(!run.executionSelection)run.executionSelection=this.compileLegacyRunSelection(run,repositoryId,decision.selected!.adapter);
           const selectedModel = this.configuration.current().config.agentProfiles.find((profile) => profile.id === run.profileId)?.settings?.model;
           if(publication?.selection?.requestedModel)run.model={id:publication.selection.requestedModel,source:"selection"};
           if (!publication?.selection && typeof selectedModel === "string") run.model = { id: selectedModel, source: "configuration" };
@@ -2437,7 +2455,7 @@ export class ControllerService {
             const currentContract = this.database.getTaskContract<JsonValue>(taskId) as unknown as TaskContract | undefined;
             if (!current || (current.document as unknown as Task).state !== "READY" || currentContract?.revision !== contract.revision) throw new TaskDispatchError("TASK_CHANGED", 409, "Task changed before dispatch reservation");
             if(publication && this.configuration.current().revision!==publication.configRevision)throw new PublicationError("SELECTION_CHANGED",409,"Configuration changed during workspace creation");
-            this.database.saveEntity("run-contract",run.id,json(contract));
+            this.database.saveEntity("run-contract",run.id,json(runContract));
             if(reviewedDelivery)this.database.saveEntity("run-delivery-selection",run.id,json(reviewedDelivery));
             this.database.saveEntity("run-verification-config",run.id,json(repositoryConfig.verificationCommands));
             this.database.saveEntity("run", run.id, json(run));
@@ -2506,7 +2524,7 @@ export class ControllerService {
     const verification = this.database.getEntity<JsonValue>("run-verification-config", runId) as unknown as RepositoryConfig["verificationCommands"] | undefined;
     const delivery = this.database.getEntity<JsonValue>("run-delivery-selection", runId) as unknown as ScmDeliverySelection | undefined;
     const repository = workspace ? snapshot.config.repositories.find(entry => entry.id === workspace.repositoryId) : undefined;
-    if (!run || !["ACTIVE", "WAITING_USER", "RESOURCE_BLOCKED", "SUSPECTED_STALL"].includes(run.state) || run.executionSelection || !profile || !adapter || !previousAdapter || !workspace || workspace.runId !== run.id || workspace.taskId !== run.taskId || !contract || !Array.isArray(verification) || !repository) throw new SemanticPolicyError("INVALID_INPUT", "Legacy reroute requires a current Run with frozen context and an owned worktree; otherwise review a new publication");
+    if (!run || !["ACTIVE", "WAITING_USER", "RESOURCE_BLOCKED", "SUSPECTED_STALL"].includes(run.state) || run.executionSelection&&run.executionSelection.mode!=="legacy" || !profile || !adapter || !previousAdapter || !workspace || workspace.runId !== run.id || workspace.taskId !== run.taskId || !contract || !Array.isArray(verification) || !repository) throw new SemanticPolicyError("INVALID_INPUT", "Legacy reroute requires a current Run with frozen context and an owned worktree; otherwise review a new publication");
     if (profile.runnerId !== run.runnerId || previousAdapter instanceof RemoteNativeAdapter || adapter instanceof RemoteNativeAdapter) throw new SemanticPolicyError("INVALID_INPUT", "Rerouting across Runner authority requires a new reviewed publication");
     if (run.recoveryReason === "NATIVE_OUTCOME_UNKNOWN" || this.runCancellations.has(run.id) || this.pendingConsoleInputs.has(run.sessionId)) throw new SemanticPolicyError("INVALID_INPUT", "Pending or uncertain native execution must settle before reroute");
     if (contract.delivery.type === "pull-request" && !delivery && !this.options.gitTransport) throw new SemanticPolicyError("INVALID_INPUT", "The original Run has no frozen SCM target; review a new publication");
@@ -2541,8 +2559,9 @@ export class ControllerService {
       replacementId = randomUUID(); let reservedRevision: number | undefined;
       const dispatched = await scheduler.dispatch({
         task: task.document as unknown as Task, taskRevision: task.revision, contract, requirements, workspacePath: workspace.path, runId: replacementId, replacement: stopped,
-        onRunStarting: replacement => {
+        onRunStarting: (replacement,decision) => {
           assertTaskOwner(true);
+          replacement.executionSelection=this.compileLegacyRunSelection(replacement,repository.id,decision.selected!.adapter);
           replacement.branch = workspace.branch; replacement.leaseExpiresAt = new Date(this.now().getTime() + 15 * 60_000).toISOString();
           replacement.revokedLeaseIds = [...new Set([...(run.revokedLeaseIds ?? []), run.leaseId])];
           if (typeof profile.settings?.model === "string") replacement.model = { id: profile.settings.model, source: "configuration" };

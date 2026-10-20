@@ -1,3 +1,5 @@
+import {freezeExecutionSelection} from "./execution-selection.js";
+import type {ExecutionSelection} from "@dispatcher/domain";
 import { randomUUID } from "node:crypto";
 import {
   AdapterContractError,
@@ -124,7 +126,9 @@ export class DevinAdapter implements AgentAdapter {
     this.backend = backend ?? new HttpDevinBackend(profile, resolveCredential!, fetchImpl);
   }
 
-  async start(input: { runId: string; workspacePath: string; backendId?: string; prompt?: string }): Promise<AdapterSession> {
+  async start(input: { runId: string; workspacePath: string; backendId?: string; prompt?: string; executionSelection?:ExecutionSelection }): Promise<AdapterSession> {
+    const backendId=input.backendId??"devin-v3-api";
+    const selection=freezeExecutionSelection(input.executionSelection,{profileId:this.profile.id,providerId:this.manifest.id,backendId,selection:false,reasoning:false});
     const now = new Date().toISOString();
     const session: AdapterSession = {
       id: randomUUID(),
@@ -133,6 +137,7 @@ export class DevinAdapter implements AgentAdapter {
       workspacePath: input.workspacePath,
       state: "STARTING",
       profileId: this.profile.id,
+      ...(selection?{executionSelection:selection}:{}),
       createdAt: now,
       updatedAt: now,
     };

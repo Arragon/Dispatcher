@@ -6,14 +6,14 @@ const text=(value:unknown):value is string=>typeof value==="string"&&value.lengt
 const fail=(code:string,message:string):never=>{throw new AdapterContractError(code,message);};
 
 /** Validate at the owning adapter before native preparation; keep one immutable choice. */
-export function freezeExecutionSelection(value:ExecutionSelection|undefined,owner:{profileId:string;providerId:string;backendId:string;selection:boolean;reasoning:boolean}):ExecutionSelection|undefined{
+export function freezeExecutionSelection(value:ExecutionSelection|undefined,owner:{profileId:string;providerId:string;backendId:string;selection:boolean;reasoning:boolean;legacyModel?:boolean}):ExecutionSelection|undefined{
   if(value===undefined)return;
   if(!value||typeof value!=="object"||value.version!==1||!text(value.profileId)||!text(value.providerId)||!text(value.backendId)||!text(value.runnerId)||!text(value.contextFingerprint)||!text(value.selectedAt)||!Number.isSafeInteger(value.configRevision)||value.configRevision<0||!value.nativeParameters||typeof value.nativeParameters!=="object"||Array.isArray(value.nativeParameters))return fail("EXECUTION_SELECTION_INVALID","Frozen execution selection is malformed");
   if(value.profileId!==owner.profileId||value.providerId!==owner.providerId||value.backendId!==owner.backendId)return fail("EXECUTION_SELECTION_CONTEXT_MISMATCH","Frozen selection belongs to another account or backend");
   const explicit=value.selectionType==="explicit-model",source=value.source;
   if(!["manual","policy-auto","legacy"].includes(value.mode)||!["explicit-model","native-default"].includes(value.selectionType)||(value.mode==="policy-auto"?source!=="policy":value.mode==="legacy"?source!=="legacy-config":!["explicit","account-default","native-default"].includes(source)))return fail("EXECUTION_SELECTION_INVALID","Frozen selection provenance is malformed");
   if(explicit? !text(value.requestedModel)||source==="native-default" : value.requestedModel!==undefined||Object.keys(value.nativeParameters).length>0||!["native-default","legacy-config"].includes(source))return fail("EXECUTION_SELECTION_INVALID","Model choice contradicts native-default semantics");
-  if(explicit&&!owner.selection)return fail("UNSUPPORTED_MODEL_SELECTION","This native backend cannot submit a model choice");
+  if(explicit&&!owner.selection&&!(value.mode==="legacy"&&owner.legacyModel))return fail("UNSUPPORTED_MODEL_SELECTION","This native backend cannot submit a model choice");
   if(Object.entries(value.nativeParameters).some(([key,value])=>!owner.reasoning||key!=="reasoningEffort"||!text(value)))return fail("UNSUPPORTED_NATIVE_PARAMETERS","This native backend cannot submit the requested parameters");
   return structuredClone(value);
 }

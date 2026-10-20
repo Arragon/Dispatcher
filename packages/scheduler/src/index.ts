@@ -84,7 +84,7 @@ export class CanonicalScheduler {
     const runId = input.runId ?? randomUUID();
     const now = new Date().toISOString();
     const run: Run = {
-      ...(input.executionSelection ? {executionSelection:input.executionSelection} : {}),
+      ...(input.executionSelection ? {executionSelection:structuredClone(input.executionSelection)} : {}),
       id: runId,
       taskId: input.task.id,
       runnerId: decision.selected.runnerId,
@@ -107,7 +107,7 @@ export class CanonicalScheduler {
     input.onRunStarting?.(run, decision);
     try {
       await input.beforeStart?.();
-      const session = await decision.selected.adapter.start({ runId, workspacePath: input.workspacePath, prompt: renderTaskContract(input.contract), ...(input.executionSelection ? {executionSelection:input.executionSelection} : {}) });
+      const session = await decision.selected.adapter.start({ runId, workspacePath: input.workspacePath, prompt: renderTaskContract(input.contract), ...(run.executionSelection ? {executionSelection:structuredClone(run.executionSelection)} : {}) });
       run.sessionId = session.id;
       if (session.providerSessionId) run.providerSessionId = session.providerSessionId;
       run.resumePolicy = session.providerSessionId || decision.selected.adapter.manifest.capabilities.resume ? "same-session" : "controlled-reroute";

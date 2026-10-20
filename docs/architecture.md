@@ -248,6 +248,20 @@ do not gain that proof. Existing consumers may omit the callback; full Controlle
 composition and qualification of other writers remain required before enabling
 native control transitions.
 
+Legacy canonical HTTP/Slack dispatch and owning-Runner reroute compile a new
+`legacy-config` ExecutionSelection from the selected adapter's actual invocation
+defaults. The projection carries backend/model request facts, with no native
+catalog qualification. Generic PTY owns its backend choice; a multi-backend
+adapter without a projection cannot borrow the first declared backend. Scheduler
+passes the reserved Run's snapshot into start and adapter sessions retain it.
+Existing configured-model consumers can preserve those legacy requests while
+unsupported interactive selection stays closed. Qoder continuation uses the
+stored snapshot. New Run contracts freeze workspace facts from the created
+WorkspaceHandle; historical records are not filled from current configuration.
+Legacy continuation rechecks scoped execution/credential context without querying
+or inventing native catalog evidence. Native reported model and price can remain
+unknown independently of a configured request.
+
 SQLite online backups are consistent private archives with checksums and an
 inventory. Archives refuse live startup; restore targets must be new directories
 and retain a durable reconciliation barrier. Restoring bytes alone never
@@ -837,8 +851,8 @@ entrypoints without a v3 selection capture one adapter-session default snapshot,
 including a known omitted parameter; it cannot coexist with ExecutionSelection.
 Historical missing or legacy-shaped model facts require reconciliation before
 continuation. These persisted snapshots and their execution owners are immutable;
-provider results and ordinary lifecycle state stay separate. Canonical legacy
-Run selection compilation and the full native control Guard remain pending.
+provider results and ordinary lifecycle state stay separate. Legacy canonical
+Run selection compilation is integrated; the full native control Guard remains pending.
 
 
 ## Usage observations

@@ -1,3 +1,5 @@
+import {freezeExecutionSelection} from "./execution-selection.js";
+import type {ExecutionSelection} from "@dispatcher/domain";
 import { randomUUID } from "node:crypto";
 import { OwnedProcessGroup } from "./owned-process.js";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
@@ -49,9 +51,9 @@ export class GenericMockAdapter implements AgentAdapter {
   readonly manifest = validateManifest(genericMockManifest);
   constructor(private readonly store: SessionStore = new MemorySessionStore()) {}
 
-  async start(input: { runId: string; workspacePath: string; backendId?: string }): Promise<AdapterSession> {
+  async start(input: { runId: string; workspacePath: string; backendId?: string; executionSelection?:ExecutionSelection }): Promise<AdapterSession> {
     const now = new Date().toISOString();
-    const session: AdapterSession = { id: randomUUID(), runId: input.runId, backendId: input.backendId ?? "mock-sdk", workspacePath: input.workspacePath, state: "RUNNING", createdAt: now, updatedAt: now };
+    const session: AdapterSession = { id: randomUUID(), runId: input.runId, backendId: input.backendId ?? "mock-sdk", workspacePath: input.workspacePath, state: "RUNNING", ...(input.executionSelection?{executionSelection:structuredClone(input.executionSelection)}:{}), createdAt: now, updatedAt: now };
     this.store.save(session);
     return structuredClone(session);
   }
@@ -159,11 +161,15 @@ export class GenericCliAdapter implements AgentAdapter {
   private readonly cancelledSessions = new Set<string>();
   constructor(private readonly executor: ProcessExecutor, private readonly template: GenericCliTemplate, private readonly store: SessionStore = new MemorySessionStore(), private readonly profileId?: string) {}
 
-  async start(input: { runId: string; workspacePath: string; backendId?: string; prompt?: string }): Promise<AdapterSession> {
+  legacyInvocationDefaults():{backendId:string}{return {backendId:this.template.mode==="pty"?"restricted-pty":"structured-cli"};}
+
+  async start(input: { runId: string; workspacePath: string; backendId?: string; prompt?: string; executionSelection?:ExecutionSelection }): Promise<AdapterSession> {
+    const backendId=input.backendId??(this.template.mode==="pty"?"restricted-pty":"structured-cli");
+    const selection=freezeExecutionSelection(input.executionSelection,{profileId:this.profileId??input.executionSelection?.profileId??"",providerId:this.manifest.id,backendId,selection:false,reasoning:false});
     const id = randomUUID();
     const command = renderCommand(this.template, { prompt: input.prompt ?? "", sessionId: id, workspace: input.workspacePath });
     const now = new Date().toISOString();
-    const session: AdapterSession = { id, runId: input.runId, backendId: input.backendId ?? (this.template.mode === "pty" ? "restricted-pty" : "structured-cli"), workspacePath: input.workspacePath, state: "STARTING", ...(this.profileId ? { profileId: this.profileId } : {}), createdAt: now, updatedAt: now };
+    const session: AdapterSession = { id, runId: input.runId, backendId: input.backendId ?? (this.template.mode === "pty" ? "restricted-pty" : "structured-cli"), workspacePath: input.workspacePath, state: "STARTING", ...(selection?{executionSelection:selection}:{}), ...(this.profileId ? { profileId: this.profileId } : {}), createdAt: now, updatedAt: now };
     this.store.save(session);
     const execution = await this.executor.start({ ...command, cwd: input.workspacePath, runId: input.runId, ...(this.template.mode ? { mode: this.template.mode } : {}) });
     this.executions.set(id, execution);

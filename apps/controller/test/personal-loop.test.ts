@@ -27,7 +27,7 @@ afterEach(async () => {
   }
 });
 
-async function setup(options: { realCodex?: boolean; executable?: string; verificationFails?: boolean; doneOnCiPassed?: boolean; secondProfile?: boolean } = {}) {
+async function setup(options: { realCodex?: boolean; executable?: string; verificationFails?: boolean; doneOnCiPassed?: boolean; secondProfile?: boolean; model?:string } = {}) {
   const directory = mkdtempSync(join(tmpdir(), "dispatcher-personal-loop-"));
   const fixture = { directory, services: [] as ControllerService[] };
   fixtures.push(fixture);
@@ -39,13 +39,13 @@ async function setup(options: { realCodex?: boolean; executable?: string; verifi
   writeFileSync(join(root, "README.md"), "fixture\n");
   execFileSync("git", ["-C", root, "add", "README.md"]);
   execFileSync("git", ["-C", root, "commit", "-m", "fixture"]);
-  const starts: Array<{ providerSessionId?: string; prompt: string }> = [];
+  const starts: Array<{ providerSessionId?: string; prompt: string; model?:string }> = [];
   const slack: Array<Record<string, unknown>> = [];
   const linear: Array<Record<string, unknown>> = [];
   const control = { turn: "running" as "running" | "waiting" | "completed" | "failed", ci: "pending" as "pending" | "success" | "failure", slackFailures: 0, ciFailures: 0, prs: 0, pushes: 0, cancellations: 0, now: new Date(), throwStart: false, prState: "open" as "open" | "closed", merged: false, headCommit: "commit-1", pushGate: undefined as Promise<void> | undefined, onStart: undefined as (() => void) | undefined };
   const backend: CodexBackend = { start: (input) => {
     if (control.throwStart) throw new Error("spawn missing-codex ENOENT");
-    starts.push({ prompt: input.prompt, ...(input.providerSessionId ? { providerSessionId: input.providerSessionId } : {}) });
+    starts.push({ prompt: input.prompt, ...(input.model?{model:input.model}:{}), ...(input.providerSessionId ? { providerSessionId: input.providerSessionId } : {}) });
     control.onStart?.();
     return { cancel: async () => { control.cancellations += 1; }, status: () => control.turn === "running" ? "running" : "completed", result: async (): Promise<CodexTurnResult> => ({ state: control.turn === "running" ? "completed" : control.turn, summary: control.turn === "waiting" ? "Choose the implementation approach" : control.turn === "failed" ? "agent crashed" : "implemented", providerSessionId: "provider-thread-1", events: control.turn === "waiting" ? [{ type: "waiting", reason: "input_required" }] : [] }) };
   } };
@@ -91,7 +91,7 @@ async function setup(options: { realCodex?: boolean; executable?: string; verifi
     { id: "slack", definitionId: "messaging.slack", kind: "messaging", displayName: "Slack", enabled: true, credentialRef: "secret://slack/bot", settings: { signingSecretRef: "secret://slack/signing", alertChannel: "C-alert", apiBase: "https://slack.invalid/api" } },
     { id: "github", definitionId: "scm.github", kind: "scm", displayName: "GitHub", enabled: true, credentialRef: "secret://github/token", settings: { apiBase: "https://github.invalid", doneOnCiPassed: options.doneOnCiPassed ?? false } },
   ];
-  config.agentProfiles = [{ id: "orion", alias: "Orion", provider: "codex", runnerId: "local", settings: { codexHome: join(directory, "profile"), ...(options.executable ? { executable: options.executable } : {}) } }];
+  config.agentProfiles = [{ id: "orion", alias: "Orion", provider: "codex", runnerId: "local", settings: { codexHome: join(directory, "profile"), ...(options.model?{model:options.model}:{}), ...(options.executable ? { executable: options.executable } : {}) } }];
   if (options.secondProfile) config.agentProfiles.push({ id: "vega", alias: "Vega", provider: "codex", runnerId: "local", settings: { codexHome: join(directory, "vega-profile") } });
   config.repositories = [{ id: "acme/repo", root, defaultBaseRef: "main", scopePaths: [], verificationCommands: [{ id: "check", file: process.execPath, args: ["-e", options.verificationFails ? "process.exit(1)" : "process.exit(0)"], required: true, timeoutMs: 5_000, outputLimitBytes: 1_024 }] }];
   const plan = (await service.app.inject({ headers: OWNER, method: "POST", url: "/api/config/plans", payload: { config } })).json().plan;
@@ -117,6 +117,19 @@ async function setup(options: { realCodex?: boolean; executable?: string; verifi
 }
 
 describe("personal Slack–Linear loop", () => {
+  it.each(["http","slack"] as const)("freezes a %s legacy dispatch choice on the Run and actual native invocation",async channel=>{
+    const f=await setup({model:"legacy-configured-model"});
+    if(channel==="http")expect((await f.service.app.inject({headers:OWNER,method:"POST",url:`/api/tasks/${f.taskId}/dispatch`,payload:{profileId:"orion"}})).statusCode).toBe(201);
+    else{await f.send(f.service,"dispatch","task dispatch INH-42");await f.service.runBackgroundCycle();await f.approve();}
+    const run=f.run();
+    expect(run.executionSelection).toMatchObject({version:1,mode:"legacy",source:"legacy-config",profileId:"orion",runnerId:"local",providerId:"codex",backendId:"codex-exec-json",selectionType:"explicit-model",requestedModel:"legacy-configured-model",nativeParameters:{}});
+    expect(run.executionSelection?.catalogRevision).toBeUndefined();
+    expect(f.starts).toHaveLength(1);expect(f.starts[0]?.model).toBe("legacy-configured-model");
+    expect(f.service.database.getEntity("adapter-session",run.sessionId)).toMatchObject({executionSelection:run.executionSelection});
+    const contract=f.service.database.getEntity<JsonValue>("run-contract",run.id) as unknown as TaskContract;
+    expect(contract.workspace).toMatchObject({repositoryId:"acme/repo",baseCommit:expect.stringMatching(/^[0-9a-f]{40}$/)});
+  });
+
   async function waitingFixture() {
     const f = await setup();
     await f.send(f.service, "dispatch", "task dispatch INH-42");

@@ -80,6 +80,8 @@ export interface AgentAdapter {
   readonly interaction?:NativeInteractionPort;
   readonly manifest: AdapterManifest;
   readonly supportsExecutionSelection?: boolean;
+  /** Existing configured invocation defaults only; this does not qualify native selection. */
+  legacyInvocationDefaults?():{backendId:string;model?:string};
   modelCatalog?(context: ModelCatalogContext & {workspacePath:string;signal?:AbortSignal}): Promise<AccountModelCatalog>;
   start(input: { runId: string; workspacePath: string; backendId?: string; prompt?: string; executionSelection?: ExecutionSelection; beforeSend?:()=>void }): Promise<AdapterSession>;
   send(sessionId: string, message: string, beforeSend?:()=>void): Promise<AdapterEvent>;

@@ -64,7 +64,7 @@ final convergence verification.
 | CV-02 | 503-path disposition and consumer/authority decisions frozen; domain/legacy binding contract fixtures pass |
 | CV-03 | atomic reload + in-flight edits fixed; process-heavy test pool bounded at four parallel workers; two configured default checks passed 90/802; ready for whole-branch review |
 | CV-04 | migration/control/backup modules ported with v3 adaptation and protocol 2; targeted 12/101 and two default 90/802 gates passed; ready for whole-branch review |
-| CV-05 | in progress: catalog scope/lifecycle, default ConfigPlan, per-Run provenance and adapter selection fences pass 91/833 default gate; remaining legacy/catalog authority assertions tracked |
+| CV-05 | in progress: catalog scope/lifecycle, default ConfigPlan, per-Run provenance and adapter selection fences pass 91/833 default gate; legacy HTTP/Slack/reroute choice now integrated at 109/1085; remaining catalog/control assertions tracked |
 | CV-06 | private legacy reader and passive Codex/Qoder snapshots verified at 93/849; Controller collection, canonical origin/attempt/time and quota wiring pending |
 | CV-08 | native host/read/dispatch foundations and Controller coordinator pass 107/1069; v3 service entry-point composition remains pending |
 | CV-12 | pending complete selection/control integration |
@@ -570,3 +570,57 @@ receipt/worker/delivery integration, other native writers and recovery. Native
 startup admission remains closed; do not close CV-08 or original Gates. Rollback
 is this isolated branch's previous SHA; original workspaces/data remain intact.
 Official quota checked after this unit; percentage is recorded in Linear.
+
+## CV-05e / R-009 legacy canonical Run selection
+
+New canonical HTTP/Slack dispatch and legacy owning-Runner reroute now compile
+ExecutionSelection at reservation from the chosen adapter's actual legacy
+invocation defaults. Source is explicitly `legacy-config`; no catalog revision
+or native freshness is invented. The optional adapter projection reports only
+its known backend/model request defaults. Generic PTY reports its actual backend
+instead of borrowing the manifest's first entry; ambiguous adapters without a
+projection cannot silently choose a backend. No Controller provider/argument map
+was introduced. Existing configured defaults remain ConfigPlan-owned.
+
+Scheduler snapshots the explicit input selection and passes the reserved Run's
+choice to start, including choices compiled during reservation. Codex, CLI, Qoder,
+Generic and Devin sessions retain that same choice. Qoder continuation now uses
+its stored Run/model snapshot, with post-await identity validation, rather than
+a changed profile default. Direct legacy starts capture a known model omission/
+value; historical missing snapshots stay unknown and are not repaired from
+current profile config. No historical Run was backfilled.
+
+The newly created WorkspaceHandle supplies frozen repository/baseRef/baseRevision
+to the Run contract. The mutable Task contract is not changed. Legacy continuation
+checks its scoped execution/credential fingerprint without pretending a native
+catalog was queried; it still runs existing Task/Run/lease checks. Existing
+physical drain, owning-Runner/workspace transfer, reroute receipt, frozen
+verification and none/commit/PR behavior remain in place. Run.executionRef and
+native control are deliberately not enabled by this increment.
+
+Ruling: a configured model invocation predates native catalog qualification on
+some CLI/Qoder consumers. Only those actual model-bearing boundaries accept
+legacy-config explicit requests; unsupported interactive/manual selection still
+rejects before native I/O. Generic/Devin model omission consumers cannot use that
+exception. This preserves actual old consumers without granting UI capability or
+pricing evidence. Cost: requested configured model remains distinct from a native
+reported model, which may be unknown; full native qualification remains a Gate.
+
+RED: two canonical HTTP/Slack cases observed no Run selection. Four adapter cases
+then exposed dropped selections/legacy CLI qualification; a fifth PTY case exposed
+missing backend ownership projection. The rebuilt targeted adapter/personal-loop
+suite passes 2 files/41 tests, including every original personal-loop assertion.
+Default `mise exec -- pnpm check` passes 109 files/1085 tests (43.11s test phase).
+No original test assertion was changed, skipped or loosened; the -t diagnostic
+run alone deselected unrelated cases before the full suite ran all of them.
+Logs: `/tmp/dispatcher-cv05-legacy-run-choice-red.log`,
+`/tmp/dispatcher-cv05-legacy-adapters-red.log`,
+`/tmp/dispatcher-cv05-legacy-backend-red.log`,
+`/tmp/dispatcher-cv05-legacy-backend-green.log`,
+`/tmp/dispatcher-cv05-legacy-run-final-check.log`.
+
+R-009 is locally implemented and verified; whole-branch/native evidence remains
+open under CV-05/12. R-005 still requires reserved native Session/context, service
+entry-point/final-SDK Guard composition and recovery. Rollback is the prior
+isolated-candidate SHA; no live or primary worktree data was used. Official quota
+checked after the unit; percentage recorded in Linear.

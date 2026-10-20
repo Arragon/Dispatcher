@@ -1,3 +1,5 @@
+import {assertSessionModelBinding,freezeExecutionSelection,sessionModel} from "./execution-selection.js";
+import type {ExecutionSelection} from "@dispatcher/domain";
 import {readReadyTurnResult,rememberTurnResult,usageSnapshotUnavailable,type PassiveTurnResult} from "./usage-snapshot.js";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -154,12 +156,19 @@ export class QoderAdapter implements AgentAdapter {
   private readonly pendingSends = new Set<string>();
   constructor(readonly profile: QoderProfileConfig, private readonly backend: QoderBackend = new QoderCliBackend(), private readonly store: SessionStore = new MemorySessionStore()) {}
 
-  async start(input: { runId: string; workspacePath: string; backendId?: string; prompt?: string }): Promise<AdapterSession> {
+  legacyInvocationDefaults():{backendId:string;model?:string}{return {backendId:"qoder-cli-json",...(this.profile.model?{model:this.profile.model}:{})};}
+
+  async start(input: { runId: string; workspacePath: string; backendId?: string; prompt?: string; executionSelection?:ExecutionSelection }): Promise<AdapterSession> {
+    const backendId=input.backendId??"qoder-cli-json";
+    if(backendId!=="qoder-cli-json")throw new AdapterContractError("BACKEND_MISMATCH","Requested backend differs from Qoder CLI");
+    const selection=freezeExecutionSelection(input.executionSelection,{profileId:this.profile.id,providerId:this.manifest.id,backendId,selection:false,reasoning:false,legacyModel:true});
     const now = new Date().toISOString();
     const providerSessionId = randomUUID();
-    const session: AdapterSession = { id: randomUUID(), runId: input.runId, backendId: input.backendId ?? "qoder-cli-json", workspacePath: input.workspacePath, state: "STARTING", profileId: this.profile.id, providerSessionId, createdAt: now, updatedAt: now };
+    const session: AdapterSession = { id: randomUUID(), runId: input.runId, backendId: input.backendId ?? "qoder-cli-json", workspacePath: input.workspacePath, state: "STARTING", profileId: this.profile.id, ...(selection?{executionSelection:selection}:{legacyModel:{...(this.profile.model?{id:this.profile.model}:{})}}), providerSessionId, createdAt: now, updatedAt: now };
     this.store.save(session);
-    const turn = this.backend.start({ executable: this.profile.executable ?? "qoder", workspacePath: input.workspacePath, prompt: input.prompt ?? "Inspect the task context and report readiness.", providerSessionId, resume: false, ...(this.profile.configDir ? { configDir: this.profile.configDir } : {}), ...(this.profile.model ? { model: this.profile.model } : {}) });
+    assertSessionModelBinding(this.store.load(session.id),session);
+    const model=sessionModel(session);
+    const turn = this.backend.start({ executable: this.profile.executable ?? "qoder", workspacePath: input.workspacePath, prompt: input.prompt ?? "Inspect the task context and report readiness.", providerSessionId, resume: false, ...(this.profile.configDir ? { configDir: this.profile.configDir } : {}), ...(model ? {model} : {}) });
     this.turns.set(session.id, turn);
     try { return this.update(session.id, { state: "RUNNING" }); }
     catch (error) { this.cancelledSessions.add(session.id); await turn.cancel(); throw error; }
@@ -169,10 +178,14 @@ export class QoderAdapter implements AgentAdapter {
     if (this.pendingSends.has(sessionId)) throw new AdapterContractError("INPUT_PENDING", "A Qoder follow-up is already pending");
     this.pendingSends.add(sessionId);
     try {
+      const expected=structuredClone(this.require(sessionId));
       const session = await this.finish(sessionId);
+      assertSessionModelBinding(this.store.load(sessionId),expected);
+      freezeExecutionSelection(session.executionSelection,{profileId:this.profile.id,providerId:this.manifest.id,backendId:"qoder-cli-json",selection:false,reasoning:false,legacyModel:true});
+      const model=sessionModel(session);
       this.assertSendable(sessionId);
       if (!session.providerSessionId) throw new AdapterContractError("SESSION_NOT_RESUMABLE", "Qoder session identity is missing");
-      this.turns.set(sessionId, this.backend.start({ executable: this.profile.executable ?? "qoder", workspacePath: session.workspacePath, prompt: message, providerSessionId: session.providerSessionId, resume: true, ...(this.profile.configDir ? { configDir: this.profile.configDir } : {}), ...(this.profile.model ? { model: this.profile.model } : {}) }));
+      this.turns.set(sessionId, this.backend.start({ executable: this.profile.executable ?? "qoder", workspacePath: session.workspacePath, prompt: message, providerSessionId: session.providerSessionId, resume: true, ...(this.profile.configDir ? { configDir: this.profile.configDir } : {}), ...(model ? {model} : {}) }));
       this.store.save({ ...session, state: "RUNNING", updatedAt: new Date().toISOString() });
       return { type: "session.message", sessionId, occurredAt: new Date().toISOString(), data: { acceptedCharacters: message.length, providerSessionId: session.providerSessionId } };
     } finally { this.pendingSends.delete(sessionId); }

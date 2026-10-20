@@ -283,12 +283,14 @@ export class StructuredCliAdapter implements AgentAdapter {
     return readNativeCliCatalog({ provider: this.definition.catalogProvider, profile: this.profile, executable: await this.executable(), context, workspacePath: context.workspacePath, ...(environment ? { environment } : {}),...(context.signal?{signal:context.signal}:{}) });
   }
 
+  legacyInvocationDefaults():{backendId:string;model?:string}{return {backendId:this.manifest.backends[0]!.id,...(this.profile.model?{model:this.profile.model}:{})};}
+
   async start(input: { runId: string; workspacePath: string; backendId?: string; prompt?: string; executionSelection?: ExecutionSelection }): Promise<AdapterSession> {
     this.starting++;
     try {
       const backendId=this.manifest.backends[0]!.id;
       if(input.backendId!==undefined&&input.backendId!==backendId)throw new AdapterContractError("BACKEND_MISMATCH","Requested backend differs from the owning CLI adapter");
-      const selection=freezeExecutionSelection(input.executionSelection,{profileId:this.profile.id,providerId:this.manifest.id,backendId,selection:this.supportsExecutionSelection,reasoning:false});
+      const selection=freezeExecutionSelection(input.executionSelection,{profileId:this.profile.id,providerId:this.manifest.id,backendId,selection:this.supportsExecutionSelection,reasoning:false,legacyModel:true});
       const now = new Date().toISOString();
       const session: AdapterSession = {
         id: randomUUID(),
@@ -336,7 +338,7 @@ export class StructuredCliAdapter implements AgentAdapter {
       const expected=structuredClone(this.require(sessionId));
       const session = await this.finish(sessionId);
       assertSessionModelBinding(this.store.load(sessionId),expected);
-      freezeExecutionSelection(session.executionSelection,{profileId:this.profile.id,providerId:this.manifest.id,backendId:this.manifest.backends[0]!.id,selection:this.supportsExecutionSelection,reasoning:false});
+      freezeExecutionSelection(session.executionSelection,{profileId:this.profile.id,providerId:this.manifest.id,backendId:this.manifest.backends[0]!.id,selection:this.supportsExecutionSelection,reasoning:false,legacyModel:true});
       if (!session.providerSessionId) throw new AdapterContractError("SESSION_NOT_RESUMABLE", `${this.manifest.displayName} did not emit a provider session id`);
       const environment = await this.environment();
       const executable = await this.executable();

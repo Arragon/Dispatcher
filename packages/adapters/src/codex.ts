@@ -199,6 +199,8 @@ export class CodexAdapter implements AgentAdapter {
     private readonly catalogRequest?: (input:CodexReadRequest)=>Promise<unknown>,
   ) {}
 
+  legacyInvocationDefaults():{backendId:string;model?:string}{return {backendId:"codex-exec-json",...(this.profile.model?{model:this.profile.model}:{})};}
+
   modelCatalog(context:ModelCatalogContext & {workspacePath:string;signal?:AbortSignal}):Promise<AccountModelCatalog> {
     return readCodexCatalog({profile:this.profile,context,workspacePath:context.workspacePath,...(context.signal?{signal:context.signal}:{}),...(this.catalogRequest?{request:this.catalogRequest}:{})});
   }
