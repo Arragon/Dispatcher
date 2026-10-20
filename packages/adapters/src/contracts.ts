@@ -1,5 +1,5 @@
 import type { NativeInteractionPort } from "./interaction-contracts.js";
-import type { ExecutionSelection, AccountModelCatalog, ModelCatalogContext, UsageObservationV1 } from "@dispatcher/domain";
+import type { NativeBinding, ExecutionContextRef, TurnObservation, ExecutionSelection, AccountModelCatalog, ModelCatalogContext, UsageObservationV1 } from "@dispatcher/domain";
 export type AdapterPlatform = "darwin" | "linux" | "win32";
 export type BackendKind = "sdk" | "api" | "daemon" | "headless-cli" | "pty";
 
@@ -45,6 +45,12 @@ export interface AdapterSession {
   state: AdapterSessionState;
   profileId?: string;
   providerSessionId?: string;
+  nativeBinding?:NativeBinding;
+  execution?:{generation:number;attempt:number;leaseId?:string};
+  executionRef?:ExecutionContextRef;
+  nativeInvocationId?:string;
+  turnObservation?:TurnObservation;
+  nativeIdentityIssue?:string;
   processId?: number;
   createdAt: string;
   updatedAt: string;
@@ -63,6 +69,12 @@ export interface AdapterResult {
   summary: string;
   artifacts: Array<{ path: string; kind: string }>;
 }
+
+export interface NativeObserverContext {
+  sessionId:string;runId:string;profileId:string;backendId:string;invocationId:string;
+  generation?:number;attempt?:number;leaseId?:string;
+}
+export type AdapterStartOutcome={kind:"created";session:AdapterSession}|{kind:"not-created"|"unknown";code:string;diagnostic?:string};
 
 export interface AgentAdapter {
   readonly interaction?:NativeInteractionPort;

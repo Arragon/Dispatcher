@@ -224,6 +224,19 @@ Existing handles without tree evidence remain valid consumers but cannot prove
 host cleanup. Recovery decisions may request read-only reobservation, never start
 or resume execution automatically.
 
+Controller's `NativeInteractions` coordinator owns session mutation lanes,
+captured Task/control/lease fences, original native request handles and durable
+command receipts. Recovery turns in-flight sends into UNKNOWN; it never infers
+that a failed reply means no native effect. External observations keep only
+qualified metadata and block writes on gaps or identity changes. Reclaim needs
+fresh read-only Git/native/resource facts, explicit confirmation and an atomic
+new epoch; it compares the v3 selection against the frozen Run contract and its
+revision, never a newly edited Task contract. Start reservation/settlement also
+compare the frozen choice and execution context. Existing acknowledged receipts
+remain readable across authority changes, while sending needs current authority.
+This coordinator is ported but is not yet composed into the v3 service entry
+points; the startup barrier and unavailable native controls remain in force.
+
 SQLite online backups are consistent private archives with checksums and an
 inventory. Archives refuse live startup; restore targets must be new directories
 and retain a durable reconciliation barrier. Restoring bytes alone never

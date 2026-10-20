@@ -66,7 +66,7 @@ final convergence verification.
 | CV-04 | migration/control/backup modules ported with v3 adaptation and protocol 2; targeted 12/101 and two default 90/802 gates passed; ready for whole-branch review |
 | CV-05 | in progress: catalog scope/lifecycle, default ConfigPlan, per-Run provenance and adapter selection fences pass 91/833 default gate; remaining legacy/catalog authority assertions tracked |
 | CV-06 | private legacy reader and passive Codex/Qoder snapshots verified at 93/849; Controller collection, canonical origin/attempt/time and quota wiring pending |
-| CV-08 | optional adapter port, bounded read observer/dispatch and event/release/stop/reclaim foundations pass 99/927; Controller composition remains pending |
+| CV-08 | native host/read/dispatch foundations and Controller coordinator pass 107/1069; v3 service entry-point composition remains pending |
 | CV-12 | pending complete selection/control integration |
 | macOS service / LP / backup | pending safe shared foundation |
 | CV-07/09/10/11 | pending contracts/guards |
@@ -470,3 +470,66 @@ is claimed; R-005/R-008 and original native/GUI Gates stay open. Rollback remain
 the original compatible binary/data or this isolated candidate's prior SHA; no
 original DB/service was opened. Official quota checked after this unit; remaining
 percentage is recorded in its Linear checkpoint.
+
+
+## CV-08c Controller coordinator, receipts and v3 reclaim/start fences
+
+Ported a499d84 `native-interactions.ts` and `native-external-changes.ts` as the
+single Controller coordinator, with five source guard/receipt/external-change/
+reclaim/start suites. Added only the AdapterSession native execution/observer and
+start-outcome contracts this coordinator consumes. No provider SDK or transport
+was imported into domain/protocol; the existing service routes are unchanged.
+
+The coordinator captures control/Task/lease authority, serializes per-session
+mutations, preserves durable UNKNOWN on uncertain sends, retains original native
+request connection handles and separates session interruption from host lifetime.
+Reclaim reads Git/native/history/resource facts and requires explicit confirmation
+before atomically granting a new epoch and invalidating old verification. Scope
+and metadata normalization retain no raw transcript/secret diagnostics.
+
+Ruling: every old coordinator ModelSelection use was adapted to the v3 Run's
+ExecutionSelection. Reclaim also reads only `run-contract`, checks its version/
+revision against the Run and checks its frozen repository/base commit. A current
+Task contract cannot repair absent Run context. Source reclaim fixtures now use
+that v3 choice plus a real frozen contract; all original assertions remain.
+Cost: legacy selections/native-default omissions without qualified baselines
+stay closed until explicit source-specific reconciliation.
+
+Additional RED cases proved that source start reservation did not compare the
+full frozen v3 choice and settlement did not compare the returned adapter choice
+and execution context. The coordinator now compares them without changing the
+existing receipt authority. A separate RED case caught frozen contract revision
+drift. Negative tests preserve the existing store's Task/control checks and its
+proactive cancellation of RESERVED commands on epoch changes. The first new
+assertion incorrectly expected RESERVED/stale-control after that cancellation;
+the corrected assertion requires CANCELLED/START_ALREADY_SETTLED. No original
+assertion was weakened.
+
+A redundant new pre-reservation lock check was removed after a RED replay case
+showed it blocked read-only ACK receipt replay after authority changed. Existing
+InteractionStore already checks locks for new commands and rechecks authority
+before SENDING. The original acknowledged receipt can be read, but begin still
+rejects a second send. This preserves idempotent reads independently of writes.
+
+Evidence: original three suites first failed on missing coordinator modules.
+Unadapted legacy reclaim fixture had 14 failures/5 passes; after v3 fixture
+adaptation the revision test went RED, then passed. Five final targeted files/
+89 tests pass. First full gate had 1067 passes and exactly the new cancellation-
+expectation failure; corrected full gate passed 107/1068. After the additional
+replay RED/fix, final `mise exec -- pnpm check` passed 107 files/1069 tests
+(41.34s test phase). Logs:
+`/tmp/dispatcher-cv08-controller-guard-red.log`,
+`/tmp/dispatcher-cv08-v3-reclaim-red.log`,
+`/tmp/dispatcher-cv08-frozen-contract-red.log`,
+`/tmp/dispatcher-cv08-v3-start-red.log`,
+`/tmp/dispatcher-cv08-start-locked-red.log`,
+`/tmp/dispatcher-cv08-start-replay-red.log`,
+`/tmp/dispatcher-cv08-controller-guard-final-green.log`,
+`/tmp/dispatcher-cv08-controller-guard-final-check-3.log`.
+
+The coordinator is not yet connected to v3 service entry points. R-005 remains
+open for SDK-final admission, Run/start identities, HTTP/Slack/semantic/worker/
+verification/delivery/cancel composition and recovery. Keep v3 physical drain,
+run-input receipts, native startup barrier and unavailable takeover UI intact.
+No real account, primary worktree or live DB/service was used. Official quota
+checked after the unit; percentage recorded in Linear.
