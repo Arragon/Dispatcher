@@ -279,3 +279,34 @@ Remaining source assertions involving executionRef, native prompt admission,
 backend injection and native-store ownership still require CV-08/09/10. The
 legacy canonical dispatch path's missing Run-level ExecutionSelection is R-009;
 this adapter snapshot increment does not claim that path is fully converged.
+
+
+## CV-05e physical catalog-process cleanup
+
+Reused the existing OwnedProcessGroup boundary in all three local catalog readers
+instead of maintaining parallel signal/kill logic. `catalog-process.ts` requires
+its physical group stop and bounded callback close; any failure returns sanitized
+`MODEL_CATALOG_CLEANUP_UNKNOWN`, overriding otherwise usable query evidence.
+Codex no longer reports success based only on parent close or resends signals to
+a previously absent numeric group. CLI and OpenCode share the same ownership rule.
+Controller's shorter 3s shutdown drain can still retain UNKNOWN while producer
+cleanup is outstanding; a closed request is never a cleanup receipt.
+
+A new POSIX-only fault test makes owned-group signalling fail with EPERM. RED
+reproduced a read that did not settle with a cleanup diagnostic; GREEN returns
+the typed unknown error without private diagnostics. The fixture kills only its
+own freshly created process in cleanup. This platform condition applies only
+to the new POSIX assertion; no existing tests were skipped or loosened. Other
+reader cancel/success/version assertions and the actual ignoring-reader shutdown
+case remain intact. Targeted suite passes 3 files/83 tests. Default
+`mise exec -- pnpm check` passes 91 files/834 tests (36.64s test phase).
+Logs: `/tmp/dispatcher-cv05-group-cleanup-red.log`,
+`/tmp/dispatcher-cv05-group-cleanup-green.log`,
+`/tmp/dispatcher-cv05-owned-process-final-check.log`.
+Official quota after the unit: 90% remaining, ordinary usage allowed.
+
+CV-05 still retains its native/backend/Guard and legacy canonical-dispatch
+conditions. Independent CV-06 work may adapt the pure legacy observation reader
+against the frozen decimal contract, but collection/control-dependent writes
+must not be enabled before their prerequisites are composed. This is a scoped
+foundation unit, not permission to close CV-05 or its real Gates.

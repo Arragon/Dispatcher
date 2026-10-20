@@ -465,6 +465,9 @@
   A per-run model/effort override belongs to its adapter session and must survive
   continuation independently of current profile defaults. Revalidate native
   account/project context before continuing a managed session.
+- Catalog parent-process close alone cannot confirm owned-group absence. Reuse
+  OwnedProcessGroup, require drained callbacks and prioritize a cleanup-unknown
+  error over usable response data; never signal a group again after absence.
 - Releasing a catalog HTTP request is not evidence that its native reader closed.
   Track the underlying read separately through bounded shutdown, keep late writes
   fenced and retain UNKNOWN cleanup evidence across subsequent clean stops.

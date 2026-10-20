@@ -1,4 +1,4 @@
-import { describe,expect,it } from "vitest";
+import { describe,expect,it,vi } from "vitest";
 import { readCodexCatalog, normalizeCodexCatalog } from "../src/codex-catalog.js";
 const context={profileId:"a",runnerId:"local",repositoryId:"repo",executionContextRef:"repo-context",reason:"open" as const};
 const model={model:"native-model",displayName:"Native model",hidden:false,isDefault:true,defaultReasoningEffort:"medium",supportedReasoningEfforts:[{reasoningEffort:"low"},{reasoningEffort:"medium"}]};
@@ -40,4 +40,22 @@ it("cancels an owned read-only RPC and confirms its process closure",async()=>{
     const result=expect(pending).rejects.toMatchObject({code:"MODEL_CATALOG_CANCELLED"});
     await expect.poll(()=>existsSync(ready)).toBe(true);abort.abort();await result;expect(readFileSync(closed,"utf8")).toBe("closed");
   }finally{abort.abort();rmSync(directory,{recursive:true,force:true});}
+});
+
+
+it.runIf(process.platform!=="win32")("retains POSIX cleanup uncertainty when an owned process group cannot be signalled",async()=>{
+  const {readCodexNative}=await import("../src/codex-catalog.js"),{mkdtempSync,writeFileSync,readFileSync,chmodSync,rmSync,existsSync}=await import("node:fs"),{tmpdir}=await import("node:os"),{join}=await import("node:path");
+  const directory=mkdtempSync(join(tmpdir(),"codex-cleanup-unknown-")),executable=join(directory,"native"),pidFile=join(directory,"pid"),kill=process.kill.bind(process);let timer:ReturnType<typeof setTimeout>|undefined,cleanupError:unknown;
+  writeFileSync(executable,`#!${process.execPath}\nrequire('node:fs').writeFileSync(${JSON.stringify(pidFile)},String(process.pid));setInterval(()=>{},1000);require('node:readline').createInterface({input:process.stdin}).on('line',line=>{const m=JSON.parse(line);if(m.id)console.log(JSON.stringify({id:m.id,result:m.id===1?{}:{data:[]}}));});`);chmodSync(executable,0o755);
+  const denied=vi.spyOn(process,"kill").mockImplementation((pid,signal)=>{if(pid<0&&signal!==0)throw Object.assign(Error("private cleanup detail"),{code:"EPERM"});return kill(pid,signal);});
+  try{
+    const query=readCodexNative({executable,codexHome:directory,workspacePath:directory,method:"model/list",params:{}});
+    const bounded=Promise.race([query,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error("cleanup query did not settle")),2000);})]);
+    await expect(bounded).rejects.toMatchObject({code:"MODEL_CATALOG_CLEANUP_UNKNOWN",message:expect.not.stringContaining("private cleanup detail")});
+  }finally{
+    denied.mockRestore();if(timer)clearTimeout(timer);
+    if(existsSync(pidFile)){const pid=Number(readFileSync(pidFile,"utf8"));try{kill(-pid,"SIGKILL");}catch(error){if((error as NodeJS.ErrnoException).code!=="ESRCH")cleanupError=error;}}
+    rmSync(directory,{recursive:true,force:true});
+  }
+  expect(cleanupError).toBeUndefined();
 });

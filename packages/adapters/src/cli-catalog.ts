@@ -1,3 +1,5 @@
+import {OwnedProcessGroup} from "./owned-process.js";
+import {drainCatalogProcess} from "./catalog-process.js";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFile, realpath, stat } from "node:fs/promises";
@@ -26,25 +28,22 @@ export function readNativeCli(input: NativeCliReadRequest): Promise<NativeCliRea
   if(input.signal?.aborted)return Promise.reject(new AdapterContractError("MODEL_CATALOG_CANCELLED","Native catalog read was cancelled"));
   return new Promise((resolve, reject) => {
     const child = spawn(input.executable, input.args, { cwd: input.workspacePath, shell: false, detached: process.platform !== "win32", stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, ...input.environment, PWD: input.workspacePath, NO_COLOR: "1" } });
+    const group=new OwnedProcessGroup(child),closed=new Promise<void>(resolve=>child.once("close",()=>resolve()));
     let stdout = "", stderr = "", bytes = 0, failed = false;
-    const stop = () => { failed = true; signal("SIGTERM"); };
-    const signal = (value: NodeJS.Signals) => { try { if (process.platform !== "win32" && child.pid) process.kill(-child.pid, value); else child.kill(value); } catch { /* The owned process may already have exited. */ } };
-    let cancellationKill:ReturnType<typeof setTimeout>|undefined;
-    const cancel=()=>{stop();cancellationKill??=setTimeout(()=>signal("SIGKILL"),2000);};
+    const stop=()=>{failed=true;void group.stop().catch(()=>reject(new AdapterContractError("MODEL_CATALOG_CLEANUP_UNKNOWN","Native catalog process cleanup could not be confirmed")));};
+    const cancel=()=>stop();
     input.signal?.addEventListener("abort",cancel,{once:true});if(input.signal?.aborted)cancel();
-    const timer = setTimeout(stop, 25000);
-    const hardStop = setTimeout(() => { failed = true; signal("SIGKILL"); }, 27000);
+    const timer=setTimeout(stop,25000);
     child.stdout.setEncoding("utf8"); child.stderr.setEncoding("utf8");
     const collect = (chunk: string, stream: "stdout" | "stderr") => { bytes += Buffer.byteLength(chunk); if (bytes > 4 * 1024 * 1024) { stop(); return; } if (stream === "stdout") stdout += chunk; else stderr += chunk; };
     child.stdout.on("data", chunk => collect(chunk, "stdout")); child.stderr.on("data", chunk => collect(chunk, "stderr"));
     child.on("error", () => { failed = true; });
-    child.on("close", code => {
-      input.signal?.removeEventListener("abort",cancel);if(cancellationKill)clearTimeout(cancellationKill);
-      clearTimeout(timer); clearTimeout(hardStop);
-      // Model queries never leave an owned daemon behind, even after exit zero.
-      signal("SIGKILL");
-      if (failed) reject(new AdapterContractError(input.signal?.aborted?"MODEL_CATALOG_CANCELLED":"NATIVE_CATALOG_UNAVAILABLE", "Native read-only query failed, was cancelled or timed out"));
-      else resolve({ stdout, stderr, exitCode: code ?? 1 });
+    child.on("close",code=>{
+      input.signal?.removeEventListener("abort",cancel);clearTimeout(timer);
+      void drainCatalogProcess(group,closed).then(()=>{
+        if(failed)reject(new AdapterContractError(input.signal?.aborted?"MODEL_CATALOG_CANCELLED":"NATIVE_CATALOG_UNAVAILABLE","Native read-only query failed, was cancelled or timed out"));
+        else resolve({stdout,stderr,exitCode:code??1});
+      },reject);
     });
   });
 }

@@ -773,6 +773,8 @@ shown as native-cache after a query outage; it never qualifies explicit executio
 Local catalog cancellation belongs to each adapter reader. Controller releases
 HTTP requests when stopping, separately drains native reads for a bounded 3s
 and preserves UNKNOWN cleanup diagnostics; late results cannot write storage.
+All local catalog readers reuse OwnedProcessGroup and also require bounded
+callback closure. Cleanup uncertainty overrides a usable catalog response.
 Default-model ConfigPlans carry optional actor/revision/scope-bound review
 metadata, saved atomically and requalified against fresh native catalog evidence
 on apply. The publication's explicit account-default choice freezes the concrete

@@ -1,3 +1,5 @@
+import {OwnedProcessGroup} from "./owned-process.js";
+import {drainCatalogProcess} from "./catalog-process.js";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
@@ -21,9 +23,12 @@ export function readCodexNative(input:CodexReadRequest):Promise<unknown>{
   if(input.signal?.aborted)return Promise.reject(new AdapterContractError("MODEL_CATALOG_CANCELLED","Native catalog read was cancelled"));
   return new Promise((resolve,reject)=>{
     const child=spawn(input.executable,["app-server","--stdio"],{cwd:input.workspacePath,shell:false,detached:process.platform!=="win32",stdio:["pipe","pipe","pipe"],env:{...process.env,PWD:input.workspacePath,CODEX_HOME:input.codexHome}});
-    const lines=createInterface({input:child.stdout});let ending=false,result:unknown,error:Error|undefined,bytes=0;let kill:ReturnType<typeof setTimeout>|undefined;
-    const signal=(value:NodeJS.Signals)=>{try{if(process.platform!=="win32"&&child.pid)process.kill(-child.pid,value);else child.kill(value);}catch{/* Owned process already exited. */}};
-    const finish=(failure?:Error)=>{if(ending)return;ending=true;error=failure;clearTimeout(timeout);lines.close();child.stdin.end();signal("SIGTERM");kill=setTimeout(()=>signal("SIGKILL"),2000);};
+    const group=new OwnedProcessGroup(child),closed=new Promise<void>(resolve=>child.once("close",()=>resolve()));
+    const lines=createInterface({input:child.stdout});let ending=false,result:unknown,bytes=0;
+    const finish=(failure?:Error)=>{
+      if(ending)return;ending=true;clearTimeout(timeout);lines.close();child.stdin.end();
+      void drainCatalogProcess(group,closed).then(()=>{if(failure||result===undefined)reject(failure??new AdapterContractError("NATIVE_QUERY_FAILED","Native query exited before a response"));else resolve(result);},reject).finally(()=>input.signal?.removeEventListener("abort",cancelled));
+    };
     const fail=()=>finish(new AdapterContractError("NATIVE_QUERY_FAILED","Native read-only query failed or timed out"));
     const timeout=setTimeout(fail,30000);
     const cancelled=()=>finish(new AdapterContractError("MODEL_CATALOG_CANCELLED","Native catalog read was cancelled"));
@@ -31,7 +36,7 @@ export function readCodexNative(input:CodexReadRequest):Promise<unknown>{
     const send=(value:unknown)=>{if(!ending)child.stdin.write(`${JSON.stringify(value)}\n`);};
     child.stdout.on("data",(chunk:Buffer)=>{bytes+=chunk.length;if(bytes>4194304)fail();});child.stderr.on("data",()=>undefined);
     child.stdin.on("error",fail);child.on("error",fail);
-    child.on("close",()=>{input.signal?.removeEventListener("abort",cancelled);signal("SIGKILL");clearTimeout(timeout);if(kill)clearTimeout(kill);lines.close();if(error||result===undefined)reject(error??new AdapterContractError("NATIVE_QUERY_FAILED","Native query exited before a response"));else resolve(result);});
+    child.on("close",()=>finish(new AdapterContractError("NATIVE_QUERY_FAILED","Native query exited before a response")));
     let initialized=false;
     lines.on("line",line=>{
       if(ending)return;if(line.length>1048576){fail();return;}
