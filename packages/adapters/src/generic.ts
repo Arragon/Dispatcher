@@ -70,9 +70,9 @@ export class GenericMockAdapter implements AgentAdapter {
     return structuredClone(session);
   }
   async send(sessionId: string, message: string, beforeSend?:()=>void): Promise<AdapterEvent> { const session = this.require(sessionId); if (session.state !== "RUNNING") throw new AdapterContractError("SESSION_NOT_RUNNING", "Session is not running"); assertAdapterWriteAdmission(beforeSend); return { type: "session.message", sessionId, occurredAt: new Date().toISOString(), data: { acceptedCharacters: message.length } }; }
-  async pause(sessionId: string): Promise<AdapterSession> { return this.transition(sessionId, "PAUSED"); }
+  async pause(sessionId: string, beforeSend?:()=>void): Promise<AdapterSession> { assertAdapterWriteAdmission(beforeSend);return this.transition(sessionId, "PAUSED"); }
   async resume(sessionId: string,beforeSend?:()=>void): Promise<AdapterSession> { assertAdapterWriteAdmission(beforeSend);return this.transition(sessionId, "RUNNING"); }
-  async cancel(sessionId: string): Promise<AdapterSession> { return this.transition(sessionId, "CANCELLED"); }
+  async cancel(sessionId: string, beforeSend?:()=>void): Promise<AdapterSession> { assertAdapterWriteAdmission(beforeSend);return this.transition(sessionId, "CANCELLED"); }
   async status(sessionId: string): Promise<AdapterSession> { return structuredClone(this.require(sessionId)); }
   async result(sessionId: string): Promise<AdapterResult> { const session = this.require(sessionId); return { sessionId, state: session.state, summary: `Mock session ${session.state.toLowerCase()}`, artifacts: [] }; }
   async diagnostics(sessionId: string): Promise<Record<string, unknown>> { return { sessionId, deterministic: true }; }
@@ -206,8 +206,9 @@ export class GenericCliAdapter implements AgentAdapter {
   }
   async pause(): Promise<AdapterSession> { throw new AdapterContractError("UNSUPPORTED_CAPABILITY", "Generic CLI does not declare pause support"); }
   async resume(): Promise<AdapterSession> { throw new AdapterContractError("UNSUPPORTED_CAPABILITY", "Generic CLI does not declare resume support"); }
-  async cancel(sessionId: string): Promise<AdapterSession> {
+  async cancel(sessionId: string, beforeSend?:()=>void): Promise<AdapterSession> {
     const session = this.require(sessionId), execution = this.executions.get(sessionId);
+    assertAdapterWriteAdmission(beforeSend);
     this.cancelledSessions.add(sessionId);
     if (!execution && ["STARTING", "RUNNING", "PAUSED"].includes(session.state)) throw new AdapterContractError("SESSION_DETACHED", "CLI process termination cannot be confirmed by this runtime");
     if (execution) await execution.cancel();

@@ -379,11 +379,12 @@ export class StructuredCliAdapter implements AgentAdapter {
     await this.send(sessionId, "Continue from the existing task context.",beforeSend);
     return this.status(sessionId);
   }
-  async cancel(sessionId: string): Promise<AdapterSession> {
+  async cancel(sessionId: string, beforeSend?:()=>void): Promise<AdapterSession> {
     this.cancelling++;
     try {
       const session=this.require(sessionId);
       if(!this.turns.has(sessionId)&&["STARTING","RUNNING"].includes(session.state))throw new AdapterContractError("SESSION_DETACHED","Native termination cannot be confirmed without owned process handles");
+      assertAdapterWriteAdmission(beforeSend);
       this.cancelled.add(sessionId);
       // A failed persistence write must not prevent stopping the owned process.
       await this.turns.get(sessionId)?.cancel();

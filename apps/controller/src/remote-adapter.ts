@@ -63,9 +63,9 @@ export class RemoteNativeAdapter implements AgentAdapter {
     const run = this.run(sessionId, true), key = `native-${action}:${contentHash({ runId: run.id, generation: run.generation, leaseId: run.leaseId, intervention: action === "cancel" ? "cancel" : run.lastActivityAt })}`;
     return this.session(await this.mutation({ type: "native.run", runId: run.id, action }, run, key,beforeSend), run);
   }
-  pause(sessionId: string): Promise<AdapterSession> { return this.transition(sessionId, "pause"); }
+  pause(sessionId: string,beforeSend?:()=>void): Promise<AdapterSession> { return this.transition(sessionId, "pause",beforeSend); }
   resume(sessionId: string,beforeSend?:()=>void): Promise<AdapterSession> { return this.transition(sessionId, "resume",beforeSend); }
-  cancel(sessionId: string): Promise<AdapterSession> { return this.transition(sessionId, "cancel"); }
+  cancel(sessionId: string,beforeSend?:()=>void): Promise<AdapterSession> { return this.transition(sessionId, "cancel",beforeSend); }
   async status(sessionId: string): Promise<AdapterSession> { const run = this.run(sessionId, true); return this.session(await this.options.request({ type: "native.run", runId: run.id, action: "status" }, run), run); }
   async result(sessionId: string): Promise<AdapterResult> {
     const run = this.run(sessionId, true), value = await this.options.request({ type: "native.run", runId: run.id, action: "result" }, run);

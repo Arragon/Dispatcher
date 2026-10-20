@@ -202,9 +202,10 @@ export class QoderAdapter implements AgentAdapter {
 
   async pause(): Promise<AdapterSession> { throw new AdapterContractError("UNSUPPORTED_CAPABILITY", "Qoder print mode cannot pause a live turn"); }
   async resume(sessionId: string, beforeSend?:()=>void): Promise<AdapterSession> { await this.send(sessionId, "Continue from the existing task context.",beforeSend); return this.status(sessionId); }
-  async cancel(sessionId: string): Promise<AdapterSession> {
+  async cancel(sessionId: string, beforeSend?:()=>void): Promise<AdapterSession> {
     const session = this.require(sessionId), turn = this.turns.get(sessionId);
     if (!turn && ["STARTING", "RUNNING", "PAUSED"].includes(session.state)) throw new AdapterContractError("SESSION_DETACHED", "Qoder process termination cannot be confirmed by this runtime");
+    assertAdapterWriteAdmission(beforeSend);
     this.cancelledSessions.add(sessionId);
     await turn?.cancel();
     return this.update(sessionId, { state: "CANCELLED" });

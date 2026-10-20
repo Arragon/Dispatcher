@@ -104,9 +104,9 @@ export interface AgentAdapter {
   modelCatalog?(context: ModelCatalogContext & {workspacePath:string;signal?:AbortSignal}): Promise<AccountModelCatalog>;
   start(input: AdapterStartInput): Promise<AdapterSession>;
   send(sessionId: string, message: string, beforeSend?:()=>void): Promise<AdapterEvent>;
-  pause(sessionId: string): Promise<AdapterSession>;
+  pause(sessionId: string, beforeSend?:()=>void): Promise<AdapterSession>;
   resume(sessionId: string, beforeSend?:()=>void): Promise<AdapterSession>;
-  cancel(sessionId: string): Promise<AdapterSession>;
+  cancel(sessionId: string, beforeSend?:()=>void): Promise<AdapterSession>;
   status(sessionId: string): Promise<AdapterSession>;
   result(sessionId: string): Promise<AdapterResult>;
   usage?(sessionId: string): Promise<Record<string, unknown>>;

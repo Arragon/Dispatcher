@@ -7,6 +7,9 @@ function fixture(store:SessionStore=new MemorySessionStore()){
  const adapter=new CodexAdapter(profile,{start},store);return {start,adapter,store};
 }
 const stale=()=>{throw Object.assign(new Error("stale control"),{code:"STALE_CONTROL_EPOCH"});};
+it("checks owned cancellation before changing the native session or stopping its turn",async()=>{
+ const f=fixture(),session=await f.adapter.start({runId:"r",workspacePath:"/work"});await expect(f.adapter.cancel(session.id,stale)).rejects.toMatchObject({dispatch:"not-sent",code:"STALE_CONTROL_EPOCH"});expect((await f.adapter.status(session.id)).state).not.toBe("CANCELLED");
+});
 it("rejects initial creation at final admission without invoking Codex",async()=>{
  const f=fixture();await expect(f.adapter.start({runId:"r",workspacePath:"/work",beforeSend:stale})).rejects.toMatchObject({creationOutcome:"not-created",code:"STALE_CONTROL_EPOCH"});expect(f.start).not.toHaveBeenCalled();
 });

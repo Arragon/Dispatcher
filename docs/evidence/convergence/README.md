@@ -66,7 +66,7 @@ final convergence verification.
 | CV-04 | migration/control/backup modules ported with v3 adaptation and protocol 2; targeted 12/101 and two default 90/802 gates passed; ready for whole-branch review |
 | CV-05 | in progress: catalog scope/lifecycle, default ConfigPlan, per-Run provenance and adapter selection fences pass 91/833 default gate; legacy HTTP/Slack/reroute choice now integrated at 109/1085; remaining catalog/control assertions tracked |
 | CV-06 | Controller nonblocking scoped collection/terminal retry verified at 115/1169; origin/attempt/time and account-quota qualification/UI pending |
-| CV-08 | continuation/worker/delivery/failure Guard increments verified at 115/1173; cancel/pause/reroute/start/recovery and native qualification remain pending |
+| CV-08 | continuation/worker/delivery/failure and adapter stop Guard increments verified at 115/1180; Controller cancel/pause/reroute/start/recovery and native qualification remain pending |
 | CV-12 | pending complete selection/control integration |
 | macOS service / LP / backup | pending safe shared foundation |
 | CV-07/09/10/11 | pending contracts/guards |
@@ -971,3 +971,25 @@ startup recovery. This increment does not open native cancellation/handoff UI or
 claim provider stop proof. No live data/service was changed. Rollback is 13bf6f7
 on the isolated branch, with its matching backup. Official quota checked after
 the unit; percentage recorded in Linear.
+
+
+## CV-08l final stop and pause adapter admission
+
+AgentAdapter cancel/pause now accept the same synchronous final admission hook
+as send/resume. Codex, Qoder, Structured CLI and Generic CLI check before owned
+stop or cancellation intent; LocalService checks again after pending input and
+credential awaits, immediately before fetch. Rejected unsent HTTP cancellation
+removes only its own in-memory stop intent. Mock and remote adapter transitions
+forward the hook. Unsupported pause/cancel remains unsupported.
+
+The original Generic late-start cancellation regression caught a moved stop
+latch. Restore that latch after admission but before the detached-handle check,
+so a late owned process is still stopped. No assertion or timeout was weakened.
+RED: 5 new final-stop cases failed before implementation. Rebuilt target passes
+3 files/52 tests including original late-start cancellation. Default `mise exec -- pnpm check` passes 115 files/1180 tests (40.50s test phase).
+`git diff --check` passes. Official quota: 60% remaining, ordinary use allowed. Logs: /tmp/dispatcher-cv08-stop-adapter-admission-red.log,
+/tmp/dispatcher-cv08l-target.log, /tmp/dispatcher-cv08l-final-check.log.
+
+This is adapter admission plumbing only; Controller stop/pause composition and
+qualified native stop remain open in R-005. No live data or service changed.
+Rollback: 91b04b3 and its matching backup.

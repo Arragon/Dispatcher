@@ -2,6 +2,7 @@ import {freezeExecutionSelection} from "./execution-selection.js";
 import {turnExecutionResource} from "./execution-resource.js";
 import {
   AdapterContractError,
+  AdapterAdmissionError,
   assertAdapterStartAdmission,
   assertAdapterWriteAdmission,
   captureAdapterStartInput,
@@ -131,15 +132,19 @@ export class LocalServiceAdapter implements AgentAdapter {
   }
   async pause(): Promise<AdapterSession> { throw new AdapterContractError("UNSUPPORTED_CAPABILITY", "The local-service contract does not declare pause"); }
   async resume(): Promise<AdapterSession> { throw new AdapterContractError("UNSUPPORTED_CAPABILITY", "The local-service contract does not declare same-session resume"); }
-  async cancel(sessionId: string): Promise<AdapterSession> {
+  async cancel(sessionId: string, beforeSend?:()=>void): Promise<AdapterSession> {
     const session = this.require(sessionId);
+    assertAdapterWriteAdmission(beforeSend);
+    const previouslyCancelled=this.cancelledSessions.has(sessionId);
     this.cancelledSessions.add(sessionId);
+    try {
     await this.pendingInputs.get(sessionId)?.catch(() => undefined);
-    const snapshot = await this.requestSnapshot(renderSessionPath(this.profile.cancelPath, requireProviderSession(session)), { method: "POST" });
+    const snapshot = await this.requestSnapshot(renderSessionPath(this.profile.cancelPath, requireProviderSession(session)), { method: "POST" },false,beforeSend);
     const state = mapState(snapshot.state);
     if (!["CANCELLED", "COMPLETED", "FAILED"].includes(state)) throw new AdapterContractError("CANCELLATION_UNCONFIRMED", "Local service did not confirm a terminal session state");
     this.snapshots.set(sessionId, snapshot);
     return this.update(sessionId, { state });
+    } catch(error) { if(error instanceof AdapterAdmissionError&&!previouslyCancelled)this.cancelledSessions.delete(sessionId);throw error; }
   }
   async status(sessionId: string): Promise<AdapterSession> {
     const session = this.require(sessionId);

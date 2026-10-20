@@ -285,12 +285,13 @@ export class CodexAdapter implements AgentAdapter {
     await this.send(sessionId, "Continue from the existing task context.",beforeSend);
     return this.status(sessionId);
   }
-  async cancel(sessionId: string): Promise<AdapterSession> {
+  async cancel(sessionId: string, beforeSend?:()=>void): Promise<AdapterSession> {
     this.pending++;
     try {
       const session=this.require(sessionId);
       const turn = this.turns.get(sessionId);
       if(!turn&&["STARTING","RUNNING"].includes(session.state))throw new AdapterContractError("SESSION_DETACHED","Native termination cannot be confirmed without owned process handles");
+      assertAdapterWriteAdmission(beforeSend);
       this.cancelled.add(sessionId);
       if (turn) await turn.cancel();
       return this.update(sessionId, { state: "CANCELLED" });
