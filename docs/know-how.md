@@ -465,6 +465,10 @@
   A per-run model/effort override belongs to its adapter session and must survive
   continuation independently of current profile defaults. Revalidate native
   account/project context before continuing a managed session.
+- A process reporting completion does not prove its result Promise is ready.
+  Usage reads must not await that Promise. Use stream snapshots or an immediate
+  settled-result cache; keep legacy explicit resource-probe refresh semantics,
+  preserve observation time and keep read failure separate from resource state.
 - Legacy usage collector event IDs do not prove cross-source native event identity.
   Retain private raw evidence, attempt and optional occurrence time; never add
   both collectors automatically or substitute collection time for billing time.

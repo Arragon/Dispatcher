@@ -1,3 +1,4 @@
+import {readReadyTurnResult,rememberTurnResult,usageSnapshotUnavailable,type PassiveTurnResult} from "./usage-snapshot.js";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { access } from "node:fs/promises";
@@ -35,7 +36,7 @@ export interface QoderDiscoveryResult {
 export type NormalizedQoderEvent =
   | { type: "activity"; summary: string }
   | { type: "waiting"; reason: string }
-  | { type: "resource"; state: "RATE_LIMITED" | "QUOTA_EXHAUSTED" | "AUTH_ERROR" | "PROVIDER_DOWN" | "UNKNOWN"; reason: string; remaining?: number; resetsAt?: string; source: "event" | "error" | "probe"; confidence: "high" | "medium" | "low" }
+  | { type: "resource";observedAt?:string; state: "RATE_LIMITED" | "QUOTA_EXHAUSTED" | "AUTH_ERROR" | "PROVIDER_DOWN" | "UNKNOWN"; reason: string; remaining?: number; resetsAt?: string; source: "event" | "error" | "probe"; confidence: "high" | "medium" | "low" }
   | { type: "failure"; reason: string };
 
 export const qoderManifest: AdapterManifest = {
@@ -77,6 +78,8 @@ export interface QoderTurn {
   cancel(): Promise<void>;
   status(): "running" | "completed";
   result(): Promise<QoderTurnResult>;
+  /** Bounded read-only resource events; independent of result completion. */
+  events?():NormalizedQoderEvent[];
 }
 
 export interface QoderBackend {
@@ -98,6 +101,7 @@ class SpawnedQoderTurn implements QoderTurn {
   private completed = false;
   private cancelled = false;
   private readonly outcome: Promise<QoderTurnResult>;
+  private lastResource:Extract<NormalizedQoderEvent,{type:"resource"}>|undefined;
   private readonly ownership: OwnedProcessGroup;
   constructor(private readonly child: ChildProcess) {
     this.ownership = new OwnedProcessGroup(child);
@@ -112,7 +116,7 @@ class SpawnedQoderTurn implements QoderTurn {
         if (!line.trim()) continue;
         try {
           const normalized = normalizeQoderEvent(JSON.parse(line) as Record<string, unknown>);
-          if (normalized) events.push(normalized);
+          if (normalized) {events.push(normalized);if(normalized.type==="resource")this.lastResource={...structuredClone(normalized),observedAt:new Date().toISOString()};}
         } catch {
           events.push({ type: "activity", summary: line.slice(0, 1_000) });
         }
@@ -125,7 +129,7 @@ class SpawnedQoderTurn implements QoderTurn {
         await this.ownership.stop();
         this.completed = true;
         const error = normalizeQoderError(stderr);
-        if (error) events.push(error);
+        if (error) {events.push(error);if(error.type==="resource")this.lastResource={...structuredClone(error),observedAt:new Date().toISOString()};}
         const waiting = events.findLast((event) => event.type === "waiting");
         const lastActivity = events.findLast((event) => event.type === "activity");
         resolve({
@@ -139,11 +143,13 @@ class SpawnedQoderTurn implements QoderTurn {
   async cancel(): Promise<void> { if (!this.completed) this.cancelled = true; await this.ownership.stop(); await this.outcome; }
   status(): "running" | "completed" { return this.completed ? "completed" : "running"; }
   result(): Promise<QoderTurnResult> { return this.outcome; }
+  events():NormalizedQoderEvent[]{return this.lastResource?[structuredClone(this.lastResource)]:[];}
 }
 
 export class QoderAdapter implements AgentAdapter {
   readonly manifest = validateManifest(qoderManifest);
   private readonly turns = new Map<string, QoderTurn>();
+  private readonly usageResults=new WeakMap<object,PassiveTurnResult<QoderTurnResult>>();
   private readonly cancelledSessions = new Set<string>();
   private readonly pendingSends = new Set<string>();
   constructor(readonly profile: QoderProfileConfig, private readonly backend: QoderBackend = new QoderCliBackend(), private readonly store: SessionStore = new MemorySessionStore()) {}
@@ -186,7 +192,13 @@ export class QoderAdapter implements AgentAdapter {
   }
   async status(sessionId: string): Promise<AdapterSession> { const session = this.require(sessionId); const turn = this.turns.get(sessionId); return !turn || turn.status() === "running" ? structuredClone(session) : this.finish(sessionId); }
   async result(sessionId: string): Promise<AdapterResult> { const session = await this.finish(sessionId); const result = await this.turns.get(sessionId)?.result(); return { sessionId, state: session.state, summary: result?.summary ?? `Qoder session ${session.state.toLowerCase()}`, artifacts: [] }; }
-  async usage(sessionId: string): Promise<Record<string, unknown>> { this.require(sessionId); const result = await this.turns.get(sessionId)?.result(); return result?.events.filter((event) => event.type === "resource").at(-1) ?? { state: "UNKNOWN", source: "probe", confidence: "low" }; }
+  async usage(sessionId: string): Promise<Record<string, unknown>> {
+    const session=this.require(sessionId),turn=this.turns.get(sessionId),snapshot=await readReadyTurnResult(turn,this.usageResults,!turn?.events);
+    if(snapshot?.status==="failed")return usageSnapshotUnavailable();
+    let events:NormalizedQoderEvent[];try{events=turn?.events?.()??snapshot?.value?.events??[];}catch{return usageSnapshotUnavailable();}
+    const resource=events.findLast(event=>event.type==="resource");
+    return resource?{...resource,checkedAt:resource.observedAt??(resource.source==="probe"?snapshot?.observedAt:undefined)??session.createdAt}:{state:"UNKNOWN",source:"session",confidence:"low",checkedAt:session.createdAt};
+  }
   async diagnostics(sessionId: string): Promise<Record<string, unknown>> { const session = this.require(sessionId); return { sessionId, profileId: session.profileId, alias: this.profile.alias, providerSessionId: session.providerSessionId, attached: this.turns.has(sessionId), resumable: true }; }
 
   private async finish(sessionId: string): Promise<AdapterSession> {
@@ -195,6 +207,7 @@ export class QoderAdapter implements AgentAdapter {
     const turn = this.turns.get(sessionId);
     if (!turn) return structuredClone(session);
     const result = await turn.result();
+    rememberTurnResult(this.usageResults,turn,result);
     if (this.cancelledSessions.has(sessionId)) return structuredClone(this.require(sessionId));
     return this.update(sessionId, { state: result.state === "completed" ? "COMPLETED" : result.state === "cancelled" ? "CANCELLED" : result.state === "waiting" ? "PAUSED" : "FAILED" });
   }

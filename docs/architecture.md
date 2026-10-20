@@ -794,7 +794,11 @@ Run selection compilation and the full native control Guard remain pending.
 
 Native adapters may return normalized versioned observations alongside resource
 state. Codex exposes bounded cached events without awaiting an active turn,
-with a persisted identity for each native turn. Controller collects these from
+with a persisted identity for each native turn. Qoder provides a bounded latest
+resource snapshot without waiting for result completion. Legacy completed-result
+getters retain a coalesced, nonblocking refresh for existing resource probes;
+unsettled data remains unknown. Read failures return telemetry metadata without
+claiming execution resource failure. Controller collects these from
 its background advancement path, independently of dashboard connections. The
 owning remote Runner persists its last observed usage; read-only cached usage
 remains available after loss of process attachment without allowing execution.

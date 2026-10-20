@@ -1,3 +1,4 @@
+import {readReadyTurnResult,rememberTurnResult,usageSnapshotUnavailable,type PassiveTurnResult} from "./usage-snapshot.js";
 import {assertSessionModelBinding,freezeExecutionSelection,sessionModel} from "./execution-selection.js";
 import { OwnedProcessGroup } from "./owned-process.js";
 import { readCodexCatalog, type CodexReadRequest } from "./codex-catalog.js";
@@ -182,6 +183,7 @@ export class CodexAdapter implements AgentAdapter {
   readonly supportsExecutionSelection = true;
   readonly manifest = validateManifest(codexManifest);
   private readonly turns = new Map<string, CodexTurn>();
+  private readonly usageResults=new WeakMap<object,PassiveTurnResult<CodexTurnResult>>();
   private pending = 0;
   private readonly sending = new Set<string>();
   private readonly cancelled=new Set<string>();
@@ -291,11 +293,15 @@ export class CodexAdapter implements AgentAdapter {
     return { sessionId, state: session.state, summary: result?.summary ?? `Codex session ${session.state.toLowerCase()}`, artifacts: [] };
   }
   async usage(sessionId: string): Promise<Record<string, unknown>> {
-    const session=this.require(sessionId),turn=this.turns.get(sessionId),result=turn?.status()==="completed"?await turn.result():undefined,events=turn?.events?.()??result?.events??[];
+    const session=this.require(sessionId),turn=this.turns.get(sessionId);
+    const snapshot=await readReadyTurnResult(turn,this.usageResults,!turn?.events);
+    if(snapshot?.status==="failed")return usageSnapshotUnavailable();
+    const result=snapshot?.value;let events:NormalizedCodexEvent[];
+    try{events=turn?.events?.()??result?.events??[];}catch{return usageSnapshotUnavailable();}
     const resource=events.findLast(event=>event.type==="resource"),usage=events.findLast(event=>event.type==="usage"),tokens=usage?.tokens;
     const observedAt=usage?.observedAt??session.turnStartedAt??session.createdAt;
     const observation:UsageObservationV1|undefined=tokens&&session.turnId?{version:1,eventId:`${session.turnId}:usage`,profileId:this.profile.id,runId:session.runId,sessionId:session.id,turnId:session.turnId,scope:"turn",mode:"snapshot",observedAt,collectedAt:observedAt,source:"native-event",completeness:"complete",metrics:[{name:"input",value:String(tokens.input),unit:"tokens"},{name:"output",value:String(tokens.output),unit:"tokens"},...(tokens.cachedInput!==undefined?[{name:"cachedInput",value:String(tokens.cachedInput),unit:"tokens",includedIn:"input"}]:[])]}:undefined;
-    return { ...(resource ?? (result?.state==="completed" ? {state:"AVAILABLE",source:"event",confidence:"medium",reason:"Native turn completed; remaining quota was not reported"} : { state: "UNKNOWN", source: "event", confidence: "low" })),checkedAt:resource?.observedAt??(resource?.source==="probe"?new Date().toISOString():observedAt), ...(tokens ? { tokens, tokenScope: "latest-turn" } : {}),...(observation?{observations:[observation]}:{}) };
+    return { ...(resource ?? (result?.state==="completed" ? {state:"AVAILABLE",source:"event",confidence:"medium",reason:"Native turn completed; remaining quota was not reported"} : { state: "UNKNOWN", source: "event", confidence: "low" })),checkedAt:resource?.observedAt??(resource?.source==="probe"?snapshot?.observedAt??observedAt:observedAt), ...(tokens ? { tokens, tokenScope: "latest-turn" } : {}),...(observation?{observations:[observation]}:{}) };
   }
   async usageObservations(sessionId:string):Promise<UsageObservationV1[]>{
     return (await this.usage(sessionId)).observations as UsageObservationV1[]??[];
@@ -310,6 +316,7 @@ export class CodexAdapter implements AgentAdapter {
     const turn = this.turns.get(sessionId);
     if (!turn || session.state === "CANCELLED") return structuredClone(session);
     const result = await turn.result();
+    rememberTurnResult(this.usageResults,turn,result);
     assertSessionModelBinding(this.store.load(sessionId),session);
     if (this.cancelled.has(sessionId)||this.require(sessionId).state === "CANCELLED") return structuredClone(this.require(sessionId));
     return this.update(sessionId, {

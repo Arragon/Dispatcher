@@ -65,7 +65,7 @@ final convergence verification.
 | CV-03 | atomic reload + in-flight edits fixed; process-heavy test pool bounded at four parallel workers; two configured default checks passed 90/802; ready for whole-branch review |
 | CV-04 | migration/control/backup modules ported with v3 adaptation and protocol 2; targeted 12/101 and two default 90/802 gates passed; ready for whole-branch review |
 | CV-05 | in progress: catalog scope/lifecycle, default ConfigPlan, per-Run provenance and adapter selection fences pass 91/833 default gate; remaining legacy/catalog authority assertions tracked |
-| CV-06 | read-only legacy measurement decoder verified; canonical origin/attempt/time mapping and nonblocking runtime/quota wiring pending |
+| CV-06 | private legacy reader and passive Codex/Qoder snapshots verified at 93/849; Controller collection, canonical origin/attempt/time and quota wiring pending |
 | CV-08/12 | pending complete selection/control integration |
 | macOS service / LP / backup | pending safe shared foundation |
 | CV-07/09/10/11 | pending contracts/guards |
@@ -349,3 +349,38 @@ removes the accidental startup-latency assertion and dangling async expectation;
 product query deadlines, process termination deadlines, test timeout and actual
 cancellation/closure expectations remain unchanged. No existing provider probe
 or product deadline was increased. Official quota after this unit: 90% remaining.
+
+
+## CV-06b passive Codex/Qoder snapshots
+
+Codex and Qoder usage reads no longer await a running or draining turn's result.
+Actual CLI readers use current resource/event snapshots. Qoder exposes only its
+latest bounded resource event with its observation timestamp. Business result
+observation can populate a private per-turn weak cache; legacy injected backends
+without stream snapshots may refresh an already completed result, coalescing a
+pending read and yielding after one microtask instead of waiting for native work.
+That compatibility preserves the existing explicit resource-probe/recovery flow.
+It never starts a session or adds another canonical usage ledger.
+
+Failed snapshot reads return sanitized telemetry-unknown metadata without an
+execution resource state. Native observation times stay fixed and prior-turn data
+is not transferred to a newly started turn. Missing account quota/tokens remain
+unknown, and Qoder does not acquire synthetic token measurements. The existing
+Controller resource pipeline is retained; complete background collection isolation,
+quota TTL and canonical origin/attempt/time admission are still R-010.
+
+Eight initial cases reproduced six failures; observation-time/next-turn coverage
+added a Qoder timestamp failure before the fix. Targeted adapter/publication/MVP
+suite passed 5 files/99 tests. Full check then caught one existing quota-recovery
+regression caused by permanently caching the legacy probe result. The getter now
+supports nonblocking completed-result refresh with its original source/timestamp
+semantics. Targeted rebuilt Controller/adapter regression passed 2 files/27 tests;
+final `mise exec -- pnpm check` passed 93 files/849 tests (37.32s test phase).
+One direct targeted rerun exercised stale adapter dist; rebuilding the package
+fixed that evidence mismatch. The existing know-how instruction at lines 281 and
+517 documents this build prerequisite; it was not necessary to change test tools.
+Logs: `/tmp/dispatcher-cv06-passive-usage-red.log`,
+`/tmp/dispatcher-cv06-snapshot-time-red.log`,
+`/tmp/dispatcher-cv06-passive-probe-rebuilt.log`,
+`/tmp/dispatcher-cv06-passive-usage-final-check.log`.
+Official quota after this unit: 88% remaining, ordinary usage allowed.
