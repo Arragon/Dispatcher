@@ -48,6 +48,19 @@ it.each(["task-revision","control"] as const)("rejects a created result after it
   expect(f.coordinator.startForRun(run.id)?.state).toBe("SENDING");
  }finally{f.db.close();}
 });
+it("binds the original Task revision when a mutation starts with a previously captured fence",async()=>{
+ const f=fixture();try{
+  f.db.saveEntity("session",run.sessionId,{id:run.sessionId,profileId:run.profileId,providerId:run.providerId});
+  const principal={id:"owner",roles:["operator"]},fence=f.coordinator.fenceFor(run,"captured-before-lane");
+  await f.coordinator.withMutationLane(run.sessionId,async()=>{
+   f.coordinator.assertInteraction(principal,"advance",fence);
+   await Promise.resolve();f.db.writeCanonicalTask("task",1,{id:"task",state:"QUEUED",currentRunId:"run",note:"concurrent edit"},at);
+   const later=f.coordinator.fenceFor(run,"later-final-boundary");expect(later.expectedTaskRevision).toBe(1);
+   expect(()=>f.coordinator.assertInteraction(principal,"advance",later)).toThrowError(expect.objectContaining({code:"STALE_TASK_REVISION"}));
+   f.coordinator.acknowledgeSettledMutationOutcome(run.sessionId);
+  });
+ }finally{f.db.close();}
+});
 it("persists canonical Session and start intent before sending, with only a semantic digest",()=>{
   const f=fixture();try{const intent=f.coordinator.reserveNativeStart(f.input);expect(intent).toMatchObject({type:"start",state:"RESERVED",fence:{runId:"run",sessionId:"reserved-session"}});expect(f.db.getEntity("session","reserved-session")).toMatchObject({profileId:"p",executionRef:run.executionRef});expect(JSON.stringify(intent)).not.toContain("private prompt");expect(f.coordinator.reserveNativeStart(f.input)).toEqual(intent);expect(()=>f.coordinator.reserveNativeStart({...f.input,semantics:{prompt:"different"}})).toThrowError(expect.objectContaining({code:"IDEMPOTENCY_CONFLICT"}));}finally{f.db.close();}
 });

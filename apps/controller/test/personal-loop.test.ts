@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { AdapterContractError, type AgentAdapter, type CodexBackend, type CodexTurnResult } from "@dispatcher/adapters";
 import type { DispatcherConfig, SecretMetadata, SecretStore } from "@dispatcher/config";
 import type { Run, Task, TaskContract } from "@dispatcher/domain";
-import type { JsonValue } from "@dispatcher/persistence";
+import { InteractionStore,type JsonValue } from "@dispatcher/persistence";
 import { ControllerService } from "../src/service.js";
 
 const OWNER = { authorization: "Bearer test-owner-token" };
@@ -141,6 +141,50 @@ describe("personal Slack–Linear loop", () => {
   }
 
   const resumeContext = { principal: { id: "owner", roles: ["operator"], channel: "api" as const }, workflowId: "reviewed-resume", confirmed: true };
+
+  function controlled(f:Awaited<ReturnType<typeof setup>>){
+    const run=f.run(),store=new InteractionStore(f.service.database);
+    f.service.database.saveEntity("session",run.sessionId,{id:run.sessionId,profileId:run.profileId,providerId:run.providerId,resumable:true,createdAt:run.startedAt!,updatedAt:run.startedAt!});
+    store.initializeControl({sessionId:run.sessionId,activeRunId:run.id,exclusion:"none",at:run.startedAt!});
+    return ()=>store.compareAndSwapControl({sessionId:run.sessionId,expectedRevision:1,expectedEpoch:1,actorId:"owner",event:{type:"conflict",at:f.control.now.toISOString()}});
+  }
+  function webAnswer(f:Awaited<ReturnType<typeof setup>>,id:string){
+    const run=f.run();return f.service.app.inject({headers:OWNER,method:"POST",url:`/api/agents/profiles/${run.profileId}/sessions/${run.sessionId}/input`,payload:{inputId:id,message:"continue",authority:{runId:run.id,generation:run.generation,leaseId:run.leaseId,lastActivityAt:run.lastActivityAt,taskRevision:f.service.database.getCanonicalTask(f.taskId)!.revision}}}).then(value=>value);
+  }
+  it.each(["http","operator","slack"] as const)("blocks %s continuation under a locked control epoch",async channel=>{
+    const f=await waitingFixture();controlled(f)();f.control.turn="running";
+    if(channel==="http")expect((await webAnswer(f,"locked-input-123")).statusCode).toBe(409);
+    else if(channel==="operator")await expect(f.service.semanticTools.execute("run.resume",{target:f.run().id},resumeContext)).rejects.toThrow();
+    else{await f.send(f.service,"locked-reply","continue");await f.service.runBackgroundCycle();}
+    expect(f.starts).toHaveLength(1);expect(f.control.cancellations).toBe(0);expect(f.run().state).toBe("WAITING_USER");
+  });
+  it.each(["http","operator"] as const)("rechecks control at the final %s native boundary after awaited preparation",async channel=>{
+    const f=await waitingFixture(),lock=controlled(f),adapter=(f.service as unknown as {agentAdapters:Map<string,AgentAdapter>}).agentAdapters.get(f.run().profileId)!;
+    const send=adapter.send.bind(adapter),entered=Promise.withResolvers<void>(),ready=Promise.withResolvers<void>();
+    vi.spyOn(adapter,"send").mockImplementation(async(...args)=>{entered.resolve();await ready.promise;return send(...args);});
+    const pending=channel==="http"?webAnswer(f,"late-control-123"):f.service.semanticTools.execute("run.resume",{target:f.run().id},resumeContext).then(value=>({value}),error=>({error}));
+    try{await entered.promise;lock();ready.resolve();await pending;expect(f.starts).toHaveLength(1);expect(f.control.cancellations).toBe(0);expect(f.run().state).toBe("WAITING_USER");expect(f.service.database.listEntities("run-input")).toContainEqual(expect.objectContaining({state:"REJECTED"}));}
+    finally{ready.resolve();await pending;}
+  });
+  it("does not cancel a new control owner after native input already crossed the boundary",async()=>{
+    const f=await waitingFixture(),lock=controlled(f);f.control.turn="running";f.control.onStart=()=>{lock();};
+    expect((await webAnswer(f,"post-native-control")).statusCode).toBe(409);
+    expect(f.starts).toHaveLength(2);expect(f.control.cancellations).toBe(0);expect(f.run()).toMatchObject({state:"RUNNER_UNAVAILABLE",recoveryReason:"NATIVE_OUTCOME_UNKNOWN"});
+    expect(f.service.database.listEntities("run-input")).toContainEqual(expect.objectContaining({state:"OUTCOME_UNKNOWN"}));
+  });
+  it("keeps uncertain Slack input durable across later replies and channels",async()=>{
+    const f=await waitingFixture(),adapter=(f.service as unknown as {agentAdapters:Map<string,AgentAdapter>}).agentAdapters.get(f.run().profileId)!,send=adapter.send.bind(adapter);
+    vi.spyOn(adapter,"send").mockImplementation(async(...args)=>{await send(...args);throw Error("native messaging acknowledgement lost");});f.control.turn="running";
+    await f.send(f.service,"lost-native-reply","continue");await f.service.runBackgroundCycle();
+    expect(f.starts).toHaveLength(2);expect(f.run()).toMatchObject({state:"RUNNER_UNAVAILABLE",recoveryReason:"NATIVE_OUTCOME_UNKNOWN"});
+    expect(f.service.database.listEntities("run-input")).toContainEqual(expect.objectContaining({state:"OUTCOME_UNKNOWN"}));
+    f.control.now=new Date(f.control.now.getTime()+60_000);await f.send(f.service,"second-native-reply","continue again");await f.service.runBackgroundCycle();
+    expect((await webAnswer(f,"cross-channel-retry")).statusCode).toBe(409);expect(f.starts).toHaveLength(2);
+  });
+  it("rejects persisted lease revocation before Web input even with a cached in-memory lease",async()=>{
+    const f=await waitingFixture(),run=f.run();f.service.database.saveEntity("run",run.id,JSON.parse(JSON.stringify({...run,revokedLeaseIds:[run.leaseId]})) as JsonValue);
+    const reply=await webAnswer(f,"revoked-owner-input");expect(reply.statusCode).toBe(409);expect(reply.json()).toMatchObject({code:"STALE_RUN_AUTHORITY"});expect(f.starts).toHaveLength(1);
+  });
 
   async function rerouteFixture() {
     const f = await setup({ secondProfile: true });

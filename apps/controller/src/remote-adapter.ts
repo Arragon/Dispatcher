@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from "node:util";
-import { AdapterContractError, type AdapterEvent, type AdapterManifest, type AdapterResult, type AdapterSession, type AgentAdapter } from "@dispatcher/adapters";
+import { AdapterContractError,assertAdapterWriteAdmission, type AdapterEvent, type AdapterManifest, type AdapterResult, type AdapterSession, type AgentAdapter } from "@dispatcher/adapters";
 import type { ExecutionSelection, Run } from "@dispatcher/domain";
 import type { CommandPayload } from "@dispatcher/protocol";
 import { remoteCommandHash } from "@dispatcher/runner";
@@ -38,7 +38,8 @@ export class RemoteNativeAdapter implements AgentAdapter {
     if(!run.sessionId.startsWith("unstarted:")&&(!object(value)||value.id!==run.sessionId))throw new AdapterContractError("COMMAND_OUTCOME_UNKNOWN","Reconciliation cannot replace the original native session");
     return this.session(value,run,true);
   }
-  private async mutation(payload: CommandPayload, run: Run, messageId: string): Promise<unknown> {
+  private async mutation(payload: CommandPayload, run: Run, messageId: string,beforeSend?:()=>void): Promise<unknown> {
+    assertAdapterWriteAdmission(beforeSend);
     try { return await this.options.request(payload, run, messageId); }
     catch (error) { if (error instanceof AdapterContractError) throw error; throw new AdapterContractError("COMMAND_OUTCOME_UNKNOWN", "Remote mutation response is unconfirmed; inspect the owning Runner before retrying"); }
   }
@@ -49,19 +50,19 @@ export class RemoteNativeAdapter implements AgentAdapter {
     this.options.reserveStart(run, remoteCommandHash({ payload, leaseId: run.leaseId, generation: run.generation }));
     return this.session(await this.mutation(payload, run, `native-start:${run.id}:${run.generation}`), run, true);
   }
-  async send(sessionId: string, message: string): Promise<AdapterEvent> {
+  async send(sessionId: string, message: string,beforeSend?:()=>void): Promise<AdapterEvent> {
     const run = this.run(sessionId, true);
     const key = `native-input:${contentHash({ runId: run.id, generation: run.generation, leaseId: run.leaseId, sessionId, message, intervention: run.lastActivityAt })}`;
-    const value = await this.mutation({ type: "native.run", runId: run.id, action: "send", message }, run, key);
+    const value = await this.mutation({ type: "native.run", runId: run.id, action: "send", message }, run, key,beforeSend);
     if (!object(value) || value.type !== "session.message" || value.sessionId !== sessionId || !date(value.occurredAt) || !object(value.data)) throw new AdapterContractError("COMMAND_OUTCOME_UNKNOWN", "Remote input acknowledgement does not match the native session");
     return { type: "session.message", sessionId, occurredAt: value.occurredAt, data: { ...(typeof value.data.acceptedCharacters === "number" ? { acceptedCharacters: value.data.acceptedCharacters } : {}) } };
   }
-  private async transition(sessionId: string, action: "pause" | "resume" | "cancel"): Promise<AdapterSession> {
+  private async transition(sessionId: string, action: "pause" | "resume" | "cancel",beforeSend?:()=>void): Promise<AdapterSession> {
     const run = this.run(sessionId, true), key = `native-${action}:${contentHash({ runId: run.id, generation: run.generation, leaseId: run.leaseId, intervention: action === "cancel" ? "cancel" : run.lastActivityAt })}`;
-    return this.session(await this.mutation({ type: "native.run", runId: run.id, action }, run, key), run);
+    return this.session(await this.mutation({ type: "native.run", runId: run.id, action }, run, key,beforeSend), run);
   }
   pause(sessionId: string): Promise<AdapterSession> { return this.transition(sessionId, "pause"); }
-  resume(sessionId: string): Promise<AdapterSession> { return this.transition(sessionId, "resume"); }
+  resume(sessionId: string,beforeSend?:()=>void): Promise<AdapterSession> { return this.transition(sessionId, "resume",beforeSend); }
   cancel(sessionId: string): Promise<AdapterSession> { return this.transition(sessionId, "cancel"); }
   async status(sessionId: string): Promise<AdapterSession> { const run = this.run(sessionId, true); return this.session(await this.options.request({ type: "native.run", runId: run.id, action: "status" }, run), run); }
   async result(sessionId: string): Promise<AdapterResult> {

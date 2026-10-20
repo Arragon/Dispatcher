@@ -312,10 +312,12 @@ export class NativeInteractions {
     if(context?.sessionId===run.sessionId)context.taskRevision=this.database.getCanonicalTask<JsonValue>(run.taskId)?.revision??0;
   }
   assertInteraction(principal:InteractionPrincipal,operation:ControllerInteractionOperation,fence:MutationFence):void {
+    const context=this.laneContext.getStore();
+    const mutation=!["history","access","collect"].includes(operation);
+    if(mutation&&context?.sessionId===fence.sessionId&&context.ownsLane&&context.taskRevision!==undefined&&context.taskRevision!==fence.expectedTaskRevision)throw new InteractionGuardError("STALE_TASK_REVISION");
     const decision=this.authorizeInteraction(principal,operation,fence);
     if(!decision.allowed)throw new InteractionGuardError(decision.code);
-    const context=this.laneContext.getStore();
-    if(context?.sessionId===fence.sessionId&&context.ownsLane&&!["history","access","collect"].includes(operation)){context.mutationAuthorized=true;if(operation==="verify")this.consumeReclaimAction(fence,"verify");}
+    if(context?.sessionId===fence.sessionId&&context.ownsLane&&mutation){context.taskRevision??=fence.expectedTaskRevision;context.mutationAuthorized=true;if(operation==="verify")this.consumeReclaimAction(fence,"verify");}
   }
   authorizeStandaloneInput(principal:InteractionPrincipal,sessionId:string):GuardDecision {
     if(!principal.id||!principal.roles.some(role=>["operator","admin"].includes(role)))return {allowed:false,code:"FORBIDDEN"};
@@ -347,6 +349,7 @@ export class NativeInteractions {
     const adapter=this.database.getEntity<JsonValue>("adapter-session",fence.sessionId) as unknown as AdapterSession|undefined;
     if(session&&(session.profileId!==run.profileId||session.providerId!==run.providerId)||adapter&&(adapter.id!==run.sessionId||adapter.runId!==run.id||adapter.profileId!==run.profileId)||!session&&!adapter)return reject("SESSION_OWNER_MISMATCH");
     if(read)return {allowed:true};
+    if(run.revokedLeaseIds?.includes(run.leaseId)&&!["cancel","fail","cleanup-input"].includes(operation))return reject("STALE_RUN_AUTHORITY");
     if(hasNativeExternalWriteBlocker(this.database,run))return reject("NATIVE_STATE_UNKNOWN");
     if(["continue","steer","approval","resume","advance","verify","deliver","reroute"].includes(operation)){try{this.assertDriftPolicy(run);const policy=this.database.getEntity<JsonValue>("native-drift-policy",run.id) as unknown as FrozenDriftPolicy|undefined;if(this.store.control(run.sessionId)?.state==="AUTOMATED"&&!policy?.policy.permissionFingerprint&&this.firstHumanEpoch(run.sessionId)!==null)return reject("NATIVE_POLICY_UNVERIFIED");}catch(error){return reject(error instanceof InteractionGuardError?error.code:"NATIVE_DRIFT_POLICY_INVALID");}}
     if(operation==="deliver"&&this.database.getEntity("native-verification-invalidation",run.id))return reject("NATIVE_REVERIFICATION_REQUIRED");
@@ -371,6 +374,7 @@ export class NativeInteractions {
     if(operation==="cleanup-input"){
       // A stale answer may stop only the original Adapter execution. Never stop a handed-off writer.
       const control=this.store.control(run.sessionId);
+      if(run.generation!==fence.generation||run.leaseId!==fence.leaseId)return reject("STALE_RUN_AUTHORITY");
       if((control?.revision??0)!==fence.expectedControlRevision||(control?.epoch??0)!==fence.expectedControlEpoch)return reject("STALE_CONTROL_REVISION");
       if(control&&control.state!=="AUTOMATED")return reject("NATIVE_WRITE_LOCKED");
       if(!adapter||(adapter.execution?.generation??run.generation)!==fence.generation)return reject("STALE_RUN_AUTHORITY");

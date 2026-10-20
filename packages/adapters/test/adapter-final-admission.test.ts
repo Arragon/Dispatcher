@@ -1,5 +1,5 @@
 import {expect,it,vi} from "vitest";
-import {CursorAdapter,StructuredCliAdapter,cursorManifest,QoderAdapter,GenericCliAdapter,DevinAdapter,LocalServiceAdapter,MemorySessionStore,type AgentAdapter} from "../src/index.js";
+import {CursorAdapter,StructuredCliAdapter,cursorManifest,QoderAdapter,GenericCliAdapter,GenericMockAdapter,DevinAdapter,LocalServiceAdapter,MemorySessionStore,type AgentAdapter} from "../src/index.js";
 const profile={id:"p",alias:"P"};
 const turn=()=>({cancel:async()=>{},status:()=>"completed" as const,result:async()=>({state:"waiting" as const,summary:"question",providerSessionId:"native",events:[]})});
 const factories:Array<[string,(start:ReturnType<typeof vi.fn>,store?:MemorySessionStore)=>AgentAdapter]>=[
@@ -8,6 +8,10 @@ const factories:Array<[string,(start:ReturnType<typeof vi.fn>,store?:MemorySessi
  ["Generic",(start,store)=>new GenericCliAdapter({start:async input=>{start(input);return {id:"process",status:async()=>({state:"running" as const}),send:async()=>{},cancel:async()=>{},result:async()=>({state:"completed" as const,summary:"done"})};}},{file:"fixture",args:["{{prompt}}"]},store,"p")],
 ];
 const stale=()=>{throw Object.assign(Error("stale authority"),{code:"STALE_CONTROL_EPOCH"});};
+it("keeps mock resume under the same write admission contract",async()=>{
+ const adapter=new GenericMockAdapter(),session=await adapter.start({runId:"r",workspacePath:"/work"});await adapter.pause(session.id);
+ await expect(adapter.resume(session.id,stale)).rejects.toMatchObject({dispatch:"not-sent",code:"STALE_CONTROL_EPOCH"});expect((await adapter.status(session.id)).state).toBe("PAUSED");
+});
 for(const [name,make] of factories){
  it(`${name} rejects creation at final write admission`,async()=>{const start=vi.fn();await expect(make(start).start({runId:"r",sessionId:"s",workspacePath:"/work",beforeSend:stale})).rejects.toMatchObject({creationOutcome:"not-created",code:"STALE_CONTROL_EPOCH"});expect(start).not.toHaveBeenCalled();});
  it(`${name} rejects same-session input at final write admission`,async()=>{const start=vi.fn(),adapter=make(start),session=await adapter.start({runId:"r",workspacePath:"/work"});await expect(adapter.send(session.id,"next",stale)).rejects.toMatchObject({dispatch:"not-sent",code:"STALE_CONTROL_EPOCH"});expect(start).toHaveBeenCalledTimes(1);});

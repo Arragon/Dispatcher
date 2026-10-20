@@ -407,8 +407,10 @@ describe("ControllerService", () => {
 
     const waitingWorkspace = await service.workspaces.create({ repositoryId: "acme/repo", taskId: "task-waiting", runId: "run-waiting", attempt: 1, baseRef: "main", scopePaths: [] });
     const failingWorkspace = await service.workspaces.create({ repositoryId: "acme/repo", taskId: "task-failing", runId: "run-failing", attempt: 1, baseRef: "main", scopePaths: [] });
-    const waitingSession = (await service.app.inject({ headers: OWNER,  method: "POST", url: "/api/agents/profiles/atlas/runs", payload: { workspacePath: waitingWorkspace.path, prompt: "needs input" } })).json().session;
-    const failingSession = (await service.app.inject({ headers: OWNER,  method: "POST", url: "/api/agents/profiles/atlas/runs", payload: { workspacePath: failingWorkspace.path, prompt: "complete" } })).json().session;
+    // Canonical fixtures must own the same Run IDs as their adapter sessions.
+    const adapter=(service as unknown as {agentAdapters:Map<string,AgentAdapter>}).agentAdapters.get("atlas")!;
+    const waitingSession=await adapter.start({runId:"run-waiting",workspacePath:waitingWorkspace.path,prompt:"needs input"});
+    const failingSession=await adapter.start({runId:"run-failing",workspacePath:failingWorkspace.path,prompt:"complete"});
     expect(backendInputs).toEqual([{ prompt: "needs input" }, { prompt: "complete" }]);
     expect((await service.app.inject({ headers: OWNER,  method: "GET", url: `/api/agents/profiles/atlas/sessions/${waitingSession.id}` })).json().session).toMatchObject({ state: "PAUSED" });
     for (const fixture of [

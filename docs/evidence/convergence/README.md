@@ -777,3 +777,56 @@ phase); no old assertion was removed or loosened. Logs:
 R-005 remains open for Controller entry-point/worker/continuation/delivery/cancel
 composition and recovery. Rollback is ff82d34; no real data/workspaces changed.
 Official quota checked after the unit; percentage recorded in Linear.
+
+
+## CV-08i Controller continuation Guard composition
+
+Controller now instantiates NativeInteractions after the unchanged startup
+preflight barrier. Web/Slack input and operator/resource resume capture Task,
+Run and control authority and share a Session mutation lane. Their final adapter
+callback rechecks it after awaited preparation. A local not-sent proof records
+REJECTED; a lost reply or post-send authority change retains OUTCOME_UNKNOWN and
+unavailable capacity. Accepted outcome acknowledgement clears the mutation marker
+before notification-only work. Task revision binds on the first successful
+mutation check even when its fence was captured before queuing. Persisted revoked
+leases reject input despite an older in-memory lease cache.
+
+Slack now uses the same durable Run-input ledger as Web/resume, so another reply
+or channel cannot resend an uncertain waiting episode. Its existing confirmed
+messaging receipt still retries only notification. Stale input cleanup compares
+the original control and invocation fence and skips a different/locked owner;
+it never cancels a new controller to make the old result fit. Standalone input
+retains its existing context/stop gate plus the coordinator's ownership gate.
+Existing remote continuation runs the callback before the established transport;
+this does not qualify remote native handoff or add a protocol capability.
+
+RED: all six new control-lock/final-await/post-effect cases failed on the previous
+service. Rebuilt personal/lifecycle tests pass 2 files/59 cases; native coordinator
+checks pass 5 files/91 cases. Added lost-Slack-ack/cross-channel, persisted revoke,
+captured-revision, remote callback and Mock resume coverage. Mock resume first
+went RED and now checks admission before changing its state.
+
+Initial full check found that Mock omission and a pre-existing Controller fixture
+that attached standalone trial Session IDs to different fabricated Run IDs.
+The fixture now creates each adapter Session with its real intended canonical
+Run ID; recovery and verification assertions remain unchanged. The async Devin
+fixture timed out because it did not implement guarded backend admission; it now
+checks the supplied callback after its await, with all original assertions kept.
+No timeout was increased, no test was skipped or assertion weakened. Typecheck
+also caught lost narrowing across the new callback; captured the validated text/
+Run identity without suppression. Final target passes 5 files/102 tests. Final
+default `mise exec -- pnpm check` passes 114 files/1155 tests (43.17s test phase).
+`git diff --check` passes. Logs:
+`/tmp/dispatcher-cv08-service-input-guard-red.log`,
+`/tmp/dispatcher-cv08-service-inputs-all-green.log`,
+`/tmp/dispatcher-cv08-mock-resume-guard-red.log`,
+`/tmp/dispatcher-cv08-service-inputs-check.log`,
+`/tmp/dispatcher-cv08-service-inputs-final-target.log`,
+`/tmp/dispatcher-cv08-service-inputs-native-green.log`,
+`/tmp/dispatcher-cv08-service-inputs-final-check.log`.
+
+Worker advancement, verification/delivery, failure/cancellation, start reservation
+and safe recovery are still pending in R-005. Native UI and startup admission
+remain closed; no real provider, database or macOS service Gate is claimed.
+Rollback is a33da7c on the isolated candidate; originals/data stay intact.
+Official quota checked after the unit; percentage recorded in Linear.

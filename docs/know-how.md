@@ -2,6 +2,11 @@
 
 ## M0–M10 invariants
 
+- Native input cleanup uses its captured control/invocation fence. A lost reply
+  does not authorize cancellation of a new control owner or a second input.
+  Persist the accepted input outcome before notification-only work; notification
+  failure must not make a known native result uncertain.
+
 - Native database migrations need both the schema and the connection-local
   `dispatcher_writer_protocol()` function. A schema-5 database is not compatible
   with a binary that only knows migrations 1–3; do not delete writer triggers.

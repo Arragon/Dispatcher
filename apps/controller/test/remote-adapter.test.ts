@@ -10,6 +10,12 @@ function fixture() {
   const adapter = new RemoteNativeAdapter({ profileId: "p", runnerId: "remote", manifest: codexManifest, run: id => id === run.id ? run : undefined, sessionRun: id => id === run.sessionId ? run : undefined, request, saveSession: save, reserveStart: reserve, active: () => true });
   return { adapter, request, run, session, save, reserve, selection };
 }
+it("checks continuation authority before entering the existing remote transport",async()=>{
+ const f=fixture();f.run.sessionId="session";f.run.state="WAITING_USER";
+ const rejected=()=>{throw Object.assign(Error("revoked"),{code:"STALE_CONTROL_REVISION"});};
+ await expect(f.adapter.send("session","next",rejected)).rejects.toMatchObject({dispatch:"not-sent",code:"STALE_CONTROL_REVISION"});
+ await expect(f.adapter.resume("session",rejected)).rejects.toMatchObject({dispatch:"not-sent",code:"STALE_CONTROL_REVISION"});expect(f.request).not.toHaveBeenCalled();
+});
 it("starts only a reserved canonical Run with its frozen model and owning workspace", async () => {
   const f = fixture();
   await expect(f.adapter.start({ runId: "missing", workspacePath: f.run.worktree!, executionSelection: f.selection })).rejects.toMatchObject({ code: "RUN_AUTHORITY_MISMATCH" });

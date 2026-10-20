@@ -1,5 +1,7 @@
 import {parseNativeModelDefaultReview,qualifyNativeModelDefault,readNativeModelDefaultEvidence} from "./model-defaults.js";
-import type {RunGitDelivery,ScmDeliverySelection} from "@dispatcher/domain";
+import type {RunGitDelivery,ScmDeliverySelection,MutationFence} from "@dispatcher/domain";
+import {NativeInteractions,InteractionGuardError,type ControllerInteractionOperation} from "./native-interactions.js";
+import {AdapterAdmissionError} from "@dispatcher/adapters";
 import { resolveProfileExecutionContext } from "./execution-context.js";
 import { ProfileProbeService } from "./profile-probes.js";
 import { CredentialContext } from "./credential-context.js";
@@ -470,6 +472,7 @@ export class ControllerService {
   readonly workspaces: WorkspaceManager;
   readonly connectors = new ConnectorRegistry();
   readonly tasks: CanonicalTaskService;
+  private readonly nativeInteractions:NativeInteractions;
   readonly projections: ProjectionWorker;
   readonly semanticTools: SemanticToolRegistry;
   readonly semanticWorkflows: SemanticWorkflowEngine;
@@ -542,6 +545,7 @@ export class ControllerService {
       this.database.close();
       throw new TaskDispatchError("NATIVE_CONTROL_RUNTIME_UNAVAILABLE",409,"This database has native execution requiring the control runtime. Keep the original binary/data backup until native control integration is qualified.");
     }
+    this.nativeInteractions=new NativeInteractions(this.database,()=>this.now());
     this.profileProbes=new ProfileProbeService(this.database,()=>this.now());
     this.credentialContext=new CredentialContext(this.database);
     this.directorySelections=new DirectorySelections(options.directoryPicker);
@@ -1613,12 +1617,16 @@ export class ControllerService {
   }
 
   private async resumeCanonicalRun(run: Run, context: { actorId: string; commandId: string; recoveryReason?: string }): Promise<Run> {
+    if(this.pendingConsoleInputs.has(run.sessionId))throw new InputReceiptError("INPUT_PENDING","Native input is already pending");
+    const fence=this.nativeInteractions.fenceFor(run,context.commandId);
+    return this.nativeInteractions.withMutationLane(run.sessionId,async()=>{
     const adapter = this.agentAdapters.get(run.profileId);
     if (!adapter) throw new AdapterContractError("PROFILE_NOT_FOUND", "The original profile is unavailable");
     const state = run.state, taskRecord = this.database.getCanonicalTask<JsonValue>(run.taskId), binding = this.runConversation(run);
     const authority = { runId: run.id, generation: run.generation, leaseId: run.leaseId, lastActivityAt: run.lastActivityAt };
     const input: RunInputIdentity = { inputId: `resume-${contentHash(context.commandId)}`, actorId: context.actorId, runId: run.id, profileId: run.profileId, sessionId: run.sessionId, generation: run.generation, authorityHash: contentHash(authority), payloadHash: contentHash({ operation: "resume", authority, taskRevision: taskRecord?.revision }) };
     const assertAuthority = (): void => {
+      this.nativeInteractions.assertInteraction({id:context.actorId,roles:["operator"],profileId:run.profileId},"resume",fence);
       const current = this.database.getEntity<JsonValue>("run", run.id) as unknown as Run | undefined;
       const task = this.database.getCanonicalTask<JsonValue>(run.taskId);
       if (this.cancelledRunIds.has(run.id) || this.pendingSessionCancellations.has(run.sessionId) || !current || current.state !== state || current.generation !== authority.generation || current.leaseId !== authority.leaseId || current.lastActivityAt !== authority.lastActivityAt || current.sessionId !== input.sessionId || current.profileId !== input.profileId || !task || task.revision !== taskRecord?.revision || (task.document as unknown as Task).currentRunId !== run.id || !["RUNNING", "WAITING_USER", "WAITING_RESOURCE"].includes((task.document as unknown as Task).state)) throw new ConnectorError("CONFLICT", "Run authority changed before continuation", { retryable: false });
@@ -1641,12 +1649,12 @@ export class ControllerService {
       assertAuthority();
       this.runInputs.reserve(input); reserved = true;
       sent = true;
-      const session = await adapter.resume(run.sessionId);
+      const session = await adapter.resume(run.sessionId,assertAuthority);
       try {
         assertAuthority();
         if (session.id !== input.sessionId || session.runId !== run.id || ["CANCELLED", "FAILED"].includes(session.state)) throw new AdapterContractError("SESSION_DETACHED", "Native response did not confirm the original continuation");
       } catch (error) {
-        try { await adapter.cancel(input.sessionId); }
+        try { await this.cleanupStaleInput(run,fence); }
         catch (cleanupError) { this.app.log.warn({ error: redactValue(cleanupError), runId: run.id }, "stale resume cleanup failed"); }
         throw error;
       }
@@ -1661,10 +1669,13 @@ export class ControllerService {
         if (["WAITING_USER", "WAITING_RESOURCE"].includes((task.document as unknown as Task).state)) this.tasks.execute({ id: context.commandId, taskId: run.taskId, baseRevision: task.revision, actor: context.actorId, command: { type: "task.transition", state: "RUNNING" } });
         this.runInputs.finish(input, "ACCEPTED");
       });
+      this.nativeInteractions.acknowledgeSettledMutationOutcome(run.sessionId);
       this.attentionNotifications.recover(run.taskId);
       this.fleetEvents.publish("run.changed", run.id, { id: run.id, state: run.state, lastActivityAt: run.lastActivityAt });
       return run;
     } catch (error) {
+      if(error instanceof AdapterAdmissionError)sent=false;
+      if(!sent)this.nativeInteractions.acknowledgeSettledMutationOutcome(run.sessionId);
       if (reserved) {
         let receipt;
         try { receipt = this.runInputs.finish(input, sent ? "OUTCOME_UNKNOWN" : "REJECTED"); }
@@ -1676,6 +1687,15 @@ export class ControllerService {
       }
       throw error;
     } finally { this.runInputs.release(input); this.pendingConsoleInputs.delete(input.sessionId); }
+    });
+  }
+
+  private assertRunInteraction(run:Run,operation:ControllerInteractionOperation):void {
+    this.nativeInteractions.assertInteraction({id:"run-worker",roles:["operator"],profileId:run.profileId},operation,this.nativeInteractions.fenceFor(run,`run:${run.id}:${operation}`));
+  }
+  private async cleanupStaleInput(run:Run,fence:MutationFence):Promise<void> {
+    const decision=this.nativeInteractions.authorizeInteraction({id:"input-cleanup",roles:["operator"],profileId:run.profileId},"cleanup-input",fence);
+    if(decision.allowed)await this.agentAdapters.get(run.profileId)?.cancel(fence.sessionId);
   }
 
   private async notifyResourceRecovery(run: Run, idempotencyKey: string): Promise<void> {
@@ -2930,6 +2950,7 @@ export class ControllerService {
   }
 
   private assertMessagingInputAuthority(run: Run, binding: ConversationBinding, expectedRevision: number): void {
+    this.assertRunInteraction(run,"continue");
     const current = this.database.getEntity<JsonValue>("run", run.id) as unknown as Run | undefined;
     const task = this.database.getCanonicalTask<JsonValue>(run.taskId)?.document as unknown as Task | undefined;
     const conversation = this.database.getEntity<JsonValue>("messaging-conversation", binding.id) as unknown as ConversationBinding | undefined;
@@ -2992,18 +3013,26 @@ export class ControllerService {
       if (binding.revision !== expectedRevision || binding.generation !== generation) throw new ConnectorError("CONFLICT", "Conversation binding is stale", { retryable: false, operation: "write" });
       const agent = this.agentAdapters.get(run.profileId);
       if (!agent) throw new ConnectorError("PERMANENT", "The run profile is unavailable", { retryable: false, operation: "write" });
+      const fence=this.nativeInteractions.fenceFor(run,`messaging:${resumeKey}`);
+      return this.nativeInteractions.withMutationLane(run.sessionId,async()=>{
+      const assertAuthority=()=>{this.nativeInteractions.assertInteraction({id:principal.principalId,roles:principal.roles,profileId:run.profileId},"continue",fence);this.assertMessagingInputAuthority(run,binding,expectedRevision);};
+      const input:RunInputIdentity={inputId:`messaging-${contentHash(resumeKey)}`,actorId:principal.principalId,runId:run.id,profileId:run.profileId,sessionId:run.sessionId,generation:run.generation,authorityHash:contentHash({runId:run.id,generation:run.generation,leaseId:run.leaseId,lastActivityAt:run.lastActivityAt}),payloadHash:contentHash({message:message.text,bindingRevision:expectedRevision})};
+      let reserved=false,sent=false;
+      try{
+      assertAuthority();this.runInputs.assertAvailable(input);
       this.assertMessagingInputAuthority(run, binding, expectedRevision);
       await this.validateRunSelection(run);
-      this.assertMessagingInputAuthority(run,binding,expectedRevision);
-      await agent.send(binding.sessionId, message.text || "Continue with the approved action.");
+      assertAuthority();this.runInputs.reserve(input);reserved=true;sent=true;
+      await agent.send(run.sessionId, message.text || "Continue with the approved action.",assertAuthority);
       try {
-        this.assertMessagingInputAuthority(run, binding, expectedRevision);
+        assertAuthority();
       } catch (error) {
-        try { await agent.cancel(binding.sessionId); }
+        try { await this.cleanupStaleInput(run,fence); }
         catch (cleanupError) { this.app.log.warn({ error: redactValue(cleanupError), runId: run.id }, "stale input session cleanup failed"); }
         throw error;
       }
       this.database.transaction(() => {
+        assertAuthority();
         assertRunTransition(run.state, "ACTIVE");
         run.state = "ACTIVE";
         run.lastActivityAt = new Date().toISOString();
@@ -3012,9 +3041,21 @@ export class ControllerService {
         const task = this.database.getCanonicalTask<JsonValue>(run.taskId)!;
         if ((task.document as unknown as Task).state === "WAITING_USER") this.tasks.execute({ id: `messaging-resume:${message.idempotencyKey}`, taskId: run.taskId, baseRevision: task.revision, actor: principal.principalId, command: { type: "task.transition", state: "RUNNING" } });
         this.database.saveEntity("messaging-resume", resumeKey, json({ version: 1, runId: run.id, sessionId: run.sessionId, generation: run.generation, interventionRevision: expectedRevision, principalId: principal.principalId, connectorInstanceId: adapter.instance.id, conversationId: message.conversationId, threadId: message.threadId } satisfies MessagingResumeReceipt));
+        this.runInputs.finish(input,"ACCEPTED");
       });
       this.attentionNotifications.recover(run.taskId);
+      this.nativeInteractions.acknowledgeSettledMutationOutcome(run.sessionId);
       return this.replyMessagingResume(adapter, message, run.id);
+      }catch(error){
+        if(error instanceof AdapterAdmissionError)sent=false;
+        if(!sent)this.nativeInteractions.acknowledgeSettledMutationOutcome(run.sessionId);
+        if(reserved){
+          let receipt;try{receipt=this.runInputs.finish(input,sent?"OUTCOME_UNKNOWN":"REJECTED");}catch(recordError){this.app.log.warn({error:redactValue(recordError),runId:run.id},"messaging input receipt remains unconfirmed");}
+          if(sent&&receipt?.state!=="ACCEPTED"){this.markRemoteUnavailable(run.id,"Native messaging input outcome is unconfirmed; inspect the original session","NATIVE_OUTCOME_UNKNOWN",run);throw new InputReceiptError("INPUT_OUTCOME_UNKNOWN","Native input outcome is unconfirmed; inspect the original session before continuing");}
+        }
+        throw error;
+      }finally{this.runInputs.release(input);}
+      });
     }
     const workflowId = `messaging:${adapter.instance.id}:${message.idempotencyKey}`;
     const intent = await this.parseAssistantIntent(message.text);
@@ -3691,23 +3732,31 @@ export class ControllerService {
     });
     this.app.post<{ Params: { profileId: string; sessionId: string }; Body: { message?: string; inputId?:string; authority?: { runId: string; generation: number; leaseId: string; taskRevision: number; lastActivityAt?: string } } }>("/api/agents/profiles/:profileId/sessions/:sessionId/input", async (request, reply) => {
       if (typeof request.body?.message!=="string"||!request.body.message.trim()) return reply.code(400).send({ code: "MESSAGE_REQUIRED" });
+      const message=request.body.message;
       if(request.body.inputId!==undefined&&(typeof request.body.inputId!=="string"||!/^[-a-zA-Z0-9_]{8,128}$/.test(request.body.inputId)))return reply.code(400).send({code:"INVALID_INPUT_ID"});
       const storedSession = this.database.getEntity<JsonValue>("adapter-session", request.params.sessionId) as unknown as AdapterSession | undefined;
       if (storedSession?.profileId !== request.params.profileId) return reply.code(404).send({ code: "SESSION_NOT_FOUND" });
       const expected=request.body.authority;
       const episode={runId:storedSession.runId,sessionId:request.params.sessionId,generation:expected?.generation??0,authorityHash:contentHash(expected?{runId:expected.runId,generation:expected.generation,leaseId:expected.leaseId,lastActivityAt:expected.lastActivityAt}:null)};
-      const inputId=request.body.inputId??(expected?`legacy-${contentHash({actor:this.principalFor(request).id,sessionId:storedSession.id,message:request.body.message,authority:expected})}`:undefined);
-      const input:RunInputIdentity|undefined=inputId?{...episode,inputId,actorId:this.principalFor(request).id,profileId:request.params.profileId,payloadHash:contentHash({message:request.body.message,authority:expected??null})}:undefined;
+      const inputId=request.body.inputId??(expected?`legacy-${contentHash({actor:this.principalFor(request).id,sessionId:storedSession.id,message,authority:expected})}`:undefined);
+      const input:RunInputIdentity|undefined=inputId?{...episode,inputId,actorId:this.principalFor(request).id,profileId:request.params.profileId,payloadHash:contentHash({message,authority:expected??null})}:undefined;
       const existing=input?this.runInputs.read(input):undefined;
       if(existing){
         if(existing.state!=="ACCEPTED")return reply.code(409).send({code:existing.state==="RESERVED"?"INPUT_PENDING":existing.state==="REJECTED"?"INPUT_REJECTED":"INPUT_OUTCOME_UNKNOWN",receipt:existing,message:"Inspect the original session before submitting another input"});
-        return {receipt:existing,repeated:true,event:{type:"session.message",sessionId:existing.sessionId,occurredAt:existing.acceptedAt,data:{acceptedCharacters:request.body.message.length}}};
+        return {receipt:existing,repeated:true,event:{type:"session.message",sessionId:existing.sessionId,occurredAt:existing.acceptedAt,data:{acceptedCharacters:message.length}}};
       }
       const adapter = this.agentAdapters.get(request.params.profileId);
       if (!adapter) return reply.code(404).send({ code: "PROFILE_NOT_FOUND" });
       const run = this.canonicalSession(storedSession);
       const binding = run ? this.runConversation(run) : undefined;
+      if(this.pendingSessionCancellations.has(storedSession.id))return reply.code(409).send({code:"SESSION_CANCELLED"});
+      if(this.pendingConsoleInputs.has(storedSession.id))return reply.code(409).send({code:"INPUT_PENDING"});
+      const fence=run?this.nativeInteractions.fenceFor(run,`console:${inputId??randomUUID()}`):undefined;
+      return this.nativeInteractions.withMutationLane(storedSession.id,async()=>{
       const assertAuthority = (): void => {
+        if(this.pendingSessionCancellations.has(storedSession.id))throw new AdapterContractError("SESSION_CANCELLED","Session cancellation forbids further input");
+        if(run)this.nativeInteractions.assertInteraction(this.principalFor(request),"continue",fence!);
+        else {const decision=this.nativeInteractions.authorizeStandaloneInput(this.principalFor(request),storedSession.id);if(!decision.allowed)throw new InteractionGuardError(decision.code);}
         this.resolveProfileExecutionContext(request.params.profileId,undefined,"resume");
         if (!run) {
           this.assertSessionContext(storedSession);
@@ -3737,10 +3786,10 @@ export class ControllerService {
         assertAuthority();
         if(input){this.runInputs.reserve(input);reserved=true;}
         sent=true;
-        const event = await adapter.send(request.params.sessionId, request.body.message);
+        const event = await adapter.send(request.params.sessionId,message,assertAuthority);
         try { assertAuthority(); }
         catch (error) {
-          try { await adapter.cancel(request.params.sessionId); }
+          try { if(run)await this.cleanupStaleInput(run,fence!);else await adapter.cancel(request.params.sessionId); }
           catch (cleanupError) { this.app.log.warn({ error: redactValue(cleanupError), runId: run?.id }, "stale console input cleanup failed"); }
           throw error;
         }
@@ -3760,8 +3809,11 @@ export class ControllerService {
           this.fleetEvents.publish("run.changed", run.id, { id: run.id, state: run.state, lastActivityAt: run.lastActivityAt });
         }
         if(!run&&input)this.runInputs.finish(input,"ACCEPTED");
+        this.nativeInteractions.acknowledgeSettledMutationOutcome(storedSession.id);
         return { event,...(input?{receipt:this.runInputs.read(input)}:{}) };
       }catch(error){
+        if(error instanceof AdapterAdmissionError)sent=false;
+        if(!sent)this.nativeInteractions.acknowledgeSettledMutationOutcome(storedSession.id);
         if(input&&reserved){
           let receipt;
           try{receipt=this.runInputs.finish(input,sent?"OUTCOME_UNKNOWN":"REJECTED");}
@@ -3773,6 +3825,7 @@ export class ControllerService {
         }
         throw error;
       } finally { if(input)this.runInputs.release(input);this.pendingConsoleInputs.delete(request.params.sessionId); }
+      });
     });
 
     this.app.get("/api/connectors", async () => ({ connectors: this.connectors.list().map((adapter) => ({ definition: adapter.definition, instance: adapter.instance })) }));
@@ -4227,14 +4280,14 @@ export class ControllerService {
       const semanticStatus = error instanceof SemanticPolicyError
         ? error.code === "FORBIDDEN" ? 403 : error.code === "STALE_WORKFLOW" ? 409 : 400
         : undefined;
-      const status = error instanceof LocalGitDeliveryError?409:error instanceof UsageObservationError?400:error instanceof InputReceiptError||error instanceof AdapterContractError&&["SESSION_DETACHED","SESSION_CANCELLED","SESSION_BUSY","SESSION_CONTEXT_CHANGED","CANCELLATION_UNCONFIRMED"].includes(error.code)?409:error instanceof PublicationError ? error.statusCode : error instanceof TaskDispatchError ? error.statusCode : error instanceof RevisionConflictError
+      const status = error instanceof InteractionGuardError?error.code==="FORBIDDEN"?403:409:error instanceof AdapterAdmissionError?409:error instanceof LocalGitDeliveryError?409:error instanceof UsageObservationError?400:error instanceof InputReceiptError||error instanceof AdapterContractError&&["SESSION_DETACHED","SESSION_CANCELLED","SESSION_BUSY","SESSION_CONTEXT_CHANGED","CANCELLATION_UNCONFIRMED"].includes(error.code)?409:error instanceof PublicationError ? error.statusCode : error instanceof TaskDispatchError ? error.statusCode : error instanceof RevisionConflictError
         ? 409
         : error instanceof LlmRuntimeError
           ? error.code === "SELECTION_CHANGED" ? 409 : error.code === "NO_AVAILABLE_PROFILE" ? 503 : 400
         : error instanceof ConfigPlanError && ["PROFILE_CONTEXT_CHANGED","CONNECTOR_CONTEXT_CHANGED","REMOTE_DRAFT_PROBE_UNAVAILABLE","RUNNER_CREDENTIAL_BUSY","CREDENTIAL_CHANGE_PENDING","CREDENTIAL_IN_USE","NATIVE_PICKER_UNAVAILABLE","NATIVE_PICKER_BUSY"].includes(error.code)?409:error instanceof ConfigPlanError || error instanceof ConfigValidationError
           ? 400
           : semanticStatus ?? workspaceStatus ?? connectorStatus ?? secretStatus ?? (error && typeof error === "object" && "validation" in error ? 400 : 500);
-      const code = error instanceof LocalGitDeliveryError||error instanceof UsageObservationError||error instanceof InputReceiptError||error instanceof AdapterContractError||error instanceof PublicationError || error instanceof TaskDispatchError || error instanceof RevisionConflictError || error instanceof ConfigPlanError || error instanceof SecretStoreError || error instanceof LlmRuntimeError || error instanceof ConnectorError || error instanceof WorkspacePolicyError || error instanceof SemanticPolicyError
+      const code = error instanceof InteractionGuardError||error instanceof LocalGitDeliveryError||error instanceof UsageObservationError||error instanceof InputReceiptError||error instanceof AdapterContractError||error instanceof PublicationError || error instanceof TaskDispatchError || error instanceof RevisionConflictError || error instanceof ConfigPlanError || error instanceof SecretStoreError || error instanceof LlmRuntimeError || error instanceof ConnectorError || error instanceof WorkspacePolicyError || error instanceof SemanticPolicyError
         ? error.code
         : error instanceof ConfigValidationError
           ? error.code

@@ -71,7 +71,7 @@ export class GenericMockAdapter implements AgentAdapter {
   }
   async send(sessionId: string, message: string, beforeSend?:()=>void): Promise<AdapterEvent> { const session = this.require(sessionId); if (session.state !== "RUNNING") throw new AdapterContractError("SESSION_NOT_RUNNING", "Session is not running"); assertAdapterWriteAdmission(beforeSend); return { type: "session.message", sessionId, occurredAt: new Date().toISOString(), data: { acceptedCharacters: message.length } }; }
   async pause(sessionId: string): Promise<AdapterSession> { return this.transition(sessionId, "PAUSED"); }
-  async resume(sessionId: string): Promise<AdapterSession> { return this.transition(sessionId, "RUNNING"); }
+  async resume(sessionId: string,beforeSend?:()=>void): Promise<AdapterSession> { assertAdapterWriteAdmission(beforeSend);return this.transition(sessionId, "RUNNING"); }
   async cancel(sessionId: string): Promise<AdapterSession> { return this.transition(sessionId, "CANCELLED"); }
   async status(sessionId: string): Promise<AdapterSession> { return structuredClone(this.require(sessionId)); }
   async result(sessionId: string): Promise<AdapterResult> { const session = this.require(sessionId); return { sessionId, state: session.state, summary: `Mock session ${session.state.toLowerCase()}`, artifacts: [] }; }

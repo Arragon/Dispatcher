@@ -239,8 +239,14 @@ new epoch; it compares the v3 selection against the frozen Run contract and its
 revision, never a newly edited Task contract. Start reservation/settlement also
 compare the frozen choice and execution context. Existing acknowledged receipts
 remain readable across authority changes, while sending needs current authority.
-This coordinator is ported but is not yet composed into the v3 service entry
-points; the startup barrier and unavailable native controls remain in force.
+The coordinator now fences Web/Slack continuation and operator/resource resume
+through a shared Session mutation lane. Their captured Task/control authority
+is checked again by the final adapter callback. A proven pre-write rejection
+is distinct from an uncertain response after sending. Slack input shares durable
+Run-input receipts with Web and resume, so a lost reply cannot authorize a
+cross-channel resend. Stale cleanup must retain the captured epoch and never
+stop a new control owner. Worker/delivery/start/cancel composition is still
+pending; the startup barrier and unavailable native controls remain in force.
 
 Codex CLI start/send/resume accept an optional synchronous `beforeSend` admission
 callback. Creation captures request fields before storing intent, then checks
