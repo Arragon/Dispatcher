@@ -16,6 +16,7 @@ import { installLaunchAgent, LAUNCHD_LABEL, launchctl, tailLog } from "./launchd
 import { normalizeCliArguments } from "./cli-args.js";
 import { OWNER_TOKEN_REFERENCE } from "./control-auth.js";
 import { ControllerService } from "./service.js";
+import {acquireInstanceLock} from "./instance-lock.js";
 
 function flag(args: string[], name: string, fallback?: string): string | undefined {
   const index = args.indexOf(name);
@@ -36,22 +37,30 @@ function servicePaths(args: string[]) {
 }
 
 async function serve(args: string[]): Promise<void> {
-  const service = new ControllerService({
-    dataDirectory: dataDirectory(args),
+  const ownership=acquireInstanceLock(dataDirectory(args));
+  let service:ControllerService;
+  try{service = new ControllerService({
+    dataDirectory: ownership.dataDirectory,
     withRunner: args.includes("--with-runner"),
     host: flag(args, "--host") ?? "127.0.0.1",
     port: Number(flag(args, "--port", "8347")),
     allowedHosts: (flag(args, "--allowed-hosts") ?? process.env.DISPATCHER_ALLOWED_HOSTS ?? "").split(",").map((host) => host.trim()).filter(Boolean),
     ...(process.env.DISPATCHER_OWNER_TOKEN ? { ownerToken: process.env.DISPATCHER_OWNER_TOKEN } : {}),
     backgroundWorker: { enabled: !args.includes("--no-background-worker") },
-  });
+  });}catch(error){ownership.release();throw error;}
+  let stopping:Promise<void>|undefined;
   const shutdown = async () => {
-    await service.stop();
-    process.exitCode = 0;
+    stopping??=service.stop().then(()=>{ownership.release();process.exitCode=0;});
+    await stopping;
   };
-  process.once("SIGINT", () => void shutdown());
-  process.once("SIGTERM", () => void shutdown());
-  await service.start();
+  const onSignal=()=>void shutdown().catch(()=>{console.error("CONTROLLER_SHUTDOWN_UNCONFIRMED");process.exitCode=1;});
+  process.once("SIGINT", onSignal);
+  process.once("SIGTERM", onSignal);
+  try{await service.start();}catch(error){
+    process.removeListener("SIGINT",onSignal);process.removeListener("SIGTERM",onSignal);
+    try{await service.stop();ownership.release();}catch{console.error("CONTROLLER_SHUTDOWN_UNCONFIRMED");}
+    throw error;
+  }
   if (process.stdout.isTTY) {
     const login = service.issueDashboardLogin();
     console.log(`Dashboard login link (single use, expires ${login.expiresAt}): ${login.url}`);
@@ -141,8 +150,10 @@ async function main(): Promise<void> {
   const args = normalizeCliArguments(process.argv.slice(2));
   const command = args[0] ?? "serve";
   if (command === "serve") await serve(args);
-  else if (command === "config") await configCommand(args);
-  else if (command === "doctor") await doctor(args);
+  else if (["config","doctor"].includes(command)){
+    const ownership=acquireInstanceLock(dataDirectory(args));
+    try{if(command==="config")await configCommand(args);else await doctor(args);}finally{ownership.release();}
+  }
   else if (command === "auth") await authCommand(args);
   else if (["install", "start", "stop", "restart", "status", "logs", "uninstall"].includes(command)) await serviceCommand(command, args);
   else throw new Error("Usage: dispatcher serve|config|auth|install|start|stop|restart|status|doctor|logs|uninstall");

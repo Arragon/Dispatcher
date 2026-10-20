@@ -68,7 +68,7 @@ final convergence verification.
 | CV-06 | Controller nonblocking scoped collection/terminal retry verified at 115/1169; origin/attempt/time and account-quota qualification/UI pending |
 | CV-08 | continuation/worker/delivery/failure/cancel/pause Guard, failure priority drain, stop audit and read-only local start recovery qualification verified at 115/1204; ordinary local start composed; schema-8 writer increment verified at 116/1208; known-unsent cancellation/publication journal recovery verified at 116/1215; general guarded local recovery verified at 116/1218; captured reroute stage Guard and default Generic drain verified at 116/1224; shared guarded replacement startup and original owned-CLI cleanup verified at 116/1229; legacy/remote/qualified native recovery remain pending |
 | CV-12 | pending complete selection/control integration |
-| macOS service / LP / backup | pending safe shared foundation |
+| macOS service / LP / backup | MAC-01a CLI data-directory ownership verified at 117/1237; service lifecycle/stable installation/logs/recovery and real evidence pending |
 | CV-07/09/10/11 | pending contracts/guards |
 | CV-13/14 and original Gates | pending implementation and evidence |
 
@@ -1346,3 +1346,40 @@ skip or suppression added. Metadata/controlled SDK fixtures do not qualify a rea
 provider handoff/stop or A/B Gate. Source/rollback: 730bd3b with matching schema-8
 backup. No live data/service changed. Official quota checked after unit; result
 recorded in Linear.
+
+
+## MAC-01a CLI data-directory ownership
+
+The CLI acquires a dedicated `.controller-instance.sqlite` exclusive transaction
+before constructing Controller or opening the business database for offline
+config/doctor. The canonical directory resolves aliases; a conflicting process
+fails closed before migration. Shutdown releases ownership only after successful
+Controller stop, while constructor failure releases immediately. Kernel process
+exit releases a crashed owner's lock without deleting a file, guessing PID
+expiry or stealing ownership. This does not qualify direct library embedding or
+older CLIs. No business schema/data or live service is changed.
+
+Reuse: existing Node built-in SQLite, no new package or third-party code.
+[SQLite's locking reference](https://www.sqlite.org/lockingv3.html) documents the
+rollback-mode exclusive lock. First real child test caught a POSIX pitfall:
+closing an extra descriptor to an existing inode releases that process's lock.
+Creation now closes only its newly created descriptor before SQLite opens it;
+existing files use lstat and SQLite alone. New regression verifies a rejected
+same-process attempt does not lose exclusion against another actual process.
+
+RED: missing module; initial implementation reproduces cross-process exclusion
+failure, then all 8 cases GREEN: contention, crash, alias, same-process rejection
+followed by another process, symlink preservation and CLI serve/doctor/config
+rejection before touching sentinel business bytes. Target 3 files/12 tests.
+First full check caught the required preserve-caught-error lint; attach narrow
+cause without suppression. Final default `mise exec -- pnpm check` passes
+117 files/1237 tests (41.70s test phase); diff check passes. Logs:
+/tmp/dispatcher-mac01a-red.log, /tmp/dispatcher-mac01a-green.log,
+/tmp/dispatcher-mac01a-target.log, /tmp/dispatcher-mac01a-final-check.log.
+
+MAC-01 remains open: launchd lifecycle, stable deployment, bounded logs, offline
+read-only doctor/upgrade/restore workflow and real login/sleep evidence pending.
+Independent service development proceeds while qualified native/remote CV-08
+activation remains closed per R-005. Rollback: fba8e9a and matching schema-8 data
+backup; do not remove a possibly owned lock file. Official quota checked after
+unit and recorded in Linear.

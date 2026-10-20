@@ -27,6 +27,15 @@ The Controller listens on `127.0.0.1:8347`; open that address for the
 Dashboard. State defaults to `.dispatcher/`. Set `DISPATCHER_DATA_DIR` or pass
 `--data-dir <path>` to isolate it.
 
+CLI `serve`, offline `config` and offline `doctor` require exclusive ownership of
+the canonical data directory before opening its business database. A second
+process fails with `DATA_DIRECTORY_IN_USE`; use the running Controller's health,
+diagnostics and ConfigPlan APIs while it owns the directory. The separate
+`.controller-instance.sqlite` file contains no user records. Do not remove it
+while a process may own the directory. A crash releases the OS lock; successful
+shutdown releases it after Controller cleanup. This protection requires the new
+CLI and does not make an older binary compatible with a newer schema.
+
 Useful probes:
 
 ```bash

@@ -2,6 +2,12 @@
 
 ## M0–M10 invariants
 
+- Keep the Controller instance-lock SQLite file separate from the business WAL
+  database and never delete/recreate it to clear ownership. On POSIX, opening and
+  closing an extra descriptor to an existing lock inode can release locks held
+  by this process. Test contention using separate real processes, including after
+  a rejected same-process attempt; a same-process-only test misses that defect.
+
 - A cancellation request is not terminal execution evidence. Keep its input
   latch separate and report completion only after owned-group drain. Generic's
   default SpawnProcessExecutor and Controller's ProcessManager executor are

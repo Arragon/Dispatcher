@@ -28,6 +28,13 @@ Runs and unresolved legacy sessions; device labels/capacity do not rebuild handl
 Scale/HA remains
 outside this boundary.
 
+The production CLI acquires a separate SQLite exclusive transaction before
+constructing Controller or opening the business database for offline config/
+doctor commands. Its canonical data-directory lock remains held through verified
+shutdown; process exit releases kernel ownership, without PID expiry or deleting
+lock files. This protects CLI processes, not independently embedded library
+instances or an older binary that does not implement the protocol.
+
 The personal MVP adds one Controller-owned `dispatchTask` path shared by HTTP
 and the confirmed operator-only `task.dispatch` semantic tool. Slack task and
 profile aliases resolve before approval. A durable workflow origin and dispatch
