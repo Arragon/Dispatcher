@@ -1,0 +1,82 @@
+{
+  "version": 1,
+  "createdAt": "20261020T173535Z",
+  "backupDirectory": "/Users/wangdongxin/.codex/backups/dispatcher-convergence/20261020T173535Z",
+  "targetDirectory": "/Users/wangdongxin/.codex/worktrees/dispatcher-convergence/dispatcher",
+  "commonAncestor": "a1e80830620c9fe2482b4293d9c79c1d66772cae",
+  "sources": {
+    "v3": {
+      "path": "/Users/wangdongxin/projects/dispatcher",
+      "sha": "19db456149593c1feadd7ff0faef35f0dc1452dd",
+      "protectedRef": "refs/backup/dispatcher-convergence-20261020T173535Z/v3",
+      "status": [
+        " M docs/superpowers/plans/2026-10-16-v3-backend-completion.md",
+        "?? dispatcher-candidate-convergence-architecture-plan.md",
+        "?? docs/progress-audit-2026-10-19.md"
+      ],
+      "sha256": {
+        "dispatcher-candidate-convergence-architecture-plan.md": "282455db1c86a0bd9cd05922ee0b43ff627b79ddc21a7ee71d74768c113eab3f",
+        "docs/progress-audit-2026-10-19.md": "c61874cacaf51f8b4745dea451f20a21a98a3e405319b561356c8a9e8614b5bd",
+        "docs/superpowers/plans/2026-10-16-v3-backend-completion.md": "bc18c124c2b07c8c9382e14543e391b3fceaa90ef2ef1903a989fc72ddf840fd"
+      },
+      "patchSha256": "cf9eae79c7bc566aaa3b0dfe6b5d3a299939762eabf488669c56e9d90ad19d73",
+      "restoreVerified": true
+    },
+    "personal-local": {
+      "path": "/Users/wangdongxin/.codex/worktrees/dispatcher-personal-local/dispatcher",
+      "sha": "297c32cbda45e317b2f09eee55eb3dda8d5153f6",
+      "protectedRef": "refs/backup/dispatcher-convergence-20261020T173535Z/personal-local",
+      "status": [],
+      "sha256": {},
+      "patchSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "restoreVerified": true
+    },
+    "continuation": {
+      "path": "/Users/wangdongxin/.codex/worktrees/dispatcher-local-continuation/dispatcher",
+      "sha": "a499d84e88c9f4ff1d01c89cc20304f236fe2bbd",
+      "protectedRef": "refs/backup/dispatcher-convergence-20261020T173535Z/continuation",
+      "status": [
+        " M apps/controller/src/service.ts",
+        " M docs/architecture.md",
+        " M docs/evidence/native-sessions/copilot-rpc.md",
+        " M docs/evidence/native-sessions/pending-human-confirmations.md",
+        " M docs/superpowers/plans/2026-10-13-copilot-rpc.md",
+        " M packages/config/src/schema.ts",
+        "?? apps/controller/test/copilot-runtime-service.test.ts",
+        "?? packages/config/test/copilot-config.test.ts"
+      ],
+      "sha256": {
+        "docs/architecture.md": "a67302edafd6e03b3ab65ebc166a1e8d44c4832c1ca066e2380a190c14f21555",
+        "docs/evidence/native-sessions/copilot-rpc.md": "30cb62ace75e7344c1d567d8c34d26fb81f982786bd617f5ef16662eb14fd157",
+        "docs/evidence/native-sessions/pending-human-confirmations.md": "729b85a378897909fb4dce5d2888e190b9a18210b0386145b3bda5ad50bffa6f",
+        "docs/superpowers/plans/2026-10-13-copilot-rpc.md": "3eef336aff860c20a4df5b50e7de77d3895fcd9f127aa067dd49b0ab54f415b4",
+        "packages/config/test/copilot-config.test.ts": "3d2437a48091122a13e9f0fe282506861d1e92cfd8a09a1eb667e01368d26f3c",
+        "packages/config/src/schema.ts": "cf19b5d45ba5d789d8b941224805144510f2556bbb0826623b30fd3d4f38426e",
+        "apps/controller/test/copilot-runtime-service.test.ts": "d106ee8e03c953e40ff788fe0e00ab85ca2d98c24d4b74e755c2152bbbac06d9",
+        "apps/controller/src/service.ts": "92c613ca6daeb2d247ea7f362a6e8590b972bf68902a5c3cc9f78200ae3e1b61"
+      },
+      "patchSha256": "02c7e38c5069d197a7e72f235f7c87243d6d142559564d4a77c24297c40af9b3",
+      "restoreVerified": true
+    }
+  },
+  "remoteRefs": [
+    "refs/remotes/origin/HEAD af00240b6d62999065141ea390df29d6fe4bbd26",
+    "refs/remotes/origin/codex/dispatcher-v3-console 19db456149593c1feadd7ff0faef35f0dc1452dd",
+    "refs/remotes/origin/codex/local-harness-ecosystem 5ec24589e35dd8e06f05794a999c6562378779b8",
+    "refs/remotes/origin/codex/m11-m14-distributed-expansion eaedee28b6426107283706e9c167321de8bb3200",
+    "refs/remotes/origin/codex/m5-m6-mvp-closure e719a3f32e07a3ae76850d75e921115f9f5028df",
+    "refs/remotes/origin/codex/m7-m10-alpha-closure 572963646df8f250505c13711b445da5dd3ae884",
+    "refs/remotes/origin/codex/mac-priority-harnesses 4a37b6d9685a81be18231f00a7c3b72cc4ca4b09",
+    "refs/remotes/origin/codex/personal-mvp-step3-5 fa7acade7428e22b561144dde5cfce4921a062cd",
+    "refs/remotes/origin/devin/1790849850-personal-mvp-step0-2 86978f9187b5559a65363d1af072fd34cb656080",
+    "refs/remotes/origin/main af00240b6d62999065141ea390df29d6fe4bbd26"
+  ],
+  "bundleSha256": "9d298c1babbb1a2966f8a38716d484de29e37fc92136f47965375d47ddbb6b73",
+  "verification": {
+    "bundle": "passed",
+    "committedTipsRestored": 3,
+    "wipFilesRestored": 11,
+    "originalWorktreesUnchanged": true,
+    "databasesOpened": false
+  }
+}
