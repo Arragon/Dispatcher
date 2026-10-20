@@ -66,7 +66,7 @@ final convergence verification.
 | CV-04 | migration/control/backup modules ported with v3 adaptation and protocol 2; targeted 12/101 and two default 90/802 gates passed; ready for whole-branch review |
 | CV-05 | in progress: catalog scope/lifecycle, default ConfigPlan, per-Run provenance and adapter selection fences pass 91/833 default gate; legacy HTTP/Slack/reroute choice now integrated at 109/1085; remaining catalog/control assertions tracked |
 | CV-06 | Controller nonblocking scoped collection/terminal retry verified at 115/1169; origin/attempt/time and account-quota qualification/UI pending |
-| CV-08 | continuation/worker/delivery/failure/cancel/pause Guard, failure priority drain, stop audit and read-only local start recovery qualification verified at 115/1204; ordinary local start composed; schema-8 writer increment verified at 116/1208; known-unsent cancellation/publication journal recovery verified at 116/1215; remaining reroute/general recovery and native qualification remain pending |
+| CV-08 | continuation/worker/delivery/failure/cancel/pause Guard, failure priority drain, stop audit and read-only local start recovery qualification verified at 115/1204; ordinary local start composed; schema-8 writer increment verified at 116/1208; known-unsent cancellation/publication journal recovery verified at 116/1215; general guarded local recovery verified at 116/1218; remaining reroute/legacy/qualified native recovery and native qualification remain pending |
 | CV-12 | pending complete selection/control integration |
 | macOS service / LP / backup | pending safe shared foundation |
 | CV-07/09/10/11 | pending contracts/guards |
@@ -1210,3 +1210,39 @@ reroute/remote composition and qualified native stop/real Gates. No original
 workspace/data/service changed. Source/rollback: e966596 and matching schema-8
 backup; do not reuse a newer journal with an older binary without compatibility
 review. Official quota checked after unit; percentage recorded in Linear.
+
+
+## CV-08r qualified direct-Run startup recovery
+
+After publication recovery, the constructor also reconciles qualified local
+STARTING/ACTIVE journals without a publication record. It retains the exact
+Run/Session/generation/lease and marks unknown process ownership unavailable with
+manual policy, without native calls or replay. Stable waiting, verification,
+delivery and remote/legacy unsupported journals retain their existing paths.
+A sealed not-created FAILED receipt can finish its original queued Task when
+Run projection previously succeeded but the Task write failed. Match the initial
+control certificate and original queued revision; later edits stay unchanged.
+This is past-fact projection even after expiry, never new lease/execution
+authority. The completion is idempotent across another restart. Existing startup
+cache/publication writes share saveStartupReceipts instead of duplicated logic.
+
+Two new cases fail first (direct restart falsely live; failed Task projection
+left queued), while the concurrent-edit preservation case already passes. Final
+3 cases pass. The known-failure case also passes with a 24-hour expired lease.
+Positive recovery-preflight tests now separately assert total_changes is
+unchanged by qualification, then assert the constructor's intended unavailable
+recovery delta and original identity. Original corrupt/foreign fail-closed tests
+retain full unchanged-record assertions. No check/timeout weakened.
+
+Targets: 4 files/166 tests including publication, physical Git/PR recovery and
+legacy continuation; default `mise exec -- pnpm check` passes 116 files/1218
+tests (45.70s test phase). `git diff --check` passes. Logs:
+/tmp/dispatcher-cv08r-recovery-red.log, /tmp/dispatcher-cv08r-recovery-green.log,
+/tmp/dispatcher-cv08r-target.log, /tmp/dispatcher-cv08r-expired-projection.log,
+/tmp/dispatcher-cv08r-check.log.
+
+This does not reattach native processes or open foreign/native binding/HUMAN
+records. Atomic legacy adoption, reroute/remote composition, qualified native
+context/stop and real recovery/soak remain in R-005/R-003/R-004. No original data
+or service changed. Source/rollback: 4b3f634 with matching schema-8 backup.
+Official quota checked after unit; percentage recorded in Linear.

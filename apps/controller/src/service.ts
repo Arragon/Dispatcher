@@ -690,7 +690,42 @@ export class ControllerService {
       dispatch: async (record,taskId) => (await this.dispatchTask(taskId,{profileId:record.selection!.profileId,repositoryId:record.repository!.id},`publication:${record.preview.publicationId}`,record)).run,
     });
     this.publications.reconcile();
+    this.reconcileLocalStartJournals();
     this.registerRoutes();
+  }
+
+  private saveStartupReceipts(run:Run):void {
+    for(const value of this.database.listEntities<JsonValue>("task-publication")){const publication=value as unknown as PublicationRecord;if(publication.receipt?.runId===run.id)this.publications.markOutcome(publication.owner,publication.preview.publicationId,run);}
+    for(const row of this.database.handle.prepare("SELECT id,document_json FROM entities WHERE kind='task-dispatch' AND json_extract(document_json,'$.run.id')=?").all(run.id)){
+      const receipt=JSON.parse(String(row.document_json)) as {run:Run;routing:unknown};
+      if(receipt.run.generation===run.generation&&receipt.run.leaseId===run.leaseId)this.database.saveEntity("task-dispatch",String(row.id),json({...receipt,run}));
+    }
+  }
+
+  private reconcileLocalStartJournals():void {
+    for(const value of this.database.listEntities<JsonValue>("run")){
+      const run=value as unknown as Run;
+      if(!["STARTING","ACTIVE","FAILED"].includes(run.state)||!isGuardedControllerStart(this.database,run))continue;
+      this.database.transaction(()=>{
+        const current=this.database.getEntity<JsonValue>("run",run.id) as unknown as Run,command=this.nativeInteractions.startForRun(run.id),task=this.database.getCanonicalTask<JsonValue>(run.taskId);
+        if(!command||!task||!isGuardedControllerStart(this.database,current))return;
+        if(command.state==="FAILED"&&["STARTING","FAILED"].includes(current.state)&&(task.document as unknown as Task).state==="QUEUED"&&task.revision===command.fence.expectedTaskRevision){
+          // A sealed not-created receipt is a past fact, even after its lease expires.
+          // It grants no new execution authority and cannot acknowledge a later Task edit.
+          if(current.state==="STARTING"){
+            assertRunTransition(current.state,"FAILED");current.state="FAILED";current.endedAt=this.now().toISOString();
+            const code=command.code&&/^[A-Z][A-Z0-9_]{0,79}$/.test(command.code)?command.code:"START_NOT_CREATED";current.failureReason=`Native startup did not create a session: ${code}`;this.database.saveEntity("run",current.id,json(current));
+          }
+          this.tasks.execute({id:`startup-failed:${current.id}:${current.generation}`,taskId:current.taskId,baseRevision:task.revision,actor:"startup-recovery",command:{type:"task.transition",state:"FAILED"}});
+          const session=this.database.getEntity<JsonValue>("adapter-session",current.sessionId) as unknown as AdapterSession|undefined;
+          if(session&&session.state==="STARTING")this.database.saveEntity("adapter-session",session.id,json({...session,state:"FAILED",updatedAt:this.now().toISOString()}));
+          this.saveStartupReceipts(current);return;
+        }
+        if(isTerminalRunState(current.state))return;
+        this.markRemoteUnavailable(current.id,"Local startup or process ownership is unconfirmed after Controller restart; inspect the original execution","NATIVE_OUTCOME_UNKNOWN",current);
+        const unavailable=this.database.getEntity<JsonValue>("run",current.id) as unknown as Run;this.saveStartupReceipts(unavailable);
+      });
+    }
   }
 
   runBackgroundCycle(): Promise<void> {
@@ -2251,11 +2286,7 @@ export class ControllerService {
         this.tasks.execute({id:`cancel-unsent:${current.id}:${current.generation}`,taskId:current.taskId,baseRevision:task.revision,actor:principal.id,command:{type:"task.transition",state:"CANCELLED"}});
         this.nativeInteractions.recordUnsentCancellation(principal,fence);
         if(session)this.saveSessionStop({...session,state:"CANCELLED"},"confirmed",{version:1,actorId:principal.id,operation:"cancel",fence,requestedAt:this.now().toISOString()});
-        for(const value of this.database.listEntities<JsonValue>("task-publication")){const publication=value as unknown as PublicationRecord;if(publication.receipt?.runId===current.id)this.publications.markOutcome(publication.owner,publication.preview.publicationId,current);}
-        for(const row of this.database.handle.prepare("SELECT id,document_json FROM entities WHERE kind='task-dispatch' AND json_extract(document_json,'$.run.id')=?").all(current.id)){
-          const receipt=JSON.parse(String(row.document_json)) as {run:Run;routing:unknown};
-          if(receipt.run.generation===current.generation&&receipt.run.leaseId===current.leaseId)this.database.saveEntity("task-dispatch",String(row.id),json({...receipt,run:current}));
-        }
+        this.saveStartupReceipts(current);
         return current;
       });
       this.cancelledRunIds.delete(cancelled.id);this.fleetEvents.publish("run.changed",cancelled.id,{id:cancelled.id,state:cancelled.state});return cancelled;

@@ -300,7 +300,15 @@ its no-send evidence and is cancellable explicitly. SENDING/UNKNOWN and detached
 ACK journal recovery remain manual and never replay creation. A reserved
 Dispatcher Session ID is not native creation or process-liveness evidence.
 Publication recovery now reads the start journal; a lost Task projection cannot
-turn a reserved ID into STARTED. Known no-send cancellation uses START_FAILED
+turn a reserved ID into STARTED.
+The same qualified local journal now covers direct/Slack-created Runs without
+publication records. Startup marks interrupted STARTING/ACTIVE ownership manual
+and unavailable without SDK calls, preserving the original invocation identity.
+A sealed FAILED start receipt may finish only its original queued Task revision;
+a later edit is retained. This projects a past no-creation fact even after lease
+expiry, without granting execution authority. Waiting/verification/delivery
+phases retain their existing paths. Existing startup caches/publication receipts
+share one scoped projection helper. Known no-send cancellation uses START_FAILED
 with the cancellation reason; sent/unknown cancellation stays distinct.
 
 Codex CLI start/send/resume accept an optional synchronous `beforeSend` admission

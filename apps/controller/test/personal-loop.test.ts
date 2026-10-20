@@ -234,6 +234,19 @@ describe("personal Slack–Linear loop", () => {
     const pending=f.service.app.inject({headers:OWNER,method:"POST",url:`/api/tasks/${f.taskId}/dispatch`,payload:{}}).then(value=>value);
     try{await entered.promise;if(change==="control")controlled(f)();else{const task=f.service.database.getCanonicalTask<JsonValue>(f.taskId)!;f.service.database.writeCanonicalTask(f.taskId,task.revision,{...(task.document as Record<string,JsonValue>),title:"Concurrent reviewed edit"});}ready.resolve();expect((await pending).statusCode).toBe(409);expect(f.starts).toHaveLength(0);if(change==="task")expect(f.task()).toMatchObject({title:"Concurrent reviewed edit",state:"QUEUED"});}finally{ready.resolve();await pending;}
   });
+  it("recovers direct non-publication execution as unavailable without replaying native creation",async()=>{
+    const f=await setup();await f.service.app.inject({headers:OWNER,method:"POST",url:`/api/tasks/${f.taskId}/dispatch`,payload:{}});const run=f.run();expect(f.service.database.listEntities("task-publication")).toHaveLength(0);await f.service.stop();const restored=await f.make();
+    expect(f.run(restored)).toMatchObject({id:run.id,state:"RUNNER_UNAVAILABLE",recoveryState:"ACTIVE",recoveryReason:"NATIVE_OUTCOME_UNKNOWN",resumePolicy:"manual",sessionId:run.sessionId,generation:run.generation,leaseId:run.leaseId});expect(f.task(restored).state).toBe("WAITING_USER");await restored.runBackgroundCycle();expect(f.starts).toHaveLength(1);expect(restored.database.listEntities("run")).toHaveLength(1);
+  });
+  it.each([false,true])("projects only the original failed-start Task authority after restart (concurrent edit=%s)",async edited=>{
+    const f=await setup();f.control.throwStart=true;const execute=f.service.tasks.execute.bind(f.service.tasks),writer=vi.spyOn(f.service.tasks,"execute").mockImplementation((input,...rest)=>{if(input.command.type==="task.transition"&&input.command.state==="FAILED")throw Error("interrupted final Task projection");return execute(input,...rest);});
+    try{expect((await f.service.app.inject({headers:OWNER,method:"POST",url:`/api/tasks/${f.taskId}/dispatch`,payload:{}})).statusCode).toBe(500);}finally{writer.mockRestore();}
+    const run=f.run();expect(f.task().state).toBe("QUEUED");expect(new InteractionStore(f.service.database).command(`native-start:${run.id}`)?.state).toBe("FAILED");expect(f.starts).toHaveLength(0);
+    if(edited){const task=f.service.database.getCanonicalTask<JsonValue>(f.taskId)!;f.service.database.writeCanonicalTask(f.taskId,task.revision,{...(task.document as Record<string,JsonValue>),title:"New reviewed intent"});}
+    if(!edited)f.control.now=new Date(f.control.now.getTime()+24*60*60_000);
+    f.control.throwStart=false;await f.service.stop();const restored=await f.make();
+    if(edited)expect(f.task(restored)).toMatchObject({state:"QUEUED",title:"New reviewed intent"});else expect(f.task(restored).state).toBe("FAILED");expect(f.starts).toHaveLength(0);const revision=restored.database.getCanonicalTask(f.taskId)!.revision;await restored.stop();const again=await f.make();expect(again.database.getCanonicalTask(f.taskId)!.revision).toBe(revision);expect(f.starts).toHaveLength(0);
+  });
   function webAnswer(f:Awaited<ReturnType<typeof setup>>,id:string){
     const run=f.run();return f.service.app.inject({headers:OWNER,method:"POST",url:`/api/agents/profiles/${run.profileId}/sessions/${run.sessionId}/input`,payload:{inputId:id,message:"continue",authority:{runId:run.id,generation:run.generation,leaseId:run.leaseId,lastActivityAt:run.lastActivityAt,taskRevision:f.service.database.getCanonicalTask(f.taskId)!.revision}}}).then(value=>value);
   }

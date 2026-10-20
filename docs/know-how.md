@@ -7,6 +7,11 @@
   ACK proves creation, not liveness after Controller restart. Keep RESERVED
   no-send evidence intact; explicit cancellation may atomically settle it without
   SDK I/O. Test rollback against the entire Run/Task records, not state alone.
+- Startup recovery must cover canonical Runs without publication records. Match
+  the qualified journal and original queued Task revision before completing a
+  not-created failure projection. Do not acknowledge a later edit or infer an
+  attached process from ACK. A failed Task projection can leave Run FAILED and
+  Task QUEUED; project the known fact once, without another SDK operation.
 
 - ExecutionSelection.contextFingerprint may describe a native model catalog; it
   is not always the base execution-context fingerprint. Preserve separate checks

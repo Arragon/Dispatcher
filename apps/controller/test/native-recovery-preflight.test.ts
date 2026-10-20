@@ -7,6 +7,7 @@ import type {Run} from "@dispatcher/domain";
 import {NativeInteractions} from "../src/native-interactions.js";
 import {contentHash} from "../src/task-publications.js";
 import { ControllerService } from "../src/service.js";
+import {isGuardedControllerStart} from "../src/start-recovery.js";
 
 it.each(["execution-context","control","binding","legacy-selection"])("does not restore native authority from %s before the control runtime is composed",kind=>{
   const dataDirectory=mkdtempSync(join(tmpdir(),"dispatcher-native-recovery-"));
@@ -41,7 +42,8 @@ it.each(["RESERVED","UNKNOWN","ACKNOWLEDGED"] as const)("admits only the local C
   const dataDirectory=mkdtempSync(join(tmpdir(),"dispatcher-guarded-start-recovery-"));let service:ControllerService|undefined;
   try{const path=join(dataDirectory,"dispatcher.sqlite"),db=new DispatcherDatabase(path),f=guardedFixture(db);
     if(state!=="RESERVED"){f.native.beginNativeStart(f.command.id);if(state==="UNKNOWN")f.native.settleNativeStart(f.command.id,{kind:"unknown",code:"NATIVE_START_OUTCOME_UNKNOWN"});else {const session={id:f.run.sessionId,runId:f.run.id,profileId:"p",backendId:"exec",workspacePath:f.run.worktree!,execution:{generation:1,attempt:1,leaseId:"lease"},executionSelection:f.run.executionSelection,state:"RUNNING" as const,createdAt:at,updatedAt:at};db.saveEntity("adapter-session",session.id,json(session));f.native.settleNativeStart(f.command.id,{kind:"created",session});}}
-    db.close();expect(()=>{service=new ControllerService({dataDirectory,ownerToken:"test-owner",withRunner:false});}).not.toThrow();expect(service!.database.getEntity("run",f.run.id)).toEqual(json(f.run));expect(new InteractionStore(service!.database).command(f.command.id)?.state).toBe(state);
+    const writes=db.handle.prepare("SELECT total_changes() AS count").get();expect(isGuardedControllerStart(db,f.run)).toBe(true);expect(db.handle.prepare("SELECT total_changes() AS count").get()).toEqual(writes);
+    db.close();expect(()=>{service=new ControllerService({dataDirectory,ownerToken:"test-owner",withRunner:false});}).not.toThrow();expect(service!.database.getEntity("run",f.run.id)).toEqual(json({...f.run,state:"RUNNER_UNAVAILABLE",recoveryState:"STARTING",recoveryReason:"NATIVE_OUTCOME_UNKNOWN",resumePolicy:"manual"}));expect(new InteractionStore(service!.database).command(f.command.id)?.state).toBe(state);expect(service!.database.getCanonicalTask("task")?.document).toMatchObject({state:"WAITING_RESOURCE"});
   }finally{if(service)await service.stop();rmSync(dataDirectory,{recursive:true,force:true});}
 });
 it.each(["marker","contract","selection","control","session","fence","backend"] as const)("keeps the native recovery barrier closed for a corrupted local %s certificate",kind=>{
