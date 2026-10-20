@@ -66,7 +66,7 @@ final convergence verification.
 | CV-04 | migration/control/backup modules ported with v3 adaptation and protocol 2; targeted 12/101 and two default 90/802 gates passed; ready for whole-branch review |
 | CV-05 | in progress: catalog scope/lifecycle, default ConfigPlan, per-Run provenance and adapter selection fences pass 91/833 default gate; legacy HTTP/Slack/reroute choice now integrated at 109/1085; remaining catalog/control assertions tracked |
 | CV-06 | Controller nonblocking scoped collection/terminal retry verified at 115/1169; origin/attempt/time and account-quota qualification/UI pending |
-| CV-08 | continuation/worker/delivery/failure/cancel/pause Guard, failure priority drain, stop audit and read-only local start recovery qualification verified at 115/1204; ordinary local start composed; schema-8 writer increment verified at 116/1208; reserved-start cancellation, reroute/recovery and native qualification remain pending |
+| CV-08 | continuation/worker/delivery/failure/cancel/pause Guard, failure priority drain, stop audit and read-only local start recovery qualification verified at 115/1204; ordinary local start composed; schema-8 writer increment verified at 116/1208; known-unsent cancellation/publication journal recovery verified at 116/1215; remaining reroute/general recovery and native qualification remain pending |
 | CV-12 | pending complete selection/control integration |
 | macOS service / LP / backup | pending safe shared foundation |
 | CV-07/09/10/11 | pending contracts/guards |
@@ -1165,3 +1165,48 @@ unit; percentage recorded in Linear. Logs:
 R-011's local gate gap is resolved; full branch review and real recovery/upgrade
 remain open. Source/rollback: 127910c with the corresponding schema-7 backup;
 never run that binary against schema 8. No live data or service touched.
+
+
+## CV-08q known-unsent cancellation and publication journal recovery
+
+A local RESERVED start now cancels in one Core transaction: validate the full
+current fence, cancel the start reservation, revoke the lease, atomically settle
+Run/Task, persist the existing scoped NATIVE_START_NOT_SENT cancellation proof,
+and update existing publication/idempotency receipts. If an adapter projection
+exists it retains the stop intent. No SDK call or mutation-lane wait is needed.
+Ruling: this exception is a pure SQLite decision before any native send; the
+RESERVED CAS and final SDK admission callback prohibit later creation. A failed
+Task write rolls the whole durable decision back and keeps execution fenced.
+A late proven-not-created receipt cannot overwrite an already cancelled intent.
+
+Known no-send cancellation reports START_FAILED with a cancellation reason; a
+sent startup's delayed acknowledgement still uses physical stop and keeps its
+uncertain startup receipt distinct. Restart/idempotent commit cannot start it
+again. Publication recovery now reads the command journal: reserved Session IDs
+are not creation evidence, SENDING becomes UNKNOWN and detached ACK does not
+prove a live process. The retained RESERVED journal can be explicitly cancelled
+after recovery, using current authority and no SDK.
+
+Initial new tests waited behind model precheck because their draft omitted a
+reviewed account/model. Correct them to the existing explicit fresh-catalog
+fixture. Replay corrected tests against e966596 source in the isolated worktree
+and restore current source bytes in finally: both unsent/atomic rollback cases
+then fail for the intended reasons; the sent-path regression already passes.
+Strengthen rollback to compare complete Run/Task records and require the target
+Task transition was actually attempted. Four controlled journal recovery cases
+also fail before their fix. These are synthetic metadata/process fixtures, not
+real crash/provider/GUI Gates. No old assertion or timeout was weakened.
+
+New target: 7 cases; complete local/start/publication target: 3 files/160 tests.
+Default `mise exec -- pnpm check` passes 116 files/1215 tests (40.57s test phase);
+`git diff --check` passes. First full gate stopped at test type-import lint; fix
+the imports without suppressions and rerun the whole gate. Logs:
+/tmp/dispatcher-cv08q-atomic-red.log, /tmp/dispatcher-cv08q-atomic-green.log,
+/tmp/dispatcher-cv08q-journal-four-red.log, /tmp/dispatcher-cv08q-full-green.log,
+/tmp/dispatcher-cv08q-target.log, /tmp/dispatcher-cv08q-final-check.log.
+
+Remaining: non-publication and failed-start recovery, atomic legacy adoption,
+reroute/remote composition and qualified native stop/real Gates. No original
+workspace/data/service changed. Source/rollback: e966596 and matching schema-8
+backup; do not reuse a newer journal with an older binary without compatibility
+review. Official quota checked after unit; percentage recorded in Linear.

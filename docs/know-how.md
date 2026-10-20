@@ -2,6 +2,12 @@
 
 ## M0–M10 invariants
 
+- A reserved Dispatcher Session UUID exists before the native SDK runs. Startup
+  recovery must read its command receipt, not infer creation from that UUID.
+  ACK proves creation, not liveness after Controller restart. Keep RESERVED
+  no-send evidence intact; explicit cancellation may atomically settle it without
+  SDK I/O. Test rollback against the entire Run/Task records, not state alone.
+
 - ExecutionSelection.contextFingerprint may describe a native model catalog; it
   is not always the base execution-context fingerprint. Preserve separate checks
   for catalog choice and the captured profile/workspace credential context.

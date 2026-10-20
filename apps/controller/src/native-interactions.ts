@@ -1098,13 +1098,14 @@ export class NativeInteractions {
     return this.database.transaction(()=>{
       const command=this.startForRun(run.id);if(command?.state!=="RESERVED")return false;
       const current=this.database.getEntity<JsonValue>("run",run.id) as unknown as Run|undefined;
-      if(!current||current.generation!==command.fence.generation||current.leaseId!==command.fence.leaseId||current.state!=="STARTING"||current.sessionId!==command.fence.sessionId)throw new InteractionStoreError("STALE_RUN_AUTHORITY");
+      if(!current||current.generation!==command.fence.generation||current.leaseId!==command.fence.leaseId||!(current.state==="STARTING"||current.state==="RUNNER_UNAVAILABLE"&&current.recoveryState==="STARTING")||current.sessionId!==command.fence.sessionId)throw new InteractionStoreError("STALE_RUN_AUTHORITY");
       this.store.updateCommand({id:command.id,expectedRevision:command.revision,state:"CANCELLED",code:"START_NOT_SENT"});return true;
     });
   }
   settleNativeStart(commandId:string,outcome:NativeStartOutcome):InteractionCommand {
     return this.database.transaction(()=>{
       const command=this.store.command(commandId);if(!command||command.type!=="start")throw new InteractionStoreError("START_INTENT_NOT_FOUND");
+      if(outcome.kind==="not-created"&&command.state==="CANCELLED")return command;
       if(outcome.kind!=="created")return this.store.updateCommand({id:commandId,expectedRevision:command.revision,state:outcome.kind==="unknown"?"UNKNOWN":"FAILED",code:outcome.code});
       this.assertNativeStartAuthority(command);
       const session=outcome.session;const run=this.database.getEntity<JsonValue>("run",command.fence.runId) as unknown as Run|undefined;

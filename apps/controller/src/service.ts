@@ -2239,6 +2239,27 @@ export class ControllerService {
     const session=this.database.getEntity<JsonValue>("adapter-session",run.sessionId) as unknown as AdapterSession|undefined;
     if(!remote&&(run.executionRef||session?.nativeBinding||this.database.handle.prepare("SELECT 1 FROM native_bindings WHERE session_id=?").get(run.sessionId)))throw new InteractionGuardError("NATIVE_CAPABILITY_UNVERIFIED");
     if(session&&this.sessionStopUncertain(session))throw new AdapterContractError("CANCELLATION_UNCONFIRMED","Previous native stop needs reconciliation before retry");
+    if(!remote&&terminalState==="CANCELLED"&&(latest.state==="STARTING"||latest.state==="RUNNER_UNAVAILABLE"&&latest.recoveryState==="STARTING")&&this.nativeInteractions.startForRun(run.id)?.state==="RESERVED"){
+      // This is an atomic Core decision with no native I/O or lane wait.
+      const cancelled=this.database.transaction(()=>{
+        assertAuthority();
+        if(!this.nativeInteractions.cancelReservedStart(latest))throw new InteractionGuardError("NATIVE_START_OUTCOME_UNKNOWN");
+        this.restoreLeaseAuthority(latest);this.leaseAuthority.revoke(latest.id,latest.leaseId,latest.generation,"Native startup cancelled before sending",this.now().toISOString());this.persistLatestLeaseAudit(latest.id);
+        const current=this.database.getEntity<JsonValue>("run",latest.id) as unknown as Run;
+        assertRunTransition(current.state,"CANCELLED");current.state="CANCELLED";current.endedAt=this.now().toISOString();delete current.recoveryState;delete current.recoveryReason;current.activitySummary="Native startup cancelled before sending";this.database.saveEntity("run",current.id,json(current));
+        const task=this.database.getCanonicalTask<JsonValue>(current.taskId)!;
+        this.tasks.execute({id:`cancel-unsent:${current.id}:${current.generation}`,taskId:current.taskId,baseRevision:task.revision,actor:principal.id,command:{type:"task.transition",state:"CANCELLED"}});
+        this.nativeInteractions.recordUnsentCancellation(principal,fence);
+        if(session)this.saveSessionStop({...session,state:"CANCELLED"},"confirmed",{version:1,actorId:principal.id,operation:"cancel",fence,requestedAt:this.now().toISOString()});
+        for(const value of this.database.listEntities<JsonValue>("task-publication")){const publication=value as unknown as PublicationRecord;if(publication.receipt?.runId===current.id)this.publications.markOutcome(publication.owner,publication.preview.publicationId,current);}
+        for(const row of this.database.handle.prepare("SELECT id,document_json FROM entities WHERE kind='task-dispatch' AND json_extract(document_json,'$.run.id')=?").all(current.id)){
+          const receipt=JSON.parse(String(row.document_json)) as {run:Run;routing:unknown};
+          if(receipt.run.generation===current.generation&&receipt.run.leaseId===current.leaseId)this.database.saveEntity("task-dispatch",String(row.id),json({...receipt,run:current}));
+        }
+        return current;
+      });
+      this.cancelledRunIds.delete(cancelled.id);this.fleetEvents.publish("run.changed",cancelled.id,{id:cancelled.id,state:cancelled.state});return cancelled;
+    }
     this.restoreLeaseAuthority(run);
     this.leaseAuthority.revoke(run.id,run.leaseId,run.generation,"Cancelled by operator",this.now().toISOString());
     this.persistLatestLeaseAudit(run.id);

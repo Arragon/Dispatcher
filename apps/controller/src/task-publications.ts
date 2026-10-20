@@ -3,11 +3,20 @@ import { posix } from "node:path";
 import type { ConfigurationEngine, RepositoryConfig } from "@dispatcher/config";
 import type { PublishDraftV1, PublicationPreview, PublicationReceipt, Task, TaskContract, ExecutionSelection, Run, ModelRoutingDecision,ScmDeliverySelection,PublicationFieldError } from "@dispatcher/domain";
 import type { CanonicalTaskService } from "@dispatcher/integrations";
-import type { DispatcherDatabase, JsonValue } from "@dispatcher/persistence";
+import {InteractionStore,type DispatcherDatabase,type JsonValue} from "@dispatcher/persistence";
 import { TaskContractCompiler } from "@dispatcher/semantic";
 import { WorkspacePolicyError, type WorkspaceManager } from "@dispatcher/workspace";
 const json = (value: unknown): JsonValue => JSON.parse(JSON.stringify(value)) as JsonValue;
-const startupState = (run: Run): PublicationReceipt["state"] => run.state === "RUNNER_UNAVAILABLE" ? "OUTCOME_UNKNOWN" : run.state === "FAILED" ? "START_FAILED" : "STARTED";
+function cancelledBeforeNativeSend(db:DispatcherDatabase,run:Run):boolean {
+  if(run.state!=="CANCELLED")return false;
+  const record=db.getEntity<JsonValue>("native-cancel",run.id) as unknown as {version?:number;fence?:{runId:string;sessionId:string;generation:number;leaseId:string};resolution?:{runId:string;sessionId:string;state:string;nativeMayBeRunning:boolean;nativeStopProof?:{version:number;state:string;code?:string}}}|undefined;
+  return run.state==="CANCELLED"&&record?.version===1&&record.fence?.runId===run.id&&record.fence.sessionId===run.sessionId&&record.fence.generation===run.generation&&record.fence.leaseId===run.leaseId&&record.resolution?.runId===run.id&&record.resolution.sessionId===run.sessionId&&record.resolution.state==="CANCELLED"&&record.resolution.nativeMayBeRunning===false&&record.resolution.nativeStopProof?.version===1&&record.resolution.nativeStopProof.state==="stopped"&&record.resolution.nativeStopProof.code==="NATIVE_START_NOT_SENT";
+}
+function startupOutcome(db:DispatcherDatabase,run:Run):Pick<PublicationReceipt,"state"|"message"> {
+  const unsent=cancelledBeforeNativeSend(db,run),command=new InteractionStore(db).command(`native-start:${run.id}`);
+  if(!unsent&&command&&(!["ACKNOWLEDGED","FAILED"].includes(command.state)||command.fence.runId!==run.id||command.fence.sessionId!==run.sessionId||command.fence.generation!==run.generation||command.fence.leaseId!==run.leaseId))return {state:"OUTCOME_UNKNOWN",message:"Native startup requires reconciliation; it will not be retried automatically"};
+  return {state:unsent||command?.state==="FAILED"?"START_FAILED":run.state==="RUNNER_UNAVAILABLE"?"OUTCOME_UNKNOWN":run.state==="FAILED"?"START_FAILED":"STARTED",...(run.failureReason?{message:run.failureReason}:unsent?{message:"Native startup cancelled before sending"}:{})};
+}
 export function contentHash(value: unknown): string {
   const stable = (v: unknown): unknown => Array.isArray(v) ? v.map(stable) : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).sort(([a],[b])=>a.localeCompare(b)).map(([k,x])=>[k,stable(x)])) : v;
   return createHash("sha256").update(JSON.stringify(stable(value))??"undefined").digest("hex");
@@ -52,10 +61,10 @@ export class PublicationService {
       const r=value as unknown as PublicationRecord;
       if(!r.receipt)continue;
       const existingRun=r.receipt?.runId ? this.db.getEntity<JsonValue>("run",r.receipt.runId) as unknown as Run|undefined : undefined;
-      const detached=r.receipt?.state==="STARTED"&&existingRun&&["ACTIVE","STARTING"].includes(existingRun.state);
+      const detached=existingRun&&["ACTIVE","STARTING"].includes(existingRun.state)&&(r.receipt?.state==="STARTED"||new InteractionStore(this.db).command(`native-start:${existingRun.id}`)?.state==="ACKNOWLEDGED");
       if(!detached&&r.receipt?.state!=="STARTING" && !(r.receipt?.state==="TASK_CREATED" && r.draft.startMode==="dispatch"))continue;
       const run=r.receipt.runId ? this.db.getEntity<JsonValue>("run",r.receipt.runId) as unknown as Run|undefined : undefined;
-      r.receipt.state=!detached && run && !run.sessionId.startsWith("unstarted:") ? run.state==="FAILED"?"START_FAILED":"STARTED" : "OUTCOME_UNKNOWN";
+      r.receipt.state=!detached && run && !run.sessionId.startsWith("unstarted:") ? startupOutcome(this.db,run).state : "OUTCOME_UNKNOWN";
       r.receipt.message="Recovered after interruption; execution is never automatically retried";
       if(r.receipt.state==="OUTCOME_UNKNOWN"&&run&&["STARTING","ACTIVE"].includes(run.state)){
         const remote=this.config.current().config.runners.some(runner=>runner.id===run.runnerId&&runner.mode==="remote");
@@ -75,8 +84,8 @@ export class PublicationService {
   }
   markOutcome(owner:string,id:string,run:Run):void {
     const r=this.record(owner,id);if(r.receipt?.runId!==run.id)throw new PublicationError("PUBLICATION_CHANGED",409,"Run is not the publication startup");
-    if(!run.failureReason)delete r.receipt.message;
-    r.receipt={...r.receipt,state:startupState(run),...(run.failureReason?{message:run.failureReason}:{})};this.db.saveEntity("task-publication",id,json(r));
+    const outcome=startupOutcome(this.db,run);if(!outcome.message)delete r.receipt.message;
+    r.receipt={...r.receipt,...outcome};this.db.saveEntity("task-publication",id,json(r));
   }
   get(owner: string, id: string): PublicationPreview | PublicationReceipt {
     const record = this.record(owner,id); return record.receipt ?? record.preview;
@@ -240,9 +249,10 @@ export class PublicationService {
     if(r.draft.startMode!=="dispatch")return receipt;
     try {
       const run=await this.runtime.dispatch(r,receipt.taskId);
-      const latest=this.record(owner,id);latest.receipt={...receipt,runId:run.id,state:startupState(run),...(run.failureReason?{message:run.failureReason}:{})};this.db.saveEntity("task-publication",id,json(latest));return latest.receipt;
+      const latest=this.record(owner,id);latest.receipt={...receipt,runId:run.id,...startupOutcome(this.db,run)};this.db.saveEntity("task-publication",id,json(latest));return latest.receipt;
     } catch(error) {
-      const latest=this.record(owner,id);latest.receipt={...latest.receipt!,state:latest.receipt?.runId?"OUTCOME_UNKNOWN":"START_FAILED",message:error instanceof PublicationError?error.message:"Startup could not be confirmed; inspect the retained task before any further action"};this.db.saveEntity("task-publication",id,json(latest));return latest.receipt;
+      const latest=this.record(owner,id),run=latest.receipt?.runId?this.db.getEntity<JsonValue>("run",latest.receipt.runId) as unknown as Run|undefined:undefined;
+      latest.receipt={...latest.receipt!,...(run&&cancelledBeforeNativeSend(this.db,run)?startupOutcome(this.db,run):{state:latest.receipt?.runId?"OUTCOME_UNKNOWN":"START_FAILED",message:error instanceof PublicationError?error.message:"Startup could not be confirmed; inspect the retained task before any further action"})};this.db.saveEntity("task-publication",id,json(latest));return latest.receipt;
     }
   }
 }

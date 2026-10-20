@@ -291,6 +291,17 @@ waiting for the Session lane, then requires both adapter stop and owned command
 drain before FAILED. Stop intent audit stays on the existing Session authority
 with actor, operation and captured fence; adapter persistence preserves it. A
 notification failure is retried separately from a confirmed execution outcome.
+A RESERVED local start can be cancelled without native I/O: one SQLite
+transaction checks the current fence, cancels the reservation, revokes the lease
+and commits Run/Task cancellation with the existing NATIVE_START_NOT_SENT proof.
+This pure Core decision has no Session-lane wait or SDK stop. Cache/publication
+receipts update in that same transaction. A recovered RESERVED start retains
+its no-send evidence and is cancellable explicitly. SENDING/UNKNOWN and detached
+ACK journal recovery remain manual and never replay creation. A reserved
+Dispatcher Session ID is not native creation or process-liveness evidence.
+Publication recovery now reads the start journal; a lost Task projection cannot
+turn a reserved ID into STARTED. Known no-send cancellation uses START_FAILED
+with the cancellation reason; sent/unknown cancellation stays distinct.
 
 Codex CLI start/send/resume accept an optional synchronous `beforeSend` admission
 callback. Creation captures request fields before storing intent, then checks
