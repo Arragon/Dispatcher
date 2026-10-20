@@ -14,6 +14,40 @@ function fixture(db=new DispatcherDatabase(":memory:")){
   const coordinator=new NativeInteractions(db);const input={run,actorId:"owner",resumable:true,backendId:"exec",semantics:{prompt:"private prompt",goal:"goal"}};
   return {db,coordinator,input};
 }
+it.each(["reserve","begin","settle"] as const)("rejects a revoked owning lease during start %s",phase=>{
+ const f=fixture();try{
+  const intent=phase==="reserve"?undefined:f.coordinator.reserveNativeStart(f.input);
+  if(phase==="settle")f.coordinator.beginNativeStart(intent!.id);
+  f.db.saveEntity("run",run.id,json({...run,revokedLeaseIds:[run.leaseId]}));
+  const action=()=>phase==="reserve"?f.coordinator.reserveNativeStart({...f.input,run:{...run,revokedLeaseIds:[run.leaseId]}}):phase==="begin"?f.coordinator.beginNativeStart(intent!.id):f.coordinator.settleNativeStart(intent!.id,{kind:"created",session:{id:run.sessionId,runId:run.id,profileId:"p",backendId:"exec",workspacePath:run.worktree,state:"RUNNING",createdAt:at,updatedAt:at}});
+  expect(action).toThrowError(expect.objectContaining({code:"STALE_RUN_AUTHORITY"}));
+ }finally{f.db.close();}
+});
+it("allows repeated checks only for the same live start invocation",()=>{
+ const f=fixture();try{
+  const intent=f.coordinator.reserveNativeStart(f.input),admit=f.coordinator.nativeStartAdmission(intent.id);
+  admit();admit();expect(f.coordinator.startForRun(run.id)).toMatchObject({state:"SENDING",revision:2});
+  expect(()=>f.coordinator.nativeStartAdmission(intent.id)).toThrowError(expect.objectContaining({code:"NATIVE_START_OUTCOME_UNKNOWN"}));
+  f.db.writeCanonicalTask("task",1,{id:"task",state:"QUEUED",currentRunId:"replacement"},at);
+  expect(admit).toThrowError(expect.objectContaining({code:"STALE_RUN_AUTHORITY"}));
+ }finally{f.db.close();}
+});
+it("pins uncertainty if a backend might have created without acknowledging admission",()=>{
+ const f=fixture();try{
+  const intent=f.coordinator.reserveNativeStart(f.input);
+  expect(f.coordinator.settleNativeStart(intent.id,{kind:"unknown",code:"NATIVE_START_OUTCOME_UNKNOWN"})).toMatchObject({state:"UNKNOWN"});
+  expect(()=>f.coordinator.nativeStartAdmission(intent.id)).toThrowError(expect.objectContaining({code:"NATIVE_START_OUTCOME_UNKNOWN"}));
+ }finally{f.db.close();}
+});
+it.each(["task-revision","control"] as const)("rejects a created result after its captured %s changes",kind=>{
+ const f=fixture();try{
+  const intent=f.coordinator.reserveNativeStart(f.input);f.coordinator.beginNativeStart(intent.id);
+  if(kind==="task-revision")f.db.writeCanonicalTask("task",1,{id:"task",state:"QUEUED",currentRunId:"run",note:"edited"},at);
+  else new InteractionStore(f.db).compareAndSwapControl({sessionId:run.sessionId,expectedRevision:1,expectedEpoch:1,actorId:"owner",event:{type:"conflict",at}});
+  expect(()=>f.coordinator.settleNativeStart(intent.id,{kind:"created",session:{id:run.sessionId,runId:run.id,profileId:"p",backendId:"exec",workspacePath:run.worktree,state:"RUNNING",createdAt:at,updatedAt:at}})).toThrowError(expect.objectContaining({code:kind==="task-revision"?"STALE_RUN_AUTHORITY":"STALE_CONTROL_REVISION"}));
+  expect(f.coordinator.startForRun(run.id)?.state).toBe("SENDING");
+ }finally{f.db.close();}
+});
 it("persists canonical Session and start intent before sending, with only a semantic digest",()=>{
   const f=fixture();try{const intent=f.coordinator.reserveNativeStart(f.input);expect(intent).toMatchObject({type:"start",state:"RESERVED",fence:{runId:"run",sessionId:"reserved-session"}});expect(f.db.getEntity("session","reserved-session")).toMatchObject({profileId:"p",executionRef:run.executionRef});expect(JSON.stringify(intent)).not.toContain("private prompt");expect(f.coordinator.reserveNativeStart(f.input)).toEqual(intent);expect(()=>f.coordinator.reserveNativeStart({...f.input,semantics:{prompt:"different"}})).toThrowError(expect.objectContaining({code:"IDEMPOTENCY_CONFLICT"}));}finally{f.db.close();}
 });

@@ -263,6 +263,17 @@ Adapter start snapshots supplied logical generation/attempt/lease facts without
 inventing defaults. Persisted execution metadata and execution references cannot
 be replaced or erased; continuation also compares them after awaited reads.
 
+The Scheduler offers a reserved creation lifecycle for guarded consumers. It
+captures a real Session ID before preparation and carries Run generation,
+attempt and lease. The adapter final callback records sending; a retained
+callback cannot authorize a later invocation. Created results require the same
+identity and frozen choice. A lost reply or failed success receipt remains
+unavailable/UNKNOWN; only explicit not-created proof permits a known failure.
+A start receipt can be pinned UNKNOWN even if a faulty backend ignored the
+sending callback. No UNKNOWN receipt grants retry authority. This lifecycle is
+available for Controller composition; native execution locations stay closed
+until their actual backend context is qualified.
+
 Legacy canonical HTTP/Slack dispatch and owning-Runner reroute compile a new
 `legacy-config` ExecutionSelection from the selected adapter's actual invocation
 defaults. The projection carries backend/model request facts, with no native

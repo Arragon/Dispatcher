@@ -1041,6 +1041,7 @@ export class NativeInteractions {
       const existing=this.store.command(id);
       if(!existing&&run.state!=="STARTING")throw new InteractionStoreError("INVALID_START_STATE");
       const current=this.database.getEntity<JsonValue>("run",run.id) as unknown as Run|undefined;
+      if(!existing&&current?.revokedLeaseIds?.includes(current.leaseId))throw new InteractionStoreError("STALE_RUN_AUTHORITY");
       if(!current||current.sessionId!==run.sessionId||current.taskId!==run.taskId||current.profileId!==run.profileId||current.providerId!==run.providerId||current.runnerId!==run.runnerId||current.attempt!==run.attempt||current.worktree!==run.worktree||current.branch!==run.branch||current.startedAt!==run.startedAt||current.generation!==run.generation||current.leaseId!==run.leaseId||!isDeepStrictEqual(current.executionRef,run.executionRef)||!isDeepStrictEqual(current.executionSelection,run.executionSelection))throw new InteractionStoreError("STALE_RUN_AUTHORITY");
       const task=this.database.getCanonicalTask<JsonValue>(run.taskId);
       if(!task)throw new InteractionStoreError("STALE_RUN_AUTHORITY");
@@ -1056,10 +1057,30 @@ export class NativeInteractions {
   beginNativeStart(commandId:string):InteractionCommand {
     const command=this.store.command(commandId);if(!command||command.type!=="start")throw new InteractionStoreError("START_INTENT_NOT_FOUND");
     if(command.state!=="RESERVED")throw new InteractionStoreError(command.state==="SENDING"||command.state==="UNKNOWN"?"NATIVE_START_OUTCOME_UNKNOWN":"START_ALREADY_SETTLED");
-    const run=this.database.getEntity<JsonValue>("run",command.fence.runId) as unknown as Run|undefined;
-    if(run)this.assertDriftPolicy(run);
-    if(run?.leaseExpiresAt&&(!Number.isFinite(Date.parse(run.leaseExpiresAt))||Date.parse(run.leaseExpiresAt)<=this.now().getTime()))throw new InteractionStoreError("STALE_RUN_AUTHORITY");
+    this.assertNativeStartAuthority(command);
     return this.store.updateCommand({id:command.id,expectedRevision:command.revision,state:"SENDING"});
+  }
+  /** A repeated check is valid only inside this one admitted invocation, never a retry. */
+  nativeStartAdmission(commandId:string):()=>void {
+    const reserved=this.store.command(commandId);
+    if(!reserved||reserved.type!=="start")throw new InteractionStoreError("START_INTENT_NOT_FOUND");
+    if(reserved.state!=="RESERVED")throw new InteractionStoreError("NATIVE_START_OUTCOME_UNKNOWN");
+    let sending:InteractionCommand|undefined;
+    return ()=>this.database.transaction(()=>{
+      if(!sending){sending=this.beginNativeStart(commandId);return;}
+      const current=this.store.command(commandId);
+      if(!isDeepStrictEqual(current,sending))throw new InteractionStoreError("NATIVE_START_OUTCOME_UNKNOWN");
+      this.assertNativeStartAuthority(sending);
+    });
+  }
+  private assertNativeStartAuthority(command:InteractionCommand):void {
+    const run=this.database.getEntity<JsonValue>("run",command.fence.runId) as unknown as Run|undefined;
+    const task=run?this.database.getCanonicalTask<JsonValue>(run.taskId):undefined;
+    const control=this.store.control(command.fence.sessionId),f=command.fence;
+    if(!run||isTerminalRunState(run.state)||run.revokedLeaseIds?.includes(run.leaseId)||run.generation!==f.generation||run.leaseId!==f.leaseId||run.sessionId!==f.sessionId||run.profileId!==command.profileId||task?.revision!==f.expectedTaskRevision||(task.document as {currentRunId?:string}).currentRunId!==run.id||run.leaseExpiresAt&&(!Number.isFinite(Date.parse(run.leaseExpiresAt))||Date.parse(run.leaseExpiresAt)<=this.now().getTime()))throw new InteractionStoreError("STALE_RUN_AUTHORITY");
+    if(!control||control.activeRunId!==run.id||control.revision!==f.expectedControlRevision||control.epoch!==f.expectedControlEpoch)throw new InteractionStoreError("STALE_CONTROL_REVISION");
+    if(control.state!=="AUTOMATED")throw new InteractionStoreError("NATIVE_WRITE_LOCKED");
+    this.assertDriftPolicy(run);
   }
   cancelReservedStart(run:Run):boolean {
     return this.database.transaction(()=>{
@@ -1073,6 +1094,7 @@ export class NativeInteractions {
     return this.database.transaction(()=>{
       const command=this.store.command(commandId);if(!command||command.type!=="start")throw new InteractionStoreError("START_INTENT_NOT_FOUND");
       if(outcome.kind!=="created")return this.store.updateCommand({id:commandId,expectedRevision:command.revision,state:outcome.kind==="unknown"?"UNKNOWN":"FAILED",code:outcome.code});
+      this.assertNativeStartAuthority(command);
       const session=outcome.session;const run=this.database.getEntity<JsonValue>("run",command.fence.runId) as unknown as Run|undefined;
       const task=run?this.database.getCanonicalTask<JsonValue>(run.taskId):undefined;
       if(!run||run.generation!==command.fence.generation||run.leaseId!==command.fence.leaseId||run.sessionId!==command.fence.sessionId||(task?.document as {currentRunId?:string}|undefined)?.currentRunId!==run.id||isTerminalRunState(run.state))throw new InteractionStoreError("STALE_RUN_AUTHORITY");

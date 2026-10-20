@@ -732,3 +732,48 @@ migration provides writer exclusion, not a claim that runtime composition or
 native recovery is complete. Rollback uses the previous binary with its own
 matching backup; never downgrade schema or remove triggers. No live migration
 was performed. Official quota checked after this unit; recorded in Linear.
+
+
+## CV-08h Scheduler reserved creation lifecycle
+
+Ported/adapted the source startReserved lifecycle to v3 frozen selections and
+existing replacement/preflight behavior. Guarded consumers require sending and
+settlement callbacks together, reserve a real Dispatcher Session ID, and pass
+actual logical counters. Sending admission occurs only in the adapter's final
+callback, after its asynchronous preparation; retained callbacks close when that
+invocation finishes. Created results must match the reserved identity, logical
+execution and choice. Missing admission, wrong Session, lost reply or failed
+success-receipt persistence retains RUNNER_UNAVAILABLE/manual/UNKNOWN with no
+endedAt. Only proven not-created or pre-adapter failure becomes FAILED. Existing
+unguarded consumers retain the v3 failure contract and remote unknown handling.
+Controller activation remains a separate pending increment.
+
+NativeInteractions provides a per-invocation start callback: repeated checks can
+revalidate the same SENDING command without issuing a second start, while a new
+callback cannot adopt SENDING/UNKNOWN. Reservation/begin/created settlement reject
+a revoked lease; settlement also compares captured Task revision/control epoch.
+An unqualified backend might create without invoking admission: only start
+receipts may conservatively transition RESERVED to UNKNOWN, blocking retry.
+This does not grant authority to send and cannot turn UNKNOWN back into SENDING.
+
+Native ExecutionRef creation remains closed until actual backend-location
+qualification is integrated. Source scheduler execution-context assertions have
+not yet been ported; they are not represented by the new A-only lifecycle tests.
+No managed location is fabricated for cloud/API backends, and the Controller
+startup barrier for native records is retained.
+
+RED: nine lifecycle cases, four revoked/repeated-admission cases, the
+unacknowledged-admission UNKNOWN case, then the unqualified-context case.
+Rebuilt target passes 6 files/76 tests, including every original v3 Scheduler
+case. Default `mise exec -- pnpm check` passes 114 files/1144 tests (43.93s test
+phase); no old assertion was removed or loosened. Logs:
+`/tmp/dispatcher-cv08-scheduler-lifecycle-red.log`,
+`/tmp/dispatcher-cv08-start-admission-revoked-red.log`,
+`/tmp/dispatcher-cv08-start-admission-uncertain-red.log`,
+`/tmp/dispatcher-cv08-start-context-red.log`,
+`/tmp/dispatcher-cv08-start-lifecycle-final-green.log`,
+`/tmp/dispatcher-cv08-start-lifecycle-check.log`.
+
+R-005 remains open for Controller entry-point/worker/continuation/delivery/cancel
+composition and recovery. Rollback is ff82d34; no real data/workspaces changed.
+Official quota checked after the unit; percentage recorded in Linear.

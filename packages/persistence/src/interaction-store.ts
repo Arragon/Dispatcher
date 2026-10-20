@@ -133,7 +133,7 @@ export class InteractionStore {
   updateCommand(input:{id:string;expectedRevision:number;state:CommandState;code?:string;nativeReceipt?:NativeCommandReceipt}):InteractionCommand {
     return this.database.transaction(()=>{
       const current=this.command(input.id);if(!current||current.revision!==input.expectedRevision)throw new InteractionStoreError("STALE_COMMAND_REVISION");
-      const transitions:Record<CommandState,CommandState[]>={RESERVED:["SENDING","CANCELLED","FAILED"],SENDING:["ACKNOWLEDGED","UNKNOWN","FAILED","CANCELLED"],UNKNOWN:["ACKNOWLEDGED","FAILED"],ACKNOWLEDGED:[],FAILED:[],CANCELLED:[]};
+      const transitions:Record<CommandState,CommandState[]>={RESERVED:["SENDING","CANCELLED","FAILED",...(current.type==="start"?["UNKNOWN" as const]:[])],SENDING:["ACKNOWLEDGED","UNKNOWN","FAILED","CANCELLED"],UNKNOWN:["ACKNOWLEDGED","FAILED"],ACKNOWLEDGED:[],FAILED:[],CANCELLED:[]};
       if(!transitions[current.state].includes(input.state))throw new InteractionStoreError("INVALID_COMMAND_TRANSITION");
       // Reservation is not authority to send later: Task/control may have changed.
       if(input.state==="SENDING")this.assertAuthority(current.profileId,current.fence);
