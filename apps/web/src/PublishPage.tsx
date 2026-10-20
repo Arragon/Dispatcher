@@ -55,6 +55,12 @@ function lines(value: string): string[] { return value.split("\n").map((line) =>
 export default function PublishPage():React.JSX.Element {
   const [params]=useSearchParams();return <PublicationComposer key={params.get("task")??"new"}/>;
 }
+function draftFromTask(context:TaskContext,existingTaskId:string):Draft {
+  const contract=context.contract,source=context.publicationDraft,intent=context.executionIntent?.execution;
+  return {...emptyDraft,
+      profileId:intent?.profileId??"",selectionMode:intent?.selectionMode??"manual",taskTypeId:intent?.taskTypeId??"",nativeModelId:intent?.nativeModelId??"",reasoningEffort:typeof intent?.nativeParameters?.reasoningEffort==="string"?intent.nativeParameters.reasoningEffort:"",catalogRevision:intent?.catalogRevision??"",contextFingerprint:intent?.contextFingerprint??"",
+      existingTaskId,existingTaskRevision:String(context.revision),clientDraftId:`task:${existingTaskId}:${context.revision}`,title:context.document.title,description:contract?.instructions??context.document.description??"",repositoryId:contract?.workspace?.repositoryId??source?.repositoryId??"",acceptance:(contract?.acceptanceCriteria??source?.acceptanceCriteria??[]).join("\n"),references:(contract?.referenceLinks??source?.referenceLinks??[]).join("\n"),baseRef:contract?.workspace?.baseRef??source?.baseRef??"",targetBranch:contract?.workspace?.targetBranch??source?.targetBranch??"",deliveryType:contract?.delivery.type??source?.delivery.type??"none",scmConnectorId:contract?.delivery.scmConnectorId??source?.delivery.scmConnectorId??"",targetRepository:contract?.delivery.repository??source?.delivery.targetRepository??"",baseBranch:contract?.delivery.baseBranch??source?.delivery.baseBranch??"",startMode:context.document.state==="NEEDS_SPEC"?"create-only":"dispatch"};
+}
 function PublicationComposer(): React.JSX.Element {
   const query = useQuery({queryKey:["config"],queryFn:()=>api<ConfigResponse<Config>>("/api/config?view=console")});
   const [params] = useSearchParams();
@@ -77,7 +83,6 @@ function PublicationComposer(): React.JSX.Element {
   const operation=useRef(false);
   useEffect(()=>{let active=true;const stored=pendingReview.current;const generation=draftGeneration.current;if(stored)void api<PublicationPreview|PublicationReceipt>(`/api/task-publications/${stored.publicationId}`).then(value=>{if(!active)return;if("taskId" in value||generation===draftGeneration.current)acceptRead(value);else setSaved("当前草稿已修改；上次预检保留，可主动读取原回执。");}).catch(()=>{if(active)setError("上次发布回执读取失败；草稿已保留，请重新读取回执后继续。");});return()=>{active=false;};},[]);
   const loadedTask=useRef("");
-  const [reloadVersion,setReloadVersion]=useState(0);
   useEffect(()=>{
     const context=taskQuery.data;if(!existingTaskId||!context||(!context.contract?.workspace&&!context.publicationDraft))return;
     const revisionKey=`${existingTaskId}:${context.revision}`;if(loadedTask.current===revisionKey)return;
@@ -85,11 +90,8 @@ function PublicationComposer(): React.JSX.Element {
     loadedTask.current=revisionKey;
     if(context.document.state==="NEEDS_SPEC"&&draft.existingTaskId===existingTaskId&&draft.existingTaskRevision&&draft.existingTaskRevision!==String(context.revision)){setError("任务版本已改变，当前草稿保留。请备份后重新读取任务再审阅。");return;}
     draftGeneration.current++;setReview(false);setPreview(undefined);
-    const contract=context.contract,source=context.publicationDraft,intent=context.executionIntent?.execution;
-    setDraft(previous=>context.document.state==="NEEDS_SPEC"&&previous.existingTaskId===existingTaskId&&previous.existingTaskRevision===String(context.revision)?previous:{...emptyDraft,
-      profileId:intent?.profileId??"",selectionMode:intent?.selectionMode??"manual",taskTypeId:intent?.taskTypeId??"",nativeModelId:intent?.nativeModelId??"",reasoningEffort:typeof intent?.nativeParameters?.reasoningEffort==="string"?intent.nativeParameters.reasoningEffort:"",catalogRevision:intent?.catalogRevision??"",contextFingerprint:intent?.contextFingerprint??"",
-      existingTaskId,existingTaskRevision:String(context.revision),clientDraftId:`task:${existingTaskId}:${context.revision}`,title:context.document.title,description:contract?.instructions??context.document.description??"",repositoryId:contract?.workspace?.repositoryId??source?.repositoryId??"",acceptance:(contract?.acceptanceCriteria??source?.acceptanceCriteria??[]).join("\n"),references:(contract?.referenceLinks??source?.referenceLinks??[]).join("\n"),baseRef:contract?.workspace?.baseRef??source?.baseRef??"",targetBranch:contract?.workspace?.targetBranch??source?.targetBranch??"",deliveryType:contract?.delivery.type??source?.delivery.type??"none",scmConnectorId:contract?.delivery.scmConnectorId??source?.delivery.scmConnectorId??"",targetRepository:contract?.delivery.repository??source?.delivery.targetRepository??"",baseBranch:contract?.delivery.baseBranch??source?.delivery.baseBranch??"",startMode:context.document.state==="NEEDS_SPEC"?"create-only":"dispatch"});
-  },[taskQuery.data,existingTaskId,reloadVersion]);
+    setDraft(previous=>context.document.state==="NEEDS_SPEC"&&previous.existingTaskId===existingTaskId&&previous.existingTaskRevision===String(context.revision)?previous:draftFromTask(context,existingTaskId));
+  },[taskQuery.data,existingTaskId]);
   const completing=Boolean(existingTaskId&&taskQuery.data?.document.state==="NEEDS_SPEC"&&taskQuery.data.publicationDraft);
   const frozenTask=Boolean(existingTaskId&&!completing);
   const saving = useRef(false);
@@ -135,9 +137,18 @@ function PublicationComposer(): React.JSX.Element {
     setTimeout(() => URL.revokeObjectURL(url),1000); saving.current=false; setSaved("任务草稿已导出，未创建任务。");
   }
   async function reloadTask():Promise<void>{
-    if(busy||pendingReview.current?.attempted||!window.confirm("重新读取会放弃本任务的未提交修改。可先备份草稿，继续吗？"))return;
-    const result=await taskQuery.refetch();if(result.error){setError("任务读取失败，当前草稿保留。");return;}
-    loadedTask.current="";setDraft({...emptyDraft});setError("");setReview(false);setPreview(undefined);pendingReview.current=undefined;localStorage.removeItem(activeReceiptKey);setReceipt(undefined);setReloadVersion(value=>value+1);
+    if(operation.current||busy||pendingReview.current?.attempted||!window.confirm("重新读取会放弃本任务的未提交修改。可先备份草稿，继续吗？"))return;
+    operation.current=true;setBusy(true);
+    const generation=draftGeneration.current;
+    try {
+      const result=await taskQuery.refetch();
+      const context=result.data;
+      if(result.error||!context||(!context.contract?.workspace&&!context.publicationDraft)){setError("任务读取失败，当前草稿保留。");return;}
+      if(generation!==draftGeneration.current){setError("任务读取期间草稿已修改，当前草稿保留。请再次确认后重新读取。");return;}
+      loadedTask.current=`${existingTaskId}:${context.revision}`;
+      draftGeneration.current++;setDraft(draftFromTask(context,existingTaskId));
+      setError("");setReview(false);setPreview(undefined);pendingReview.current=undefined;localStorage.removeItem(activeReceiptKey);setReceipt(undefined);
+    } finally {operation.current=false;setBusy(false);}
   }
   async function check(reanalyze=false): Promise<void> {
     if(operation.current)return;

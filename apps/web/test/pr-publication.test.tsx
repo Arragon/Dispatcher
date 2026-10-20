@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import {afterEach,beforeEach,expect,it,vi} from "vitest";
-import {cleanup,render,screen,within} from "@testing-library/react";
+import {act,cleanup,render,screen,waitFor,within} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {MemoryRouter} from "react-router-dom";
 import {QueryClient,QueryClientProvider} from "@tanstack/react-query";
@@ -94,7 +94,39 @@ it("reloads a conflicting original task only after preserving the draft until ex
  const confirm=vi.spyOn(window,"confirm").mockReturnValue(true);
  vi.spyOn(globalThis,"fetch").mockImplementation(async input=>new Response(JSON.stringify(String(input)==="/api/tasks/incomplete"?{revision:3,document:{id:"incomplete",state:"NEEDS_SPEC",title:"New title",description:"New body"},publicationDraft:{repositoryId:"",acceptanceCriteria:[],execution:{},delivery:{type:"none"}}}:config)));
  mount(<PublishPage/>,"/publish?task=incomplete");await screen.findByRole("heading",{name:"完善现有任务"});expect((screen.getByLabelText("任务说明") as HTMLTextAreaElement).value).toBe("Unsaved edits");
- await userEvent.click(screen.getByRole("button",{name:"重新读取任务"}));expect(confirm).toHaveBeenCalled();expect((screen.getByLabelText("任务说明") as HTMLTextAreaElement).value).toBe("New body");
+ await userEvent.click(screen.getByRole("button",{name:"重新读取任务"}));expect(confirm).toHaveBeenCalled();await waitFor(()=>expect((screen.getByLabelText("任务说明") as HTMLTextAreaElement).value).toBe("New body"));
+});
+it("never persists an empty intermediate draft while reloading a task",async()=>{
+ localStorage.setItem("dispatcher.publication-draft.v1:incomplete",JSON.stringify({existingTaskId:"incomplete",existingTaskRevision:"2",description:"Unsaved edits"}));
+ vi.spyOn(window,"confirm").mockReturnValue(true);
+ const task={revision:3,document:{id:"incomplete",state:"NEEDS_SPEC",title:"New title",description:"New body"},publicationDraft:{repositoryId:"",acceptanceCriteria:[],execution:{},delivery:{type:"none"}}};
+ let reads=0;let release!:(value:Response)=>void;
+ const response=new Promise<Response>(resolve=>{release=resolve;});
+ vi.spyOn(globalThis,"fetch").mockImplementation(async input=>String(input)==="/api/tasks/incomplete"&&++reads>1?response:new Response(JSON.stringify(String(input)==="/api/tasks/incomplete"?task:config)));
+ mount(<PublishPage/>,"/publish?task=incomplete");await screen.findByRole("heading",{name:"完善现有任务"});
+ const writes=vi.spyOn(Storage.prototype,"setItem");
+ await userEvent.click(screen.getByRole("button",{name:"重新读取任务"}));
+ expect((screen.getByLabelText("任务说明") as HTMLTextAreaElement).value).toBe("Unsaved edits");
+ await act(async()=>{release(new Response(JSON.stringify(task)));});
+ await waitFor(()=>expect((screen.getByLabelText("任务说明") as HTMLTextAreaElement).value).toBe("New body"));
+ const descriptions=writes.mock.calls.filter(([key])=>key==="dispatcher.publication-draft.v1:incomplete").map(([,value])=>JSON.parse(String(value)).description);
+ expect(descriptions).not.toContain("");
+ expect(JSON.parse(localStorage.getItem("dispatcher.publication-draft.v1:incomplete")!).description).toBe("New body");
+});
+it("preserves edits made while an explicit task reload is still pending",async()=>{
+ localStorage.setItem("dispatcher.publication-draft.v1:incomplete",JSON.stringify({existingTaskId:"incomplete",existingTaskRevision:"2",description:"Unsaved edits"}));
+ vi.spyOn(window,"confirm").mockReturnValue(true);
+ const task={revision:3,document:{id:"incomplete",state:"NEEDS_SPEC",title:"New title",description:"New body"},publicationDraft:{repositoryId:"",acceptanceCriteria:[],execution:{},delivery:{type:"none"}}};
+ let reads=0;let release!:(value:Response)=>void;
+ const response=new Promise<Response>(resolve=>{release=resolve;});
+ vi.spyOn(globalThis,"fetch").mockImplementation(async input=>String(input)==="/api/tasks/incomplete"&&++reads>1?response:new Response(JSON.stringify(String(input)==="/api/tasks/incomplete"?task:config)));
+ mount(<PublishPage/>,"/publish?task=incomplete");await screen.findByRole("heading",{name:"完善现有任务"});
+ await userEvent.click(screen.getByRole("button",{name:"重新读取任务"}));
+ await userEvent.type(screen.getByLabelText("任务说明")," after reload started");
+ await act(async()=>{release(new Response(JSON.stringify(task)));});
+ await screen.findByText("任务读取期间草稿已修改，当前草稿保留。请再次确认后重新读取。");
+ expect((screen.getByLabelText("任务说明") as HTMLTextAreaElement).value).toBe("Unsaved edits after reload started");
+ expect(JSON.parse(localStorage.getItem("dispatcher.publication-draft.v1:incomplete")!).description).toBe("Unsaved edits after reload started");
 });
 it("retains an incomplete task's explicit policy type instead of silently enabling another semantic analysis",async()=>{
  const task={revision:1,document:{id:"incomplete",title:"Original",description:"Body",state:"NEEDS_SPEC"},publicationDraft:{repositoryId:"repo",acceptanceCriteria:[],execution:{selectionMode:"policy-auto",profileId:"p",taskTypeId:"fix"},delivery:{type:"none"}},executionIntent:{execution:{selectionMode:"policy-auto",profileId:"p",taskTypeId:"fix"}}};
