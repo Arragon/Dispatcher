@@ -66,7 +66,7 @@ final convergence verification.
 | CV-04 | migration/control/backup modules ported with v3 adaptation and protocol 2; targeted 12/101 and two default 90/802 gates passed; ready for whole-branch review |
 | CV-05 | in progress: catalog scope/lifecycle, default ConfigPlan, per-Run provenance and adapter selection fences pass 91/833 default gate; legacy HTTP/Slack/reroute choice now integrated at 109/1085; remaining catalog/control assertions tracked |
 | CV-06 | Controller nonblocking scoped collection/terminal retry verified at 115/1169; origin/attempt/time and account-quota qualification/UI pending |
-| CV-08 | continuation/worker/delivery/failure/cancel/pause Guard, failure priority drain, stop audit and read-only local start recovery qualification verified at 115/1204; ordinary local start composed; writer increment, reserved-start cancellation, reroute/recovery and native qualification remain pending |
+| CV-08 | continuation/worker/delivery/failure/cancel/pause Guard, failure priority drain, stop audit and read-only local start recovery qualification verified at 115/1204; ordinary local start composed; schema-8 writer increment verified at 116/1208; reserved-start cancellation, reroute/recovery and native qualification remain pending |
 | CV-12 | pending complete selection/control integration |
 | macOS service / LP / backup | pending safe shared foundation |
 | CV-07/09/10/11 | pending contracts/guards |
@@ -1136,3 +1136,32 @@ start cancellation, priority startup outcome/reconciliation, legacy adoption,
 reroute, complete recovery and qualified native stop. No live database/service
 changed; no native or A/B Gate closes. Source/rollback: eba4b2f with matching
 pre-activation data backup, never an older binary against an incompatible DB.
+
+
+## CV-04h guarded startup minimum writer (R-011)
+
+Additive migration 8, guarded_controller_start_writer_protocol, raises the
+connection/trigger protocol to 4 before ordinary local start activation. It
+fences protocol-3 intermediate writers even when their SQLite connection is
+already open; their old migration catalog also refuses the newer schema.
+Migration entries 1–7 match 127910c byte-for-byte (array prefix SHA-256
+78fd06a8e9fb6e5ac871333ae004e0a9e1fe901d6c1da63a24eeb9ff48e20b8a).
+
+Interrupted upgrade and outer rollback restore both schema-7 trigger SQL and
+connection writer 3. Snapshot writer detection follows exact schema/name: a
+schema-7 backup remains writer 3, archive/source bytes stay unchanged, and only
+its restored copy upgrades to schema 8 behind RESTORE_RECONCILIATION_REQUIRED.
+No schema downgrade or trigger deletion bypass is used.
+
+All four new regressions failed first; target passes 4 files/30 tests, including
+older writer/backup regression cases. Existing default-schema assertions now
+expect 8; old-version rollback and snapshot assertions retain their actual
+versions. Default `mise exec -- pnpm check` passes 116 files/1208 tests
+(40.87s test phase); `git diff --check` passes. Official quota checked after
+unit; percentage recorded in Linear. Logs:
+/tmp/dispatcher-start-writer-red.log, /tmp/dispatcher-start-writer-green.log,
+/tmp/dispatcher-start-writer-check.log.
+
+R-011's local gate gap is resolved; full branch review and real recovery/upgrade
+remain open. Source/rollback: 127910c with the corresponding schema-7 backup;
+never run that binary against schema 8. No live data or service touched.

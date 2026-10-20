@@ -187,6 +187,10 @@ before Controller control integration: an already-open protocol-2 intermediate
 binary must not write through newly activated control records. Migration 6 is
 unchanged. Backups use the protocol of their own snapshot, and only the restored
 copy upgrades; rollback restores both SQLite and connection writer state.
+Migration 8 (`guarded_controller_start_writer_protocol`) raises the protocol to 4
+for ordinary guarded local startup, rejecting already-open protocol-3
+intermediate writers. Migration entries 1–7 remain unchanged. Schema-7 backups
+use writer 3; only a restored copy upgrades to schema 8 behind the restore barrier.
 Connections register `dispatcher_writer_protocol()` before writes; upgraded
 triggers reject older writers. Nested repository operations use savepoints so
 a caught inner failure cannot partially commit native identity changes.
@@ -195,9 +199,9 @@ from historical `modelSelection` records. Native binding validates a new Run
 against its frozen contract's repository/base commit; current config cannot
 repair missing historical identity.
 
-The Controller currently refuses live persisted native execution/control and
-unadapted legacy model selections before
-its control runtime is composed, before restoring leases or starting workers.
+The Controller refuses live persisted native execution/control outside its exact
+unbound local start certificate, and unadapted legacy model selections, before
+restoring leases or starting workers.
 Schema compatibility alone is not permission to take over another native writer.
 Missing/conflicting old binding facts remain diagnostic and do not acquire
 AUTOMATED control. This staged integration does not enable native takeover UI.
@@ -280,7 +284,8 @@ reconciliation rather than accepting stale startup. Basic execution-context and
 native model-catalog fingerprints have distinct meanings; final admission pins
 the former while the existing selection preflight validates the latter. Remote
 startup retains its separate owning-Runner contract pending CV-12 composition.
-A new minimum-writer increment remains required before live activation.
+Guarded local startup requires the schema-8 minimum writer protocol; native
+control remains unavailable until its remaining runtime composition is qualified.
 Failure revokes and aborts its original owned verification command before
 waiting for the Session lane, then requires both adapter stop and owned command
 drain before FAILED. Stop intent audit stays on the existing Session authority

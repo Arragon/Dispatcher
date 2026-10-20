@@ -68,7 +68,7 @@ it("migrates twice without adopting conflicting old owners or changing their rec
     const old=new DispatcherDatabase(path,migrations.filter(m=>m.version<4));seed(old);seed(old,"alias","other","other-run");
     const original=old.getEntity<JsonValue>("session","session")!;const alias=old.getEntity<JsonValue>("session","alias")!;
     old.saveEntity("session","session",json({...original as object,nativeBinding:binding}));old.saveEntity("session","alias",json({...alias as object,nativeBinding:{...binding,profileId:"other"}}));old.close();
-    const db=new DispatcherDatabase(path);const store=new InteractionStore(db);expect(db.schemaVersion()).toBe(7);expect(store.diagnostics().map(d=>d.code)).toEqual(["NATIVE_BINDING_CONFLICT","NATIVE_BINDING_CONFLICT"]);
+    const db=new DispatcherDatabase(path);const store=new InteractionStore(db);expect(db.schemaVersion()).toBe(8);expect(store.diagnostics().map(d=>d.code)).toEqual(["NATIVE_BINDING_CONFLICT","NATIVE_BINDING_CONFLICT"]);
     expect(store.binding("session")).toBeUndefined();expect(db.getEntity("session","session")).toEqual(json({...original as object,nativeBinding:binding}));
     expect(()=>store.bindNative({sessionId:"session",runId:"run",binding,expectedGeneration:1,expectedLeaseId:"lease"})).toThrowError(expect.objectContaining({code:"NATIVE_BINDING_CONFLICT"}));
     db.migrate();expect(store.diagnostics()).toHaveLength(2);db.close();
@@ -120,7 +120,7 @@ it("rolls back migration data and DDL together before retrying",()=>{
     }}])).toThrow(MigrationError);
     const rollback=new DispatcherDatabase(path,migrations.filter(m=>m.version<4));expect(rollback.schemaVersion()).toBe(3);expect(rollback.getEntity("session","session")).toMatchObject({id:"session",profileId:"p"});
     expect(rollback.handle.prepare("SELECT name FROM sqlite_master WHERE name='native_bindings'").all()).toHaveLength(0);rollback.close();
-    const recovered=new DispatcherDatabase(path);expect(recovered.schemaVersion()).toBe(7);expect(new InteractionStore(recovered).diagnostics()).toMatchObject([{code:"LEGACY_NATIVE_BINDING_MISSING"}]);expect(recovered.integrityCheck()).toBe(true);recovered.close();
+    const recovered=new DispatcherDatabase(path);expect(recovered.schemaVersion()).toBe(8);expect(new InteractionStore(recovered).diagnostics()).toMatchObject([{code:"LEGACY_NATIVE_BINDING_MISSING"}]);expect(recovered.integrityCheck()).toBe(true);recovered.close();
   }finally{rmSync(directory,{recursive:true,force:true});}
 });
 it("rolls back a failed binding inside a caller transaction that catches the failure",()=>{
@@ -199,7 +199,7 @@ it("preserves contradictory adapter bindings as migration diagnostics instead of
   try{
     const old=new DispatcherDatabase(path,migrations.filter(m=>m.version<4));seed(old);
     old.saveEntity("session","session",json({...old.getEntity("session","session") as object,nativeBinding:binding}));old.saveEntity("adapter-session","session",json({id:"session",runId:"run",profileId:"p",backendId:"exec",nativeBinding:{...binding,nativeSessionId:"contradictory"},providerSessionId:"native"}));old.close();
-    const db=new DispatcherDatabase(path);const store=new InteractionStore(db);expect(db.schemaVersion()).toBe(7);expect(store.diagnostics().every(d=>d.code==="NATIVE_IDENTITY_CHANGED")).toBe(true);expect(store.binding("session")).toBeUndefined();expect(db.getEntity("adapter-session","session")).toMatchObject({nativeBinding:{nativeSessionId:"contradictory"}});
+    const db=new DispatcherDatabase(path);const store=new InteractionStore(db);expect(db.schemaVersion()).toBe(8);expect(store.diagnostics().every(d=>d.code==="NATIVE_IDENTITY_CHANGED")).toBe(true);expect(store.binding("session")).toBeUndefined();expect(db.getEntity("adapter-session","session")).toMatchObject({nativeBinding:{nativeSessionId:"contradictory"}});
     seed(db,"new","other","other-run");expect(()=>store.bindNative({sessionId:"new",runId:"other-run",binding:{...binding,profileId:"other",nativeSessionId:"contradictory"},expectedGeneration:1,expectedLeaseId:"lease"})).toThrowError(expect.objectContaining({code:"NATIVE_IDENTITY_CHANGED"}));db.close();
   }finally{rmSync(directory,{recursive:true,force:true});}
 });
@@ -228,7 +228,7 @@ it("quarantines identities belonging to orphan Adapter records",()=>{
 it("does not abort migration when untrusted Adapter binding fields are malformed",()=>{
   const db=new DispatcherDatabase(":memory:",migrations.filter(m=>m.version<4));try{
     seed(db);db.saveEntity("session","session",json({...db.getEntity("session","session") as object,nativeBinding:binding}));db.saveEntity("adapter-session","session",json({id:"session",runId:"run",profileId:"p",backendId:"exec",nativeBinding:{...binding,nativeSessionId:123}}));
-    expect(()=>db.migrate()).not.toThrow();expect(db.schemaVersion()).toBe(7);expect(new InteractionStore(db).diagnostics()).toMatchObject([{code:"LEGACY_NATIVE_BINDING_UNVERIFIED"}]);expect(db.getEntity("adapter-session","session")).toMatchObject({nativeBinding:{nativeSessionId:123}});
+    expect(()=>db.migrate()).not.toThrow();expect(db.schemaVersion()).toBe(8);expect(new InteractionStore(db).diagnostics()).toMatchObject([{code:"LEGACY_NATIVE_BINDING_UNVERIFIED"}]);expect(db.getEntity("adapter-session","session")).toMatchObject({nativeBinding:{nativeSessionId:123}});
   }finally{db.close();}
 });
 it("does not migrate an apparently valid owner whose key is disputed by another Adapter record",()=>{

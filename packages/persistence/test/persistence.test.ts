@@ -19,9 +19,9 @@ afterEach(() => {
 describe("DispatcherDatabase", () => {
   it("migrates an empty database idempotently", () => {
     const db = new DispatcherDatabase(":memory:");
-    expect(db.schemaVersion()).toBe(7);
+    expect(db.schemaVersion()).toBe(8);
     db.migrate();
-    expect(db.schemaVersion()).toBe(7);
+    expect(db.schemaVersion()).toBe(8);
     expect(db.integrityCheck()).toBe(true);
     db.close();
   });
@@ -35,7 +35,7 @@ describe("DispatcherDatabase", () => {
       .run(JSON.stringify({ controller: { id: "legacy" } }), "2026-09-21T00:00:00.000Z");
     old.close();
     const upgraded = new DispatcherDatabase(path);
-    expect(upgraded.schemaVersion()).toBe(7);
+    expect(upgraded.schemaVersion()).toBe(8);
     expect(upgraded.getEntity("runner", "legacy-runner")).toEqual({ state: "OFFLINE" });
     expect(upgraded.handle.prepare("SELECT revision FROM config_state WHERE singleton = 1").get()).toEqual({ revision: 7 });
     expect(upgraded.integrityCheck()).toBe(true);
