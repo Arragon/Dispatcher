@@ -66,7 +66,7 @@ final convergence verification.
 | CV-04 | migration/control/backup modules ported with v3 adaptation and protocol 2; targeted 12/101 and two default 90/802 gates passed; ready for whole-branch review |
 | CV-05 | in progress: catalog scope/lifecycle, default ConfigPlan, per-Run provenance and adapter selection fences pass 91/833 default gate; legacy HTTP/Slack/reroute choice now integrated at 109/1085; remaining catalog/control assertions tracked |
 | CV-06 | Controller nonblocking scoped collection/terminal retry verified at 115/1169; origin/attempt/time and account-quota qualification/UI pending |
-| CV-08 | continuation/worker/delivery/failure/cancel/pause Guard, failure priority drain, stop audit and read-only local start recovery qualification verified at 115/1204; ordinary local start composed; schema-8 writer increment verified at 116/1208; known-unsent cancellation/publication journal recovery verified at 116/1215; general guarded local recovery verified at 116/1218; captured reroute stage Guard verified at 116/1222; replacement start/legacy/qualified native recovery remain and native qualification remain pending |
+| CV-08 | continuation/worker/delivery/failure/cancel/pause Guard, failure priority drain, stop audit and read-only local start recovery qualification verified at 115/1204; ordinary local start composed; schema-8 writer increment verified at 116/1208; known-unsent cancellation/publication journal recovery verified at 116/1215; general guarded local recovery verified at 116/1218; captured reroute stage Guard and default Generic drain verified at 116/1224; replacement start/legacy/qualified native recovery remain and native qualification remain pending |
 | CV-12 | pending complete selection/control integration |
 | macOS service / LP / backup | pending safe shared foundation |
 | CV-07/09/10/11 | pending contracts/guards |
@@ -1280,3 +1280,34 @@ before terminal completion. Reproduce and repair this before further activation;
 no provider/real-process Gate is claimed by metadata fixtures. Original data and
 services unchanged. Source/rollback: a872c18 plus matching schema-8 backup.
 Official quota checked after unit; percentage recorded in Linear.
+
+
+## CV-08t Generic default owned-stop status barrier (R-012)
+
+SpawnProcessExecutor no longer sets terminal cancelled on request. Its separate
+cancellationRequested latch rejects stdin immediately, while status stays
+nonterminal until OwnedProcessGroup drain and the outcome complete. Failed drain
+stays unconfirmed/nonterminal. Outcome rejection remains observable to consumers
+and is also safely observed when no result reader has attached.
+
+Scope correction to the initial R-012 concern: Controller creates Generic with
+its ProcessManager-backed executor, whose status already awaits its result. The
+defect is in the exported default SpawnProcessExecutor; do not claim that the
+Controller's ordinary path had this same early terminal report. Preserve and
+regress both paths rather than replacing the safe executor.
+
+Two controlled real-child tests hold/reject owned drain and fail before the fix.
+They also retain immediate input rejection; cleanup releases only their own
+spawned child through its original owned group. Existing physical descendant/
+normal-completion/permission-uncertainty and legacy cancellation target passes
+2 files/27 tests. Default `mise exec -- pnpm check` passes 116 files/1224 tests
+(41.30s test phase); `git diff --check` passes. Initial full gate caught the test
+this-alias lint; replace it with a scoped cleanup callback, without suppression,
+and rerun the whole gate. No old assertion or timeout changed. Logs:
+/tmp/dispatcher-cv08t-generic-drain-red.log,
+/tmp/dispatcher-cv08t-generic-drain-green.log, /tmp/dispatcher-cv08t-final-check.log.
+
+R-012's local default-executor defect is fixed; this does not qualify a native
+provider/shared-host stop or formal A/B Gate. No live data/service changed.
+Source/rollback: 3102d03 with its matching schema-8 backup. Official quota checked
+after unit; percentage recorded in Linear.

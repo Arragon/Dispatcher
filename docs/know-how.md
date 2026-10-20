@@ -2,6 +2,11 @@
 
 ## M0–M10 invariants
 
+- A cancellation request is not terminal execution evidence. Keep its input
+  latch separate and report completion only after owned-group drain. Generic's
+  default SpawnProcessExecutor and Controller's ProcessManager executor are
+  different implementations; inspect the actual consumer before claiming impact.
+
 - Capture a reroute fence before its queue/preflight awaits. The original Run
   becomes terminal before replacement reservation, so post-stop reuse needs a
   narrow stage guard, not a fresh general mutation fence. Require the original

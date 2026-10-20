@@ -315,7 +315,12 @@ refresh and stop preflight retain the original fence. Once the old Run is
 SUPERSEDED, a dedicated stage guard requires its revoked original lease, exact
 current Task revision/control, confirmed scoped adapter stop and no uncertain
 commands before reusing its worktree. It rejects native-bound or executionRef
-sessions. Replacement startup composition remains separate work. Known no-send cancellation uses START_FAILED
+sessions. Replacement startup composition remains separate work.
+Generic's default SpawnProcessExecutor keeps cancellation request state separate
+from observed completion. It blocks stdin immediately, but terminal status waits
+for owned-group drain and outcome; a failed drain remains nonterminal. The
+Controller's existing ProcessManager-backed generic executor is a separate path
+and retains its own completion barrier. Known no-send cancellation uses START_FAILED
 with the cancellation reason; sent/unknown cancellation stays distinct.
 
 Codex CLI start/send/resume accept an optional synchronous `beforeSend` admission

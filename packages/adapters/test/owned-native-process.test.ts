@@ -75,3 +75,18 @@ it("never confirms termination while group presence remains permission-uncertain
     await vi.advanceTimersByTimeAsync(4100); await rejection;
   } finally { kill.mockRestore(); vi.useRealTimers(); }
 });
+
+it("keeps Generic stop pending nonterminal while blocking input until owned drain completes",async()=>{
+  const release=Promise.withResolvers<void>(),entered=Promise.withResolvers<void>(),original=OwnedProcessGroup.prototype.stop;let cleanup:(()=>Promise<void>)|undefined;
+  const spy=vi.spyOn(OwnedProcessGroup.prototype,"stop").mockImplementation(function(this:OwnedProcessGroup){cleanup=()=>original.call(this);entered.resolve();return release.promise.then(()=>original.call(this));});
+  const execution=await new SpawnProcessExecutor().start({file:process.execPath,args:["-e","setInterval(()=>{},1000)"],cwd:tmpdir(),runId:"pending-generic-stop"}),result=execution.result(),pending=execution.cancel();void result.catch(()=>undefined);void pending.catch(()=>undefined);
+  try{await entered.promise;expect(await execution.status()).toEqual({state:"running"});await expect(execution.send("must not be written")).rejects.toMatchObject({code:"SESSION_NOT_INTERACTIVE"});release.resolve();await pending;expect(await execution.status()).toEqual({state:"cancelled"});expect(await result).toMatchObject({state:"cancelled"});}
+  finally{release.resolve();spy.mockRestore();if(cleanup)await cleanup();await pending.catch(()=>undefined);await result.catch(()=>undefined);}
+});
+it("keeps Generic termination unconfirmed when owned drain rejects",async()=>{
+  const original=OwnedProcessGroup.prototype.stop;let cleanup:(()=>Promise<void>)|undefined;
+  const spy=vi.spyOn(OwnedProcessGroup.prototype,"stop").mockImplementation(function(this:OwnedProcessGroup){cleanup=()=>original.call(this);return Promise.reject(Error("owned drain is unconfirmed"));});
+  const execution=await new SpawnProcessExecutor().start({file:process.execPath,args:["-e","setInterval(()=>{},1000)"],cwd:tmpdir(),runId:"unknown-generic-stop"}),result=execution.result();void result.catch(()=>undefined);
+  try{await expect(execution.cancel()).rejects.toThrow("owned drain is unconfirmed");expect(await execution.status()).toEqual({state:"running"});await expect(execution.send("must stay fenced")).rejects.toMatchObject({code:"SESSION_NOT_INTERACTIVE"});}
+  finally{spy.mockRestore();if(cleanup)await cleanup();await result.catch(()=>undefined);}
+});

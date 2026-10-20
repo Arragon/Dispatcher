@@ -103,6 +103,7 @@ export class SpawnProcessExecutor implements ProcessExecutor {
 class SpawnProcessExecution implements ProcessExecution {
   private current: "running" | "cancelled" | "completed" | "failed" = "running";
   private readonly ownership: OwnedProcessGroup;
+  private cancellationRequested=false;
   private stdout = "";
   private stderr = "";
   private readonly outcome: Promise<{ state: "cancelled" | "completed" | "failed"; summary: string }>;
@@ -115,18 +116,19 @@ class SpawnProcessExecution implements ProcessExecution {
       child.on("error", (error) => { this.stderr = error.message; });
       child.on("close", (code) => { void (async () => {
         await this.ownership.stop();
-        if (this.current !== "cancelled") this.current = code === 0 ? "completed" : "failed";
+        this.current = this.cancellationRequested ? "cancelled" : code === 0 ? "completed" : "failed";
         resolve({ state: this.current, summary: (this.stdout.trim() || this.stderr.trim() || `Process exited with code ${code ?? "unknown"}`).slice(0, 4_000) });
       })().catch(reject); });
     });
+    void this.outcome.catch(()=>undefined);
   }
   async status(): Promise<{ state: "running" | "cancelled" | "completed" | "failed" }> { return { state: this.current }; }
   async send(data: string): Promise<void> {
-    if (this.current !== "running" || !this.child.stdin?.writable) throw new AdapterContractError("SESSION_NOT_INTERACTIVE", "CLI process stdin is unavailable");
+    if (this.cancellationRequested || this.current !== "running" || !this.child.stdin?.writable) throw new AdapterContractError("SESSION_NOT_INTERACTIVE", "CLI process stdin is unavailable");
     await new Promise<void>((resolve, reject) => this.child.stdin!.write(data, (error) => error ? reject(error) : resolve()));
   }
   async cancel(): Promise<void> {
-    if (this.current === "running") this.current = "cancelled";
+    if (this.current === "running") this.cancellationRequested = true;
     await this.ownership.stop();
     await this.outcome;
   }
