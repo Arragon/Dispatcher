@@ -1,3 +1,5 @@
+import { assessInteractionCapability, type InteractionRequirement } from "@dispatcher/domain";
+import { getInteractionPort, type NativeInteractionPort } from "./interaction-contracts.js";
 import type { AdapterBackendSpec, AdapterManifest } from "./contracts.js";
 
 export interface AdapterCompatibilityRow {
@@ -18,6 +20,18 @@ export interface CapabilityAssessment {
   missing: string[];
   explanation: string;
 }
+
+export function assessInteractionRequirement(adapter:{manifest:AdapterManifest;interaction?:NativeInteractionPort},requirement:InteractionRequirement,scopeFingerprint:string):{supported:boolean;code?:string} {
+  if(requirement.backendId&&!adapter.manifest.backends.some(backend=>backend.id===requirement.backendId))return {supported:false,code:"NATIVE_BACKEND_UNAVAILABLE"};
+  if(requirement.executionLocation!=="managed-worktree")return {supported:false,code:"EXECUTION_CONTEXT_UNSUPPORTED"};
+  if(requirement.mode==="compatible")return {supported:true};
+  const port=getInteractionPort(adapter);if(!port)return {supported:false,code:"NATIVE_CAPABILITY_UNVERIFIED"};
+  const capabilities=port.capabilities();
+  for(const name of ["durableIdentity","historyRead","sameSessionContinue","observeExternalChanges","releaseControl","reclaimControl"] as const){const assessment=assessInteractionCapability(capabilities[name],scopeFingerprint,"runtime-verified");if(!assessment.supported)return assessment;}
+  if(requirement.mode==="native-gui")return assessInteractionCapability(requirement.surface?capabilities.surfaces[requirement.surface]:undefined,scopeFingerprint,"ui-roundtrip-verified");
+  return {supported:true};
+}
+
 
 export function buildAdapterCompatibilityMatrix(manifests: readonly AdapterManifest[]): AdapterCompatibilityRow[] {
   return manifests.flatMap((manifest) => manifest.backends.map((backend) => {

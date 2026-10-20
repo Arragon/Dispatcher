@@ -13,3 +13,6 @@ export * from "./compatibility.js";
 export { readCodexNative, readCodexCatalog, normalizeCodexCatalog, type CodexReadRequest } from "./codex-catalog.js";
 
 export { OwnedProcessGroup } from "./owned-process.js";
+
+export * from "./interaction-contracts.js";
+export * from "./native-requests.js";

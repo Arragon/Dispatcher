@@ -1,3 +1,4 @@
+import type { NativeInteractionPort } from "./interaction-contracts.js";
 import type { ExecutionSelection, AccountModelCatalog, ModelCatalogContext, UsageObservationV1 } from "@dispatcher/domain";
 export type AdapterPlatform = "darwin" | "linux" | "win32";
 export type BackendKind = "sdk" | "api" | "daemon" | "headless-cli" | "pty";
@@ -64,6 +65,7 @@ export interface AdapterResult {
 }
 
 export interface AgentAdapter {
+  readonly interaction?:NativeInteractionPort;
   readonly manifest: AdapterManifest;
   readonly supportsExecutionSelection?: boolean;
   modelCatalog?(context: ModelCatalogContext & {workspacePath:string;signal?:AbortSignal}): Promise<AccountModelCatalog>;

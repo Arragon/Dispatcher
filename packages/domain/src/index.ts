@@ -1,3 +1,4 @@
+export * from "./native-drift.js";
 export * from "./legacy-usage.js";
 export * from "./session-interaction.js";
 export * from "./legacy-selection.js";

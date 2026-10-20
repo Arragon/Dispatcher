@@ -66,7 +66,8 @@ final convergence verification.
 | CV-04 | migration/control/backup modules ported with v3 adaptation and protocol 2; targeted 12/101 and two default 90/802 gates passed; ready for whole-branch review |
 | CV-05 | in progress: catalog scope/lifecycle, default ConfigPlan, per-Run provenance and adapter selection fences pass 91/833 default gate; remaining legacy/catalog authority assertions tracked |
 | CV-06 | private legacy reader and passive Codex/Qoder snapshots verified at 93/849; Controller collection, canonical origin/attempt/time and quota wiring pending |
-| CV-08/12 | pending complete selection/control integration |
+| CV-08 | optional adapter port, bounded read observer/dispatch and event/release/stop/reclaim foundations pass 99/927; Controller composition remains pending |
+| CV-12 | pending complete selection/control integration |
 | macOS service / LP / backup | pending safe shared foundation |
 | CV-07/09/10/11 | pending contracts/guards |
 | CV-13/14 and original Gates | pending implementation and evidence |
@@ -384,3 +385,42 @@ Logs: `/tmp/dispatcher-cv06-passive-usage-red.log`,
 `/tmp/dispatcher-cv06-passive-probe-rebuilt.log`,
 `/tmp/dispatcher-cv06-passive-usage-final-check.log`.
 Official quota after this unit: 88% remaining, ordinary usage allowed.
+
+
+## CV-08a native interaction and read-only recovery foundations
+
+Ported a499d84 optional adapter interaction contracts, native request handles,
+Runner dispatch/quiescence/release/stop/reclaim helpers and bounded native event
+recovery. Read observer lives in `native-observation.ts`: v3's existing remote
+`NativeRunnerRuntime` remains intact. Observation generations, late reads and
+request metadata are fenced; unqualified capabilities and unknown receipts stay
+closed. Native event journal metadata uses checksum/CAS and remains separate
+from v3 transport replay, command bindings and ACKs. A restart/compaction
+coexistence regression preserves those original command identities.
+
+Ruling: adapt native drift comparison to the one v3 ExecutionSelection, rather
+than porting old ModelSelection as a second authority. Explicit model and effort
+are compared independently without rewriting the bound choice. A native-default
+omission has no concrete model baseline and stays unverified; native integration
+will need a qualified original reported context, never a current default guess.
+Cost: native-default reclaim stays closed until that context is available.
+Account identity accepts only provider-confirmed opaque SHA-256 fingerprints.
+
+The original five missing-module suites first went RED; drift's three new v3
+cases also went RED before adaptation. Rebuilt domain/adapters/Runner targeted
+suite passed six files/77 tests. Default gate initially found two unused imports
+left after splitting the old runtime; corrected without suppression. Final
+`mise exec -- pnpm check` passed 99 files/927 tests (46.72s test phase).
+Logs: `/tmp/dispatcher-cv08-foundation-red.log`,
+`/tmp/dispatcher-cv08-drift-red.log`,
+`/tmp/dispatcher-cv08-foundation-green.log`,
+`/tmp/dispatcher-cv08-foundation-final-check.log`,
+`/tmp/dispatcher-cv08-foundation-final-check-2.log`.
+Official quota after this unit: 86% remaining, ordinary usage allowed.
+
+This is a foundation increment. CV-08 remains open: Controller command lanes,
+all final write admissions, recovery, external change/candidate invalidation and
+real native handoff are not yet composed. Controller's native startup barrier
+remains in place. No live database or native account was used. The source host
+manager and its process-tree proof need the following increment; no release UI
+or parallel controller router is exposed.

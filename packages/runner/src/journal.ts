@@ -1,3 +1,5 @@
+import { isDeepStrictEqual } from "node:util";
+import { validateNativeEventCheckpoint, type NativeEventCheckpoint } from "./native-event-reconcile.js";
 import { createHash } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
@@ -36,6 +38,12 @@ export class RunnerJournal {
         envelope_json TEXT NOT NULL,
         checksum TEXT NOT NULL,
         created_at TEXT NOT NULL
+      ) STRICT;
+      CREATE TABLE IF NOT EXISTS native_event_checkpoints (
+        session_id TEXT PRIMARY KEY,
+        checkpoint_json TEXT NOT NULL,
+        checksum TEXT NOT NULL,
+        updated_at TEXT NOT NULL
       ) STRICT;
       CREATE TABLE IF NOT EXISTS runner_command_bindings (
         message_id TEXT PRIMARY KEY,
@@ -102,6 +110,26 @@ export class RunnerJournal {
   acknowledgedSequence(): number {
     const row = this.database.prepare("SELECT acknowledged_sequence FROM journal_meta WHERE singleton = 1").get() as Record<string, unknown>;
     return Number(row.acknowledged_sequence);
+  }
+
+  saveNativeCheckpoint(sessionId:string,checkpoint:NativeEventCheckpoint):void {
+    if(!sessionId)throw new Error("INVALID_NATIVE_EVENT_CHECKPOINT");
+    validateNativeEventCheckpoint(checkpoint);
+    const prior=this.nativeCheckpoint(sessionId);
+    if(prior&&(!isDeepStrictEqual(prior.binding,checkpoint.binding)||prior.scopeFingerprint!==checkpoint.scopeFingerprint||prior.stream.kind!==checkpoint.stream.kind||checkpoint.revision<=prior.revision&&!isDeepStrictEqual(prior,checkpoint)||checkpoint.observerGeneration<prior.observerGeneration||checkpoint.observerGeneration===prior.observerGeneration&&(checkpoint.sequence<prior.sequence||checkpoint.observerEpoch!==prior.observerEpoch)))throw new Error("NATIVE_EVENT_CHECKPOINT_STALE");
+    const document=JSON.stringify(checkpoint);
+    if(Buffer.byteLength(document)>256*1_024)throw new Error("NATIVE_EVENT_CHECKPOINT_TOO_LARGE");
+    const expectedChecksum=prior?checksum(JSON.stringify(prior)):null;
+    const saved=this.database.prepare("INSERT INTO native_event_checkpoints(session_id,checkpoint_json,checksum,updated_at) VALUES(?,?,?,?) ON CONFLICT(session_id) DO UPDATE SET checkpoint_json=excluded.checkpoint_json,checksum=excluded.checksum,updated_at=excluded.updated_at WHERE native_event_checkpoints.checksum=?").run(sessionId,document,checksum(document),new Date().toISOString(),expectedChecksum);
+    if(Number(saved.changes)!==1)throw new Error("NATIVE_EVENT_CHECKPOINT_STALE");
+  }
+  nativeCheckpoint(sessionId:string):NativeEventCheckpoint|undefined {
+    const row=this.database.prepare("SELECT checkpoint_json,checksum FROM native_event_checkpoints WHERE session_id=?").get(sessionId) as {checkpoint_json:string;checksum:string}|undefined;
+    if(!row)return undefined;
+    if(checksum(row.checkpoint_json)!==row.checksum)throw new Error("NATIVE_EVENT_CHECKPOINT_CORRUPT");
+    const checkpoint=JSON.parse(row.checkpoint_json) as NativeEventCheckpoint;
+    validateNativeEventCheckpoint(checkpoint);
+    return checkpoint;
   }
 
   get schemaVersion(): number {

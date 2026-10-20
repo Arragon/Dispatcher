@@ -197,6 +197,20 @@ Schema compatibility alone is not permission to take over another native writer.
 Missing/conflicting old binding facts remain diagnostic and do not acquire
 AUTOMATED control. This staged integration does not enable native takeover UI.
 
+The adapter's optional `NativeInteractionPort` qualifies each capability against
+its exact native scope; existing adapters without the port stay compatible.
+Runner's `native-observation` is a bounded read-only observer with independent
+connection generations and ordered snapshots. It is distinct from the existing
+remote execution `NativeRunnerRuntime`. Command dispatch, quiescence, release,
+stop and reclaim helpers require current-authority callbacks and qualified native
+evidence. An uncertain receipt never authorizes a retry. Native event checkpoints
+hold bounded metadata and provider cursors separately from transport replay,
+command identity and ACKs in the Runner journal. These helpers are foundations;
+Controller admission remains closed until all write paths use the shared Guard.
+Drift comparison uses the frozen v3 model/effort; an omitted native default
+cannot be compared to a fabricated bound model. Missing account identity stays
+unknown, and exact policy requires a provider-confirmed account fingerprint.
+
 SQLite online backups are consistent private archives with checksums and an
 inventory. Archives refuse live startup; restore targets must be new directories
 and retain a durable reconciliation barrier. Restoring bytes alone never
