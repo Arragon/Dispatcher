@@ -74,7 +74,7 @@ describe("frozen CLI selection", () => {
     const calls: string[][] = [];
     const backend: CliAgentBackend = { start: input => { calls.push(input.args); const id = `native-${calls.length}`; return { status: () => "completed", cancel: async () => undefined, result: async () => ({ state: "completed", summary: "done", providerSessionId: id, events: [] }) }; } };
     const adapter = new Adapter({id:"account",alias:"A",model:"default"}, backend);
-    const [a,b] = await Promise.all(["model-a","model-b"].map(requestedModel => adapter.start({runId:requestedModel,prompt:`prompt-${requestedModel}`,workspacePath:"/tmp",executionSelection:{...selection,requestedModel}})));
+    const [a,b] = await Promise.all(["model-a","model-b"].map(requestedModel => adapter.start({runId:requestedModel,prompt:`prompt-${requestedModel}`,workspacePath:"/tmp",executionSelection:{...selection,providerId:adapter.manifest.id,backendId:adapter.manifest.backends[0]!.id,requestedModel}})));
     await Promise.all([adapter.send(a!.id,"continue-a"),adapter.send(b!.id,"continue-b")]);
     expect(calls).toHaveLength(4);
     for (const [prompt, model] of [["prompt-model-a","model-a"],["prompt-model-b","model-b"],["continue-a","model-a"],["continue-b","model-b"]]) {
@@ -87,18 +87,19 @@ describe("frozen CLI selection", () => {
     const backend: CliAgentBackend = { start: input => { calls.push(input.args); return { status: () => "completed", cancel: async () => undefined, result: async () => ({ state: "completed", summary: "done", providerSessionId: "native-thread", events: [] }) }; } };
     const profile = { id: "account", alias: "A", model: "profile-default" };
     const adapter = new Adapter(profile, backend);
-    const session = await adapter.start({ runId: "run", workspacePath: "/tmp", executionSelection: selection });
-    profile.model = "changed-default"; selection.requestedModel = "mutated-after-start";
+    const choice={...selection,providerId:adapter.manifest.id,backendId:adapter.manifest.backends[0]!.id};
+    const session = await adapter.start({ runId: "run", workspacePath: "/tmp", executionSelection: choice });
+    profile.model = "changed-default"; choice.requestedModel = "mutated-after-start";
     await adapter.send(session.id, "continue");
     expect(calls).toHaveLength(2);
     for (const args of calls) { expect(args).toContain("native-choice"); expect(args).not.toContain("profile-default"); expect(args).not.toContain("changed-default"); }
     expect(session.executionSelection?.requestedModel).toBe("native-choice");
-    selection.requestedModel = "native-choice";
-    const native = await adapter.start({ runId: "native", workspacePath: "/tmp", executionSelection: { ...selection, source: "native-default", selectionType: "native-default", requestedModel: undefined } });
+    choice.requestedModel = "native-choice";
+    const native = await adapter.start({ runId: "native", workspacePath: "/tmp", executionSelection: { ...choice, source: "native-default", selectionType: "native-default", requestedModel: undefined } });
     await adapter.send(native.id, "continue");
     expect(calls.slice(2).every(args => !args.includes("--model"))).toBe(true);
     expect(await adapter.usage(session.id)).toMatchObject({ state: "AVAILABLE" });
-    await expect(adapter.start({ runId: "bad", workspacePath: "/tmp", executionSelection: { ...selection, nativeParameters: { invented: "high" } } })).rejects.toMatchObject({ code: "UNSUPPORTED_NATIVE_PARAMETERS" });
+    await expect(adapter.start({ runId: "bad", workspacePath: "/tmp", executionSelection: { ...choice, nativeParameters: { invented: "high" } } })).rejects.toMatchObject({ code: "UNSUPPORTED_NATIVE_PARAMETERS" });
   });
 });
 

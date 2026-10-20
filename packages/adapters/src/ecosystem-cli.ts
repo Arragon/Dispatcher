@@ -1,3 +1,4 @@
+import {assertSessionModelBinding,freezeExecutionSelection,sessionModel} from "./execution-selection.js";
 import { OwnedProcessGroup } from "./owned-process.js";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -285,6 +286,9 @@ export class StructuredCliAdapter implements AgentAdapter {
   async start(input: { runId: string; workspacePath: string; backendId?: string; prompt?: string; executionSelection?: ExecutionSelection }): Promise<AdapterSession> {
     this.starting++;
     try {
+      const backendId=this.manifest.backends[0]!.id;
+      if(input.backendId!==undefined&&input.backendId!==backendId)throw new AdapterContractError("BACKEND_MISMATCH","Requested backend differs from the owning CLI adapter");
+      const selection=freezeExecutionSelection(input.executionSelection,{profileId:this.profile.id,providerId:this.manifest.id,backendId,selection:this.supportsExecutionSelection,reasoning:false});
       const now = new Date().toISOString();
       const session: AdapterSession = {
         id: randomUUID(),
@@ -293,7 +297,7 @@ export class StructuredCliAdapter implements AgentAdapter {
         workspacePath: input.workspacePath,
         state: "STARTING",
         profileId: this.profile.id,
-        ...(input.executionSelection ? { executionSelection: structuredClone(input.executionSelection) } : {}),
+        ...(selection?{executionSelection:selection}:{legacyModel:{...(this.profile.model?{id:this.profile.model}:{})}}),
         ...(this.definition.newSessionId ? { providerSessionId: this.definition.newSessionId() } : {}),
         createdAt: now,
         updatedAt: now,
@@ -301,6 +305,7 @@ export class StructuredCliAdapter implements AgentAdapter {
       const environment = await this.environment();
       const executable = await this.executable();
       this.store.save(session);
+      assertSessionModelBinding(this.store.load(session.id),session);
       const turn = this.backend.start({
         executable,
         args: this.definition.startArgs({ prompt: input.prompt ?? "Inspect the task and report readiness.", newSession: true, approveTools: this.profile.approveTools === true, trustWorkspace: this.profile.trustWorkspace === true, ...(this.profile.configDir ? { configDir: this.profile.configDir } : {}), ...(session.providerSessionId ? { providerSessionId: session.providerSessionId } : {}), ...this.selectionArgs(session) }),
@@ -328,11 +333,15 @@ export class StructuredCliAdapter implements AgentAdapter {
     if (this.definition.strictLifecycle && (this.turns.get(sessionId)?.status() === "running" || this.sending.has(sessionId))) throw new AdapterContractError("SESSION_BUSY", "Wait for the current CLI turn before sending another message");
     this.sending.add(sessionId);
     try {
+      const expected=structuredClone(this.require(sessionId));
       const session = await this.finish(sessionId);
+      assertSessionModelBinding(this.store.load(sessionId),expected);
+      freezeExecutionSelection(session.executionSelection,{profileId:this.profile.id,providerId:this.manifest.id,backendId:this.manifest.backends[0]!.id,selection:this.supportsExecutionSelection,reasoning:false});
       if (!session.providerSessionId) throw new AdapterContractError("SESSION_NOT_RESUMABLE", `${this.manifest.displayName} did not emit a provider session id`);
       const environment = await this.environment();
       const executable = await this.executable();
       if (this.cancelled.has(sessionId)||this.require(sessionId).state === "CANCELLED") throw new AdapterContractError("SESSION_CANCELLED", "Session was cancelled before the next turn started");
+      assertSessionModelBinding(this.store.load(sessionId),expected);
       this.store.save({ ...session, state: "STARTING", updatedAt: new Date().toISOString() });
       const turn = this.backend.start({
         executable,
@@ -395,7 +404,7 @@ export class StructuredCliAdapter implements AgentAdapter {
   }
   private selectionArgs(session: AdapterSession): { model?: string } {
     if (session.executionSelection && Object.keys(session.executionSelection.nativeParameters).length) throw new AdapterContractError("UNSUPPORTED_NATIVE_PARAMETERS", "This native catalog does not expose qualified per-model parameters");
-    return session.executionSelection ? session.executionSelection.requestedModel ? { model: session.executionSelection.requestedModel } : {} : this.profile.model ? { model: this.profile.model } : {};
+    const model=sessionModel(session);return model?{model}:{};
   }
   private executable(): Promise<string> {
     return this.definition.resolveExecutable?.(this.profile) ?? Promise.resolve(this.profile.executable ?? this.definition.defaultExecutable);
@@ -409,6 +418,7 @@ export class StructuredCliAdapter implements AgentAdapter {
       return structuredClone(session);
     }
     const result = await turn.result();
+    assertSessionModelBinding(this.store.load(sessionId),session);
     if (this.cancelled.has(sessionId)||this.require(sessionId).state === "CANCELLED") return structuredClone(this.require(sessionId));
     return this.update(sessionId, {
       state: result.state === "completed" ? "COMPLETED" : result.state === "cancelled" ? "CANCELLED" : result.state === "waiting" ? "PAUSED" : "FAILED",

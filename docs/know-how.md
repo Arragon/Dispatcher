@@ -468,6 +468,10 @@
 - Releasing a catalog HTTP request is not evidence that its native reader closed.
   Track the underlying read separately through bounded shutdown, keep late writes
   fenced and retain UNKNOWN cleanup evidence across subsequent clean stops.
+- Capture an adapter's legacy default before asynchronous preparation, including
+  an explicit empty snapshot for known omission. Absence on a historical record
+  is unknown, not permission to use today's configured model. Require review
+  before continuing unknown/legacy-shaped selections; keep their raw data intact.
 - A native default-model review has a source-specific catalog hash. Do not
   reinterpret an old default-plan proof as a current v3 catalog revision.
   Bind new proof to actor/config/native scope and recheck after awaited work;

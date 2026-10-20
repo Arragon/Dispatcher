@@ -778,6 +778,15 @@ metadata, saved atomically and requalified against fresh native catalog evidence
 on apply. The publication's explicit account-default choice freezes the concrete
 model and parameters in ExecutionSelection; native-default continues to omit
 parameters. Legacy default-plan proof requires a fresh review.
+Adapter entrypoints validate and clone the v3 selection before native preparation
+and recheck stored model/owner binding after awaited work. Legacy invocation
+entrypoints without a v3 selection capture one adapter-session default snapshot,
+including a known omitted parameter; it cannot coexist with ExecutionSelection.
+Historical missing or legacy-shaped model facts require reconciliation before
+continuation. These persisted snapshots and their execution owners are immutable;
+provider results and ordinary lifecycle state stay separate. Canonical legacy
+Run selection compilation and the full native control Guard remain pending.
+
 
 ## Usage observations
 

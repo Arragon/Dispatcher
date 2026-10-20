@@ -472,6 +472,11 @@ export class DispatcherDatabase {
       if(frozenFields.some(field=>!isDeepStrictEqual(before[field],after[field])))throw new InteractionStoreError("NATIVE_IDENTITY_CHANGED");
       if(kind==="session"&&after.executionRef&&typeof after.executionRef==="object"&&!Array.isArray(after.executionRef)&&after.executionRef.id!==binding.executionRefId)throw new InteractionStoreError("NATIVE_IDENTITY_CHANGED");
     }
+    if(kind==="adapter-session"){
+      const fields=["executionSelection","modelSelection","legacyModel"];
+      const bound=fields.some(field=>before?.[field]!==undefined);
+      if(fields.filter(field=>after?.[field]!==undefined).length>1||fields.some(field=>before?.[field]!==undefined&&!isDeepStrictEqual(before[field],after?.[field]))||bound&&["id","profileId","backendId","runId","workspacePath"].some(field=>!isDeepStrictEqual(before?.[field],after?.[field])))throw new ImmutableSessionSelectionError();
+    }
     if(kind==="model-routing-decision"&&before){
       const frozen=(value:Record<string,JsonValue>)=>Object.fromEntries(Object.entries(value).filter(([key])=>!["status","confirmation","runId","consumedAt"].includes(key)));
       const same=isDeepStrictEqual(before,after);
@@ -1010,6 +1015,10 @@ export class DispatcherDatabase {
   close(): void {
     this.handle.close();
   }
+}
+export class ImmutableSessionSelectionError extends Error {
+  readonly code="IMMUTABLE_SESSION_SELECTION";
+  constructor(){super("A bound session model selection and execution owner cannot change");this.name="ImmutableSessionSelectionError";}
 }
 export class ImmutableRunSelectionError extends Error {
   readonly code="IMMUTABLE_RUN_SELECTION";

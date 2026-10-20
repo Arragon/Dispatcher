@@ -64,7 +64,7 @@ final convergence verification.
 | CV-02 | 503-path disposition and consumer/authority decisions frozen; domain/legacy binding contract fixtures pass |
 | CV-03 | atomic reload + in-flight edits fixed; process-heavy test pool bounded at four parallel workers; two configured default checks passed 90/802; ready for whole-branch review |
 | CV-04 | migration/control/backup modules ported with v3 adaptation and protocol 2; targeted 12/101 and two default 90/802 gates passed; ready for whole-branch review |
-| CV-05 | in progress: catalog scope, default ConfigPlan proof and per-Run account-default provenance pass 90/813 default gate; lifecycle and old capability/price evidence remaining |
+| CV-05 | in progress: catalog scope/lifecycle, default ConfigPlan, per-Run provenance and adapter selection fences pass 91/833 default gate; remaining legacy/catalog authority assertions tracked |
 | CV-06/08/12 | pending complete catalog/selection integration |
 | macOS service / LP / backup | pending safe shared foundation |
 | CV-07/09/10/11 | pending contracts/guards |
@@ -236,3 +236,46 @@ R-008 is locally implemented; real macOS shutdown/restart and diagnosis remain
 in MAC-01. CV-05 is still open for remaining legacy adapter/catalog assertions;
 OpenCode server-backend/native runtime proof belongs with CV-09, and account
 price qualification with CV-07. Inventory costs are never accepted as prices.
+
+
+## CV-05d adapter selection fences and snapshot preservation
+
+Adapted a499d84 structured-model-binding assertions to the v3
+ExecutionSelection contract in the owning Codex/StructuredCli adapters. New
+`execution-selection.ts` freezes inputs before native preparation, validates
+account/provider/backend/provenance and rejects parameters the backend cannot
+submit. Selection and execution-owner changes during awaited previous results
+or preparation fail before a new native call. Requested model/effort remain
+separate from provider-reported evidence.
+
+Legacy entrypoints that do not supply ExecutionSelection capture one
+`AdapterSession.legacyModel` snapshot, including a present empty object for
+known omission. It cannot coexist with a current selection. Historical sessions
+that lack either snapshot remain readable but cannot resume by guessing from
+current defaults (`MODEL_SNAPSHOT_UNKNOWN`); legacy `modelSelection` shapes
+require source-specific review (`MODEL_LEGACY_REVIEW_REQUIRED`). This intentionally
+changes the old source's pre-snapshot fallback to honor the accepted unknown-fact
+rule. No historical records are rewritten. The persistence store rejects changing
+or removing a session selection/snapshot or its account/backend/workspace owner,
+while lifecycle state remains mutable. This does not replace CV-08 control fences.
+
+New adapter tests first reproduced 10 failures, then two missing-snapshot cases;
+the new persistence case reproduced an accepted overwrite. Targeted adapter and
+persistence suite passed 4 files/71 tests before the final historical cases.
+`mise exec -- pnpm check` passes 91 files/833 tests (36.13s test phase).
+Existing parameterized CLI fixtures now carry their actual provider/backend
+identity; all previous model/default/parameter assertions remain. A concurrent
+HTTP test originally assumed request-order startup and failed the full gate;
+it now checks each receipt's Run/worktree against its native model and effort,
+which verifies the actual association independent of scheduling order.
+Logs: `/tmp/dispatcher-cv05-adapter-binding-red.log`,
+`/tmp/dispatcher-cv05-session-immutability-red.log`,
+`/tmp/dispatcher-cv05-missing-snapshot-red.log`,
+`/tmp/dispatcher-cv05-binding-final-check.log`.
+
+Rechecked all three original HEAD/status snapshots and 11 WIP file hashes:
+unchanged. Official quota after this unit: 91% remaining, ordinary usage allowed.
+Remaining source assertions involving executionRef, native prompt admission,
+backend injection and native-store ownership still require CV-08/09/10. The
+legacy canonical dispatch path's missing Run-level ExecutionSelection is R-009;
+this adapter snapshot increment does not claim that path is fully converged.

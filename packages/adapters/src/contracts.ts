@@ -33,6 +33,8 @@ export type AdapterSessionState = "STARTING" | "RUNNING" | "PAUSED" | "CANCELLED
 
 export interface AdapterSession {
   executionSelection?: ExecutionSelection;
+  /** A present empty snapshot preserves a known omission; absent is historical data. */
+  legacyModel?:{id?:string};
   turnId?:string;
   turnStartedAt?:string;
   id: string;

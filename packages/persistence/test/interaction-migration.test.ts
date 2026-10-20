@@ -245,3 +245,19 @@ it("quarantines identifiable native keys even when ownership or execution fields
     }finally{db.close();}
   }
 });
+
+
+it("preserves adapter-session execution and known legacy-default snapshots without native binding",()=>{
+  const db=new DispatcherDatabase(":memory:");
+  try{
+    for(const frozen of [{executionSelection:{version:1,requestedModel:"chosen"}},{legacyModel:{}},{legacyModel:{id:"configured"}}]){
+      const session={id:JSON.stringify(frozen),profileId:"p",backendId:"exec",runId:"run",workspacePath:"/managed",state:"RUNNING",...frozen};
+      db.saveEntity("adapter-session",session.id,json(session));
+      expect(()=>db.saveEntity("adapter-session",session.id,json({...session,...("legacyModel" in frozen?{legacyModel:{id:"replaced"}}:{executionSelection:{version:1,requestedModel:"replaced"}})}))).toThrowError(expect.objectContaining({code:"IMMUTABLE_SESSION_SELECTION"}));
+      expect(()=>db.saveEntity("adapter-session",session.id,json({...session,workspacePath:"/other"}))).toThrowError(expect.objectContaining({code:"IMMUTABLE_SESSION_SELECTION"}));
+      db.saveEntity("adapter-session",session.id,json({...session,state:"COMPLETED"}));
+      expect(db.getEntity("adapter-session",session.id)).toMatchObject({...session,state:"COMPLETED"});
+    }
+    expect(()=>db.saveEntity("adapter-session","dual",json({id:"dual",executionSelection:{version:1},legacyModel:{id:"second"}}))).toThrowError(expect.objectContaining({code:"IMMUTABLE_SESSION_SELECTION"}));
+  }finally{db.close();}
+});

@@ -47,7 +47,12 @@ describe("task publication receipts", () => {
     for(const response of previews)expect(response.json().canCommit).toBe(true);
     const receipts=await Promise.all(previews.map((response,index)=>f.commit(response.json(),`simultaneous-${index}`).then(value=>value.json())));
     expect(receipts.map(value=>value.state)).toEqual(["STARTED","STARTED"]);
-    expect(f.starts.map(value=>[value.model,value.reasoningEffort])).toEqual([["model-a","low"],["model-b","medium"]]);
+    expect(f.starts).toHaveLength(2);
+    for(const [index,receipt] of receipts.entries()){
+      const run=f.service.database.getEntity("run",receipt.runId) as {worktree:string;executionSelection:{requestedModel:string;nativeParameters:{reasoningEffort:string}}},model=f.control.modelIds[index],reasoningEffort=index?"medium":"low";
+      expect(run.executionSelection).toMatchObject({requestedModel:model,nativeParameters:{reasoningEffort}});
+      expect(f.starts.find(call=>call.workspacePath===run.worktree)).toMatchObject({model,reasoningEffort});
+    }
     const selections=receipts.map(value=>(f.service.database.getEntity("run",value.runId) as {executionSelection:unknown}).executionSelection);
     await f.service.stop();const restarted=await f.make();
     expect(receipts.map(value=>(restarted.database.getEntity("run",value.runId) as {executionSelection:unknown}).executionSelection)).toEqual(selections);

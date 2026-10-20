@@ -1,3 +1,4 @@
+import {assertSessionModelBinding,freezeExecutionSelection,sessionModel} from "./execution-selection.js";
 import { OwnedProcessGroup } from "./owned-process.js";
 import { readCodexCatalog, type CodexReadRequest } from "./codex-catalog.js";
 import type { ExecutionSelection, ModelCatalogContext, AccountModelCatalog,UsageObservationV1 } from "@dispatcher/domain";
@@ -198,6 +199,9 @@ export class CodexAdapter implements AgentAdapter {
     return readCodexCatalog({profile:this.profile,context,workspacePath:context.workspacePath,...(context.signal?{signal:context.signal}:{}),...(this.catalogRequest?{request:this.catalogRequest}:{})});
   }
   async start(input: { runId: string; workspacePath: string; backendId?: string; prompt?: string; executionSelection?: ExecutionSelection }): Promise<AdapterSession> {
+    const backendId="codex-exec-json";
+    if(input.backendId!==undefined&&input.backendId!==backendId)throw new AdapterContractError("BACKEND_MISMATCH","Requested backend differs from the owning Codex adapter");
+    const selection=freezeExecutionSelection(input.executionSelection,{profileId:this.profile.id,providerId:this.manifest.id,backendId,selection:true,reasoning:true});
     const now = new Date().toISOString();
     const session: AdapterSession = {
       id: randomUUID(),
@@ -206,19 +210,21 @@ export class CodexAdapter implements AgentAdapter {
       workspacePath: input.workspacePath,
       state: "STARTING",
       profileId: this.profile.id,
-      ...(input.executionSelection ? { executionSelection: structuredClone(input.executionSelection) } : {}),
+      ...(selection?{executionSelection:selection}:{legacyModel:{...(this.profile.model?{id:this.profile.model}:{})}}),
       createdAt: now,
       updatedAt: now,
       turnId:randomUUID(),turnStartedAt:now,
     };
     this.store.save(session);
+    assertSessionModelBinding(this.store.load(session.id),session);
+    const model=sessionModel(session);
     const turn = this.backend.start({
       executable: this.profile.executable ?? "codex",
       codexHome: this.profile.codexHome,
       workspacePath: input.workspacePath,
-      ...(typeof input.executionSelection?.nativeParameters.reasoningEffort==="string" ? {reasoningEffort:input.executionSelection.nativeParameters.reasoningEffort}:{}),
+      ...(typeof session.executionSelection?.nativeParameters.reasoningEffort==="string" ? {reasoningEffort:session.executionSelection.nativeParameters.reasoningEffort}:{}),
       prompt: input.prompt ?? "Inspect the task context and report readiness.",
-      ...(input.executionSelection ? input.executionSelection.requestedModel ? {model:input.executionSelection.requestedModel} : {} : this.profile.model ? {model:this.profile.model} : {}),
+      ...(model?{model}:{}),
     });
     this.turns.set(session.id, turn);
     session.state = "RUNNING";
@@ -233,9 +239,13 @@ export class CodexAdapter implements AgentAdapter {
     if (this.sending.has(sessionId) || (this.require(sessionId).state === "RUNNING" && this.turns.get(sessionId)?.status() === "running")) throw new AdapterContractError("SESSION_BUSY", "Wait for the active Codex turn before sending another message");
     this.sending.add(sessionId);
     try {
+    const expected=structuredClone(this.require(sessionId));
     const session = await this.finishCurrentTurn(sessionId);
+    assertSessionModelBinding(this.store.load(sessionId),expected);
+    freezeExecutionSelection(session.executionSelection,{profileId:this.profile.id,providerId:this.manifest.id,backendId:"codex-exec-json",selection:true,reasoning:true});
     if (this.cancelled.has(sessionId)||this.require(sessionId).state === "CANCELLED") throw new AdapterContractError("SESSION_CANCELLED", "A cancelled Codex session cannot accept input");
     if (!session.providerSessionId) throw new AdapterContractError("SESSION_NOT_RESUMABLE", "Codex did not return a provider session id");
+    const model=sessionModel(session);
     const turnStartedAt=new Date().toISOString();this.store.save({ ...session, state: "STARTING",turnId:randomUUID(),turnStartedAt,updatedAt:turnStartedAt });
     const turn = this.backend.start({
       executable: this.profile.executable ?? "codex",
@@ -244,7 +254,7 @@ export class CodexAdapter implements AgentAdapter {
       ...(typeof session.executionSelection?.nativeParameters.reasoningEffort==="string" ? {reasoningEffort:session.executionSelection.nativeParameters.reasoningEffort}:{}),
       prompt: message,
       providerSessionId: session.providerSessionId,
-      ...(session.executionSelection ? session.executionSelection.requestedModel ? {model:session.executionSelection.requestedModel} : {} : this.profile.model ? {model:this.profile.model} : {}),
+      ...(model?{model}:{}),
     });
     this.turns.set(sessionId, turn);
     const persisted = { ...this.require(sessionId) }; delete persisted.processId;
@@ -300,6 +310,7 @@ export class CodexAdapter implements AgentAdapter {
     const turn = this.turns.get(sessionId);
     if (!turn || session.state === "CANCELLED") return structuredClone(session);
     const result = await turn.result();
+    assertSessionModelBinding(this.store.load(sessionId),session);
     if (this.cancelled.has(sessionId)||this.require(sessionId).state === "CANCELLED") return structuredClone(this.require(sessionId));
     return this.update(sessionId, {
       state: result.state === "completed" ? "COMPLETED" : result.state === "cancelled" ? "CANCELLED" : result.state === "waiting" ? "PAUSED" : "FAILED",
