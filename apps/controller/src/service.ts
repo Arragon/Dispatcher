@@ -1,3 +1,4 @@
+import {parseNativeModelDefaultReview,qualifyNativeModelDefault,readNativeModelDefaultEvidence} from "./model-defaults.js";
 import type {RunGitDelivery,ScmDeliverySelection} from "@dispatcher/domain";
 import { resolveProfileExecutionContext } from "./execution-context.js";
 import { ProfileProbeService } from "./profile-probes.js";
@@ -298,6 +299,7 @@ interface SecretBody {
 }
 
 interface ConfigPlanBody {
+  nativeModelDefault?: unknown;
   baseRevision?: number;
   config?: unknown;
   edits?: unknown;
@@ -943,22 +945,38 @@ export class ControllerService {
     };
   }
 
-  private async planConfiguration(proposed:unknown,actor:string,source:Parameters<ConfigurationEngine["buildPlan"]>[2]) {
+  private async planConfiguration(proposed:unknown,actor:string,source:Parameters<ConfigurationEngine["buildPlan"]>[2],nativeModelDefault?:unknown) {
     const snapshot=this.configuration.current(),next=validateConfig(proposed);
+    const review=nativeModelDefault===undefined?undefined:parseNativeModelDefaultReview(nativeModelDefault);
+    const scopeRef=review?this.resolveProfileExecutionContext(review.profileId,review.repositoryId,"catalog").fingerprint:undefined;
+    if(review)await qualifyNativeModelDefault(snapshot.config,next,review,(profileId,repositoryId)=>this.modelCatalog(profileId,repositoryId,"selection-change"));
     const evidence=await qualifyRoutingPolicy(snapshot.config,next,(profileId,repositoryId)=>this.modelCatalog(profileId,repositoryId,"selection-change"));
     if(this.configuration.current().revision!==snapshot.revision)throw new RevisionConflictError(snapshot.revision,this.configuration.current().revision);
-    const plan=this.configuration.buildPlan(next,actor,source);
-    if(evidence)this.database.saveEntity("policy-plan-evidence",plan.id,json(evidence));
-    return plan;
+    if(review&&scopeRef!==this.resolveProfileExecutionContext(review.profileId,review.repositoryId,"catalog").fingerprint)throw new PublicationError("MODEL_DEFAULT_PLAN_STALE",409,"Native account context changed while reviewing the default model");
+    return this.database.transaction(()=>{
+      const plan=this.configuration.buildPlan(next,actor,source);
+      if(evidence)this.database.saveEntity("policy-plan-evidence",plan.id,json(evidence));
+      if(review)this.database.saveEntity("model-default-plan",plan.id,json({format:"v3-model-default-plan-v1",actorId:actor,configRevision:snapshot.revision,scopeRef,review}));
+      return plan;
+    });
   }
-  private async applyConfigurationPlan(id:string,options:{confirmed?:boolean}={}) {
+  private async applyConfigurationPlan(id:string,options:{confirmed?:boolean;actorId?:string}={}) {
     const plan=this.configuration.getPlan(id);if(plan&&plan.state!=="PLANNED")return this.configuration.applyPlan(id,options);
     const snapshot=this.configuration.current();if(plan&&snapshot.revision!==plan.baseRevision)throw new RevisionConflictError(plan.baseRevision,snapshot.revision);
     const next=this.configuration.proposedConfig(id);
+    const rawDefault=this.database.getEntity<JsonValue>("model-default-plan",id);
+    const reviewedDefault=readNativeModelDefaultEvidence(rawDefault);
+    if(rawDefault!==undefined&&!reviewedDefault)throw new PublicationError("MODEL_DEFAULT_REVIEW_REQUIRED",409,"Legacy default-model evidence needs a fresh native review");
+    if(reviewedDefault){
+      if(reviewedDefault.actorId!==options.actorId)throw new PublicationError("MODEL_DEFAULT_PLAN_FORBIDDEN",403,"This default-model review belongs to another operator");
+      if(reviewedDefault.configRevision!==snapshot.revision||reviewedDefault.scopeRef!==this.resolveProfileExecutionContext(reviewedDefault.review.profileId,reviewedDefault.review.repositoryId,"catalog").fingerprint)throw new PublicationError("MODEL_DEFAULT_PLAN_STALE",409,"Native default-model context changed; review a new plan");
+      await qualifyNativeModelDefault(snapshot.config,next,reviewedDefault.review,(profileId,repositoryId)=>this.modelCatalog(profileId,repositoryId,"selection-change"));
+    }
     const evidence=await qualifyRoutingPolicy(snapshot.config,next,(profileId,repositoryId)=>this.modelCatalog(profileId,repositoryId,"selection-change"));
     if(evidence){const reviewed=this.database.getEntity<JsonValue>("policy-plan-evidence",id) as unknown as PolicyConfigEvidence|undefined;if(!reviewed||contentHash(reviewed)!==contentHash(evidence))throw new ConfigPlanError("ROUTING_PLAN_STALE","Native routing evidence changed; build and review a new ConfigPlan");}
     await assertRequiredSecretsAvailable(next,this.secrets);
     await this.refreshChangingTrialSessions(snapshot.config, next);
+    if(reviewedDefault&&reviewedDefault.scopeRef!==this.resolveProfileExecutionContext(reviewedDefault.review.profileId,reviewedDefault.review.repositoryId,"catalog").fingerprint)throw new PublicationError("MODEL_DEFAULT_PLAN_STALE",409,"Native account context changed before applying the default model");
     return this.configuration.applyPlan(id,options);
   }
   private async rollbackConfigurationPlan(id:string) {
@@ -1971,7 +1989,7 @@ export class ControllerService {
       return [{runnerId:runner.id,runnerTags:runner.capabilities,capacity:(runner.id===this.embeddedRunner?.runner.id||remote) && ["ONLINE","DEGRADED"].includes(runner.state)?Math.min(runner.capacity,configuredCapacity):0,activeRuns:this.activeExecutionCount(runner.id),providerId:profile.provider,profileId:profile.id,resourceState:this.profileResourceState(profile.id),capabilities:[...new Set([...manifestCapabilities(adapter.manifest),...runner.capabilities])],adapter}];
     });
   }
-  private readonly catalogGenerations=new Map<string,number>();
+  private readonly catalogReads=new Map<string,Promise<AccountModelCatalog>>();
   private async remoteRequest(runnerId:string,payload:CommandPayload,run?:Run,messageId?:string):Promise<unknown> {
     const configured=this.configuration.current().config.runners.find(runner=>runner.id===runnerId&&runner.mode==="remote"),runner=this.runners.list().find(runner=>runner.id===runnerId);
     if(!configured||!runner||!["ONLINE","DEGRADED","DRAINING"].includes(runner.state)||!runner.capabilities.includes(NATIVE_EXECUTION_CAPABILITY)||!this.remoteRunnerServer.isConnected(runnerId))throw new AdapterContractError("REMOTE_EXECUTION_UNAVAILABLE","Owning Runner is offline or has no qualified native execution capability");
@@ -2150,6 +2168,7 @@ export class ControllerService {
   }
 
   private async modelCatalog(profileId:string,repositoryId:string,reason:ModelCatalogContext["reason"]="open",workspacePath?:string):Promise<AccountModelCatalog> {
+    if(this.stopping)throw new PublicationError("CATALOG_CLOSED",409,"Native catalog admission is closed");
     const snapshot=this.configuration.current();const profile=snapshot.config.agentProfiles.find(p=>p.id===profileId),repository=snapshot.config.repositories.find(r=>r.id===repositoryId);
     if(!profile||!repository)throw new PublicationError("CATALOG_CONTEXT_REQUIRED",400,"Choose a registered account and repository");
     const context:ModelCatalogContext={profileId,runnerId:profile.runnerId,repositoryId,executionContextRef:contentHash({repositoryId,root:repository.root}),reason};
@@ -2162,20 +2181,36 @@ export class ControllerService {
     if(!remote)context.executionContextRef=contentHash({repository:context.executionContextRef,context:applied.fingerprint});
     const adapter=this.agentAdapters.get(applied.profileId);
     if(!remote&&!adapter?.modelCatalog)return fallback("MODEL_CATALOG_UNSUPPORTED","This native adapter does not expose a model catalog");
-    const key=contentHash({profileId,repositoryId});const generation=(this.catalogGenerations.get(key)??0)+1;this.catalogGenerations.set(key,generation);
+    const key=contentHash({profileId,repositoryId});
+    const scopeRef=contentHash({profileId,repositoryId,configRevision:snapshot.revision,contextFingerprint:applied.fingerprint,workspacePath:workspacePath??repository.root});
+    const readKey=contentHash({scopeRef,reason});
+    const pending=this.catalogReads.get(readKey);
+    if(pending)return structuredClone(await pending);
+    const operation=(async()=>{
+    const previous=this.database.getEntity<JsonValue>("model-catalog",key) as unknown as {format?:string;scopeRef?:string;catalog?:AccountModelCatalog}|undefined;
     let catalog:AccountModelCatalog;
     try {
       const run=remote&&workspacePath?this.database.listEntities<JsonValue>("run").map(value=>value as unknown as Run).find(run=>run.profileId===profileId&&run.worktree===workspacePath&&!isTerminalRunState(run.state)):undefined;
       if(remote&&workspacePath&&!run)throw new AdapterContractError("RUN_CONTEXT_UNAVAILABLE","Remote worktree does not have matching canonical Run authority");
       catalog=remote?remoteCatalog(await this.remoteRequest(profile.runnerId,{type:"native.model_catalog",profileId,repositoryId,reason,...(run?{runId:run.id}:{})},run),{profileId,runnerId:profile.runnerId,providerId:profile.provider}):await adapter!.modelCatalog!({...context,workspacePath:workspacePath??repository.root});
+      if(catalog.profileId!==profileId||catalog.runnerId!==profile.runnerId||catalog.providerId!==profile.provider||!adapter?.manifest.backends.some(backend=>backend.id===catalog.backendId))throw new AdapterContractError("NATIVE_CONTEXT_CHANGED","Native catalog returned a different account or backend context");
     }
     catch (error) {
       catalog=error instanceof AdapterContractError&&(remote||error.code==="REMOTE_RESULT_INVALID")?fallback(error.code,error.message):error instanceof AdapterContractError && error.code==="NATIVE_VERSION_UNSUPPORTED" ? {...fallback(error.code,"Installed native version does not support the qualified catalog interface"),selectionSupport:"unsupported"} : error instanceof AdapterContractError && error.code==="NATIVE_CONTEXT_CHANGED" ? fallback(error.code,"Native account or configuration changed during the query; refresh before reviewing") : fallback("NATIVE_CATALOG_UNAVAILABLE","Native catalog could not be read; explicit selection is unavailable");
     }
+    if(this.stopping)throw new PublicationError("CATALOG_CLOSED",409,"Native catalog admission is closed");
     if(this.configuration.current().revision!==snapshot.revision)throw new PublicationError("SELECTION_CHANGED",409,"Configuration changed during native catalog query");
     if(this.resolveProfileExecutionContext(profileId,repositoryId,"catalog").fingerprint!==applied.fingerprint)throw new PublicationError("SELECTION_CHANGED",409,"Account credentials or native context changed during the catalog query");
-    if(this.catalogGenerations.get(key)!==generation)throw new PublicationError("CATALOG_SUPERSEDED",409,"A newer catalog request superseded this response");
-    this.database.saveEntity("model-catalog",key,json(catalog));return catalog;
+    // Keep one latest UI snapshot per account/repository. Worktree preflight
+    // reads stay fresh and do not fill storage with per-Run model inventories.
+    if(catalog.failure?.code==="NATIVE_CATALOG_UNAVAILABLE"&&previous?.format==="account-model-catalog-cache-v1"&&previous.scopeRef===scopeRef&&previous.catalog){
+      catalog={...structuredClone(previous.catalog),freshness:"native-cache",selectionSupport:catalog.selectionSupport,failure:catalog.failure};
+    }
+    if((reason==="open"||reason==="manual-refresh")&&catalog.freshness==="native-fresh"&&!catalog.failure)this.database.saveEntity("model-catalog",key,json({format:"account-model-catalog-cache-v1",scopeRef,catalog}));
+    return catalog;
+    })();
+    this.catalogReads.set(readKey,operation);
+    try{return structuredClone(await operation);}finally{if(this.catalogReads.get(readKey)===operation)this.catalogReads.delete(readKey);}
   }
   private async prepareScmDelivery(draft:Pick<PublishDraftV1,"delivery">,repository:RepositoryConfig):Promise<ScmDeliverySelection>{
     const snapshot=this.configuration.current(),delivery=draft.delivery;
@@ -2203,6 +2238,9 @@ export class ControllerService {
     if(catalog.selectionSupport==="unsupported")throw new PublicationError("NATIVE_SELECTION_UNSUPPORTED",409,"This native backend does not expose qualified per-run model selection");
     if(catalog.failure?.code==="NATIVE_AUTH_REQUIRED"||catalog.failure?.code==="PROFILE_DISABLED"||catalog.failure?.code==="NATIVE_CONTEXT_CHANGED")throw new PublicationError(catalog.failure.code,409,catalog.failure.message);
     const automatic=draft.execution.selectionMode==="policy-auto";
+    const requestedSource=draft.execution.selectionSource;
+    if(requestedSource==="account-default"&&(automatic||draft.execution.selectionType!=="explicit-model"||!draft.execution.nativeModelId||draft.execution.nativeModelId!==stringSetting(profile.settings?.model)))throw new PublicationError("ACCOUNT_DEFAULT_CHANGED",409,"The reviewed account default changed; select and review it again");
+    if(requestedSource&&requestedSource!=="account-default"&&requestedSource!==(automatic?"policy":draft.execution.selectionType==="explicit-model"?"explicit":"native-default"))throw new PublicationError("INVALID_SELECTION_SOURCE",400,"Selection source does not match the requested model choice");
     let routingDecision:ExecutionSelection["routingDecision"];
     if(automatic){
       if(!context)throw new PublicationError("ROUTING_REVIEW_REQUIRED",409,"Automatic dispatch requires an authenticated routing review");
@@ -2231,7 +2269,7 @@ export class ControllerService {
     const decision=routeDeterministically({capabilities:["code","git"]},candidates);
     if(!decision.selected)throw new PublicationError("EXECUTION_UNAVAILABLE",409,decision.explanation);
     const backendId=decision.selected.adapter.manifest.backends[0]!.id;
-    return {version:1,mode:automatic?"policy-auto":"manual",source:automatic?"policy":explicit?"explicit":"native-default",selectionType:explicit?"explicit-model":"native-default",...(explicit?{requestedModel:automatic?routingDecision!.target!.modelId:draft.execution.nativeModelId!,catalogRevision:catalog.revision}:{}),profileId:profile.id,runnerId:profile.runnerId,providerId:profile.provider,backendId,nativeParameters,...(routingDecision?{routingDecision}:{}),contextFingerprint:catalog.contextFingerprint,configRevision:snapshot.revision,selectedAt:this.now().toISOString()};
+    return {version:1,mode:automatic?"policy-auto":"manual",source:automatic?"policy":explicit?requestedSource==="account-default"?"account-default":"explicit":"native-default",selectionType:explicit?"explicit-model":"native-default",...(explicit?{requestedModel:automatic?routingDecision!.target!.modelId:draft.execution.nativeModelId!,catalogRevision:catalog.revision}:{}),profileId:profile.id,runnerId:profile.runnerId,providerId:profile.provider,backendId,nativeParameters,...(routingDecision?{routingDecision}:{}),contextFingerprint:catalog.contextFingerprint,configRevision:snapshot.revision,selectedAt:this.now().toISOString()};
   }
 
   private async validateRunSelection(run:Run):Promise<void> {
@@ -2684,14 +2722,14 @@ export class ControllerService {
     });
     this.semanticTools.register({
       name: "config.apply", description: "Apply a confirmed ConfigPlan", risk: "privileged", requiredRoles: ["admin"], input: { required: ["planId"], properties: { planId: "string" }, additionalProperties: false },
-      execute: async ({ planId }) => {
-        return this.applyConfigurationPlan(String(planId), { confirmed: true });
+      execute: async ({ planId },context) => {
+        return this.applyConfigurationPlan(String(planId), { confirmed: true,actorId:context.principal.id });
       },
     });
     this.semanticTools.register({
       name: "config.apply_plan", description: "Apply a confirmed ConfigPlan", risk: "privileged", requiredRoles: ["admin"], input: { required: ["planId"], properties: { planId: "string" }, additionalProperties: false },
-      execute: async ({ planId }) => {
-        return this.applyConfigurationPlan(String(planId), { confirmed: true });
+      execute: async ({ planId },context) => {
+        return this.applyConfigurationPlan(String(planId), { confirmed: true,actorId:context.principal.id });
       },
     });
     this.semanticTools.register({
@@ -4038,13 +4076,13 @@ export class ControllerService {
         if(body.baseRevision!==actual) throw new RevisionConflictError(body.baseRevision,actual);
       }
       const proposed=body.edits===undefined?body.config:applyConfigEdits(this.configuration.current().config,body.edits);
-      const plan = await this.planConfiguration(proposed, this.principalFor(request).id, "web");
+      const plan = await this.planConfiguration(proposed, this.principalFor(request).id, "web",body.nativeModelDefault);
       return reply.code(201).send({ plan:body.edits===undefined?plan:consoleConfigPlan(plan) });
     });
     this.app.post<{ Params: { id: string }; Body: ApplyPlanBody;Querystring:{view?:string} }>("/api/config/plans/:id/apply", async (request,reply) => {
       if(request.query.view!==undefined&&request.query.view!=="console")return reply.code(400).send({code:"CONFIG_VIEW_INVALID"});
       const before=this.configuration.getPlan(request.params.id),confirmed = request.body?.confirmed;
-      const applied=await this.applyConfigurationPlan(request.params.id, confirmed === undefined ? {} : { confirmed });
+      const applied=await this.applyConfigurationPlan(request.params.id, {...(confirmed===undefined?{}:{confirmed}),actorId:this.principalFor(request).id});
       return {...applied,...(request.query.view==="console"?consoleConfig(applied.config):{}),planId:request.params.id,state:this.configuration.getPlan(request.params.id)?.state,currentRevision:applied.revision,...(before?{appliedRevision:before.baseRevision+1,repeated:before.state==="APPLIED"}:{})};
     });
     this.app.post<{ Params: { id: string };Querystring:{view?:string} }>("/api/config/plans/:id/rollback", async (request,reply) => {

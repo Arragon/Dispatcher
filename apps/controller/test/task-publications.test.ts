@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { StructuredCliAdapter, type CodexBackend, type CliStartInput } from "@dispatcher/adapters";
+import { CodexAdapter, StructuredCliAdapter, type CodexBackend, type CliStartInput } from "@dispatcher/adapters";
 import type { JsonValue } from "@dispatcher/persistence";
 import type { DispatcherConfig, SecretStore } from "@dispatcher/config";
 import { ControllerService } from "../src/service.js";
@@ -38,6 +38,122 @@ async function setup() {
   return {service,root,clock,make,draft,preview,commit,starts,cliStarts,control,classificationRequests};
 }
 describe("task publication receipts", () => {
+  it("freezes an explicitly reviewed account default as the sole Run selection",async()=>{
+    const f=await setup(),config=f.service.configuration.current().config;config.agentProfiles[0]!.settings!.model="catalog-model";
+    const plan=f.service.configuration.buildPlan(config,"owner","web");await f.service.configuration.applyPlan(plan.id,{confirmed:true});
+    const catalog=(await f.service.app.inject({headers:OWNER,url:"/api/agents/profiles/codex-local/models?repositoryId=repo"})).json();
+    const p=(await f.preview({...f.draft,startMode:"dispatch",execution:{profileId:"codex-local",selectionMode:"manual",selectionType:"explicit-model",selectionSource:"account-default",nativeModelId:"catalog-model",catalogRevision:catalog.revision,contextFingerprint:catalog.contextFingerprint,nativeParameters:{reasoningEffort:"low"},allowUnconfirmedModelAccess:true}})).json();
+    expect(p.canCommit).toBe(true);expect(p.effectiveExecution).toMatchObject({selectionSource:"account-default",nativeModelId:"catalog-model",nativeParameters:{reasoningEffort:"low"}});
+    const receipt=(await f.commit(p)).json();expect(receipt.state).toBe("STARTED");
+    expect(f.service.database.getEntity("run",receipt.runId)).toMatchObject({executionSelection:{source:"account-default",requestedModel:"catalog-model",nativeParameters:{reasoningEffort:"low"}}});
+    expect(f.service.database.getEntity("run",receipt.runId)).not.toHaveProperty("modelSelection");
+    expect(f.starts[0]).toMatchObject({model:"catalog-model",reasoningEffort:"low"});
+  });
+  it("rejects forged account-default attribution before creating or starting work",async()=>{
+    const f=await setup();const catalog=(await f.service.app.inject({headers:OWNER,url:"/api/agents/profiles/codex-local/models?repositoryId=repo"})).json();
+    for(const selectionType of ["native-default","explicit-model"]){
+      const preview=(await f.preview({...f.draft,startMode:"dispatch",execution:{profileId:"codex-local",selectionMode:"manual",selectionType,selectionSource:"account-default",...(selectionType==="explicit-model"?{nativeModelId:"catalog-model",catalogRevision:catalog.revision,contextFingerprint:catalog.contextFingerprint,allowUnconfirmedModelAccess:true}:{})}})).json();
+      expect(preview.canCommit).toBe(false);expect(preview.checks).toEqual(expect.arrayContaining([expect.objectContaining({code:"ACCOUNT_DEFAULT_CHANGED"})]));
+    }
+    expect(f.starts).toHaveLength(0);expect(f.service.database.listEntities("task")).toHaveLength(0);
+  });
+
+  it("refuses an account-default plan if native credentials change after catalog validation",async()=>{
+    const f=await setup();const catalog=(await f.service.app.inject({headers:OWNER,url:"/api/agents/profiles/codex-local/models?repositoryId=repo"})).json();
+    const current=f.service.configuration.current(),config=structuredClone(current.config);config.agentProfiles[0]!.settings!.model="catalog-model";
+    const nativeModelDefault={version:1,profileId:"codex-local",repositoryId:"repo",modelId:"catalog-model",catalogRevision:catalog.revision,contextFingerprint:catalog.contextFingerprint,allowUnconfirmedModelAccess:true};
+    const built=(await f.service.app.inject({headers:OWNER,method:"POST",url:"/api/config/plans",payload:{baseRevision:current.revision,config,nativeModelDefault}})).json();
+    const entered=Promise.withResolvers<void>(),gate=Promise.withResolvers<void>();
+    const target=f.service as unknown as {refreshChangingTrialSessions:(current:DispatcherConfig,next:DispatcherConfig)=>Promise<void>};
+    const held=vi.spyOn(target,"refreshChangingTrialSessions").mockImplementation(async()=>{entered.resolve();await gate.promise;});
+    try {
+      const pending=f.service.app.inject({headers:OWNER,method:"POST",url:`/api/config/plans/${built.plan.id}/apply`,payload:{confirmed:true}}).then(value=>value);
+      await entered.promise;
+      const home=String(config.agentProfiles[0]!.settings!.codexHome);mkdirSync(home,{recursive:true});writeFileSync(join(home,"auth.json"),"{}");
+      gate.resolve();const applied=await pending;
+      expect(applied.statusCode).toBe(409);expect(applied.json().code).toBe("MODEL_DEFAULT_PLAN_STALE");
+      expect(f.service.configuration.current().config.agentProfiles[0]!.settings!.model).toBe("profile-default");
+    } finally {gate.resolve();held.mockRestore();}
+  });
+  it("applies a fresh account-default review through the existing ConfigPlan path",async()=>{
+    const f=await setup();const catalog=(await f.service.app.inject({headers:OWNER,url:"/api/agents/profiles/codex-local/models?repositoryId=repo"})).json();
+    const current=f.service.configuration.current(),config=structuredClone(current.config);config.agentProfiles[0]!.settings!.model="catalog-model";
+    const nativeModelDefault={version:1,profileId:"codex-local",repositoryId:"repo",modelId:"catalog-model",catalogRevision:catalog.revision,contextFingerprint:catalog.contextFingerprint,allowUnconfirmedModelAccess:true};
+    const built=await f.service.app.inject({headers:OWNER,method:"POST",url:"/api/config/plans",payload:{baseRevision:current.revision,config,nativeModelDefault}});
+    expect(built.statusCode).toBe(201);const plan=built.json().plan;
+    expect(f.service.database.getEntity("model-default-plan",plan.id)).toMatchObject({format:"v3-model-default-plan-v1",configRevision:current.revision,review:nativeModelDefault});
+    expect((await f.service.app.inject({headers:OWNER,method:"POST",url:`/api/config/plans/${plan.id}/apply?view=console`,payload:{confirmed:true}})).statusCode).toBe(200);
+    expect(f.service.configuration.current().config.agentProfiles[0]!.settings!.model).toBe("catalog-model");
+    expect(f.starts).toHaveLength(0);
+  });
+  it("rolls back plan creation if its native-default evidence cannot be persisted",async()=>{
+    const f=await setup();const catalog=(await f.service.app.inject({headers:OWNER,url:"/api/agents/profiles/codex-local/models?repositoryId=repo"})).json();
+    const current=f.service.configuration.current(),config=structuredClone(current.config);config.agentProfiles[0]!.settings!.model="catalog-model";
+    const count=()=>Number(f.service.database.handle.prepare("SELECT COUNT(*) AS count FROM config_plans").get()!.count),before=count();
+    const save=f.service.database.saveEntity.bind(f.service.database);
+    const failure=vi.spyOn(f.service.database,"saveEntity").mockImplementation((kind,...args)=>{if(kind==="model-default-plan")throw new Error("injected default proof write failure");save(kind,...args);});
+    try {
+      const nativeModelDefault={version:1,profileId:"codex-local",repositoryId:"repo",modelId:"catalog-model",catalogRevision:catalog.revision,contextFingerprint:catalog.contextFingerprint,allowUnconfirmedModelAccess:true};
+      const built=await f.service.app.inject({headers:OWNER,method:"POST",url:"/api/config/plans",payload:{baseRevision:current.revision,config,nativeModelDefault}});
+      expect(built.statusCode).toBe(500);expect(count()).toBe(before);
+      expect(f.service.configuration.current().revision).toBe(current.revision);
+    } finally {failure.mockRestore();}
+  });
+  it("revalidates a reviewed account-default catalog before applying its ConfigPlan",async()=>{
+    const f=await setup();const catalog=(await f.service.app.inject({headers:OWNER,url:"/api/agents/profiles/codex-local/models?repositoryId=repo"})).json();
+    const current=f.service.configuration.current(),config=structuredClone(current.config);config.agentProfiles[0]!.settings!.model="catalog-model";
+    const nativeModelDefault={version:1,profileId:"codex-local",repositoryId:"repo",modelId:"catalog-model",catalogRevision:catalog.revision,contextFingerprint:catalog.contextFingerprint,allowUnconfirmedModelAccess:true};
+    const response=await f.service.app.inject({headers:OWNER,method:"POST",url:"/api/config/plans",payload:{baseRevision:current.revision,config,nativeModelDefault}});
+    expect(response.statusCode).toBe(201);const plan=response.json().plan;
+    f.control.modelId="changed-catalog-model";
+    const applied=await f.service.app.inject({headers:OWNER,method:"POST",url:`/api/config/plans/${plan.id}/apply`,payload:{confirmed:true}});
+    expect(applied.statusCode).toBe(409);expect(applied.json().code).toBe("MODEL_DEFAULT_PLAN_STALE");
+    expect(f.service.configuration.current().config.agentProfiles[0]!.settings!.model).toBe("profile-default");
+    expect(f.starts).toHaveLength(0);
+  });
+  it("requires fresh review of legacy native-default plan proofs instead of guessing their catalog hash",async()=>{
+    const f=await setup();const current=f.service.configuration.current(),config=structuredClone(current.config);config.agentProfiles[0]!.settings!.model="catalog-model";
+    const plan=f.service.configuration.buildPlan(config,"owner","web");
+    const historical={profileId:"codex-local",principalId:"owner",catalogVersion:"legacy-catalog-hash",nativeSelectionId:"catalog-model",input:{configRevision:current.revision}};
+    f.service.database.saveEntity("model-default-plan",plan.id,historical);
+    const applied=await f.service.app.inject({headers:OWNER,method:"POST",url:`/api/config/plans/${plan.id}/apply`,payload:{confirmed:true}});
+    expect(applied.statusCode).toBe(409);expect(applied.json().code).toBe("MODEL_DEFAULT_REVIEW_REQUIRED");
+    expect(f.service.configuration.current().config.agentProfiles[0]!.settings!.model).toBe("profile-default");
+    expect(f.service.database.getEntity("model-default-plan",plan.id)).toEqual(historical);
+  });
+  it("shares an identical in-flight account/project catalog without superseding either reader",async()=>{
+    const f=await setup();let release!:()=>void;let entered!:()=>void;
+    const gate=new Promise<void>(resolve=>{release=resolve;}),started=new Promise<void>(resolve=>{entered=resolve;});
+    const original=CodexAdapter.prototype.modelCatalog;
+    const read=vi.spyOn(CodexAdapter.prototype,"modelCatalog").mockImplementation(async function(input){entered();await gate;return original.call(this,input);});
+    try {
+      const replies=Promise.all([1,2].map(()=>f.service.app.inject({headers:OWNER,url:"/api/agents/profiles/codex-local/models?repositoryId=repo"}).then(value=>value)));
+      await started;release();const [a,b]=await replies;
+      expect(a!.statusCode).toBe(200);expect(b!.statusCode).toBe(200);
+      expect(a!.json()).toEqual(b!.json());expect(read).toHaveBeenCalledTimes(1);
+    } finally {release();read.mockRestore();}
+  });
+  it("keeps the last successful catalog read-only after a refresh failure",async()=>{
+    const f=await setup();const url="/api/agents/profiles/codex-local/models?repositoryId=repo";
+    const first=(await f.service.app.inject({headers:OWNER,url})).json();
+    const read=vi.spyOn(CodexAdapter.prototype,"modelCatalog").mockRejectedValue(new Error("sk-synthetic-private-catalog-error"));
+    try {
+      const response=await f.service.app.inject({headers:OWNER,url});expect(response.statusCode).toBe(200);
+      expect(response.json()).toMatchObject({freshness:"native-cache",fetchedAt:first.fetchedAt,entries:first.entries,failure:{code:"NATIVE_CATALOG_UNAVAILABLE"}});
+      expect(JSON.stringify(response.json())).not.toContain("sk-synthetic-private-catalog-error");
+      const preview=(await f.preview({...f.draft,startMode:"dispatch",execution:{profileId:"codex-local",selectionMode:"manual",selectionType:"explicit-model",nativeModelId:"catalog-model",catalogRevision:first.revision,contextFingerprint:first.contextFingerprint}})).json();
+      expect(preview.canCommit).toBe(false);expect(f.starts).toHaveLength(0);
+    } finally {read.mockRestore();}
+  });
+  it("rejects a catalog returned for a different account instead of treating it as fresh",async()=>{
+    const f=await setup();const original=CodexAdapter.prototype.modelCatalog;
+    const read=vi.spyOn(CodexAdapter.prototype,"modelCatalog").mockImplementation(async function(input){return {...await original.call(this,input),profileId:"foreign-profile"};});
+    try {
+      const response=await f.service.app.inject({headers:OWNER,url:"/api/agents/profiles/codex-local/models?repositoryId=repo"});
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toMatchObject({profileId:"codex-local",freshness:"unverified",entries:[],failure:{code:"NATIVE_CONTEXT_CHANGED"}});
+    } finally {read.mockRestore();}
+  });
   it("waits for an owned Git hook to terminate before acknowledging canonical cancellation",async()=>{
     const f=await setup();f.control.completed=true;const ready=join(f.root,"..","git-hook.pid"),hook=join(f.root,".git","hooks","pre-commit");
     writeFileSync(hook,`#!${process.execPath}\nconst fs=require('node:fs');process.on('SIGTERM',()=>{});fs.writeFileSync(${JSON.stringify(ready)},String(process.pid));setInterval(()=>{},1000);\n`);chmodSync(hook,0o755);

@@ -19,6 +19,20 @@ function mount(ui: React.ReactNode, route = "/publish") {
   return render(<QueryClientProvider client={new QueryClient({defaultOptions:{queries:{retry:false}}})}><MemoryRouter initialEntries={[route]}>{ui}</MemoryRouter></QueryClientProvider>);
 }
 const config = {revision:1,config:{repositories:[{id:"repo",root:"/workspace/repo",defaultBaseRef:"main",scopePaths:["src"],verificationCommands:[]}],agentProfiles:[{id:"codex",provider:"codex",alias:"Work account",enabled:true,runnerId:"local",settings:{model:"configured-candidate"}}]}};
+it("persists an account-default choice and sends its exact reviewed source on publication",async()=>{
+  const posts:Array<Record<string,unknown>>=[];
+  const catalog={revision:"default-rev",contextFingerprint:"default-ctx",freshness:"native-fresh",selectionSupport:"explicit",source:"native-rpc",entries:[{id:"configured-candidate",displayName:"Saved model",selectable:true,access:"unconfirmed",parameterOptions:{reasoningEffort:["low"]},parameterDefaults:{}}]};
+  vi.spyOn(globalThis,"fetch").mockImplementation(async(input,init)=>{
+    if(init?.method==="POST"){posts.push(JSON.parse(String(init.body)));return new Response(JSON.stringify({message:"Keep draft"}),{status:409});}
+    return new Response(JSON.stringify(String(input).includes("/models?")?catalog:config));
+  });
+  const first=mount(<PublishPage/>);await screen.findByRole("option",{name:/repo/});
+  await userEvent.selectOptions(screen.getByLabelText("项目仓库"),"repo");await userEvent.selectOptions(screen.getByLabelText("Harness 账号"),"codex");
+  await userEvent.click(await screen.findByRole("button",{name:"使用账号默认模型 · configured-candidate"}));
+  await userEvent.selectOptions(screen.getByLabelText("思考强度"),"low");await userEvent.click(screen.getByLabelText(/我理解目录列出/));await userEvent.type(screen.getByLabelText("任务说明"),"Use reviewed default");
+  first.unmount();mount(<PublishPage/>);await screen.findByRole("option",{name:/repo/});await userEvent.click(screen.getByRole("button",{name:"检查并审阅"}));
+  expect(posts[0]?.execution).toMatchObject({selectionSource:"account-default",nativeModelId:"configured-candidate",nativeParameters:{reasoningEffort:"low"},catalogRevision:"default-rev",contextFingerprint:"default-ctx",allowUnconfirmedModelAccess:true});
+});
 it("reviews an automatic decision separately and preserves the exact payload across commit recovery",async()=>{
   const posts:Array<{path:string;body:Record<string,unknown>}>=[];
   const policy={enabled:true,requireConfirmation:true,classificationMode:"keyword",taskTypes:[{id:"fix",name:"修复",enabled:true}],rules:[]};

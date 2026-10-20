@@ -1,7 +1,7 @@
 import { lazy, Suspense, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useSearchParams } from "react-router-dom";
-import type { AccountModelCatalog } from "@dispatcher/domain";
+import type { AccountModelCatalog, NativeModelDefaultReviewV1 } from "@dispatcher/domain";
 import { api, createConfigurationPlan, refreshConfiguration, type ConfigResponse } from "./api.js";
 import { NativeModelPicker, nativeDefaultChoice } from "./NativeModelPicker.js";
 import { Drawer } from "./Drawer.js";
@@ -24,16 +24,18 @@ export default function ModelsPage():React.JSX.Element {
   async function planDefault(clear=false):Promise<void>{
     if(!query.data||!account||busy)return;setBusy(true);setMessage("");
     try{
+      let nativeModelDefault:NativeModelDefaultReviewV1|undefined;
       if(!clear){
         const catalog=await api<AccountModelCatalog>(`/api/agents/profiles/${encodeURIComponent(profile)}/models?repositoryId=${encodeURIComponent(repository)}`);
         const model=catalog.entries?.find(entry=>entry.id===choice.modelId);
         if(catalog.revision!==choice.catalogRevision||catalog.contextFingerprint!==choice.contextFingerprint||catalog.freshness!=="native-fresh"||!model?.selectable||model.access==="denied"||model.access==="unconfirmed"&&!choice.allowUnconfirmed)throw new Error("目录或访问证据已变化，请刷新并重新选择模型。");
+        nativeModelDefault={version:1,profileId:profile,repositoryId:repository,modelId:choice.modelId,catalogRevision:catalog.revision,contextFingerprint:catalog.contextFingerprint,allowUnconfirmedModelAccess:choice.allowUnconfirmed};
       }
       const next=structuredClone(query.data.config);
       const target=next.agentProfiles.find(entry=>entry.id===profile)!;
       target.settings={...target.settings};
       if(clear)delete target.settings.model;else target.settings.model=choice.modelId;
-      const built=await createConfigurationPlan(query.data,next);
+      const built=await createConfigurationPlan(query.data,next,nativeModelDefault?{nativeModelDefault}:{});
       setReviewTarget(`${account.alias} · ${clear?"移除覆盖，沿用原生配置":choice.modelId}`);setPlan(built.plan);
     }catch(error){setMessage(error instanceof Error?error.message:"默认模型计划生成失败");}finally{setBusy(false);}
   }

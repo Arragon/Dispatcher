@@ -465,6 +465,11 @@
   A per-run model/effort override belongs to its adapter session and must survive
   continuation independently of current profile defaults. Revalidate native
   account/project context before continuing a managed session.
+- A native default-model review has a source-specific catalog hash. Do not
+  reinterpret an old default-plan proof as a current v3 catalog revision.
+  Bind new proof to actor/config/native scope and recheck after awaited work;
+  save it in the same transaction as its ConfigPlan. A read-only cached catalog
+  cannot qualify a default change or explicit Run.
 - Codex model/list is a native candidate catalog, not an entitlement or price
   source. Keep access unconfirmed and require acknowledgment for explicit
   selection. Known missing authentication blocks native defaults too. A

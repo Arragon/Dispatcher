@@ -64,7 +64,8 @@ final convergence verification.
 | CV-02 | 503-path disposition and consumer/authority decisions frozen; domain/legacy binding contract fixtures pass |
 | CV-03 | atomic reload + in-flight edits fixed; process-heavy test pool bounded at four parallel workers; two configured default checks passed 90/802; ready for whole-branch review |
 | CV-04 | migration/control/backup modules ported with v3 adaptation and protocol 2; targeted 12/101 and two default 90/802 gates passed; ready for whole-branch review |
-| CV-05/06/08/12 | pending persistence/contracts |
+| CV-05 | in progress: catalog scope, default ConfigPlan proof and per-Run account-default provenance pass 90/813 default gate; lifecycle and old capability/price evidence remaining |
+| CV-06/08/12 | pending complete catalog/selection integration |
 | macOS service / LP / backup | pending safe shared foundation |
 | CV-07/09/10/11 | pending contracts/guards |
 | CV-13/14 and original Gates | pending implementation and evidence |
@@ -146,3 +147,59 @@ installed only by migration 6. Schema-3/5 backup sources remain unchanged while
 their restored private copies upgrade and retain reconciliation barriers.
 
 Official quota at the latest completed unit checkpoint: 96% remaining.
+
+## CV-05a catalog scope integration
+
+Reused the old ModelCatalogService pending-read and last-success behavior in
+the v3 catalog path. Identical in-flight profile/repository/config/native-context
+reads share one operation; independent worktree/reason reads do not supersede
+each other. Successful UI inventory storage is bounded to one record per
+profile/repository, explicitly tagged with its scope. Worktree preflight still
+queries native state and never promotes cached entries to execution evidence.
+Returned profile/Runner/provider/backend must match the owning adapter.
+
+Three new RED cases demonstrated duplicate-reader supersession, discarded
+last-success data and accepted foreign-account catalogs. The initial 49 publication
+tests passed, followed by the complete default gate below. Cache failures retain sanitized reasons
+and native-cache freshness, while explicit publication stays blocked. Shutdown
+admission/post-await writes are closed, with complete abort/drain still R-008.
+CV-05 remains In Progress for lifecycle and legacy capability/price evidence.
+
+
+## CV-05b default review and immutable source
+
+The existing `/api/config/plans` endpoint accepts an optional strict
+`NativeModelDefaultReviewV1` context. Its versioned evidence commits atomically
+with the plan, binds actor/revision/native scope, and is freshly requalified
+at apply time. Credential scope is rechecked after asynchronous secret/trial
+work. Legacy `model-default-plan` shapes remain intact but require fresh review;
+legacy catalog hashes are not guessed as equivalent to v3 revisions. Ordinary
+ConfigPlans remain supported and do not gain invented native qualification.
+
+`ModelsPage` sends the reviewed context through the same edit-based ConfigPlan
+helper. PublishPage offers an explicit account-default choice, freezes its
+actual model/effort/source and restores it with the local draft. Service rejects
+changed defaults and forged attribution; Codex receives the requested model and
+effort. The empty/native-default choice still omits both parameters. Policy
+routing keeps its v3 classifier/decision chain, including freshness and context
+checks; no second router or legacy publication page was mounted.
+
+Four new RED assertions covered missing default-plan context, lost source,
+forged source and local draft restoration. Together with five default-plan
+cases (native catalog/credential drift, legacy proof, atomic failure and valid
+apply), the targeted suite passed 4 files / 87 tests. Full
+`mise exec -- pnpm check` passed 90 files / 813 tests (36.37s test phase).
+Intermediate type inference and no-control-regex errors were fixed with an
+explicit Draft state type and character validation; no checks were weakened.
+Logs: `/tmp/dispatcher-cv05-source-red.log`,
+`/tmp/dispatcher-cv05-source-green.log`,
+`/tmp/dispatcher-cv05-default-selection-check.log`.
+
+Source behavior adapted from a499d84 `model-catalogs.ts` and default editor;
+v3 19db456 publication/ConfigPlan/UI remains the target authority. The Grok
+lifecycle fixture backend was corrected to the producer's existing
+`grok-cli-json`; its credential-change assertions remain unchanged.
+Rollback this unit through a compatible candidate checkout and backup; do not
+open schema 6 with a v3-only or protocol-1 writer. Original source worktrees,
+WIP, native stores and live Controller data were not changed.
+Official quota after this unit: 93% remaining, ordinary usage allowed.

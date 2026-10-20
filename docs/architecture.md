@@ -767,6 +767,15 @@ native-login changes remain observable only through qualified native checks,
 not a claim of continuous account monitoring. No secret value or digest of a
 secret value is saved in these epoch records.
 
+Native catalog requests share only identical account/repository/config/native
+scope and reason. A bounded latest UI snapshot per account/repository may be
+shown as native-cache after a query outage; it never qualifies explicit execution.
+Default-model ConfigPlans carry optional actor/revision/scope-bound review
+metadata, saved atomically and requalified against fresh native catalog evidence
+on apply. The publication's explicit account-default choice freezes the concrete
+model and parameters in ExecutionSelection; native-default continues to omit
+parameters. Legacy default-plan proof requires a fresh review.
+
 ## Usage observations
 
 Native adapters may return normalized versioned observations alongside resource

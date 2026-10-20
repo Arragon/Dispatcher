@@ -85,7 +85,7 @@ describe("all-provider adapter lifecycle", () => {
     try{
       expect((await f.apply(config=>{config.agentProfiles=[{id:"grok",alias:"Grok",provider:"grok",runnerId:"local",credentialRef:"secret://grok/account"}];})).statusCode).toBe(200);
       const adapter=(f.service as unknown as {agentAdapters:Map<string,AgentAdapter>}).agentAdapters.get("grok")!;
-      adapter.modelCatalog=async context=>{if(held){entered.resolve();await gate.promise;}return {profileId:"grok",runnerId:"local",providerId:"grok",backendId:"grok-headless",contextFingerprint:contentHash(context.executionContextRef),revision:"fixture",fetchedAt:new Date().toISOString(),freshness:"native-fresh",source:"cli-query",selectionSupport:"explicit",entries:[]};};
+      adapter.modelCatalog=async context=>{if(held){entered.resolve();await gate.promise;}return {profileId:"grok",runnerId:"local",providerId:"grok",backendId:"grok-cli-json",contextFingerprint:contentHash(context.executionContextRef),revision:"fixture",fetchedAt:new Date().toISOString(),freshness:"native-fresh",source:"cli-query",selectionSupport:"explicit",entries:[]};};
       const catalog=()=>f.service.app.inject({headers:OWNER,url:"/api/agents/profiles/grok/models?repositoryId=fixture"});
       const before=await catalog();expect(before.statusCode).toBe(200);
       held=true;const pending=catalog();await entered.promise;expect((await f.service.app.inject({headers:OWNER,method:"PUT",url:"/api/secrets/grok/account",payload:{value:"rotated-secret"}})).statusCode).toBe(201);gate.resolve();expect((await pending).statusCode).toBe(409);held=false;

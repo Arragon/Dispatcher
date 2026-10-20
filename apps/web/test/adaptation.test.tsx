@@ -72,7 +72,7 @@ it("validates and reviews a native default without applying a one-run selection 
   mount(<ModelsPage/>,"/models?profile=account");await screen.findByRole("option",{name:"repo"});await userEvent.selectOptions(screen.getByLabelText("项目仓库"),"repo");await screen.findByRole("option",{name:/Native model/});await userEvent.selectOptions(screen.getByLabelText("原生模型"),"native-model");
   expect(posts).toHaveLength(0);await userEvent.click(screen.getByRole("button",{name:"将所选模型设为账号默认…"}));
   expect(await screen.findByRole("dialog",{name:"审阅账号默认模型"})).toBeTruthy();
-  expect(posts[0]).toMatchObject({path:"/api/config/plans",body:{baseRevision:8,edits:[{op:"replace",path:"/agentProfiles/0/settings/model",entityId:"account",value:"native-model"}]}});
+  expect(posts[0]).toMatchObject({path:"/api/config/plans",body:{baseRevision:8,edits:[{op:"replace",path:"/agentProfiles/0/settings/model",entityId:"account",value:"native-model"}],nativeModelDefault:{version:1,profileId:"account",repositoryId:"repo",modelId:"native-model",catalogRevision:"catalog-1",contextFingerprint:"ctx",allowUnconfirmedModelAccess:false}}});
   expect(posts).toHaveLength(1);
 });
 

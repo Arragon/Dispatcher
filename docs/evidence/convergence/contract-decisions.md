@@ -66,3 +66,15 @@ HUMAN/UNKNOWN control, old writer and migration failure. They are exercised
 in their producing units; the current baseline full gate is 80 files / 724
 tests passed with default workers at `87ab99d`. It does not prove the new
 migration/port fixtures or any real native UI/provider Gate.
+
+
+## Default-model review compatibility
+
+Account-default is an explicit publication choice carrying the concrete saved
+model ID, current catalog/context and per-run parameters. It does not silently
+replace the native-default omission path. New default-model ConfigPlans retain
+v3 edit semantics with optional `NativeModelDefaultReviewV1`; evidence format
+`v3-model-default-plan-v1` binds actor/revision/scope and must requalify on apply.
+Old `model-default-plan` records are retained and rejected for fresh review.
+This compatibility is required by persisted records; it is not response-shape
+negotiation or a second live selection authority.

@@ -63,3 +63,15 @@ export interface AccountModelCatalog {
 }
 
 export interface PublicationFieldError {path:string;code:"required"|"invalid"|"too-long"}
+
+export interface NativeModelDefaultReviewV1 {
+  version:1;profileId:string;repositoryId:string;modelId:string;
+  catalogRevision:string;contextFingerprint:string;allowUnconfirmedModelAccess?:boolean;
+}
+export function isNativeModelDefaultReview(value:unknown):value is NativeModelDefaultReviewV1 {
+  if(!value||typeof value!=="object"||Array.isArray(value))return false;
+  const record=value as Record<string,unknown>;
+  const fields=["profileId","repositoryId","modelId","catalogRevision","contextFingerprint"];
+  const text=(value:unknown)=>typeof value==="string"&&value.length>0&&value.length<=240&&!Array.from(value).some(character=>character.charCodeAt(0)<32||character.charCodeAt(0)===127);
+  return record.version===1&&fields.every(field=>text(record[field]))&&Object.keys(record).every(key=>["version",...fields,"allowUnconfirmedModelAccess"].includes(key))&&(record.allowUnconfirmedModelAccess===undefined||typeof record.allowUnconfirmedModelAccess==="boolean");
+}
