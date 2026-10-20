@@ -2,12 +2,14 @@ import {readReadyTurnResult,rememberTurnResult,usageSnapshotUnavailable,type Pas
 import {assertSessionModelBinding,freezeExecutionSelection,sessionModel} from "./execution-selection.js";
 import { OwnedProcessGroup } from "./owned-process.js";
 import { readCodexCatalog, type CodexReadRequest } from "./codex-catalog.js";
-import type { ExecutionSelection, ModelCatalogContext, AccountModelCatalog,UsageObservationV1 } from "@dispatcher/domain";
+import type { ModelCatalogContext, AccountModelCatalog,UsageObservationV1 } from "@dispatcher/domain";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { promisify } from "node:util";
 import {
   AdapterContractError,
+  localStartFailure,
+  type AdapterStartInput,
   AdapterStartError,
   assertAdapterWriteAdmission,
   validateManifest,
@@ -17,7 +19,7 @@ import {
   type AdapterSession,
   type AgentAdapter,
 } from "./contracts.js";
-import { MemorySessionStore, type SessionStore } from "./generic.js";
+import { MemorySessionStore, startSessionId, type SessionStore } from "./generic.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -204,14 +206,14 @@ export class CodexAdapter implements AgentAdapter {
   modelCatalog(context:ModelCatalogContext & {workspacePath:string;signal?:AbortSignal}):Promise<AccountModelCatalog> {
     return readCodexCatalog({profile:this.profile,context,workspacePath:context.workspacePath,...(context.signal?{signal:context.signal}:{}),...(this.catalogRequest?{request:this.catalogRequest}:{})});
   }
-  async start(input: { runId: string; workspacePath: string; backendId?: string; prompt?: string; executionSelection?: ExecutionSelection; beforeSend?:()=>void }): Promise<AdapterSession> {
+  async start(input: AdapterStartInput): Promise<AdapterSession> {
     const request={...input};
     const backendId="codex-exec-json";
     if(request.backendId!==undefined&&request.backendId!==backendId)throw new AdapterContractError("BACKEND_MISMATCH","Requested backend differs from the owning Codex adapter");
     const selection=freezeExecutionSelection(request.executionSelection,{profileId:this.profile.id,providerId:this.manifest.id,backendId,selection:true,reasoning:true});
     const now = new Date().toISOString();
     const session: AdapterSession = {
-      id: randomUUID(),
+      id: startSessionId(this.store,request.sessionId),
       runId: request.runId,
       backendId: request.backendId ?? "codex-exec-json",
       workspacePath: request.workspacePath,
@@ -227,14 +229,15 @@ export class CodexAdapter implements AgentAdapter {
     const model=sessionModel(session);
     try{assertAdapterWriteAdmission(request.beforeSend);}
     catch(error){this.update(session.id,{state:"FAILED"});throw new AdapterStartError("not-created",(error as AdapterContractError).code,"Native creation admission rejected before Codex invocation");}
-    const turn = this.backend.start({
+    let turn:CodexTurn;
+    try{turn = this.backend.start({
       executable: this.profile.executable ?? "codex",
       codexHome: this.profile.codexHome,
       workspacePath: request.workspacePath,
       ...(typeof session.executionSelection?.nativeParameters.reasoningEffort==="string" ? {reasoningEffort:session.executionSelection.nativeParameters.reasoningEffort}:{}),
       prompt: request.prompt ?? "Inspect the task context and report readiness.",
       ...(model?{model}:{}),
-    });
+    });}catch(error){throw localStartFailure(error);}
     this.turns.set(session.id, turn);
     session.state = "RUNNING";
     if (turn.processId !== undefined) session.processId = turn.processId;

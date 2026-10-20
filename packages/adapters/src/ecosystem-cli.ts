@@ -1,10 +1,12 @@
 import {assertSessionModelBinding,freezeExecutionSelection,sessionModel} from "./execution-selection.js";
 import { OwnedProcessGroup } from "./owned-process.js";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
-import { randomUUID } from "node:crypto";
 import { promisify } from "node:util";
 import {
   AdapterContractError,
+  localStartFailure,
+  startPreparationFailure,
+  type AdapterStartInput,
   validateManifest,
   type AdapterEvent,
   type AdapterManifest,
@@ -12,8 +14,8 @@ import {
   type AdapterSession,
   type AgentAdapter,
 } from "./contracts.js";
-import { MemorySessionStore, type SessionStore } from "./generic.js";
-import type { AccountModelCatalog, ExecutionSelection, ModelCatalogContext } from "@dispatcher/domain";
+import { MemorySessionStore, startSessionId, type SessionStore } from "./generic.js";
+import type { AccountModelCatalog, ModelCatalogContext } from "@dispatcher/domain";
 import { readNativeCliCatalog, cursorLoginIdentity, type CatalogCliProvider } from "./cli-catalog.js";
 import { readOpenCodeCatalog } from "./opencode-catalog.js";
 
@@ -285,7 +287,7 @@ export class StructuredCliAdapter implements AgentAdapter {
 
   legacyInvocationDefaults():{backendId:string;model?:string}{return {backendId:this.manifest.backends[0]!.id,...(this.profile.model?{model:this.profile.model}:{})};}
 
-  async start(input: { runId: string; workspacePath: string; backendId?: string; prompt?: string; executionSelection?: ExecutionSelection }): Promise<AdapterSession> {
+  async start(input: AdapterStartInput): Promise<AdapterSession> {
     this.starting++;
     try {
       const backendId=this.manifest.backends[0]!.id;
@@ -293,7 +295,7 @@ export class StructuredCliAdapter implements AgentAdapter {
       const selection=freezeExecutionSelection(input.executionSelection,{profileId:this.profile.id,providerId:this.manifest.id,backendId,selection:this.supportsExecutionSelection,reasoning:false,legacyModel:true});
       const now = new Date().toISOString();
       const session: AdapterSession = {
-        id: randomUUID(),
+        id: startSessionId(this.store,input.sessionId),
         runId: input.runId,
         backendId: input.backendId ?? this.manifest.backends[0]!.id,
         workspacePath: input.workspacePath,
@@ -304,18 +306,19 @@ export class StructuredCliAdapter implements AgentAdapter {
         createdAt: now,
         updatedAt: now,
       };
-      const environment = await this.environment();
-      const executable = await this.executable();
       this.store.save(session);
+      let environment:Record<string,string>|undefined,executable:string;
+      try{environment=await this.environment();executable=await this.executable();}catch(error){throw startPreparationFailure(error);}
       assertSessionModelBinding(this.store.load(session.id),session);
-      const turn = this.backend.start({
+      let turn:CliTurn;
+    try{turn = this.backend.start({
         executable,
         args: this.definition.startArgs({ prompt: input.prompt ?? "Inspect the task and report readiness.", newSession: true, approveTools: this.profile.approveTools === true, trustWorkspace: this.profile.trustWorkspace === true, ...(this.profile.configDir ? { configDir: this.profile.configDir } : {}), ...(session.providerSessionId ? { providerSessionId: session.providerSessionId } : {}), ...this.selectionArgs(session) }),
         workspacePath: input.workspacePath,
         ...(this.definition.normalizeLine ? { normalizeLine: this.definition.normalizeLine } : {}),
         ...(this.definition.requireExecutionEvidence ? { requireExecutionEvidence: true } : {}),
         ...(environment ? { environment } : {}),
-      });
+      });}catch(error){throw localStartFailure(error);}
       this.turns.set(session.id, turn);
       session.state = "RUNNING";
       if (turn.processId !== undefined) session.processId = turn.processId;

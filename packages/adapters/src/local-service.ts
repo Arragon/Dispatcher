@@ -1,6 +1,8 @@
-import { randomUUID } from "node:crypto";
+import {freezeExecutionSelection} from "./execution-selection.js";
 import {
   AdapterContractError,
+  AdapterStartError,
+  type AdapterStartInput,
   validateManifest,
   type AdapterEvent,
   type AdapterManifest,
@@ -9,7 +11,7 @@ import {
   type AgentAdapter,
 } from "./contracts.js";
 import type { CredentialResolver } from "./ecosystem-cli.js";
-import { MemorySessionStore, type SessionStore } from "./generic.js";
+import { MemorySessionStore, startSessionId, type SessionStore } from "./generic.js";
 
 export interface LocalServiceProfileConfig {
   id: string;
@@ -82,15 +84,17 @@ export class LocalServiceAdapter implements AgentAdapter {
     for (const path of [profile.statusPath, profile.inputPath, profile.cancelPath]) validateSessionPath(path);
   }
 
-  async start(input: { runId: string; workspacePath: string; backendId?: string; prompt?: string }): Promise<AdapterSession> {
+  async start(input: AdapterStartInput): Promise<AdapterSession> {
+    const selection=freezeExecutionSelection(input.executionSelection,{profileId:this.profile.id,providerId:this.profile.provider,backendId:"local-service-http",selection:false,reasoning:false});
     const now = new Date().toISOString();
     const session: AdapterSession = {
-      id: randomUUID(),
+      id: startSessionId(this.store,input.sessionId),
       runId: input.runId,
       backendId: input.backendId ?? "local-service-http",
       workspacePath: input.workspacePath,
       state: "STARTING",
       profileId: this.profile.id,
+      ...(selection?{executionSelection:selection}:{}),
       createdAt: now,
       updatedAt: now,
     };
@@ -98,7 +102,7 @@ export class LocalServiceAdapter implements AgentAdapter {
     const snapshot = await this.requestSnapshot(this.profile.startPath, {
       method: "POST",
       body: JSON.stringify({ runId: input.runId, workspacePath: input.workspacePath, prompt: input.prompt ?? "Inspect the task and report readiness." }),
-    });
+    },true);
     session.state=mapState(snapshot.state);session.providerSessionId=snapshot.sessionId;session.updatedAt=new Date().toISOString();
     this.snapshots.set(session.id, snapshot);
     this.store.save(session);
@@ -158,8 +162,8 @@ export class LocalServiceAdapter implements AgentAdapter {
     return { sessionId, provider: this.profile.provider, health: health.ok ? "HEALTHY" : "DEGRADED", statusCode: health.status, endpointContract: "configured-v1" };
   }
 
-  private async requestSnapshot(path: string, init: RequestInit = {}): Promise<LocalServiceSnapshot> {
-    const response = await this.request(path, init);
+  private async requestSnapshot(path: string, init: RequestInit = {},creation=false): Promise<LocalServiceSnapshot> {
+    const response = await this.request(path, init,creation);
     const body = await response.json().catch(() => ({})) as Record<string, unknown>;
     if (!response.ok) throw new AdapterContractError(response.status === 401 || response.status === 403 ? "AUTH_ERROR" : "PROVIDER_ERROR", String(body.message ?? `Local service returned ${response.status}`).slice(0, 500));
     const sessionId = stringValue(body.sessionId) ?? stringValue(body.session_id) ?? stringValue(body.id);
@@ -178,11 +182,11 @@ export class LocalServiceAdapter implements AgentAdapter {
       ...(body.resource && typeof body.resource === "object" && !Array.isArray(body.resource) ? { resource: body.resource as Record<string, unknown> } : {}),
     };
   }
-  private async request(path: string, init: RequestInit = {}): Promise<Response> {
+  private async request(path: string, init: RequestInit = {},creation=false): Promise<Response> {
     const headers: Record<string, string> = { "content-type": "application/json" };
     if (this.profile.credentialRef) {
       if (!this.resolveCredential) throw new AdapterContractError("SECRET_RESOLVER_UNAVAILABLE", "Credential references require a SecretStore resolver");
-      headers.authorization = `Bearer ${await this.resolveCredential(this.profile.credentialRef)}`;
+      try{headers.authorization = `Bearer ${await this.resolveCredential(this.profile.credentialRef)}`;}catch(error){if(creation)throw new AdapterStartError("not-created","START_PREPARATION_FAILED","Local service credential is unavailable before creation");throw error;}
     }
     return this.fetchImpl(`${this.profile.baseUrl.replace(/\/$/, "")}${path}`, { ...init, headers: { ...headers, ...(init.headers ?? {}) }, signal: AbortSignal.timeout(10_000) });
   }

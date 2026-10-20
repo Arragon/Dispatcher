@@ -1,5 +1,4 @@
 import {assertSessionModelBinding,freezeExecutionSelection,sessionModel} from "./execution-selection.js";
-import type {ExecutionSelection} from "@dispatcher/domain";
 import {readReadyTurnResult,rememberTurnResult,usageSnapshotUnavailable,type PassiveTurnResult} from "./usage-snapshot.js";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -9,6 +8,8 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import {
   AdapterContractError,
+  localStartFailure,
+  type AdapterStartInput,
   validateManifest,
   type AdapterEvent,
   type AdapterManifest,
@@ -16,7 +17,7 @@ import {
   type AdapterSession,
   type AgentAdapter,
 } from "./contracts.js";
-import { MemorySessionStore, type SessionStore } from "./generic.js";
+import { MemorySessionStore, startSessionId, type SessionStore } from "./generic.js";
 
 import { OwnedProcessGroup } from "./owned-process.js";
 
@@ -158,17 +159,18 @@ export class QoderAdapter implements AgentAdapter {
 
   legacyInvocationDefaults():{backendId:string;model?:string}{return {backendId:"qoder-cli-json",...(this.profile.model?{model:this.profile.model}:{})};}
 
-  async start(input: { runId: string; workspacePath: string; backendId?: string; prompt?: string; executionSelection?:ExecutionSelection }): Promise<AdapterSession> {
+  async start(input: AdapterStartInput): Promise<AdapterSession> {
     const backendId=input.backendId??"qoder-cli-json";
     if(backendId!=="qoder-cli-json")throw new AdapterContractError("BACKEND_MISMATCH","Requested backend differs from Qoder CLI");
     const selection=freezeExecutionSelection(input.executionSelection,{profileId:this.profile.id,providerId:this.manifest.id,backendId,selection:false,reasoning:false,legacyModel:true});
     const now = new Date().toISOString();
     const providerSessionId = randomUUID();
-    const session: AdapterSession = { id: randomUUID(), runId: input.runId, backendId: input.backendId ?? "qoder-cli-json", workspacePath: input.workspacePath, state: "STARTING", profileId: this.profile.id, ...(selection?{executionSelection:selection}:{legacyModel:{...(this.profile.model?{id:this.profile.model}:{})}}), providerSessionId, createdAt: now, updatedAt: now };
+    const session: AdapterSession = { id: startSessionId(this.store,input.sessionId), runId: input.runId, backendId: input.backendId ?? "qoder-cli-json", workspacePath: input.workspacePath, state: "STARTING", profileId: this.profile.id, ...(selection?{executionSelection:selection}:{legacyModel:{...(this.profile.model?{id:this.profile.model}:{})}}), providerSessionId, createdAt: now, updatedAt: now };
     this.store.save(session);
     assertSessionModelBinding(this.store.load(session.id),session);
     const model=sessionModel(session);
-    const turn = this.backend.start({ executable: this.profile.executable ?? "qoder", workspacePath: input.workspacePath, prompt: input.prompt ?? "Inspect the task context and report readiness.", providerSessionId, resume: false, ...(this.profile.configDir ? { configDir: this.profile.configDir } : {}), ...(model ? {model} : {}) });
+    let turn:QoderTurn;
+    try{turn = this.backend.start({ executable: this.profile.executable ?? "qoder", workspacePath: input.workspacePath, prompt: input.prompt ?? "Inspect the task context and report readiness.", providerSessionId, resume: false, ...(this.profile.configDir ? { configDir: this.profile.configDir } : {}), ...(model ? {model} : {}) });}catch(error){throw localStartFailure(error);}
     this.turns.set(session.id, turn);
     try { return this.update(session.id, { state: "RUNNING" }); }
     catch (error) { this.cancelledSessions.add(session.id); await turn.cancel(); throw error; }

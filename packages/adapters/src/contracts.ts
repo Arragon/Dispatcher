@@ -76,6 +76,11 @@ export interface NativeObserverContext {
 }
 export type AdapterStartOutcome={kind:"created";session:AdapterSession}|{kind:"not-created"|"unknown";code:string;diagnostic?:string};
 
+export interface AdapterStartInput {
+  runId:string;sessionId?:string;workspacePath:string;backendId?:string;prompt?:string;
+  executionSelection?:ExecutionSelection;beforeSend?:()=>void;
+}
+
 export interface AgentAdapter {
   readonly interaction?:NativeInteractionPort;
   readonly manifest: AdapterManifest;
@@ -83,7 +88,7 @@ export interface AgentAdapter {
   /** Existing configured invocation defaults only; this does not qualify native selection. */
   legacyInvocationDefaults?():{backendId:string;model?:string};
   modelCatalog?(context: ModelCatalogContext & {workspacePath:string;signal?:AbortSignal}): Promise<AccountModelCatalog>;
-  start(input: { runId: string; workspacePath: string; backendId?: string; prompt?: string; executionSelection?: ExecutionSelection; beforeSend?:()=>void }): Promise<AdapterSession>;
+  start(input: AdapterStartInput): Promise<AdapterSession>;
   send(sessionId: string, message: string, beforeSend?:()=>void): Promise<AdapterEvent>;
   pause(sessionId: string): Promise<AdapterSession>;
   resume(sessionId: string, beforeSend?:()=>void): Promise<AdapterSession>;
@@ -120,6 +125,17 @@ export function assertAdapterWriteAdmission(guard:(()=>void)|undefined):void {
     const code=(error as {code?:unknown})?.code;
     throw new AdapterAdmissionError(typeof code==="string"&&/^[A-Z][A-Z0-9_]{0,79}$/.test(code)?code:"NATIVE_WRITE_ADMISSION_REJECTED");
   }
+}
+
+export function localStartFailure(error:unknown):unknown {
+  const code=error&&typeof error==="object"&&"code" in error?error.code:undefined;
+  return ["ENOENT","EACCES","ENOEXEC","EPERM"].includes(String(code))
+    ? new AdapterStartError("not-created","SPAWN_FAILED",error instanceof Error?error.message:String(code))
+    : error;
+}
+
+export function startPreparationFailure(error:unknown):AdapterStartError {
+  return new AdapterStartError("not-created",error instanceof AdapterContractError?error.code:"START_PREPARATION_FAILED",error instanceof Error?error.message:"Agent preparation failed before creation");
 }
 
 function schemaProperties(schema: Record<string, unknown>): Record<string, unknown> {

@@ -262,6 +262,14 @@ Legacy continuation rechecks scoped execution/credential context without queryin
 or inventing native catalog evidence. Native reported model and price can remain
 unknown independently of a configured request.
 
+The optional reserved Dispatcher Session ID in AdapterStartInput is preserved
+by every built-in adapter family and remains distinct from provider-native IDs.
+An existing ID is rejected before another create. Structured CLI stores its
+intent before async credential preparation so the ID cannot be reused during
+that await. Known local spawn/preparation failures can prove not-created; lost
+HTTP responses cannot. This is an adapter contract: Controller reservation and
+the creation receipt still need to be composed before lifting native admission.
+
 SQLite online backups are consistent private archives with checksums and an
 inventory. Archives refuse live startup; restore targets must be new directories
 and retain a durable reconciliation barrier. Restoring bytes alone never

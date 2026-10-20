@@ -1,11 +1,13 @@
 import {freezeExecutionSelection} from "./execution-selection.js";
-import type {ExecutionSelection} from "@dispatcher/domain";
 import { randomUUID } from "node:crypto";
 import { OwnedProcessGroup } from "./owned-process.js";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { promisify } from "node:util";
 import {
   AdapterContractError,
+  AdapterStartError,
+  localStartFailure,
+  type AdapterStartInput,
   validateManifest,
   type AdapterEvent,
   type AdapterManifest,
@@ -26,6 +28,11 @@ export class MemorySessionStore implements SessionStore {
   private readonly sessions = new Map<string, AdapterSession>();
   load(id: string): AdapterSession | undefined { const value = this.sessions.get(id); return value ? structuredClone(value) : undefined; }
   save(session: AdapterSession): void { this.sessions.set(session.id, structuredClone(session)); }
+}
+
+export function startSessionId(store:SessionStore,requested?:string):string {
+  if(requested!==undefined&&(!requested||requested.includes("\0")||requested.startsWith("unstarted:")||store.load(requested)))throw new AdapterStartError("not-created","SESSION_ID_CONFLICT","Reserved Session identity is invalid or already exists");
+  return requested??randomUUID();
 }
 
 export function selectBackend(manifest: AdapterManifest, available: BackendKind[]): { backendId: string; explanation: string } {
@@ -51,9 +58,9 @@ export class GenericMockAdapter implements AgentAdapter {
   readonly manifest = validateManifest(genericMockManifest);
   constructor(private readonly store: SessionStore = new MemorySessionStore()) {}
 
-  async start(input: { runId: string; workspacePath: string; backendId?: string; executionSelection?:ExecutionSelection }): Promise<AdapterSession> {
+  async start(input: AdapterStartInput): Promise<AdapterSession> {
     const now = new Date().toISOString();
-    const session: AdapterSession = { id: randomUUID(), runId: input.runId, backendId: input.backendId ?? "mock-sdk", workspacePath: input.workspacePath, state: "RUNNING", ...(input.executionSelection?{executionSelection:structuredClone(input.executionSelection)}:{}), createdAt: now, updatedAt: now };
+    const session: AdapterSession = { id: startSessionId(this.store,input.sessionId), runId: input.runId, backendId: input.backendId ?? "mock-sdk", workspacePath: input.workspacePath, state: "RUNNING", ...(input.executionSelection?{executionSelection:structuredClone(input.executionSelection)}:{}), createdAt: now, updatedAt: now };
     this.store.save(session);
     return structuredClone(session);
   }
@@ -163,15 +170,16 @@ export class GenericCliAdapter implements AgentAdapter {
 
   legacyInvocationDefaults():{backendId:string}{return {backendId:this.template.mode==="pty"?"restricted-pty":"structured-cli"};}
 
-  async start(input: { runId: string; workspacePath: string; backendId?: string; prompt?: string; executionSelection?:ExecutionSelection }): Promise<AdapterSession> {
+  async start(input: AdapterStartInput): Promise<AdapterSession> {
     const backendId=input.backendId??(this.template.mode==="pty"?"restricted-pty":"structured-cli");
     const selection=freezeExecutionSelection(input.executionSelection,{profileId:this.profileId??input.executionSelection?.profileId??"",providerId:this.manifest.id,backendId,selection:false,reasoning:false});
-    const id = randomUUID();
+    const id = startSessionId(this.store,input.sessionId);
     const command = renderCommand(this.template, { prompt: input.prompt ?? "", sessionId: id, workspace: input.workspacePath });
     const now = new Date().toISOString();
     const session: AdapterSession = { id, runId: input.runId, backendId: input.backendId ?? (this.template.mode === "pty" ? "restricted-pty" : "structured-cli"), workspacePath: input.workspacePath, state: "STARTING", ...(selection?{executionSelection:selection}:{}), ...(this.profileId ? { profileId: this.profileId } : {}), createdAt: now, updatedAt: now };
     this.store.save(session);
-    const execution = await this.executor.start({ ...command, cwd: input.workspacePath, runId: input.runId, ...(this.template.mode ? { mode: this.template.mode } : {}) });
+    let execution:ProcessExecution;
+    try{execution = await this.executor.start({ ...command, cwd: input.workspacePath, runId: input.runId, ...(this.template.mode ? { mode: this.template.mode } : {}) });}catch(error){throw localStartFailure(error);}
     this.executions.set(id, execution);
     if (this.cancelledSessions.has(id)) {
       await execution.cancel(); this.transition(id, "CANCELLED");

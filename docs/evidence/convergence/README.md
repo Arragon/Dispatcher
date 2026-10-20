@@ -624,3 +624,47 @@ open under CV-05/12. R-005 still requires reserved native Session/context, servi
 entry-point/final-SDK Guard composition and recovery. Rollback is the prior
 isolated-candidate SHA; no live or primary worktree data was used. Official quota
 checked after the unit; percentage recorded in Linear.
+
+
+## CV-08e reserved adapter Session IDs and creation outcomes
+
+Ported a499d84 `startSessionId`, local spawn/preparation failure classification
+and the original cross-adapter start-intent contract suite. The shared
+AdapterStartInput accepts an optional reserved Dispatcher Session ID; Codex,
+Qoder, Structured/Generic CLI, Devin and local service retain it without using
+it as a provider-native ID. Reusing it rejects before another create. CLI stores
+its intent before awaiting credential/executable preparation, so a concurrent
+same-ID request cannot cross that preparation gap. Existing callers may still
+omit an ID and get a fresh one. Controller/Scheduler reservation is not changed
+yet; native startup admission remains closed.
+
+Proven owned-local spawn errors retain not-created/SPAWN_FAILED diagnostics.
+Pre-HTTP credential failure is sanitized and marked not-created; a lost HTTP
+response receives no such proof. Native/API failures are not inferred to be
+pre-create just because the reply failed. These helpers will feed the durable
+Controller creation receipt when its service composition is enabled.
+
+Local service also preserves legacy Run selection for WorkBuddy/CodeBuddy using
+the configured provider product, not the shared manifest's umbrella ID. Both
+provider cases went RED with a context mismatch before that adaptation. This
+completes the actual local-service omission consumer of R-009 without granting
+model selection/native-interaction capability.
+
+RED: all 13 original start-intent cases failed before the port; two additional
+product-provider cases then failed before the fix. Added concurrent credential
+preparation coverage and strengthened the lost-HTTP-reply assertion to require
+no not-created proof. Targeted rebuilt suite passes 3 files/30 tests. Initial
+default check found six unused imports after common start-input typing; removed
+them without suppression. Final `mise exec -- pnpm check` passes 110 files/1101
+tests (38.71s test phase). Logs:
+`/tmp/dispatcher-cv08-start-identity-red.log`,
+`/tmp/dispatcher-cv08-start-provider-red.log`,
+`/tmp/dispatcher-cv08-start-identity-all-green.log`,
+`/tmp/dispatcher-cv08-start-identity-final-check.log`,
+`/tmp/dispatcher-cv08-start-identity-final-check-2.log`.
+
+No new native binding, control transition, schema or SDK credentials were enabled.
+R-005 remains open for logical invocation metadata, other final-SDK admissions
+and v3 service creation/input/worker/delivery/cancellation composition. Rollback
+is the prior isolated branch SHA; original data/workspaces remain intact.
+Official quota checked after the unit; percentage recorded in Linear.

@@ -1,8 +1,8 @@
 import {freezeExecutionSelection} from "./execution-selection.js";
-import type {ExecutionSelection} from "@dispatcher/domain";
-import { randomUUID } from "node:crypto";
 import {
   AdapterContractError,
+  AdapterStartError,
+  type AdapterStartInput,
   validateManifest,
   type AdapterEvent,
   type AdapterManifest,
@@ -10,7 +10,7 @@ import {
   type AdapterSession,
   type AgentAdapter,
 } from "./contracts.js";
-import { MemorySessionStore, type SessionStore } from "./generic.js";
+import { MemorySessionStore, startSessionId, type SessionStore } from "./generic.js";
 import type { CredentialResolver } from "./ecosystem-cli.js";
 
 export interface DevinProfileConfig {
@@ -100,7 +100,8 @@ export class HttpDevinBackend implements DevinBackend {
   }
 
   private async request(path: string, init: RequestInit = {}): Promise<Response> {
-    const token = await this.resolveCredential(this.profile.credentialRef);
+    let token:string;
+    try{token=await this.resolveCredential(this.profile.credentialRef);}catch(error){if(init.method==="POST"&&path.endsWith("/sessions"))throw new AdapterStartError("not-created","START_PREPARATION_FAILED","Devin credential is unavailable before creation");throw error;}
     const response = await this.fetchImpl(`${(this.profile.apiBase ?? "https://api.devin.ai").replace(/\/$/, "")}${path}`, {
       ...init,
       headers: { authorization: `Bearer ${token}`, "content-type": "application/json", ...(init.headers ?? {}) },
@@ -126,12 +127,12 @@ export class DevinAdapter implements AgentAdapter {
     this.backend = backend ?? new HttpDevinBackend(profile, resolveCredential!, fetchImpl);
   }
 
-  async start(input: { runId: string; workspacePath: string; backendId?: string; prompt?: string; executionSelection?:ExecutionSelection }): Promise<AdapterSession> {
+  async start(input: AdapterStartInput): Promise<AdapterSession> {
     const backendId=input.backendId??"devin-v3-api";
     const selection=freezeExecutionSelection(input.executionSelection,{profileId:this.profile.id,providerId:this.manifest.id,backendId,selection:false,reasoning:false});
     const now = new Date().toISOString();
     const session: AdapterSession = {
-      id: randomUUID(),
+      id: startSessionId(this.store,input.sessionId),
       runId: input.runId,
       backendId: input.backendId ?? "devin-v3-api",
       workspacePath: input.workspacePath,
