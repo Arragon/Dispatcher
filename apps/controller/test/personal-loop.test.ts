@@ -148,6 +148,30 @@ describe("personal Slack–Linear loop", () => {
     store.initializeControl({sessionId:run.sessionId,activeRunId:run.id,exclusion:"none",at:run.startedAt!});
     return ()=>store.compareAndSwapControl({sessionId:run.sessionId,expectedRevision:1,expectedEpoch:1,actorId:"owner",event:{type:"conflict",at:f.control.now.toISOString()}});
   }
+  function humanOwned(f:Awaited<ReturnType<typeof setup>>){
+    controlled(f);const store=new InteractionStore(f.service.database),run=f.run(),current=store.control(run.sessionId)!;
+    // Persisted-owner fixture only; this is not evidence of a native handoff.
+    f.service.database.handle.prepare("UPDATE session_controls SET state='HUMAN',epoch=2,revision=2,document_json=? WHERE session_id=?").run(JSON.stringify({...current,state:"HUMAN",epoch:2,revision:2}),run.sessionId);
+  }
+  it("waits for owned stop before marking a lease-expired Run failed",async()=>{
+    const f=await setup();await f.service.app.inject({headers:OWNER,method:"POST",url:`/api/tasks/${f.taskId}/dispatch`,payload:{}});
+    const adapter=(f.service as unknown as {agentAdapters:Map<string,AgentAdapter>}).agentAdapters.get("orion")!,cancel=adapter.cancel.bind(adapter),entered=Promise.withResolvers<void>(),ready=Promise.withResolvers<void>();
+    vi.spyOn(adapter,"cancel").mockImplementation(async(...args)=>{entered.resolve();await ready.promise;return cancel(...args);});f.control.now=new Date(f.control.now.getTime()+16*60_000);
+    const cycle=f.service.runBackgroundCycle();
+    try{await entered.promise;expect(f.run().state).not.toBe("FAILED");expect(f.task().state).not.toBe("FAILED");ready.resolve();await cycle;expect(f.run().state).toBe("FAILED");expect(f.control.cancellations).toBe(1);}finally{ready.resolve();await cycle;}
+  });
+  it("keeps unconfirmed failure cleanup unavailable and never blindly repeats the stop",async()=>{
+    const f=await setup();await f.service.app.inject({headers:OWNER,method:"POST",url:`/api/tasks/${f.taskId}/dispatch`,payload:{}});
+    const adapter=(f.service as unknown as {agentAdapters:Map<string,AgentAdapter>}).agentAdapters.get("orion")!,cancel=vi.spyOn(adapter,"cancel").mockRejectedValue(Error("owned stop outcome unavailable"));f.control.now=new Date(f.control.now.getTime()+16*60_000);
+    await f.service.runBackgroundCycle();expect(f.run()).toMatchObject({state:"RUNNER_UNAVAILABLE",recoveryReason:"NATIVE_OUTCOME_UNKNOWN"});expect(f.task().state).not.toBe("FAILED");
+    f.control.now=new Date(f.control.now.getTime()+60_000);await f.service.runBackgroundCycle();expect(cancel).toHaveBeenCalledTimes(1);expect(f.service.database.getEntity("adapter-session",f.run().sessionId)).toMatchObject({authority:{stopState:"unconfirmed"}});
+  });
+  it.each(["failure","cancel"] as const)("does not stop a persisted HUMAN owner through %s cleanup",async action=>{
+    const f=await setup();await f.service.app.inject({headers:OWNER,method:"POST",url:`/api/tasks/${f.taskId}/dispatch`,payload:{}});humanOwned(f);
+    if(action==="failure"){f.control.now=new Date(f.control.now.getTime()+16*60_000);await f.service.runBackgroundCycle();}
+    else await expect(f.service.semanticTools.execute("run.cancel",{target:f.run().id},{...resumeContext,workflowId:"human-owner-cancel"})).rejects.toMatchObject({code:"HUMAN_CANCEL_CONFIRMATION_REQUIRED"});
+    expect(f.run().state).toBe("ACTIVE");expect(f.task().state).toBe("RUNNING");expect(f.control.cancellations).toBe(0);
+  });
   function webAnswer(f:Awaited<ReturnType<typeof setup>>,id:string){
     const run=f.run();return f.service.app.inject({headers:OWNER,method:"POST",url:`/api/agents/profiles/${run.profileId}/sessions/${run.sessionId}/input`,payload:{inputId:id,message:"continue",authority:{runId:run.id,generation:run.generation,leaseId:run.leaseId,lastActivityAt:run.lastActivityAt,taskRevision:f.service.database.getCanonicalTask(f.taskId)!.revision}}}).then(value=>value);
   }

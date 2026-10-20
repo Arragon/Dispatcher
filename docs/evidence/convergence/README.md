@@ -65,8 +65,8 @@ final convergence verification.
 | CV-03 | atomic reload + in-flight edits fixed; process-heavy test pool bounded at four parallel workers; two configured default checks passed 90/802; ready for whole-branch review |
 | CV-04 | migration/control/backup modules ported with v3 adaptation and protocol 2; targeted 12/101 and two default 90/802 gates passed; ready for whole-branch review |
 | CV-05 | in progress: catalog scope/lifecycle, default ConfigPlan, per-Run provenance and adapter selection fences pass 91/833 default gate; legacy HTTP/Slack/reroute choice now integrated at 109/1085; remaining catalog/control assertions tracked |
-| CV-06 | private legacy reader and passive Codex/Qoder snapshots verified at 93/849; Controller collection, canonical origin/attempt/time and quota wiring pending |
-| CV-08 | native host/read/dispatch foundations and Controller coordinator pass 107/1069; v3 service entry-point composition remains pending |
+| CV-06 | Controller nonblocking scoped collection/terminal retry verified at 115/1169; origin/attempt/time and account-quota qualification/UI pending |
+| CV-08 | continuation/worker/delivery/failure Guard increments verified at 115/1173; cancel/pause/reroute/start/recovery and native qualification remain pending |
 | CV-12 | pending complete selection/control integration |
 | macOS service / LP / backup | pending safe shared foundation |
 | CV-07/09/10/11 | pending contracts/guards |
@@ -932,3 +932,42 @@ this unit does not establish billing or native handoff evidence. R-005 still
 requires fail/cancel/pause/reroute/start/recovery composition before activation.
 Rollback is 26fa064 with its matching data; original workspaces/data unchanged.
 Official quota checked after the unit; percentage recorded in Linear.
+
+
+## CV-08k owned failure cleanup and HUMAN stop protection
+
+Failure handling now validates current Task/Run/control authority before cleanup
+and uses the Session mutation lane. It reuses the existing private Session stop
+state and uncertainty flag; no parallel stop registry was added. A live local
+adapter must report an attached owned handle. A saved terminal snapshot alone is
+not termination evidence. Native-bound/executionRef runtimes remain unavailable
+until their qualified session-scoped stop is composed; this path never kills a
+shared native host.
+
+Failure first retains unavailable capacity, then waits for the owning adapter's
+confirmed stop. Only after rechecking the captured authority does it atomically
+mark Run/Task FAILED. Unknown cleanup retains unconfirmed stop state and manual
+reconciliation without blindly issuing another stop. Its own synchronous
+unavailable Task transition updates only the revision it just committed;
+concurrent edits during awaits are not acknowledged. Explicit cancellation now
+checks the coordinator before revoking/aborting a known Session, and HUMAN control
+requires explicit native cancellation confirmation rather than legacy stop.
+
+RED: all four owned-drain/unknown-cleanup/HUMAN-failure/HUMAN-cancel cases failed
+on the old service. The first adaptation correctly rejected its own unavailable
+Task transition as stale; explicitly acknowledge that synchronous transition,
+without loosening cross-await revision checks. Target passes 4 cases. Default
+`mise exec -- pnpm check` passes 115 files/1173 tests (44.40s test phase), including
+the original expiry/heartbeat/physical cancellation checks; no assertion or
+timeout was weakened. `git diff --check` passes. Logs:
+`/tmp/dispatcher-cv08-failure-cancel-red.log`,
+`/tmp/dispatcher-cv08-failure-cancel-green.log`,
+`/tmp/dispatcher-cv08-failure-cancel-green-2.log`,
+`/tmp/dispatcher-cv08-failure-cancel-check.log`.
+
+Still pending: final cancel/pause SDK callbacks, actor-bound cancellation intent,
+priority drain of active verification on failure, reroute/start and complete
+startup recovery. This increment does not open native cancellation/handoff UI or
+claim provider stop proof. No live data/service was changed. Rollback is 13bf6f7
+on the isolated branch, with its matching backup. Official quota checked after
+the unit; percentage recorded in Linear.

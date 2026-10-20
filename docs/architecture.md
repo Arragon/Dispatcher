@@ -251,7 +251,11 @@ Usage reads now run outside that lane and business advancement, with scoped
 coalescing, terminal retry and shutdown fencing. Execution resource facts come
 from owned status/results independently of billing reads. Query failures retain
 unknown telemetry without declaring the provider down. Fail/cancel/pause/reroute/
-start/recovery remain pending; native startup admission stays closed.
+start/recovery remain pending; native startup admission stays closed. Failure
+cleanup retains unavailable capacity and the existing Session stop receipt until
+owned execution has stopped and captured authority is rechecked. Unconfirmed
+stops require reconciliation; saved terminal snapshots cannot prove local process
+termination. Native-bound runtimes require qualified session-scoped stop evidence.
 
 Codex CLI start/send/resume accept an optional synchronous `beforeSend` admission
 callback. Creation captures request fields before storing intent, then checks

@@ -799,26 +799,55 @@ export class ControllerService {
     if(this.leaseAuthority.current(runId)?.revokedAt){const run=this.database.getEntity<JsonValue>("run",runId) as unknown as Run|undefined;if(run&&record.leaseId===run.leaseId&&record.generation===run.generation&&!run.revokedLeaseIds?.includes(run.leaseId)){run.revokedLeaseIds=[...(run.revokedLeaseIds??[]),run.leaseId];this.database.saveEntity("run",run.id,json(run));}}
   }
 
-  private async failRun(run: Run, reason: string): Promise<void> {
-    const current = this.database.getEntity<JsonValue>("run", run.id) as unknown as Run | undefined;
-    if (!current || current.generation !== run.generation || isTerminalRunState(current.state)) return;
-    assertRunTransition(current.state, "FAILED");
-    current.state = "FAILED";
-    current.failureReason = String(redactValue(reason));
-    current.endedAt = this.now().toISOString();
-    this.database.saveEntity("run", current.id, json(current));
-    const task = this.database.getCanonicalTask<JsonValue>(current.taskId);
-    if (task && !["DONE", "FAILED", "CANCELLED"].includes((task.document as unknown as Task).state)) this.tasks.execute({ id: `run:${current.id}:${current.generation}:failed`, taskId: current.taskId, baseRevision: task.revision, actor: "run-worker", command: { type: "task.transition", state: "FAILED" } });
-    this.fleetEvents.publish("run.changed", current.id, { id: current.id, state: current.state });
-    if (!current.sessionId.startsWith("unstarted:")) {
-      try { await this.agentAdapters.get(current.profileId)?.cancel(current.sessionId); }
-      catch (error) {
-        current.failureReason += `; agent cleanup failed: ${String(redactValue(error instanceof Error ? error.message : "unknown error"))}`;
-        this.database.saveEntity("run", current.id, json(current));
-        this.app.log.warn({ runId: current.id, error: redactValue(error) }, "failed run agent cleanup failed");
-      }
+  private async failRun(run:Run,reason:string):Promise<void>{
+    const current=this.database.getEntity<JsonValue>("run",run.id) as unknown as Run|undefined;
+    if(!current||current.generation!==run.generation||current.leaseId!==run.leaseId||isTerminalRunState(current.state)||this.nativeInteractions.hasUncertainStart(run.id))return;
+    const fence=this.nativeInteractions.fenceFor(current,`failure:${current.id}:${current.generation}`),principal={id:"run-worker",roles:["operator"],profileId:current.profileId};
+    if(!this.nativeInteractions.authorizeInteraction(principal,"fail",fence).allowed)return;
+    const session=this.database.getEntity<JsonValue>("adapter-session",current.sessionId) as unknown as AdapterSession|undefined;
+    if(!session||current.sessionId.startsWith("unstarted:"))return;
+    if(this.sessionStopUncertain(session))return;
+    // Bound native runtimes need a qualified session-scoped stop, never a host kill.
+    if(current.executionRef||session.nativeBinding||this.database.handle.prepare("SELECT 1 FROM native_bindings WHERE session_id=?").get(session.id)){
+      this.markRemoteUnavailable(current.id,"Native failure requires qualified session-scoped stop evidence","NATIVE_OUTCOME_UNKNOWN",current);return;
     }
-    await this.notifyAttention(current);
+    await this.nativeInteractions.withMutationLane(current.sessionId,async()=>{
+      const assertAuthority=()=>this.nativeInteractions.assertInteraction(principal,"fail",fence);
+      assertAuthority();
+      const adapter=this.agentAdapters.get(current.profileId);if(!adapter)throw new AdapterContractError("SESSION_DETACHED","Owning adapter is unavailable for failure cleanup");
+      this.uncertainSessionStops.add(session.id);
+      try{
+        try{
+          this.markRemoteUnavailable(current.id,"Failure cleanup requested; waiting for owned execution to stop","NATIVE_OUTCOME_UNKNOWN",current);
+          fence.expectedTaskRevision=this.database.getCanonicalTask<JsonValue>(current.taskId)!.revision;
+          this.nativeInteractions.acknowledgeTaskRevision(current);
+          this.saveSessionStop(session,"requested");
+        }
+        catch(error){this.app.log.warn({error:redactValue(error),runId:current.id},"Failure cleanup intent persistence failed");}
+        const local=adapter instanceof CodexAdapter||adapter instanceof QoderAdapter||adapter instanceof StructuredCliAdapter||adapter instanceof GenericCliAdapter;
+        if(local&&(await adapter.diagnostics?.(session.id))?.attached!==true)throw new AdapterContractError("SESSION_DETACHED","Saved native state is not owned process termination evidence");
+        assertAuthority();
+        const stopped=await adapter.cancel(session.id);
+        if(!["CANCELLED","COMPLETED","FAILED"].includes(stopped.state))throw new AdapterContractError("CANCELLATION_UNCONFIRMED","Owned failure cleanup did not confirm termination");
+        assertAuthority();this.saveSessionStop(stopped,"confirmed");this.uncertainSessionStops.delete(session.id);
+        this.database.transaction(()=>{
+          assertAuthority();
+          const latest=this.database.getEntity<JsonValue>("run",current.id) as unknown as Run;
+          assertRunTransition(latest.state,"FAILED");latest.state="FAILED";latest.failureReason=String(redactValue(reason));latest.endedAt=this.now().toISOString();
+          this.database.saveEntity("run",latest.id,json(latest));
+          const task=this.database.getCanonicalTask<JsonValue>(latest.taskId)!;
+          if(!["DONE","FAILED","CANCELLED"].includes((task.document as unknown as Task).state))this.tasks.execute({id:`run:${latest.id}:${latest.generation}:failed`,taskId:latest.taskId,baseRevision:task.revision,actor:"run-worker",command:{type:"task.transition",state:"FAILED"}});
+          this.nativeInteractions.acknowledgeTaskRevision(latest);
+        });
+        this.nativeInteractions.acknowledgeSettledMutationOutcome(current.sessionId);
+        this.fleetEvents.publish("run.changed",current.id,{id:current.id,state:"FAILED"});
+        const failed=this.database.getEntity<JsonValue>("run",current.id) as unknown as Run;await this.notifyAttention(failed);
+      }catch(error){
+        if(this.sessionStopState(session)!=="confirmed")try{this.saveSessionStop(session,"unconfirmed");}catch(recordError){this.app.log.warn({error:redactValue(recordError),runId:current.id},"Failure cleanup remains unconfirmed");}
+        this.markRemoteUnavailable(current.id,"Owned failure cleanup is unconfirmed; inspect the original execution","NATIVE_OUTCOME_UNKNOWN",current);
+        throw error;
+      }
+    }).catch(error=>{this.app.log.warn({error:redactValue(error),runId:current.id},"Failure cleanup requires reconciliation");});
   }
 
   private async renewEmbeddedLeases(): Promise<void> {
@@ -2160,8 +2189,9 @@ export class ControllerService {
     if(!result||result.runId!==run.id||typeof result.settledAt!=="string"||!Number.isFinite(Date.parse(result.settledAt)))throw new AdapterContractError("REMOTE_RESULT_INVALID","Owning Runner did not confirm execution finalization");
   }
   private cancelRunExecution(run:Run):Promise<Run> {
-    this.runReroutes.get(run.id)?.abort();
     if (isTerminalRunState(run.state)) return Promise.resolve(run);
+    if(!run.sessionId.startsWith("unstarted:"))this.nativeInteractions.assertCancellation({id:"operator",roles:["operator"],profileId:run.profileId},this.nativeInteractions.fenceFor(run,`cancel:${run.id}:${run.generation}`));
+    this.runReroutes.get(run.id)?.abort();
     const pending = this.runCancellations.get(run.id);
     if (pending) return pending;
     this.cancelledRunIds.add(run.id);
