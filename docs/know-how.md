@@ -7,6 +7,10 @@
   cancellation latch before a detached-start check, after admission, so a late
   owned process cannot escape cleanup. Unknown stop acknowledgement retains the
   existing Session stop fence and does not authorize another blind SDK call.
+- Failure cleanup must abort its owned verification before waiting for the lane
+  held by that verification. Confirming the adapter stopped does not prove a Git
+  command or descendant drained. Keep stop audit on the existing Session row
+  across adapter saves; notification-only errors cannot invalidate known cleanup.
 
 - Usage queries cannot run inside the Session mutation lane or business progress
   awaits. Keep execution facts from owned status/results separate from telemetry

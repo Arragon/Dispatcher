@@ -239,7 +239,8 @@ interface DeliveryFeedback {
 const CREDENTIAL_PATTERN = /(?:sk-|xox[baprs]-|gh[op]_)[a-z0-9_-]{8,}/i;
 const ADVANCEABLE_RUN_STATES = new Set<Run["state"]>(["ACTIVE", "VERIFYING", "DELIVERING"]);
 
-interface SessionAuthority {version:1;fingerprint:string;repositoryId?:string;stopState:NativeSessionConsoleView["stopState"]}
+interface SessionStopIntent {version:1;actorId:string;operation:"cancel"|"fail";fence:MutationFence;requestedAt:string}
+interface SessionAuthority {version:1;fingerprint:string;repositoryId?:string;stopState:NativeSessionConsoleView["stopState"];stopIntent?:SessionStopIntent}
 type BoundSession=AdapterSession&{authority?:SessionAuthority};
 class DatabaseSessionStore implements SessionStore {
   constructor(private readonly database: DispatcherDatabase,private readonly beforeSpawn?:(session:AdapterSession)=>void,private readonly bind?:(session:AdapterSession)=>SessionAuthority|undefined) {}
@@ -811,6 +812,16 @@ export class ControllerService {
     if(current.executionRef||session.nativeBinding||this.database.handle.prepare("SELECT 1 FROM native_bindings WHERE session_id=?").get(session.id)){
       this.markRemoteUnavailable(current.id,"Native failure requires qualified session-scoped stop evidence","NATIVE_OUTCOME_UNKNOWN",current);return;
     }
+    // Stop existing owned commands before waiting for their Session lane.
+    this.restoreLeaseAuthority(current);
+    this.leaseAuthority.revoke(current.id,current.leaseId,current.generation,"Run failure cleanup",this.now().toISOString());
+    this.persistLatestLeaseAudit(current.id);
+    this.cancelledRunIds.add(current.id);
+    const localCommand=this.localCommands.get(current.id),advancing=this.runAdvances.get(current.id);
+    localCommand?.controller.abort();
+    this.markRemoteUnavailable(current.id,"Failure cleanup requested; waiting for owned execution to stop","NATIVE_OUTCOME_UNKNOWN",current);
+    fence.expectedTaskRevision=this.database.getCanonicalTask<JsonValue>(current.taskId)!.revision;
+    this.nativeInteractions.acknowledgeTaskRevision(current);
     await this.nativeInteractions.withMutationLane(current.sessionId,async()=>{
       const assertAuthority=()=>this.nativeInteractions.assertInteraction(principal,"fail",fence);
       assertAuthority();
@@ -818,10 +829,7 @@ export class ControllerService {
       this.uncertainSessionStops.add(session.id);
       try{
         try{
-          this.markRemoteUnavailable(current.id,"Failure cleanup requested; waiting for owned execution to stop","NATIVE_OUTCOME_UNKNOWN",current);
-          fence.expectedTaskRevision=this.database.getCanonicalTask<JsonValue>(current.taskId)!.revision;
-          this.nativeInteractions.acknowledgeTaskRevision(current);
-          this.saveSessionStop(session,"requested");
+          this.saveSessionStop(session,"requested",{version:1,actorId:principal.id,operation:"fail",fence,requestedAt:this.now().toISOString()});
         }
         catch(error){this.app.log.warn({error:redactValue(error),runId:current.id},"Failure cleanup intent persistence failed");}
         const local=adapter instanceof CodexAdapter||adapter instanceof QoderAdapter||adapter instanceof StructuredCliAdapter||adapter instanceof GenericCliAdapter;
@@ -832,6 +840,8 @@ export class ControllerService {
         if(!admitted)throw new AdapterContractError("NATIVE_CAPABILITY_UNVERIFIED","Stop backend omitted final admission");
         if(stopped.id!==session.id||stopped.runId!==current.id||!["CANCELLED","COMPLETED","FAILED"].includes(stopped.state))throw new AdapterContractError("CANCELLATION_UNCONFIRMED","Owned failure cleanup did not confirm termination");
         assertAuthority();this.saveSessionStop(stopped,"confirmed");this.uncertainSessionStops.delete(session.id);
+        await localCommand?.settled.catch(error=>{if(!(error instanceof AdapterContractError&&error.code==="RUN_CANCELLED")&&!(error instanceof LocalGitDeliveryError&&error.code==="COMMIT_ABORTED"))throw error;});
+        await advancing?.catch(()=>undefined);
         this.database.transaction(()=>{
           assertAuthority();
           const latest=this.database.getEntity<JsonValue>("run",current.id) as unknown as Run;
@@ -843,7 +853,9 @@ export class ControllerService {
         });
         this.nativeInteractions.acknowledgeSettledMutationOutcome(current.sessionId);
         this.fleetEvents.publish("run.changed",current.id,{id:current.id,state:"FAILED"});
-        const failed=this.database.getEntity<JsonValue>("run",current.id) as unknown as Run;await this.notifyAttention(failed);
+        this.cancelledRunIds.delete(current.id);
+        const failed=this.database.getEntity<JsonValue>("run",current.id) as unknown as Run;
+        try{await this.notifyAttention(failed);}catch(error){this.attentionNotifications.recover(failed.taskId);this.app.log.warn({error:redactValue(error),runId:failed.id},"Failure attention notification is pending");}
       }catch(error){
         if(error instanceof AdapterAdmissionError){this.uncertainSessionStops.delete(session.id);this.saveSessionStop(session,"none");this.nativeInteractions.acknowledgeSettledMutationOutcome(current.sessionId);}
         else if(this.sessionStopState(session)!=="confirmed")try{this.saveSessionStop(session,"unconfirmed");}catch(recordError){this.app.log.warn({error:redactValue(recordError),runId:current.id},"Failure cleanup remains unconfirmed");}
@@ -2236,7 +2248,7 @@ export class ControllerService {
     this.nativeInteractions.acknowledgeTaskRevision(run);
     return this.nativeInteractions.withMutationLane(run.sessionId,async()=>{
       assertAuthority();this.nativeInteractions.assertInteraction(principal,"cancel",fence);
-      if(session){this.uncertainSessionStops.add(session.id);this.saveSessionStop(session,"requested");}
+      if(session){this.uncertainSessionStops.add(session.id);this.saveSessionStop(session,"requested",{version:1,actorId:principal.id,operation:"cancel",fence,requestedAt:this.now().toISOString()});}
       try{
         if(remote){
           assertAuthority();
@@ -4510,11 +4522,11 @@ export class ControllerService {
     if(this.sessionContextState(session)!=="current")throw new AdapterContractError("SESSION_CONTEXT_CHANGED","Original session account context is changed or unknown; inspect its saved history");
     this.resolveProfileExecutionContext(session.profileId!,undefined,"resume");
   }
-  private saveSessionStop(session:AdapterSession,stopState:NativeSessionConsoleView["stopState"]):void{
+  private saveSessionStop(session:AdapterSession,stopState:NativeSessionConsoleView["stopState"],stopIntent?:SessionStopIntent):void{
     const stored=this.database.getEntity<JsonValue>("adapter-session",session.id) as unknown as BoundSession|undefined;
     if(!stored)throw new AdapterContractError("SESSION_NOT_FOUND","Session disappeared during stop");
     const authority=stored.authority??{version:1 as const,fingerprint:"unknown"};
-    this.database.saveEntity("adapter-session",session.id,json({...stored,...(stopState==="confirmed"?session:{}),authority:{...authority,stopState}}));
+    this.database.saveEntity("adapter-session",session.id,json({...stored,...(stopState==="confirmed"?session:{}),authority:{...authority,stopState,...(stopIntent?{stopIntent:structuredClone(stopIntent)}:{})}}));
   }
   private sessionView(session: AdapterSession): NativeSessionConsoleView {
     const run=this.canonicalSession(session),contextState=this.sessionContextState(session),stopState=this.sessionStopState(session),adapter=this.agentAdapters.get(session.profileId??"");

@@ -66,7 +66,7 @@ final convergence verification.
 | CV-04 | migration/control/backup modules ported with v3 adaptation and protocol 2; targeted 12/101 and two default 90/802 gates passed; ready for whole-branch review |
 | CV-05 | in progress: catalog scope/lifecycle, default ConfigPlan, per-Run provenance and adapter selection fences pass 91/833 default gate; legacy HTTP/Slack/reroute choice now integrated at 109/1085; remaining catalog/control assertions tracked |
 | CV-06 | Controller nonblocking scoped collection/terminal retry verified at 115/1169; origin/attempt/time and account-quota qualification/UI pending |
-| CV-08 | continuation/worker/delivery/failure/cancel/pause Guard increments verified at 115/1187; priority drain, reroute/start/recovery and native qualification remain pending |
+| CV-08 | continuation/worker/delivery/failure/cancel/pause Guard, failure priority drain and stop audit verified at 115/1191; reroute/start/recovery and native qualification remain pending |
 | CV-12 | pending complete selection/control integration |
 | macOS service / LP / backup | pending safe shared foundation |
 | CV-07/09/10/11 | pending contracts/guards |
@@ -1033,3 +1033,29 @@ Remaining: failure priority drain, legacy startup/reroute/recovery composition,
 durable actor/fence metadata for stop audit, full qualified native stop and real
 Gates. This increment supplies no real account/process GUI evidence. Source and
 rollback: cb31c22 with matching data backup; original workspaces/data unchanged.
+
+
+## CV-08n failure priority drain and Session stop audit
+
+Failure now revokes its exact lease, fences advancement and aborts the original
+owned verification command before waiting for the Session mutation lane. It
+waits for adapter stop and owned command/advance drain before FAILED. Unknown
+owned-command cleanup stays unavailable. Attention delivery is isolated from
+the already committed failure result, so a notification error cannot relabel
+confirmed cleanup unknown.
+
+The existing Session authority now optionally retains stopIntent (actor, operation,
+captured fence and requested time). Failure/cancel populate it before SDK stop;
+DatabaseSessionStore retains it through adapter saves and restart. It is private
+audit metadata, not a second stop registry or a native stop proof.
+
+All four new cases failed before implementation and then passed. Personal-loop
+and physical lifecycle target passes 2 files/85 tests. Default `mise exec -- pnpm check` passes 115 files/1191 tests (40.27s test phase).
+`git diff --check` passes. Official quota checked after the unit; percentage recorded in Linear. Logs: /tmp/dispatcher-cv08n-failure-red.log,
+/tmp/dispatcher-cv08n-failure-green.log, /tmp/dispatcher-cv08n-target.log,
+/tmp/dispatcher-cv08n-check.log. No old assertion/deadline changed.
+
+Rechecked all three source HEAD/status snapshots and all 11 WIP file SHA-256
+hashes: unchanged. No original data/service touched. Rollback: cd2821a plus its
+matching backup. R-005 remains open for start/reroute/recovery and qualified
+native context/stop; no formal or real-provider Gate is closed.

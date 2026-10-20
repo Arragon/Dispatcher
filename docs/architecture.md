@@ -251,7 +251,7 @@ Usage reads now run outside that lane and business advancement, with scoped
 coalescing, terminal retry and shutdown fencing. Execution resource facts come
 from owned status/results independently of billing reads. Query failures retain
 unknown telemetry without declaring the provider down. Reroute/start/recovery
-and failure priority drain remain pending; native startup admission stays closed. Failure
+remain pending; native startup admission stays closed. Failure
 cleanup retains unavailable capacity and the existing Session stop receipt until
 owned execution has stopped and captured authority is rechecked. Unconfirmed
 stops require reconciliation; saved terminal snapshots cannot prove local process
@@ -264,6 +264,11 @@ rejection clears only its own stop intent. Explicit cancellation may stop an
 expired lease's original invocation but cannot authorize continuation. Pause
 uses the same lane/final callback and rejects missing admission acknowledgement.
 Local native-bound cancellation stays closed until a qualified stop is wired.
+Failure revokes and aborts its original owned verification command before
+waiting for the Session lane, then requires both adapter stop and owned command
+drain before FAILED. Stop intent audit stays on the existing Session authority
+with actor, operation and captured fence; adapter persistence preserves it. A
+notification failure is retried separately from a confirmed execution outcome.
 
 Codex CLI start/send/resume accept an optional synchronous `beforeSend` admission
 callback. Creation captures request fields before storing intent, then checks

@@ -204,6 +204,26 @@ describe("personal Slack–Linear loop", () => {
     const f=await setup();await f.service.app.inject({headers:OWNER,method:"POST",url:`/api/tasks/${f.taskId}/dispatch`,payload:{}});const run=f.run();f.control.now=new Date(f.control.now.getTime()+16*60_000);
     await f.service.semanticTools.execute("run.cancel",{target:run.id},{...resumeContext,workflowId:"expired-stop"});expect(f.run().state).toBe("CANCELLED");expect(f.task().state).toBe("CANCELLED");expect(f.control.cancellations).toBe(1);
   });
+  it("aborts owned verification before waiting for its mutation lane during failure",async()=>{
+    const f=await setup();await f.service.app.inject({headers:OWNER,method:"POST",url:`/api/tasks/${f.taskId}/dispatch`,payload:{}});const run=f.run(),entered=Promise.withResolvers<void>(),ready=Promise.withResolvers<void>(),controller=new AbortController();
+    const internals=f.service as unknown as {nativeInteractions:{withMutationLane<T>(id:string,operation:()=>Promise<T>):Promise<T>};localCommands:Map<string,{controller:AbortController;settled:Promise<void>}>;failRun(run:Run,reason:string):Promise<void>};
+    const lane=internals.nativeInteractions.withMutationLane(run.sessionId,async()=>{entered.resolve();await ready.promise;});await entered.promise;internals.localCommands.set(run.id,{controller,settled:ready.promise});
+    const pending=internals.failRun(run,"owned verification lease expired");
+    try{await Promise.resolve();expect(controller.signal.aborted).toBe(true);expect(f.run().state).not.toBe("FAILED");ready.resolve();await Promise.all([lane,pending]);expect(f.run().state).toBe("FAILED");expect(f.control.cancellations).toBe(1);}finally{ready.resolve();await Promise.all([lane,pending]);internals.localCommands.delete(run.id);}
+  });
+  it("retains unavailable failure when owned command drain is unconfirmed",async()=>{
+    const f=await setup();await f.service.app.inject({headers:OWNER,method:"POST",url:`/api/tasks/${f.taskId}/dispatch`,payload:{}});const run=f.run(),controller=new AbortController();
+    const internals=f.service as unknown as {localCommands:Map<string,{controller:AbortController;settled:Promise<void>}>;failRun(run:Run,reason:string):Promise<void>};const settled=Promise.reject(Error("unconfirmed descendant stop"));void settled.catch(()=>undefined);internals.localCommands.set(run.id,{controller,settled});
+    try{await internals.failRun(run,"lease expired");expect(controller.signal.aborted).toBe(true);expect(f.run().state).toBe("RUNNER_UNAVAILABLE");expect(f.task().state).not.toBe("FAILED");}finally{internals.localCommands.delete(run.id);}
+  });
+  it("persists the real cancellation actor and captured fence through adapter saves and restart",async()=>{
+    const f=await setup();await f.service.app.inject({headers:OWNER,method:"POST",url:`/api/tasks/${f.taskId}/dispatch`,payload:{}});const run=f.run();await f.service.semanticTools.execute("run.cancel",{target:run.id},{...resumeContext,principal:{...resumeContext.principal,id:"reviewed-operator"},workflowId:"stop-audit"});await f.service.stop();const restored=await f.make();
+    expect(restored.database.getEntity("adapter-session",run.sessionId)).toMatchObject({authority:{stopState:"confirmed",stopIntent:{version:1,actorId:"reviewed-operator",operation:"cancel",fence:{runId:run.id,sessionId:run.sessionId,generation:run.generation,leaseId:run.leaseId,expectedCurrentRunId:run.id}}}});expect(f.starts).toHaveLength(1);
+  });
+  it("does not turn confirmed failure cleanup unknown when attention notification fails",async()=>{
+    const f=await setup();await f.service.app.inject({headers:OWNER,method:"POST",url:`/api/tasks/${f.taskId}/dispatch`,payload:{}});const internals=f.service as unknown as {failRun(run:Run,reason:string):Promise<void>;notifyAttention(run:Run):Promise<void>;markRemoteUnavailable(...args:unknown[]):void};vi.spyOn(internals,"notifyAttention").mockRejectedValue(Error("notification unavailable"));const unavailable=vi.spyOn(internals,"markRemoteUnavailable");await internals.failRun(f.run(),"lease expired");
+    expect(f.run().state).toBe("FAILED");expect(f.task().state).toBe("FAILED");expect(unavailable).toHaveBeenCalledTimes(1);expect(f.service.database.getEntity("adapter-session",f.run().sessionId)).toMatchObject({authority:{stopState:"confirmed"}});
+  });
   function webAnswer(f:Awaited<ReturnType<typeof setup>>,id:string){
     const run=f.run();return f.service.app.inject({headers:OWNER,method:"POST",url:`/api/agents/profiles/${run.profileId}/sessions/${run.sessionId}/input`,payload:{inputId:id,message:"continue",authority:{runId:run.id,generation:run.generation,leaseId:run.leaseId,lastActivityAt:run.lastActivityAt,taskRevision:f.service.database.getCanonicalTask(f.taskId)!.revision}}}).then(value=>value);
   }
