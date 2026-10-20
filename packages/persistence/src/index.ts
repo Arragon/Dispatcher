@@ -473,6 +473,7 @@ export class DispatcherDatabase {
       if(kind==="session"&&after.executionRef&&typeof after.executionRef==="object"&&!Array.isArray(after.executionRef)&&after.executionRef.id!==binding.executionRefId)throw new InteractionStoreError("NATIVE_IDENTITY_CHANGED");
     }
     if(kind==="adapter-session"){
+      if(["execution","executionRef"].some(field=>before?.[field]!==undefined&&!isDeepStrictEqual(before[field],after?.[field])))throw new ImmutableExecutionContextError();
       const fields=["executionSelection","modelSelection","legacyModel"];
       const bound=fields.some(field=>before?.[field]!==undefined);
       if(fields.filter(field=>after?.[field]!==undefined).length>1||fields.some(field=>before?.[field]!==undefined&&!isDeepStrictEqual(before[field],after?.[field]))||bound&&["id","profileId","backendId","runId","workspacePath"].some(field=>!isDeepStrictEqual(before?.[field],after?.[field])))throw new ImmutableSessionSelectionError();

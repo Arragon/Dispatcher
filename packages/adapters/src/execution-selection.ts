@@ -24,6 +24,7 @@ export function assertSessionModelBinding(current:AdapterSession|undefined,expec
     if(session.executionSelection===undefined&&session.legacyModel===undefined)fail("MODEL_SNAPSHOT_UNKNOWN","Historical session model choice is unknown; review before continuation");
     if(session.legacyModel!==undefined&&(session.executionSelection!==undefined||!session.legacyModel||typeof session.legacyModel!=="object"||Array.isArray(session.legacyModel)||session.legacyModel.id!==undefined&&!text(session.legacyModel.id)))fail("EXECUTION_SELECTION_INVALID","Legacy default snapshot is malformed or conflicts with a current choice");
   }
+  if(current&&!isDeepStrictEqual([current.execution,current.executionRef],[expected.execution,expected.executionRef]))fail("EXECUTION_CONTEXT_DRIFT","Stored execution context changed during native preparation");
   const fields=(session:AdapterSession)=>[session.id,session.runId,session.profileId,session.backendId,session.workspacePath,session.executionSelection,session.legacyModel];
   if(!current||!isDeepStrictEqual(fields(current),fields(expected)))fail("MODEL_BINDING_DRIFT","Stored model binding changed during native preparation");
 }

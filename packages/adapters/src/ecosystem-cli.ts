@@ -4,6 +4,9 @@ import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { promisify } from "node:util";
 import {
   AdapterContractError,
+  assertAdapterStartAdmission,
+  assertAdapterWriteAdmission,
+  captureAdapterStartInput,
   localStartFailure,
   startPreparationFailure,
   type AdapterStartInput,
@@ -288,6 +291,7 @@ export class StructuredCliAdapter implements AgentAdapter {
   legacyInvocationDefaults():{backendId:string;model?:string}{return {backendId:this.manifest.backends[0]!.id,...(this.profile.model?{model:this.profile.model}:{})};}
 
   async start(input: AdapterStartInput): Promise<AdapterSession> {
+    input=captureAdapterStartInput(input);
     this.starting++;
     try {
       const backendId=this.manifest.backends[0]!.id;
@@ -297,6 +301,7 @@ export class StructuredCliAdapter implements AgentAdapter {
       const session: AdapterSession = {
         id: startSessionId(this.store,input.sessionId),
         runId: input.runId,
+      ...(input.execution?{execution:input.execution}:{}),
         backendId: input.backendId ?? this.manifest.backends[0]!.id,
         workspacePath: input.workspacePath,
         state: "STARTING",
@@ -310,15 +315,17 @@ export class StructuredCliAdapter implements AgentAdapter {
       let environment:Record<string,string>|undefined,executable:string;
       try{environment=await this.environment();executable=await this.executable();}catch(error){throw startPreparationFailure(error);}
       assertSessionModelBinding(this.store.load(session.id),session);
-      let turn:CliTurn;
-    try{turn = this.backend.start({
+      const nativeInput:CliStartInput={
         executable,
         args: this.definition.startArgs({ prompt: input.prompt ?? "Inspect the task and report readiness.", newSession: true, approveTools: this.profile.approveTools === true, trustWorkspace: this.profile.trustWorkspace === true, ...(this.profile.configDir ? { configDir: this.profile.configDir } : {}), ...(session.providerSessionId ? { providerSessionId: session.providerSessionId } : {}), ...this.selectionArgs(session) }),
         workspacePath: input.workspacePath,
         ...(this.definition.normalizeLine ? { normalizeLine: this.definition.normalizeLine } : {}),
         ...(this.definition.requireExecutionEvidence ? { requireExecutionEvidence: true } : {}),
         ...(environment ? { environment } : {}),
-      });}catch(error){throw localStartFailure(error);}
+      };
+      assertAdapterStartAdmission(input.beforeSend);
+      let turn:CliTurn;
+      try{turn=this.backend.start(nativeInput);}catch(error){throw localStartFailure(error);}
       this.turns.set(session.id, turn);
       session.state = "RUNNING";
       if (turn.processId !== undefined) session.processId = turn.processId;
@@ -331,7 +338,7 @@ export class StructuredCliAdapter implements AgentAdapter {
     return this.starting > 0 || this.cancelling > 0 || this.sending.size > 0 || [...this.turns.values()].some((turn) => turn.status() === "running");
   }
 
-  async send(sessionId: string, message: string): Promise<AdapterEvent> {
+  async send(sessionId: string, message: string, beforeSend?:()=>void): Promise<AdapterEvent> {
     if (!this.definition.supportsResume) throw new AdapterContractError("UNSUPPORTED_CAPABILITY", `${this.manifest.displayName} headless runs do not accept mid-session input`);
     if (this.cancelled.has(sessionId)||this.require(sessionId).state === "CANCELLED") throw new AdapterContractError("SESSION_CANCELLED", "Cancelled sessions cannot accept input");
     if (this.definition.strictLifecycle && !this.turns.has(sessionId) && !["COMPLETED", "PAUSED"].includes(this.require(sessionId).state)) throw new AdapterContractError("SESSION_DETACHED", "Active or failed process handles cannot be recovered; use controlled operator recovery");
@@ -348,14 +355,16 @@ export class StructuredCliAdapter implements AgentAdapter {
       if (this.cancelled.has(sessionId)||this.require(sessionId).state === "CANCELLED") throw new AdapterContractError("SESSION_CANCELLED", "Session was cancelled before the next turn started");
       assertSessionModelBinding(this.store.load(sessionId),expected);
       this.store.save({ ...session, state: "STARTING", updatedAt: new Date().toISOString() });
-      const turn = this.backend.start({
+      const nativeInput:CliStartInput={
         executable,
         args: this.definition.startArgs({ prompt: message, providerSessionId: session.providerSessionId, approveTools: this.profile.approveTools === true, trustWorkspace: this.profile.trustWorkspace === true, ...(this.profile.configDir ? { configDir: this.profile.configDir } : {}), ...this.selectionArgs(session) }),
         workspacePath: session.workspacePath,
         ...(this.definition.normalizeLine ? { normalizeLine: this.definition.normalizeLine } : {}),
         ...(this.definition.requireExecutionEvidence ? { requireExecutionEvidence: true } : {}),
         ...(environment ? { environment } : {}),
-      });
+      };
+      assertAdapterWriteAdmission(beforeSend);
+      const turn=this.backend.start(nativeInput);
       this.turns.set(sessionId, turn);
       const persisted = { ...session }; delete persisted.processId;
       try { this.store.save({ ...persisted, state: "RUNNING", ...(turn.processId !== undefined ? { processId: turn.processId } : {}), updatedAt: new Date().toISOString() }); }
@@ -364,9 +373,9 @@ export class StructuredCliAdapter implements AgentAdapter {
     } finally { this.sending.delete(sessionId); }
   }
   async pause(): Promise<AdapterSession> { throw new AdapterContractError("UNSUPPORTED_CAPABILITY", `${this.manifest.displayName} cannot pause a headless turn`); }
-  async resume(sessionId: string): Promise<AdapterSession> {
+  async resume(sessionId: string, beforeSend?:()=>void): Promise<AdapterSession> {
     if (!this.definition.supportsResume) throw new AdapterContractError("UNSUPPORTED_CAPABILITY", `${this.manifest.displayName} session recovery is not declared for this backend`);
-    await this.send(sessionId, "Continue from the existing task context.");
+    await this.send(sessionId, "Continue from the existing task context.",beforeSend);
     return this.status(sessionId);
   }
   async cancel(sessionId: string): Promise<AdapterSession> {

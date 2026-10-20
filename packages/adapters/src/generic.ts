@@ -5,6 +5,9 @@ import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { promisify } from "node:util";
 import {
   AdapterContractError,
+  assertAdapterStartAdmission,
+  assertAdapterWriteAdmission,
+  captureAdapterStartInput,
   AdapterStartError,
   localStartFailure,
   type AdapterStartInput,
@@ -59,12 +62,14 @@ export class GenericMockAdapter implements AgentAdapter {
   constructor(private readonly store: SessionStore = new MemorySessionStore()) {}
 
   async start(input: AdapterStartInput): Promise<AdapterSession> {
+    input=captureAdapterStartInput(input);
+    assertAdapterStartAdmission(input.beforeSend);
     const now = new Date().toISOString();
-    const session: AdapterSession = { id: startSessionId(this.store,input.sessionId), runId: input.runId, backendId: input.backendId ?? "mock-sdk", workspacePath: input.workspacePath, state: "RUNNING", ...(input.executionSelection?{executionSelection:structuredClone(input.executionSelection)}:{}), createdAt: now, updatedAt: now };
+    const session: AdapterSession = { id: startSessionId(this.store,input.sessionId), runId: input.runId, ...(input.execution?{execution:input.execution}:{}), backendId: input.backendId ?? "mock-sdk", workspacePath: input.workspacePath, state: "RUNNING", ...(input.executionSelection?{executionSelection:structuredClone(input.executionSelection)}:{}), createdAt: now, updatedAt: now };
     this.store.save(session);
     return structuredClone(session);
   }
-  async send(sessionId: string, message: string): Promise<AdapterEvent> { const session = this.require(sessionId); if (session.state !== "RUNNING") throw new AdapterContractError("SESSION_NOT_RUNNING", "Session is not running"); return { type: "session.message", sessionId, occurredAt: new Date().toISOString(), data: { acceptedCharacters: message.length } }; }
+  async send(sessionId: string, message: string, beforeSend?:()=>void): Promise<AdapterEvent> { const session = this.require(sessionId); if (session.state !== "RUNNING") throw new AdapterContractError("SESSION_NOT_RUNNING", "Session is not running"); assertAdapterWriteAdmission(beforeSend); return { type: "session.message", sessionId, occurredAt: new Date().toISOString(), data: { acceptedCharacters: message.length } }; }
   async pause(sessionId: string): Promise<AdapterSession> { return this.transition(sessionId, "PAUSED"); }
   async resume(sessionId: string): Promise<AdapterSession> { return this.transition(sessionId, "RUNNING"); }
   async cancel(sessionId: string): Promise<AdapterSession> { return this.transition(sessionId, "CANCELLED"); }
@@ -171,13 +176,15 @@ export class GenericCliAdapter implements AgentAdapter {
   legacyInvocationDefaults():{backendId:string}{return {backendId:this.template.mode==="pty"?"restricted-pty":"structured-cli"};}
 
   async start(input: AdapterStartInput): Promise<AdapterSession> {
+    input=captureAdapterStartInput(input);
     const backendId=input.backendId??(this.template.mode==="pty"?"restricted-pty":"structured-cli");
     const selection=freezeExecutionSelection(input.executionSelection,{profileId:this.profileId??input.executionSelection?.profileId??"",providerId:this.manifest.id,backendId,selection:false,reasoning:false});
     const id = startSessionId(this.store,input.sessionId);
     const command = renderCommand(this.template, { prompt: input.prompt ?? "", sessionId: id, workspace: input.workspacePath });
     const now = new Date().toISOString();
-    const session: AdapterSession = { id, runId: input.runId, backendId: input.backendId ?? (this.template.mode === "pty" ? "restricted-pty" : "structured-cli"), workspacePath: input.workspacePath, state: "STARTING", ...(selection?{executionSelection:selection}:{}), ...(this.profileId ? { profileId: this.profileId } : {}), createdAt: now, updatedAt: now };
+    const session: AdapterSession = { id, runId: input.runId, ...(input.execution?{execution:input.execution}:{}), backendId: input.backendId ?? (this.template.mode === "pty" ? "restricted-pty" : "structured-cli"), workspacePath: input.workspacePath, state: "STARTING", ...(selection?{executionSelection:selection}:{}), ...(this.profileId ? { profileId: this.profileId } : {}), createdAt: now, updatedAt: now };
     this.store.save(session);
+    assertAdapterStartAdmission(input.beforeSend);
     let execution:ProcessExecution;
     try{execution = await this.executor.start({ ...command, cwd: input.workspacePath, runId: input.runId, ...(this.template.mode ? { mode: this.template.mode } : {}) });}catch(error){throw localStartFailure(error);}
     this.executions.set(id, execution);
@@ -189,10 +196,11 @@ export class GenericCliAdapter implements AgentAdapter {
     catch (error) { this.cancelledSessions.add(id); await execution.cancel(); throw error; }
   }
 
-  async send(sessionId: string, message: string): Promise<AdapterEvent> {
+  async send(sessionId: string, message: string, beforeSend?:()=>void): Promise<AdapterEvent> {
     if (this.cancelledSessions.has(sessionId) || this.require(sessionId).state === "CANCELLED") throw new AdapterContractError("SESSION_CANCELLED", "CLI session cancellation forbids more input");
     const execution = this.executions.get(sessionId);
     if (!execution) throw new AdapterContractError("SESSION_NOT_ATTACHED", "CLI process is not attached to this runtime");
+    assertAdapterWriteAdmission(beforeSend);
     await execution.send(message);
     return { type: "session.message", sessionId, occurredAt: new Date().toISOString(), data: { acceptedCharacters: message.length } };
   }

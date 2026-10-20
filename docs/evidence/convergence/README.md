@@ -668,3 +668,40 @@ R-005 remains open for logical invocation metadata, other final-SDK admissions
 and v3 service creation/input/worker/delivery/cancellation composition. Rollback
 is the prior isolated branch SHA; original data/workspaces remain intact.
 Official quota checked after the unit; percentage recorded in Linear.
+
+## CV-08f final built-in write admission and logical invocation facts
+
+Qoder, Structured/Generic CLI and HTTP create/input writers now carry the same
+synchronous final admission callback as Codex. HTTP checks after credentials;
+Structured CLI constructs arguments before its final check. Guard failures
+before creation prove not-created; input rejection proves not-sent. Lost native
+responses keep their uncertain classification. Async injected Devin backends
+must implement the callback contract to enter guarded mode; legacy unguarded
+callers retain their existing behavior. This ABI does not qualify native control.
+
+Start snapshots caller-supplied generation/attempt/lease, validates them and
+stores them with the adapter Session. No counters or execution locations are
+inferred. Persistence rejects replacing/erasing established execution metadata;
+post-await continuation rejects drift even with an in-memory SessionStore.
+No Controller native-control path or live data migration is enabled yet.
+
+RED: 17 missing-admission/context cases, two post-await drift cases, two immutable
+persistence cases, and argument preparation changing authority before spawn.
+The new HTTP fixture was corrected to use Devin's real snake-case response key;
+the existing parser/assertions were not loosened. Rebuilt targeted checks pass
+4 files/47 tests. Default `mise exec -- pnpm check` passes 112 files/1123 tests
+(44.03s test phase); `git diff --check` passes. Logs:
+`/tmp/dispatcher-cv08-final-writers-red.log`,
+`/tmp/dispatcher-cv08-execution-metadata-drift-red.log`,
+`/tmp/dispatcher-cv08-persisted-context-red.log`,
+`/tmp/dispatcher-cv08-cli-argument-admission-red.log`,
+`/tmp/dispatcher-cv08-final-admission-green.log`,
+`/tmp/dispatcher-cv08-final-admission-check.log`.
+
+R-005 remains open for actual Controller/Scheduler composition and recovery.
+Before activating controls, upgrade the minimum writer protocol again: an
+already-open intermediate protocol-2 runtime understands selection but does not
+guard all control paths. Preserve schema 4/5/6; use an additive atomic migration
+and verify old-writer refusal/rollback/backup compatibility. Rollback for this
+unit is 0249a88; original workspaces/data remain intact. Official quota checked
+after the unit and recorded in Linear.

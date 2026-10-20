@@ -8,6 +8,9 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import {
   AdapterContractError,
+  assertAdapterStartAdmission,
+  assertAdapterWriteAdmission,
+  captureAdapterStartInput,
   localStartFailure,
   type AdapterStartInput,
   validateManifest,
@@ -160,22 +163,24 @@ export class QoderAdapter implements AgentAdapter {
   legacyInvocationDefaults():{backendId:string;model?:string}{return {backendId:"qoder-cli-json",...(this.profile.model?{model:this.profile.model}:{})};}
 
   async start(input: AdapterStartInput): Promise<AdapterSession> {
+    input=captureAdapterStartInput(input);
     const backendId=input.backendId??"qoder-cli-json";
     if(backendId!=="qoder-cli-json")throw new AdapterContractError("BACKEND_MISMATCH","Requested backend differs from Qoder CLI");
     const selection=freezeExecutionSelection(input.executionSelection,{profileId:this.profile.id,providerId:this.manifest.id,backendId,selection:false,reasoning:false,legacyModel:true});
     const now = new Date().toISOString();
     const providerSessionId = randomUUID();
-    const session: AdapterSession = { id: startSessionId(this.store,input.sessionId), runId: input.runId, backendId: input.backendId ?? "qoder-cli-json", workspacePath: input.workspacePath, state: "STARTING", profileId: this.profile.id, ...(selection?{executionSelection:selection}:{legacyModel:{...(this.profile.model?{id:this.profile.model}:{})}}), providerSessionId, createdAt: now, updatedAt: now };
+    const session: AdapterSession = { id: startSessionId(this.store,input.sessionId), runId: input.runId, ...(input.execution?{execution:input.execution}:{}), backendId: input.backendId ?? "qoder-cli-json", workspacePath: input.workspacePath, state: "STARTING", profileId: this.profile.id, ...(selection?{executionSelection:selection}:{legacyModel:{...(this.profile.model?{id:this.profile.model}:{})}}), providerSessionId, createdAt: now, updatedAt: now };
     this.store.save(session);
     assertSessionModelBinding(this.store.load(session.id),session);
     const model=sessionModel(session);
+    assertAdapterStartAdmission(input.beforeSend);
     let turn:QoderTurn;
     try{turn = this.backend.start({ executable: this.profile.executable ?? "qoder", workspacePath: input.workspacePath, prompt: input.prompt ?? "Inspect the task context and report readiness.", providerSessionId, resume: false, ...(this.profile.configDir ? { configDir: this.profile.configDir } : {}), ...(model ? {model} : {}) });}catch(error){throw localStartFailure(error);}
     this.turns.set(session.id, turn);
     try { return this.update(session.id, { state: "RUNNING" }); }
     catch (error) { this.cancelledSessions.add(session.id); await turn.cancel(); throw error; }
   }
-  async send(sessionId: string, message: string): Promise<AdapterEvent> {
+  async send(sessionId: string, message: string, beforeSend?:()=>void): Promise<AdapterEvent> {
     this.assertSendable(sessionId);
     if (this.pendingSends.has(sessionId)) throw new AdapterContractError("INPUT_PENDING", "A Qoder follow-up is already pending");
     this.pendingSends.add(sessionId);
@@ -187,6 +192,7 @@ export class QoderAdapter implements AgentAdapter {
       const model=sessionModel(session);
       this.assertSendable(sessionId);
       if (!session.providerSessionId) throw new AdapterContractError("SESSION_NOT_RESUMABLE", "Qoder session identity is missing");
+      assertAdapterWriteAdmission(beforeSend);
       this.turns.set(sessionId, this.backend.start({ executable: this.profile.executable ?? "qoder", workspacePath: session.workspacePath, prompt: message, providerSessionId: session.providerSessionId, resume: true, ...(this.profile.configDir ? { configDir: this.profile.configDir } : {}), ...(model ? {model} : {}) }));
       this.store.save({ ...session, state: "RUNNING", updatedAt: new Date().toISOString() });
       return { type: "session.message", sessionId, occurredAt: new Date().toISOString(), data: { acceptedCharacters: message.length, providerSessionId: session.providerSessionId } };
@@ -194,7 +200,7 @@ export class QoderAdapter implements AgentAdapter {
   }
 
   async pause(): Promise<AdapterSession> { throw new AdapterContractError("UNSUPPORTED_CAPABILITY", "Qoder print mode cannot pause a live turn"); }
-  async resume(sessionId: string): Promise<AdapterSession> { await this.send(sessionId, "Continue from the existing task context."); return this.status(sessionId); }
+  async resume(sessionId: string, beforeSend?:()=>void): Promise<AdapterSession> { await this.send(sessionId, "Continue from the existing task context.",beforeSend); return this.status(sessionId); }
   async cancel(sessionId: string): Promise<AdapterSession> {
     const session = this.require(sessionId), turn = this.turns.get(sessionId);
     if (!turn && ["STARTING", "RUNNING", "PAUSED"].includes(session.state)) throw new AdapterContractError("SESSION_DETACHED", "Qoder process termination cannot be confirmed by this runtime");

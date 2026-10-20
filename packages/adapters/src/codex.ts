@@ -8,6 +8,7 @@ import { randomUUID } from "node:crypto";
 import { promisify } from "node:util";
 import {
   AdapterContractError,
+  captureAdapterStartInput,
   localStartFailure,
   type AdapterStartInput,
   AdapterStartError,
@@ -207,7 +208,7 @@ export class CodexAdapter implements AgentAdapter {
     return readCodexCatalog({profile:this.profile,context,workspacePath:context.workspacePath,...(context.signal?{signal:context.signal}:{}),...(this.catalogRequest?{request:this.catalogRequest}:{})});
   }
   async start(input: AdapterStartInput): Promise<AdapterSession> {
-    const request={...input};
+    const request=captureAdapterStartInput(input);
     const backendId="codex-exec-json";
     if(request.backendId!==undefined&&request.backendId!==backendId)throw new AdapterContractError("BACKEND_MISMATCH","Requested backend differs from the owning Codex adapter");
     const selection=freezeExecutionSelection(request.executionSelection,{profileId:this.profile.id,providerId:this.manifest.id,backendId,selection:true,reasoning:true});
@@ -215,6 +216,7 @@ export class CodexAdapter implements AgentAdapter {
     const session: AdapterSession = {
       id: startSessionId(this.store,request.sessionId),
       runId: request.runId,
+      ...(request.execution?{execution:request.execution}:{}),
       backendId: request.backendId ?? "codex-exec-json",
       workspacePath: request.workspacePath,
       state: "STARTING",

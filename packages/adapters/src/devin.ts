@@ -1,6 +1,9 @@
 import {freezeExecutionSelection} from "./execution-selection.js";
 import {
   AdapterContractError,
+  assertAdapterStartAdmission,
+  assertAdapterWriteAdmission,
+  captureAdapterStartInput,
   AdapterStartError,
   type AdapterStartInput,
   validateManifest,
@@ -33,10 +36,12 @@ export interface DevinSessionSnapshot {
 }
 
 export interface DevinBackend {
+  /** Calls the supplied guard at its last write boundary, after async preparation. */
+  readonly supportsFinalAdmission?:true;
   health(): Promise<{ ok: boolean; diagnostic?: string }>;
-  create(input: { prompt: string; maxSessionAcu?: number }): Promise<DevinSessionSnapshot>;
+  create(input: { prompt: string; maxSessionAcu?: number },beforeSend?:()=>void): Promise<DevinSessionSnapshot>;
   get(sessionId: string): Promise<DevinSessionSnapshot>;
-  send(sessionId: string, message: string): Promise<DevinSessionSnapshot>;
+  send(sessionId: string, message: string,beforeSend?:()=>void): Promise<DevinSessionSnapshot>;
 }
 
 export const devinManifest: AdapterManifest = {
@@ -69,6 +74,7 @@ export const devinManifest: AdapterManifest = {
 };
 
 export class HttpDevinBackend implements DevinBackend {
+  readonly supportsFinalAdmission=true;
   constructor(
     private readonly profile: DevinProfileConfig,
     private readonly resolveCredential: CredentialResolver,
@@ -80,11 +86,11 @@ export class HttpDevinBackend implements DevinBackend {
     return response.ok ? { ok: true } : { ok: false, diagnostic: `Devin API returned ${response.status}` };
   }
 
-  async create(input: { prompt: string; maxSessionAcu?: number }): Promise<DevinSessionSnapshot> {
+  async create(input: { prompt: string; maxSessionAcu?: number },beforeSend?:()=>void): Promise<DevinSessionSnapshot> {
     const response = await this.request(`/v3/organizations/${encodeURIComponent(this.profile.organizationId)}/sessions`, {
       method: "POST",
       body: JSON.stringify({ prompt: input.prompt }),
-    });
+    },beforeSend,true);
     return parseResponse(response);
   }
 
@@ -92,16 +98,17 @@ export class HttpDevinBackend implements DevinBackend {
     return parseResponse(await this.request(`/v3/organizations/${encodeURIComponent(this.profile.organizationId)}/sessions/${encodeURIComponent(sessionId)}`));
   }
 
-  async send(sessionId: string, message: string): Promise<DevinSessionSnapshot> {
+  async send(sessionId: string, message: string,beforeSend?:()=>void): Promise<DevinSessionSnapshot> {
     return parseResponse(await this.request(`/v3/organizations/${encodeURIComponent(this.profile.organizationId)}/sessions/${encodeURIComponent(sessionId)}/messages`, {
       method: "POST",
       body: JSON.stringify({ message }),
-    }));
+    },beforeSend));
   }
 
-  private async request(path: string, init: RequestInit = {}): Promise<Response> {
+  private async request(path: string, init: RequestInit = {},beforeSend?:()=>void,creation=false): Promise<Response> {
     let token:string;
-    try{token=await this.resolveCredential(this.profile.credentialRef);}catch(error){if(init.method==="POST"&&path.endsWith("/sessions"))throw new AdapterStartError("not-created","START_PREPARATION_FAILED","Devin credential is unavailable before creation");throw error;}
+    try{token=await this.resolveCredential(this.profile.credentialRef);}catch(error){if(creation)throw new AdapterStartError("not-created","START_PREPARATION_FAILED","Devin credential is unavailable before creation");throw error;}
+    if(creation)assertAdapterStartAdmission(beforeSend);else assertAdapterWriteAdmission(beforeSend);
     const response = await this.fetchImpl(`${(this.profile.apiBase ?? "https://api.devin.ai").replace(/\/$/, "")}${path}`, {
       ...init,
       headers: { authorization: `Bearer ${token}`, "content-type": "application/json", ...(init.headers ?? {}) },
@@ -128,12 +135,14 @@ export class DevinAdapter implements AgentAdapter {
   }
 
   async start(input: AdapterStartInput): Promise<AdapterSession> {
+    input=captureAdapterStartInput(input);
     const backendId=input.backendId??"devin-v3-api";
     const selection=freezeExecutionSelection(input.executionSelection,{profileId:this.profile.id,providerId:this.manifest.id,backendId,selection:false,reasoning:false});
     const now = new Date().toISOString();
     const session: AdapterSession = {
       id: startSessionId(this.store,input.sessionId),
       runId: input.runId,
+      ...(input.execution?{execution:input.execution}:{}),
       backendId: input.backendId ?? "devin-v3-api",
       workspacePath: input.workspacePath,
       state: "STARTING",
@@ -143,23 +152,26 @@ export class DevinAdapter implements AgentAdapter {
       updatedAt: now,
     };
     this.store.save(session);
-    const snapshot = await this.backend.create({ prompt: input.prompt ?? "Inspect the task and report readiness.", ...(this.profile.maxSessionAcu ? { maxSessionAcu: this.profile.maxSessionAcu } : {}) });
+    if(input.beforeSend&&this.backend.supportsFinalAdmission!==true)throw new AdapterStartError("not-created","NATIVE_CAPABILITY_UNVERIFIED","Async backend does not support final write admission");
+    const payload={prompt:input.prompt??"Inspect the task and report readiness.",...(this.profile.maxSessionAcu?{maxSessionAcu:this.profile.maxSessionAcu}:{})};
+    const snapshot=input.beforeSend?await this.backend.create(payload,input.beforeSend):await this.backend.create(payload);
     session.state=mapState(snapshot.status);session.providerSessionId=snapshot.sessionId;session.updatedAt=new Date().toISOString();
     this.snapshots.set(session.id, snapshot);
     this.store.save(session);
     return structuredClone(session);
   }
 
-  async send(sessionId: string, message: string): Promise<AdapterEvent> {
+  async send(sessionId: string, message: string,beforeSend?:()=>void): Promise<AdapterEvent> {
     const session = this.require(sessionId);
     if (!session.providerSessionId) throw new AdapterContractError("SESSION_NOT_RESUMABLE", "Devin session id is missing");
-    const snapshot = await this.backend.send(session.providerSessionId, message);
+    if(beforeSend&&this.backend.supportsFinalAdmission!==true)throw new AdapterContractError("NATIVE_CAPABILITY_UNVERIFIED","Async backend does not support final write admission");
+    const snapshot=beforeSend?await this.backend.send(session.providerSessionId,message,beforeSend):await this.backend.send(session.providerSessionId,message);
     this.snapshots.set(sessionId, snapshot);
     this.update(sessionId, { state: mapState(snapshot.status) });
     return { type: "session.message", sessionId, occurredAt: new Date().toISOString(), data: { acceptedCharacters: message.length, providerSessionId: snapshot.sessionId } };
   }
   async pause(): Promise<AdapterSession> { throw new AdapterContractError("UNSUPPORTED_CAPABILITY", "The Devin v3 API does not expose a pause operation"); }
-  async resume(sessionId: string): Promise<AdapterSession> { await this.send(sessionId, "Continue from the current session context."); return this.status(sessionId); }
+  async resume(sessionId: string,beforeSend?:()=>void): Promise<AdapterSession> { await this.send(sessionId, "Continue from the current session context.",beforeSend); return this.status(sessionId); }
   async cancel(): Promise<AdapterSession> { throw new AdapterContractError("UNSUPPORTED_CAPABILITY", "The verified Devin v3 session API does not expose a cancellation endpoint"); }
   async status(sessionId: string): Promise<AdapterSession> {
     const session = this.require(sessionId);

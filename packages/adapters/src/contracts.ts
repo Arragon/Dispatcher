@@ -78,7 +78,19 @@ export type AdapterStartOutcome={kind:"created";session:AdapterSession}|{kind:"n
 
 export interface AdapterStartInput {
   runId:string;sessionId?:string;workspacePath:string;backendId?:string;prompt?:string;
-  executionSelection?:ExecutionSelection;beforeSend?:()=>void;
+  executionSelection?:ExecutionSelection;beforeSend?:()=>void;execution?:AdapterSession["execution"];
+}
+
+/** Capture request facts before async preparation; never invent invocation counters. */
+export function captureAdapterStartInput(input:AdapterStartInput):AdapterStartInput {
+  const request={...input};
+  const e=input.execution;
+  if(e!==undefined){
+    if(!e||!Number.isSafeInteger(e.generation)||e.generation<1||!Number.isSafeInteger(e.attempt)||e.attempt<1||e.leaseId!==undefined&&(typeof e.leaseId!=="string"||!e.leaseId||e.leaseId.length>240||Array.from(e.leaseId).some(c=>c.charCodeAt(0)<32||c.charCodeAt(0)===127)))throw new AdapterStartError("not-created","INVALID_EXECUTION_CONTEXT","Invocation counters require the owning Run generation and attempt");
+    request.execution={generation:e.generation,attempt:e.attempt,...(e.leaseId!==undefined?{leaseId:e.leaseId}:{})};
+  }
+  if(input.executionSelection)request.executionSelection=structuredClone(input.executionSelection);
+  return request;
 }
 
 export interface AgentAdapter {
@@ -125,6 +137,10 @@ export function assertAdapterWriteAdmission(guard:(()=>void)|undefined):void {
     const code=(error as {code?:unknown})?.code;
     throw new AdapterAdmissionError(typeof code==="string"&&/^[A-Z][A-Z0-9_]{0,79}$/.test(code)?code:"NATIVE_WRITE_ADMISSION_REJECTED");
   }
+}
+
+export function assertAdapterStartAdmission(guard:(()=>void)|undefined):void {
+  try{assertAdapterWriteAdmission(guard);}catch(error){throw startPreparationFailure(error);}
 }
 
 export function localStartFailure(error:unknown):unknown {

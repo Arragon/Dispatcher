@@ -248,6 +248,16 @@ do not gain that proof. Existing consumers may omit the callback; full Controlle
 composition and qualification of other writers remain required before enabling
 native control transitions.
 
+Other built-in local writers use the same final callback. Structured CLI builds
+its arguments first, checks authority after credential/executable awaits and
+intent persistence, then invokes the backend. HTTP writers check after credential
+resolution, immediately before fetch. An injected async Devin backend must
+explicitly implement this callback contract before guarded calls are admitted;
+this internal ABI is not evidence of a native interaction capability.
+Adapter start snapshots supplied logical generation/attempt/lease facts without
+inventing defaults. Persisted execution metadata and execution references cannot
+be replaced or erased; continuation also compares them after awaited reads.
+
 Legacy canonical HTTP/Slack dispatch and owning-Runner reroute compile a new
 `legacy-config` ExecutionSelection from the selected adapter's actual invocation
 defaults. The projection carries backend/model request facts, with no native
