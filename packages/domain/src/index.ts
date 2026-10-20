@@ -1,3 +1,6 @@
+export * from "./session-interaction.js";
+export * from "./legacy-selection.js";
+import type { NativeBinding, ExecutionContextRef } from "./session-interaction.js";
 export * from "./profile-console.js";
 export * from "./repository-console.js";
 export * from "./delivery.js";
@@ -237,6 +240,8 @@ export interface Session {
   providerId: ProviderId;
   profileId: EntityId;
   nativeSessionId?: string;
+  nativeBinding?: NativeBinding;
+  executionRef?: ExecutionContextRef;
   resumable: boolean;
   createdAt: IsoDateTime;
   updatedAt: IsoDateTime;
@@ -250,6 +255,7 @@ export interface VerificationEvidence {
 
 export interface Run {
   executionSelection?: ExecutionSelection;
+  executionRef?: ExecutionContextRef;
   id: EntityId;
   taskId: EntityId;
   runnerId: EntityId;
