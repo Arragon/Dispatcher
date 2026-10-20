@@ -6,8 +6,10 @@ export const RESTORE_BARRIER_KIND = "database-restore-barrier";
 export const DATABASE_ARCHIVE_MARKER = ".dispatcher-archive";
 export const DATABASE_ARCHIVE_KIND = "database-backup-archive";
 export const CONVERGENCE_SCHEMA_NAME = "v3_native_convergence_writer_protocol";
-export function databaseWriterProtocol(db:DatabaseSync):1|2 {
+export const CONTROL_RUNTIME_SCHEMA_NAME = "guarded_control_runtime_writer_protocol";
+export function databaseWriterProtocol(db:DatabaseSync):1|2|3 {
   if(!hasTable(db,"schema_migrations"))return 1;
+  if(db.prepare("SELECT name FROM schema_migrations WHERE version=7").get()?.name===CONTROL_RUNTIME_SCHEMA_NAME)return 3;
   const migration=db.prepare("SELECT name FROM schema_migrations WHERE version=6").get();
   return migration?.name===CONVERGENCE_SCHEMA_NAME?2:1;
 }
@@ -42,7 +44,7 @@ export function assertDatabaseLocationOperational(path:string):void {
 
 // SQLite keeps these triggers when an older process ignores the migration ledger.
 // That process has no matching connection-local function, so DML fails closed.
-export function installWriterGate(db:DatabaseSync,protocol:1|2=1):void {
+export function installWriterGate(db:DatabaseSync,protocol:1|2|3=1):void {
   for(const row of db.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'").all()) {
     const table=String(row.name);
     if(!/^[a-z_]+$/.test(table))throw new DatabaseCompatibilityError("DATABASE_SCHEMA_UNSUPPORTED");
@@ -51,10 +53,16 @@ export function installWriterGate(db:DatabaseSync,protocol:1|2=1):void {
 }
 
 export function upgradeConvergenceWriterGate(db:DatabaseSync):void {
+  replaceWriterGate(db,2);
+}
+export function upgradeControlRuntimeWriterGate(db:DatabaseSync):void {
+  replaceWriterGate(db,3);
+}
+function replaceWriterGate(db:DatabaseSync,protocol:2|3):void {
   for(const row of db.prepare("SELECT name FROM sqlite_schema WHERE type='trigger' AND name GLOB 'writer_gate_*'").all()){
     const name=String(row.name);
     if(!/^writer_gate_[a-z_]+_(insert|update|delete)$/.test(name))throw new DatabaseCompatibilityError("DATABASE_SCHEMA_UNSUPPORTED");
     db.exec(`DROP TRIGGER ${name}`);
   }
-  installWriterGate(db,2);
+  installWriterGate(db,protocol);
 }

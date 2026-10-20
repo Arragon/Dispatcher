@@ -19,7 +19,7 @@ it("preserves old database records and frozen selection across restart without i
     expect(()=>upgraded.saveEntity("run","selected",{id:"selected",state:"ACTIVE"})).toThrowError(expect.objectContaining({code:"IMMUTABLE_RUN_SELECTION"}));
     upgraded.close();const restored=new DispatcherDatabase(path);
     expect(restored.getEntity("run","selected")).toEqual(json({id:"selected",state:"ACTIVE",modelSelection:selection}));
-    expect(restored.schemaVersion()).toBe(6);expect(restored.integrityCheck()).toBe(true);restored.close();
+    expect(restored.schemaVersion()).toBe(7);expect(restored.integrityCheck()).toBe(true);restored.close();
   }finally{rmSync(directory,{recursive:true,force:true});}
 });
 it("freezes decision input and consumption history with its Run reference",()=>{

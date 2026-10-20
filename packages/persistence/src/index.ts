@@ -3,7 +3,7 @@ import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { isDeepStrictEqual } from "node:util";
 import { InteractionStoreError, migrateNativeInteractions } from "./interaction-store.js";
-import { assertDatabaseLocationOperational, assertDatabaseOperational, assertDatabaseSchema, CONVERGENCE_SCHEMA_NAME, databaseWriterProtocol, installWriterGate, upgradeConvergenceWriterGate } from "./database-compatibility.js";
+import { assertDatabaseLocationOperational, assertDatabaseOperational, assertDatabaseSchema, CONVERGENCE_SCHEMA_NAME, CONTROL_RUNTIME_SCHEMA_NAME, databaseWriterProtocol, installWriterGate, upgradeConvergenceWriterGate, upgradeControlRuntimeWriterGate } from "./database-compatibility.js";
 
 export * from "./interaction-store.js";
 export * from "./database-compatibility.js";
@@ -274,6 +274,12 @@ export const migrations: readonly Migration[] = [
     sql: "",
     afterApply: database => upgradeConvergenceWriterGate(database.handle),
   },
+  {
+    version: 7,
+    name: CONTROL_RUNTIME_SCHEMA_NAME,
+    sql: "",
+    afterApply: database => upgradeControlRuntimeWriterGate(database.handle),
+  },
 ] as const;
 
 export class MigrationError extends Error {
@@ -421,6 +427,7 @@ export class DispatcherDatabase {
       try {
         this.transaction(() => {
           if(migration.version===6&&migration.name===CONVERGENCE_SCHEMA_NAME)this.writerProtocol=2;
+          if(migration.version===7&&migration.name===CONTROL_RUNTIME_SCHEMA_NAME)this.writerProtocol=3;
           this.handle.exec(migration.sql);
           migration.afterApply?.(this);
           this.handle

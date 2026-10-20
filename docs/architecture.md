@@ -182,6 +182,11 @@ epoch CAS, command receipts, observation checkpoints and identity diagnostics.
 Migration 6 (`v3_native_convergence_writer_protocol`) atomically raises the
 writer protocol to 2 so an already-open personal-local protocol-1 binary cannot
 erase v3 execution choices. Schema 4/5 retain their original SQL and semantics.
+Migration 7 (`guarded_control_runtime_writer_protocol`) raises the protocol to 3
+before Controller control integration: an already-open protocol-2 intermediate
+binary must not write through newly activated control records. Migration 6 is
+unchanged. Backups use the protocol of their own snapshot, and only the restored
+copy upgrades; rollback restores both SQLite and connection writer state.
 Connections register `dispatcher_writer_protocol()` before writes; upgraded
 triggers reject older writers. Nested repository operations use savepoints so
 a caught inner failure cannot partially commit native identity changes.

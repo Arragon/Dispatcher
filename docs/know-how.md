@@ -9,6 +9,9 @@
   control but not v3 immutable selections. Backups must use the protocol from
   their own schema; upgrading only a restored copy must not change the source.
   Rolling back an outer transaction must also restore connection writer state.
+- Control runtime schema 7 requires protocol 3. Protocol 2 intermediate binaries
+  do not guard all control paths; an already-open connection must be fenced as
+  well as rejecting an old binary at startup. Keep migrations 4/5/6 unchanged.
 - A caught failure inside an outer SQLite transaction needs a savepoint to
   undo partial native binding/projection writes. Merely detecting an existing
   transaction and running the inner callback is not atomic.

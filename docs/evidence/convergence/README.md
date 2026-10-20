@@ -705,3 +705,30 @@ guard all control paths. Preserve schema 4/5/6; use an additive atomic migration
 and verify old-writer refusal/rollback/backup compatibility. Rollback for this
 unit is 0249a88; original workspaces/data remain intact. Official quota checked
 after the unit and recorded in Linear.
+
+
+## CV-04 follow-up / CV-08g control-runtime minimum writer
+
+Additive schema 7 raises the minimum connection writer to protocol 3 before
+activating Controller controls. Protocol 2 intermediate runtimes know v3 choice
+immutability but lack complete control admission. Original schema 4/5/6 SQL and
+semantics remain unchanged. Both old-binary startup and already-open protocol-2
+writes reject. A failed migration or outer rollback restores the SQL gate and
+connection-local protocol. Snapshot backup uses its own schema protocol; schema
+3/5/6 archives restore into a schema-7 copy behind reconciliation barriers.
+Source databases and live user data are not upgraded by these tests.
+
+RED: three protocol-2 fencing/rollback cases failed at schema 6. GREEN: targeted
+persistence/recovery suite 8 files/69 tests. Existing default-schema assertions
+were intentionally advanced from 6 to 7; no behavior/rollback assertion was
+removed. A schema-6 backup case was added. Default `mise exec -- pnpm check`
+passes 113 files/1127 tests (44.47s test phase). Logs:
+`/tmp/dispatcher-cv08-control-writer-red.log`,
+`/tmp/dispatcher-cv08-control-writer-all-green.log`,
+`/tmp/dispatcher-cv08-control-writer-check.log`.
+
+Controller startup admission remains closed for existing native controls. This
+migration provides writer exclusion, not a claim that runtime composition or
+native recovery is complete. Rollback uses the previous binary with its own
+matching backup; never downgrade schema or remove triggers. No live migration
+was performed. Official quota checked after this unit; recorded in Linear.
