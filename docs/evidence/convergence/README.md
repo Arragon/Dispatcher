@@ -68,7 +68,7 @@ final convergence verification.
 | CV-06 | Controller nonblocking scoped collection/terminal retry verified at 115/1169; origin/attempt/time and account-quota qualification/UI pending |
 | CV-08 | continuation/worker/delivery/failure/cancel/pause Guard, failure priority drain, stop audit and read-only local start recovery qualification verified at 115/1204; ordinary local start composed; schema-8 writer increment verified at 116/1208; known-unsent cancellation/publication journal recovery verified at 116/1215; general guarded local recovery verified at 116/1218; captured reroute stage Guard and default Generic drain verified at 116/1224; shared guarded replacement startup and original owned-CLI cleanup verified at 116/1229; legacy/remote/qualified native recovery remain pending |
 | CV-12 | pending complete selection/control integration |
-| macOS service / LP / backup | MAC-01a CLI data-directory ownership verified at 117/1237; MAC-01b lifecycle/fixed definition verified at 117/1251; MAC-01c read-only doctor verified at 118/1264; MAC-01d structured logs/safe tail verified at 119/1273; early stdio/release staging/upgrade/recovery and real evidence pending |
+| macOS service / LP / backup | MAC-01a CLI data-directory ownership verified at 117/1237; MAC-01b lifecycle/fixed definition verified at 117/1251; MAC-01c read-only doctor verified at 118/1264; MAC-01d structured logs/safe tail verified at 119/1273; MAC-01e offline DB backup/restore preparation verified at 121/1281; early stdio/staging/upgrade/qualified restore activation and real evidence pending |
 | CV-07/09/10/11 | pending contracts/guards |
 | CV-13/14 and original Gates | pending implementation and evidence |
 
@@ -1506,4 +1506,46 @@ Release staging, upgrade/rollback/recovery and real service Gates remain pending
 R-006 wording corrected after repository inspection: persistence backup/restore
 functions exist; Controller HTTP backup/restore routes are not currently wired.
 No live data/service changed. Rollback: 1eb4056 with matching schema-8 backup.
+Official quota checked after unit and recorded in Linear.
+
+
+## MAC-01e offline database backup and restore preparation
+
+Add CLI backup/restore using the existing persistence archive/checksum/manifest/
+barrier functions. Backup validates an existing source, takes its data-directory
+ownership, uses the same stable private main/WAL copy as doctor (backup limit
+2 GiB/file), then creates a verified archive. It explicitly reports database-only,
+secretStoreIncluded=false and nativeStorageIncluded=false. Source schema/bytes
+remain unchanged. Restore defaults to preview; --execute --confirm prepares only
+a new target behind filesystem + database barriers. It does not reconcile, clear
+UNKNOWN, start Controller or replay external effects.
+
+Move the existing instance-lock primitive into persistence so both CLI and restore
+share one implementation. New-target restore must win that lock after mkdir and
+before any staging/barrier write. If another Controller wins the interval, no
+records or marker overwrite its files. No migration entry changes; the complete
+migration-array segment is byte-identical to 6c37615 (checksum printed in local
+verification output). Snapshot copying is factored only for its two real readers.
+
+Seven app/actual CLI cases cover old-schema/hash preservation, archive refusal by
+normal binary, active-owner rejection/no bundle creation, missing-source no-init,
+preview/confirmation, copy-only upgrade + both barriers, original-directory
+refusal and checksum tampering. A separate persistence boundary race confirms
+competing ownership and preserves its uncommitted file. Initial race test failed
+to enter its hook: the target was /var while newDirectory canonicalized it to
+/private/var. Move it to the persistence source test, canonicalize the fixture
+and retain an explicit ownership-installed assertion; no protection assertion
+was removed. CLI subprocess tests exercise the compiled consumer separately.
+
+Target passes 6 files/51 tests. Default `mise exec -- pnpm check` passes
+121 files/1281 tests (41.71s test phase), including original native migration/
+writer/rollback cases; diff check passes. Logs: /tmp/dispatcher-mac01e-red.log,
+/tmp/dispatcher-mac01e-race-green.log, /tmp/dispatcher-mac01e-final-target.log,
+/tmp/dispatcher-mac01e-check.log. No new dependency, schema downgrade, trigger
+removal, test timeout/skip/suppression or live service/data mutation.
+
+MAC-01/R-006/R-013 remain open for qualified restore reconciliation/activation,
+full native/credential recovery, early raw stdio, stable staging/upgrade/rollback
+and real macOS drill. A prepared blocked copy is not A acceptance. Rollback:
+6c37615 with its matching schema-8 backup; retain all source archives and barriers.
 Official quota checked after unit and recorded in Linear.

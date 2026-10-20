@@ -3,6 +3,7 @@ import { closeSync, constants, fstatSync, fsyncSync, linkSync, lstatSync, mkdirS
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { backup, DatabaseSync } from "node:sqlite";
 import { isDeepStrictEqual } from "node:util";
+import {acquireInstanceLock} from "./instance-lock.js";
 import { DispatcherDatabase, migrations } from "./index.js";
 import { assertDatabaseSchema, databaseWriterProtocol, DATABASE_ARCHIVE_KIND, DATABASE_ARCHIVE_MARKER, DatabaseCompatibilityError, hasTable, RESTORE_BARRIER_KIND, restoreReconciliationRequired } from "./database-compatibility.js";
 
@@ -98,10 +99,13 @@ export function restoreDispatcherBackup(bundlePath:string,targetDirectory:string
     if(!isDeepStrictEqual(digest(fd),{sha256:manifest.sha256,bytes:manifest.bytes}))fail("BACKUP_CHECKSUM_MISMATCH");const inspection=inspectDispatcherDatabase(source);if(!inspection.integrity||inspection.schemaVersion!==manifest.schemaVersion||!isDeepStrictEqual(inspection.inventory,manifest.inventory))fail("BACKUP_INTEGRITY_FAILED");
     // Inspection cannot authorize replay: effects may have happened after capture.
     const plan:DispatcherRestorePlan={version:1,applied:false,schemaVersion:manifest.schemaVersion,snapshotSha256:manifest.sha256,inventory:manifest.inventory,reconciliationRequired:true};if(!options.execute)return plan;
-    const directory=newDirectory(targetDirectory),target=join(directory,".restore-incomplete.sqlite");writeFileSync(join(directory,"dispatcher.sqlite.restore-pending"),'{"version":1}\n',{flag:"wx",mode:0o600});syncFile(join(directory,"dispatcher.sqlite.restore-pending"));syncDirectory(directory);syncDirectory(dirname(directory));const output=openSync(target,"wx",0o600);try{if(!isDeepStrictEqual(digest(fd,output),{sha256:manifest.sha256,bytes:manifest.bytes}))fail("BACKUP_CHECKSUM_MISMATCH");fsyncSync(output);}finally{closeSync(output);}
+    const directory=newDirectory(targetDirectory),ownership=acquireInstanceLock(directory);
+    try{
+    const target=join(directory,".restore-incomplete.sqlite");writeFileSync(join(directory,"dispatcher.sqlite.restore-pending"),'{"version":1}\n',{flag:"wx",mode:0o600});syncFile(join(directory,"dispatcher.sqlite.restore-pending"));syncDirectory(directory);syncDirectory(dirname(directory));const output=openSync(target,"wx",0o600);try{if(!isDeepStrictEqual(digest(fd,output),{sha256:manifest.sha256,bytes:manifest.bytes}))fail("BACKUP_CHECKSUM_MISMATCH");fsyncSync(output);}finally{closeSync(output);}
     // Only this private staging copy loses the archive marker. The final filename
     // remains blocked by the durable restore-pending file throughout preparation.
     const staging=new DatabaseSync(target);try{const writerProtocol=databaseWriterProtocol(staging);staging.function("dispatcher_writer_protocol",{deterministic:true},()=>writerProtocol);staging.prepare("DELETE FROM entities WHERE kind=?").run(DATABASE_ARCHIVE_KIND);}finally{staging.close();}
     const restored=new DispatcherDatabase(target);try{restored.saveEntity(RESTORE_BARRIER_KIND,"active",{version:1,state:"RECONCILIATION_REQUIRED",snapshotSha256:manifest.sha256,capturedAt:manifest.capturedAt,restoredAt:new Date().toISOString()});restored.checkpoint();}finally{restored.close();}syncFile(target);linkSync(target,join(directory,"dispatcher.sqlite"));unlinkSync(target);syncDirectory(directory);syncDirectory(dirname(directory));return {...plan,applied:true};
+    }finally{ownership.release();}
   }finally{closeSync(fd);}
 }

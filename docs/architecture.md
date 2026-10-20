@@ -33,7 +33,9 @@ constructing Controller or opening the business database for offline config
 commands. Its canonical data-directory lock remains held through verified
 shutdown; process exit releases kernel ownership, without PID expiry or deleting
 lock files. This protects CLI processes, not independently embedded library
-instances or an older binary that does not implement the protocol.
+instances or an older binary that does not implement the protocol. This shared
+directory ownership primitive now lives in persistence; restore preparation also
+must win it on its new target before writing staging files or restore barriers.
 
 The per-user launchd definition binds absolute Node/CLI/data/log paths and a
 working directory. Abnormal exits are throttled; explicit stop disables the
@@ -54,6 +56,11 @@ that copy enters SQLite inspection/recovery inventory; no source initialization,
 migration, journal recovery, lease restoration or provider work occurs. A busy,
 changed, future-schema or restore/archive source stays unresolved. Reports use
 aggregate metadata and never establish execution readiness.
+The offline database backup CLI shares that stable-copy reader while holding
+directory ownership. It reuses the existing archive/checksum/restore functions:
+preview creates no target, execution prepares only a new directory behind both
+restore barriers. Credentials and native provider storage stay outside this
+database-only artifact; no reconciliation or runtime activation is implied.
 
 The personal MVP adds one Controller-owned `dispatchTask` path shared by HTTP
 and the confirmed operator-only `task.dispatch` semantic tool. Slack task and

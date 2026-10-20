@@ -163,6 +163,27 @@ for stop/status, while new definitions add the fixed runtime log path. Early
 pre-import/native stdout/stderr retention is still pending; structured-log bounds
 alone do not complete MAC-01's full log Gate.
 
+## Offline database backup and restore preparation
+
+Stop the owning Controller before backup. These commands capture only SQLite
+data, with private archive permissions and checksum/inventory verification;
+Keychain/encrypted SecretStore files and provider native homes are separate.
+
+```bash
+pnpm dispatcher -- backup --data-dir /absolute/data --out /absolute/new-backup-bundle
+pnpm dispatcher -- restore --bundle /absolute/new-backup-bundle --target-data-dir /absolute/new-restored-data
+pnpm dispatcher -- restore --bundle /absolute/new-backup-bundle --target-data-dir /absolute/new-restored-data --execute --confirm
+```
+
+Backup holds the data-directory lock and inspects a stable private main/WAL copy,
+each capped at 2 GiB, preserving source bytes and schema. Restore defaults to
+preview, rejects an existing target, and execution preserves both filesystem and
+database reconciliation barriers. Only its new staging copy may upgrade schema.
+It never downgrades or removes source triggers. A target won by another owner is
+left intact. `applied: true` means a blocked copy was prepared; it cannot start
+Controller yet. Qualified reconciliation/activation, native/credential recovery
+and the real macOS recovery drill remain pending. Do not remove barriers manually.
+
 ## Native Remote Runner
 
 Build the Runner CLI, then inspect the platform-specific plan before applying

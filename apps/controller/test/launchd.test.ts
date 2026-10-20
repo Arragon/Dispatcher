@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { installLaunchAgent, launchdPlist,readLaunchAgent,statusLaunchAgent, startLaunchAgent,stopLaunchAgent,restartLaunchAgent,uninstallLaunchAgent,LaunchctlError,type LaunchctlExecutor } from "../src/launchd.js";
-import {acquireInstanceLock} from "../src/instance-lock.js";
+import {acquireInstanceLock} from "@dispatcher/persistence";
 
 const directories: string[] = [];
 afterEach(() => {

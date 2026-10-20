@@ -9,7 +9,7 @@ import {fileURLToPath} from "node:url";
 import {afterEach,describe,expect,it,vi} from "vitest";
 import {DispatcherDatabase,migrations} from "@dispatcher/persistence";
 import {inspectLocalController} from "../src/doctor.js";
-import {acquireInstanceLock} from "../src/instance-lock.js";
+import {acquireInstanceLock} from "@dispatcher/persistence";
 
 const roots:string[]=[];
 const fault=vi.hoisted(()=>({active:false,calls:0}));

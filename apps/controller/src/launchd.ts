@@ -4,7 +4,7 @@ import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
-import {acquireInstanceLock} from "./instance-lock.js";
+import {acquireInstanceLock} from "@dispatcher/persistence";
 import {readControllerLogTail} from "./controller-logs.js";
 
 export const LAUNCHD_LABEL = "dev.dispatcher.controller";

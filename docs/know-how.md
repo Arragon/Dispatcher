@@ -2,6 +2,12 @@
 
 ## M0–M10 invariants
 
+- A new restore directory must win the same ownership primitive as Controller
+  before copying records or writing its barrier. If another owner wins the
+  mkdir-to-lock interval, leave its files intact. On macOS, canonicalize /var and
+  /private/var when injecting a directory-boundary race; assert that the competing
+  owner was actually installed before interpreting the test result.
+
 - Log retention owns an explicit stream family, not every *.log in a directory.
   Keep foreign diagnostics intact and bound even one retained file when the total
   budget is smaller than the per-file budget. Structured consumers must write

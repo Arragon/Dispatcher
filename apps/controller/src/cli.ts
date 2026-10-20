@@ -16,9 +16,10 @@ import { installLaunchAgent, LAUNCHD_LABEL,readLaunchAgent,startLaunchAgent,stop
 import { normalizeCliArguments } from "./cli-args.js";
 import { OWNER_TOKEN_REFERENCE } from "./control-auth.js";
 import { ControllerService } from "./service.js";
-import {acquireInstanceLock} from "./instance-lock.js";
+import {acquireInstanceLock} from "@dispatcher/persistence";
 import {inspectLocalController} from "./doctor.js";
 import {createControllerLogDestination,readControllerLogTail} from "./controller-logs.js";
+import {createLocalDatabaseBackup,restoreLocalDatabase} from "./local-backups.js";
 let controllerLog:{write(message:string):void}|undefined;
 function serviceFailure(code:string):void {
   if(controllerLog)controllerLog.write(JSON.stringify({level:50,time:Date.now(),msg:code})+"\n");else console.error(code);
@@ -150,13 +151,21 @@ async function main(): Promise<void> {
   const command = args[0] ?? "serve";
   if (command === "serve") await serve(args);
   else if(command==="doctor")await doctor(args);
+  else if(command==="backup"){
+    const out=flag(args,"--out");if(!out)throw Error("Use backup --data-dir <directory> --out <new-bundle-directory>");
+    console.log(JSON.stringify(await createLocalDatabaseBackup(dataDirectory(args),out),null,2));
+  }
+  else if(command==="restore"){
+    const bundle=flag(args,"--bundle"),target=flag(args,"--target-data-dir");if(!bundle||!target)throw Error("Use restore --bundle <directory> --target-data-dir <new-directory> [--execute --confirm]");
+    console.log(JSON.stringify(restoreLocalDatabase(bundle,target,{execute:args.includes("--execute"),confirmed:args.includes("--confirm")}),null,2));
+  }
   else if (command==="config"){
     const ownership=acquireInstanceLock(dataDirectory(args));
     try{await configCommand(args);}finally{ownership.release();}
   }
   else if (command === "auth") await authCommand(args);
   else if (["install", "start", "stop", "restart", "status", "logs", "uninstall"].includes(command)) await serviceCommand(command, args);
-  else throw new Error("Usage: dispatcher serve|config|auth|install|start|stop|restart|status|doctor|logs|uninstall");
+  else throw new Error("Usage: dispatcher serve|config|auth|install|start|stop|restart|status|doctor|logs|backup|restore|uninstall");
 }
 
 main().catch((error: unknown) => {

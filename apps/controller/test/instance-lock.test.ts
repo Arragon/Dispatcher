@@ -5,13 +5,13 @@ import {tmpdir} from "node:os";
 import {join} from "node:path";
 import {fileURLToPath} from "node:url";
 import {afterEach,describe,expect,it} from "vitest";
-import {acquireInstanceLock,INSTANCE_LOCK_FILE} from "../src/instance-lock.js";
+import {acquireInstanceLock,INSTANCE_LOCK_FILE} from "@dispatcher/persistence";
 
 const roots:string[]=[],children:ChildProcess[]=[];
 afterEach(async()=>{for(const child of children.splice(0)){if(child.exitCode===null&&child.signalCode===null){child.kill("SIGKILL");await once(child,"exit");}}for(const root of roots.splice(0))rmSync(root,{recursive:true,force:true});});
 function root(){const value=mkdtempSync(join(tmpdir(),"dispatcher-instance-"));roots.push(value);return value;}
 async function owner(directory:string){
-  const module=fileURLToPath(new URL("../src/instance-lock.ts",import.meta.url));
+  const module=fileURLToPath(new URL("../../../packages/persistence/src/instance-lock.ts",import.meta.url));
   const child=spawn(process.execPath,["--import","tsx","--input-type=module","-e",`import {acquireInstanceLock} from ${JSON.stringify(module)}; const lock=acquireInstanceLock(process.argv[1]); process.send('locked'); setInterval(()=>{},1000); process.on('message',()=>{lock.release();process.exit(0)});`,directory],{stdio:["ignore","pipe","pipe","ipc"]});children.push(child);await Promise.race([once(child,"message"),once(child,"exit").then(()=>{throw Error("Lock child failed");})]);return child;
 }
 describe("Controller data-directory ownership",()=>{
@@ -29,7 +29,7 @@ describe("Controller data-directory ownership",()=>{
     const directory=root(),lock=acquireInstanceLock(directory);
     try{
       expect(()=>acquireInstanceLock(directory)).toThrow(/DATA_DIRECTORY_IN_USE/);
-      const module=fileURLToPath(new URL("../src/instance-lock.ts",import.meta.url));
+      const module=fileURLToPath(new URL("../../../packages/persistence/src/instance-lock.ts",import.meta.url));
       const probe=spawnSync(process.execPath,["--import","tsx","--input-type=module","-e",`import {acquireInstanceLock} from ${JSON.stringify(module)}; try{acquireInstanceLock(process.argv[1]).release();process.exitCode=2}catch(error){if(!error.message.startsWith('DATA_DIRECTORY_IN_USE'))throw error}`,directory],{timeout:5000});expect(probe.status,probe.stderr.toString()).toBe(0);
     }finally{lock.release();}
   });

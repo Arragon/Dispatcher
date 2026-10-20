@@ -8,6 +8,7 @@ import { assertDatabaseLocationOperational, assertDatabaseOperational, assertDat
 export * from "./interaction-store.js";
 export * from "./database-compatibility.js";
 export * from "./backup.js";
+export * from "./instance-lock.js";
 
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
