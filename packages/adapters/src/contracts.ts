@@ -64,7 +64,7 @@ export interface AdapterResult {
 export interface AgentAdapter {
   readonly manifest: AdapterManifest;
   readonly supportsExecutionSelection?: boolean;
-  modelCatalog?(context: ModelCatalogContext & {workspacePath:string}): Promise<AccountModelCatalog>;
+  modelCatalog?(context: ModelCatalogContext & {workspacePath:string;signal?:AbortSignal}): Promise<AccountModelCatalog>;
   start(input: { runId: string; workspacePath: string; backendId?: string; prompt?: string; executionSelection?: ExecutionSelection }): Promise<AdapterSession>;
   send(sessionId: string, message: string): Promise<AdapterEvent>;
   pause(sessionId: string): Promise<AdapterSession>;

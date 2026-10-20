@@ -275,11 +275,11 @@ export class StructuredCliAdapter implements AgentAdapter {
     this.store = store;
   }
 
-  async modelCatalog(context: ModelCatalogContext & { workspacePath: string }): Promise<AccountModelCatalog> {
+  async modelCatalog(context: ModelCatalogContext & { workspacePath: string;signal?:AbortSignal }): Promise<AccountModelCatalog> {
     if (!this.definition.catalogProvider) return { profileId: context.profileId, runnerId: context.runnerId, providerId: this.manifest.id, backendId: this.manifest.backends[0]!.id, contextFingerprint: "unsupported", revision: "unsupported", fetchedAt: new Date().toISOString(), freshness: "unverified", source: "cli-query", selectionSupport: "unsupported", entries: [], failure: { code: "MODEL_CATALOG_UNSUPPORTED", message: "This native CLI does not expose a qualified model catalog and per-run selection" } };
-    if (this.definition.catalogProvider === "opencode") return readOpenCodeCatalog({ profile: this.profile, executable: await this.executable(), context, workspacePath: context.workspacePath });
+    if (this.definition.catalogProvider === "opencode") return readOpenCodeCatalog({ profile: this.profile, executable: await this.executable(), context, workspacePath: context.workspacePath,...(context.signal?{signal:context.signal}:{}) });
     const environment = await this.environment();
-    return readNativeCliCatalog({ provider: this.definition.catalogProvider, profile: this.profile, executable: await this.executable(), context, workspacePath: context.workspacePath, ...(environment ? { environment } : {}) });
+    return readNativeCliCatalog({ provider: this.definition.catalogProvider, profile: this.profile, executable: await this.executable(), context, workspacePath: context.workspacePath, ...(environment ? { environment } : {}),...(context.signal?{signal:context.signal}:{}) });
   }
 
   async start(input: { runId: string; workspacePath: string; backendId?: string; prompt?: string; executionSelection?: ExecutionSelection }): Promise<AdapterSession> {

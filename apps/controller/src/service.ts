@@ -719,10 +719,12 @@ export class ControllerService {
   async stop(): Promise<void> {
     if (this.stopping) return this.stopping;
     this.stopping = (async () => {
+      this.catalogShutdown.abort();
       await this.directorySelections.close();
       await this.lifecycle.stop();
       await Promise.allSettled([...this.remoteLifecycleJobs.values()]);
       await this.profileProbes.drain();
+      await this.drainCatalogReads();
       if (this.listening) await this.app.close();
       else await this.app.close();
       this.events.close();
@@ -1990,6 +1992,33 @@ export class ControllerService {
     });
   }
   private readonly catalogReads=new Map<string,Promise<AccountModelCatalog>>();
+  private readonly nativeCatalogReads=new Set<Promise<AccountModelCatalog>>();
+  private readonly catalogShutdown=new AbortController();
+  private catalogCleanupUnknown=false;
+  private async ownedCatalogRead(read:()=>Promise<AccountModelCatalog>):Promise<AccountModelCatalog>{
+    const signal=this.catalogShutdown.signal;
+    if(signal.aborted)throw new PublicationError("CATALOG_CLOSED",409,"Native catalog admission is closed");
+    const operation=Promise.resolve().then(read);this.nativeCatalogReads.add(operation);
+    void operation.then(()=>{this.nativeCatalogReads.delete(operation);},error=>{
+      this.nativeCatalogReads.delete(operation);
+      if(error instanceof AdapterContractError&&["MODEL_CATALOG_CLEANUP_UNKNOWN","NATIVE_CATALOG_CLEANUP_UNKNOWN"].includes(error.code))this.catalogCleanupUnknown=true;
+    });
+    let cancel:()=>void=()=>undefined;
+    const closed=new Promise<never>((_,reject)=>{cancel=()=>reject(new PublicationError("CATALOG_CLOSED",409,"Native catalog admission is closed"));signal.addEventListener("abort",cancel,{once:true});if(signal.aborted)cancel();});
+    try{return await Promise.race([operation,closed]);}finally{signal.removeEventListener("abort",cancel);}
+  }
+  private async drainCatalogReads():Promise<void>{
+    this.catalogShutdown.abort();let timer:ReturnType<typeof setTimeout>|undefined;
+    try{
+      const drained=await Promise.race([Promise.allSettled([...this.nativeCatalogReads]).then(()=>true),new Promise<boolean>(resolve=>{timer=setTimeout(()=>resolve(false),3000);})]);
+      const prior=this.database.getEntity<JsonValue>("catalog-lifecycle","shutdown") as {state?:string}|undefined;
+      if(!drained||this.catalogCleanupUnknown||prior?.state==="unknown"){
+        this.database.saveEntity("catalog-lifecycle","shutdown",{state:"unknown",pendingReads:this.nativeCatalogReads.size,observedAt:this.now().toISOString(),reasonCode:"CATALOG_CLEANUP_UNKNOWN"});
+        this.app.log.warn({pendingReads:this.nativeCatalogReads.size},"Native catalog cleanup remains unconfirmed");
+      }
+    }finally{if(timer)clearTimeout(timer);}
+  }
+
   private async remoteRequest(runnerId:string,payload:CommandPayload,run?:Run,messageId?:string):Promise<unknown> {
     const configured=this.configuration.current().config.runners.find(runner=>runner.id===runnerId&&runner.mode==="remote"),runner=this.runners.list().find(runner=>runner.id===runnerId);
     if(!configured||!runner||!["ONLINE","DEGRADED","DRAINING"].includes(runner.state)||!runner.capabilities.includes(NATIVE_EXECUTION_CAPABILITY)||!this.remoteRunnerServer.isConnected(runnerId))throw new AdapterContractError("REMOTE_EXECUTION_UNAVAILABLE","Owning Runner is offline or has no qualified native execution capability");
@@ -2192,10 +2221,11 @@ export class ControllerService {
     try {
       const run=remote&&workspacePath?this.database.listEntities<JsonValue>("run").map(value=>value as unknown as Run).find(run=>run.profileId===profileId&&run.worktree===workspacePath&&!isTerminalRunState(run.state)):undefined;
       if(remote&&workspacePath&&!run)throw new AdapterContractError("RUN_CONTEXT_UNAVAILABLE","Remote worktree does not have matching canonical Run authority");
-      catalog=remote?remoteCatalog(await this.remoteRequest(profile.runnerId,{type:"native.model_catalog",profileId,repositoryId,reason,...(run?{runId:run.id}:{})},run),{profileId,runnerId:profile.runnerId,providerId:profile.provider}):await adapter!.modelCatalog!({...context,workspacePath:workspacePath??repository.root});
+      catalog=await this.ownedCatalogRead(()=>remote?this.remoteRequest(profile.runnerId,{type:"native.model_catalog",profileId,repositoryId,reason,...(run?{runId:run.id}:{})},run).then(value=>remoteCatalog(value,{profileId,runnerId:profile.runnerId,providerId:profile.provider})):adapter!.modelCatalog!({...context,workspacePath:workspacePath??repository.root,signal:this.catalogShutdown.signal}));
       if(catalog.profileId!==profileId||catalog.runnerId!==profile.runnerId||catalog.providerId!==profile.provider||!adapter?.manifest.backends.some(backend=>backend.id===catalog.backendId))throw new AdapterContractError("NATIVE_CONTEXT_CHANGED","Native catalog returned a different account or backend context");
     }
     catch (error) {
+      if(error instanceof AdapterContractError&&["MODEL_CATALOG_CLEANUP_UNKNOWN","NATIVE_CATALOG_CLEANUP_UNKNOWN"].includes(error.code))this.catalogCleanupUnknown=true;
       catalog=error instanceof AdapterContractError&&(remote||error.code==="REMOTE_RESULT_INVALID")?fallback(error.code,error.message):error instanceof AdapterContractError && error.code==="NATIVE_VERSION_UNSUPPORTED" ? {...fallback(error.code,"Installed native version does not support the qualified catalog interface"),selectionSupport:"unsupported"} : error instanceof AdapterContractError && error.code==="NATIVE_CONTEXT_CHANGED" ? fallback(error.code,"Native account or configuration changed during the query; refresh before reviewing") : fallback("NATIVE_CATALOG_UNAVAILABLE","Native catalog could not be read; explicit selection is unavailable");
     }
     if(this.stopping)throw new PublicationError("CATALOG_CLOSED",409,"Native catalog admission is closed");

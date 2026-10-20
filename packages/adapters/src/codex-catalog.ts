@@ -8,7 +8,7 @@ import { AdapterContractError } from "./contracts.js";
 import type { CodexProfileConfig } from "./codex.js";
 export interface CodexReadRequest {
   executable: string; codexHome: string; workspacePath: string;
-  method: "model/list" | "account/read"; params: Record<string,unknown>;
+  method: "model/list" | "account/read"; params: Record<string,unknown>;signal?:AbortSignal;
 }
 const digest=(value:unknown)=>createHash("sha256").update(JSON.stringify(value)).digest("hex");
 const invalid=()=>new AdapterContractError("INVALID_MODEL_CATALOG","Native model catalog is malformed");
@@ -18,16 +18,20 @@ function text(value:unknown):string{if(typeof value!=="string"||!value||value.le
 /** Each connection is restricted to read-only RPCs and is reaped before returning. */
 export function readCodexNative(input:CodexReadRequest):Promise<unknown>{
   if(!["model/list","account/read"].includes(input.method))return Promise.reject(new AdapterContractError("READ_ONLY_QUERY_REQUIRED","Only native read-only queries are allowed"));
+  if(input.signal?.aborted)return Promise.reject(new AdapterContractError("MODEL_CATALOG_CANCELLED","Native catalog read was cancelled"));
   return new Promise((resolve,reject)=>{
-    const child=spawn(input.executable,["app-server","--stdio"],{cwd:input.workspacePath,shell:false,stdio:["pipe","pipe","pipe"],env:{...process.env,PWD:input.workspacePath,CODEX_HOME:input.codexHome}});
+    const child=spawn(input.executable,["app-server","--stdio"],{cwd:input.workspacePath,shell:false,detached:process.platform!=="win32",stdio:["pipe","pipe","pipe"],env:{...process.env,PWD:input.workspacePath,CODEX_HOME:input.codexHome}});
     const lines=createInterface({input:child.stdout});let ending=false,result:unknown,error:Error|undefined,bytes=0;let kill:ReturnType<typeof setTimeout>|undefined;
-    const finish=(failure?:Error)=>{if(ending)return;ending=true;error=failure;clearTimeout(timeout);lines.close();child.stdin.end();child.kill("SIGTERM");kill=setTimeout(()=>child.kill("SIGKILL"),2000);};
+    const signal=(value:NodeJS.Signals)=>{try{if(process.platform!=="win32"&&child.pid)process.kill(-child.pid,value);else child.kill(value);}catch{/* Owned process already exited. */}};
+    const finish=(failure?:Error)=>{if(ending)return;ending=true;error=failure;clearTimeout(timeout);lines.close();child.stdin.end();signal("SIGTERM");kill=setTimeout(()=>signal("SIGKILL"),2000);};
     const fail=()=>finish(new AdapterContractError("NATIVE_QUERY_FAILED","Native read-only query failed or timed out"));
     const timeout=setTimeout(fail,30000);
+    const cancelled=()=>finish(new AdapterContractError("MODEL_CATALOG_CANCELLED","Native catalog read was cancelled"));
+    input.signal?.addEventListener("abort",cancelled,{once:true});if(input.signal?.aborted)cancelled();
     const send=(value:unknown)=>{if(!ending)child.stdin.write(`${JSON.stringify(value)}\n`);};
     child.stdout.on("data",(chunk:Buffer)=>{bytes+=chunk.length;if(bytes>4194304)fail();});child.stderr.on("data",()=>undefined);
     child.stdin.on("error",fail);child.on("error",fail);
-    child.on("close",()=>{clearTimeout(timeout);if(kill)clearTimeout(kill);lines.close();if(error||result===undefined)reject(error??new AdapterContractError("NATIVE_QUERY_FAILED","Native query exited before a response"));else resolve(result);});
+    child.on("close",()=>{input.signal?.removeEventListener("abort",cancelled);signal("SIGKILL");clearTimeout(timeout);if(kill)clearTimeout(kill);lines.close();if(error||result===undefined)reject(error??new AdapterContractError("NATIVE_QUERY_FAILED","Native query exited before a response"));else resolve(result);});
     let initialized=false;
     lines.on("line",line=>{
       if(ending)return;if(line.length>1048576){fail();return;}
@@ -52,9 +56,9 @@ export function normalizeCodexCatalog(value:unknown,context:ModelCatalogContext,
   }).sort((a,b)=>a.id.localeCompare(b.id));
   return {profileId:context.profileId,runnerId:context.runnerId,providerId:"codex",backendId:"codex-exec-json",contextFingerprint,revision:digest({contextFingerprint,entries}),fetchedAt,freshness:"native-fresh",source:"native-rpc",selectionSupport:"explicit",entries};
 }
-export async function readCodexCatalog(input:{profile:CodexProfileConfig;context:ModelCatalogContext;workspacePath:string;request?:(input:CodexReadRequest)=>Promise<unknown>}):Promise<AccountModelCatalog>{
+export async function readCodexCatalog(input:{profile:CodexProfileConfig;context:ModelCatalogContext;workspacePath:string;signal?:AbortSignal;request?:(input:CodexReadRequest)=>Promise<unknown>}):Promise<AccountModelCatalog>{
   const request=input.request??readCodexNative;
-  const query=(method:CodexReadRequest["method"],params:Record<string,unknown>)=>request({executable:input.profile.executable??"codex",codexHome:input.profile.codexHome,workspacePath:input.workspacePath,method,params});
+  const query=(method:CodexReadRequest["method"],params:Record<string,unknown>)=>{if(input.signal?.aborted)throw new AdapterContractError("MODEL_CATALOG_CANCELLED","Native catalog read was cancelled");return request({executable:input.profile.executable??"codex",codexHome:input.profile.codexHome,workspacePath:input.workspacePath,method,params,...(input.signal?{signal:input.signal}:{})});};
   const account=object(await query("account/read",{refreshToken:false}));
   const data:unknown[]=[];let cursor:string|undefined;const cursors=new Set<string>();const deadline=Date.now()+30000;
   for(let page=0;page<20;page++){

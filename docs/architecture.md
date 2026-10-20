@@ -770,6 +770,9 @@ secret value is saved in these epoch records.
 Native catalog requests share only identical account/repository/config/native
 scope and reason. A bounded latest UI snapshot per account/repository may be
 shown as native-cache after a query outage; it never qualifies explicit execution.
+Local catalog cancellation belongs to each adapter reader. Controller releases
+HTTP requests when stopping, separately drains native reads for a bounded 3s
+and preserves UNKNOWN cleanup diagnostics; late results cannot write storage.
 Default-model ConfigPlans carry optional actor/revision/scope-bound review
 metadata, saved atomically and requalified against fresh native catalog evidence
 on apply. The publication's explicit account-default choice freezes the concrete

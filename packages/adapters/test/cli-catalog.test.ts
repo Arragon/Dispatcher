@@ -101,3 +101,23 @@ describe("frozen CLI selection", () => {
     await expect(adapter.start({ runId: "bad", workspacePath: "/tmp", executionSelection: { ...selection, nativeParameters: { invented: "high" } } })).rejects.toMatchObject({ code: "UNSUPPORTED_NATIVE_PARAMETERS" });
   });
 });
+
+it("cancels CLI catalog subprocesses and confirms closure",async()=>{
+  const {readNativeCli}=await import("../src/cli-catalog.js"),{existsSync}=await import("node:fs");
+  const directory=mkdtempSync(join(tmpdir(),"cli-catalog-cancel-")),executable=join(directory,"native"),ready=join(directory,"ready"),closed=join(directory,"closed"),abort=new AbortController();
+  try{
+    writeFileSync(executable,`#!${process.execPath}\nprocess.on('SIGTERM',()=>{require('node:fs').writeFileSync(${JSON.stringify(closed)},'closed');process.exit(0);});require('node:fs').writeFileSync(${JSON.stringify(ready)},'ready');setInterval(()=>{},1000);`);chmodSync(executable,0o755);
+    const result=expect(readNativeCli({executable,args:["models"],workspacePath:directory,signal:abort.signal})).rejects.toMatchObject({code:"MODEL_CATALOG_CANCELLED"});
+    await expect.poll(()=>existsSync(ready)).toBe(true);abort.abort();await result;expect(readFileSync(closed,"utf8")).toBe("closed");
+  }finally{abort.abort();rmSync(directory,{recursive:true,force:true});}
+});
+it("cancels an owned OpenCode host while its initial API read is stalled",async()=>{
+  const {existsSync}=await import("node:fs");
+  const directory=mkdtempSync(join(tmpdir(),"opencode-catalog-cancel-")),data=join(directory,"opencode"),executable=join(directory,"native"),ready=join(directory,"ready"),closed=join(directory,"closed"),abort=new AbortController();mkdirSync(data);
+  const db=new DatabaseSync(join(data,"opencode.db"));db.exec("CREATE TABLE account_state(id TEXT,active_account_id TEXT,active_org_id TEXT);CREATE TABLE account(id TEXT,url TEXT);CREATE TABLE credential(id TEXT,integration_id TEXT,connector_id TEXT,method_id TEXT,active INTEGER,time_updated INTEGER);CREATE TABLE control_account(email TEXT,url TEXT,active INTEGER,time_updated INTEGER)");db.close();vi.stubEnv("XDG_DATA_HOME",directory);
+  try{
+    writeFileSync(executable,`#!${process.execPath}\nconst fs=require('node:fs'),server=require('node:http').createServer(()=>{});process.on('SIGTERM',()=>{fs.writeFileSync(${JSON.stringify(closed)},'closed');process.exit(0);});server.listen(0,'127.0.0.1',()=>{console.log(JSON.stringify({url:'http://127.0.0.1:'+server.address().port}));fs.writeFileSync(${JSON.stringify(ready)},'ready');});`);chmodSync(executable,0o755);
+    const result=expect(readOpenCodeCatalog({profile:{id:"account",alias:"A"},executable,context,workspacePath:directory,signal:abort.signal})).rejects.toBeInstanceOf(Error);
+    await expect.poll(()=>existsSync(ready)).toBe(true);abort.abort();await result;expect(readFileSync(closed,"utf8")).toBe("closed");
+  }finally{abort.abort();vi.unstubAllEnvs();rmSync(directory,{recursive:true,force:true});}
+});

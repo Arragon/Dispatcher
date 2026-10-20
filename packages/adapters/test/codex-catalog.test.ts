@@ -29,3 +29,15 @@ it("reaps native RPC processes before returning and rejects mutating methods",as
     await expect(readCodexNative({...input,method:"thread/start" as never})).rejects.toMatchObject({code:"READ_ONLY_QUERY_REQUIRED"});
   }finally{rmSync(directory,{recursive:true,force:true});}
 });
+
+
+it("cancels an owned read-only RPC and confirms its process closure",async()=>{
+  const {readCodexNative}=await import("../src/codex-catalog.js");const {mkdtempSync,writeFileSync,readFileSync,chmodSync,rmSync,existsSync}=await import("node:fs");const {tmpdir}=await import("node:os");const {join}=await import("node:path");
+  const directory=mkdtempSync(join(tmpdir(),"codex-cancel-rpc-")),executable=join(directory,"native"),ready=join(directory,"ready"),closed=join(directory,"closed"),abort=new AbortController();
+  try{
+    writeFileSync(executable,`#!${process.execPath}\nprocess.on('SIGTERM',()=>{require('node:fs').writeFileSync(${JSON.stringify(closed)},'closed');process.exit(0);});require('node:fs').writeFileSync(${JSON.stringify(ready)},'ready');process.stdin.resume();`);chmodSync(executable,0o755);
+    const pending=readCodexNative({executable,codexHome:directory,workspacePath:directory,method:"model/list",params:{},signal:abort.signal});
+    const result=expect(pending).rejects.toMatchObject({code:"MODEL_CATALOG_CANCELLED"});
+    await expect.poll(()=>existsSync(ready)).toBe(true);abort.abort();await result;expect(readFileSync(closed,"utf8")).toBe("closed");
+  }finally{abort.abort();rmSync(directory,{recursive:true,force:true});}
+});

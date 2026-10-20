@@ -465,6 +465,9 @@
   A per-run model/effort override belongs to its adapter session and must survive
   continuation independently of current profile defaults. Revalidate native
   account/project context before continuing a managed session.
+- Releasing a catalog HTTP request is not evidence that its native reader closed.
+  Track the underlying read separately through bounded shutdown, keep late writes
+  fenced and retain UNKNOWN cleanup evidence across subsequent clean stops.
 - A native default-model review has a source-specific catalog hash. Do not
   reinterpret an old default-plan proof as a current v3 catalog revision.
   Bind new proof to actor/config/native scope and recheck after awaited work;

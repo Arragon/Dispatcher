@@ -203,3 +203,36 @@ Rollback this unit through a compatible candidate checkout and backup; do not
 open schema 6 with a v3-only or protocol-1 writer. Original source worktrees,
 WIP, native stores and live Controller data were not changed.
 Official quota after this unit: 93% remaining, ordinary usage allowed.
+
+
+## CV-05c catalog shutdown and concurrent selection
+
+Local Codex/CLI/OpenCode catalog readers now accept adapter-owned cancellation.
+Codex and CLI terminate their owned process groups and confirm close before
+returning; the private OpenCode host also cancels HTTP/startup and drains its
+process. This optional signal stays in the adapter boundary, not the pure domain
+or remote wire protocol. The Controller closes request admission immediately,
+separately owns underlying native reads, waits up to 3s for cleanup and prevents
+late results from writing to closed storage. An unresponsive reader leaves a
+persisted `catalog-lifecycle/shutdown` UNKNOWN diagnostic. A later clean shutdown
+does not erase prior unconfirmed cleanup. Remote cleanup remains owning-Runner
+evidence and cannot be inferred from a closed Controller HTTP request.
+
+New RED cases reproduced missing cancellation, a live RPC timeout and shutdown
+hanging on an ignoring reader. Positive tests confirm RPC/CLI/OpenCode process
+closure and Controller drain; the ignoring-reader test confirms a bounded stop
+and retained UNKNOWN. A full HTTP two-model test freezes different efforts,
+starts both on one capacity-2 account, restarts the service and verifies identical
+selections with no new inference. Existing native-default/Policy and adapter
+continuation assertions remain intact.
+
+Targeted `mise exec -- pnpm vitest run` for task-publications, codex-catalog and
+cli-catalog passed 3 files / 82 tests. Default `mise exec -- pnpm check` passed
+90 files / 819 tests. Logs: `/tmp/dispatcher-cv05-lifecycle-red.log`,
+`/tmp/dispatcher-cv05-unclosed-red.log`,
+`/tmp/dispatcher-cv05-lifecycle-concurrency.log`,
+`/tmp/dispatcher-cv05-lifecycle-check.log`. Official quota: 92% remaining.
+R-008 is locally implemented; real macOS shutdown/restart and diagnosis remain
+in MAC-01. CV-05 is still open for remaining legacy adapter/catalog assertions;
+OpenCode server-backend/native runtime proof belongs with CV-09, and account
+price qualification with CV-07. Inventory costs are never accepted as prices.

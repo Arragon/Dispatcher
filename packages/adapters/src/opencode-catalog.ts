@@ -39,21 +39,25 @@ function accountBinding(): string {
 }
 
 /** Own a fresh authenticated stdio host, query only read-only routes, and reap it before returning. */
-export async function readOpenCodeCatalog(input: { profile: CliAgentProfile; executable: string; context: ModelCatalogContext; workspacePath: string }): Promise<AccountModelCatalog> {
+export async function readOpenCodeCatalog(input: { profile: CliAgentProfile; executable: string; context: ModelCatalogContext; workspacePath: string;signal?:AbortSignal }): Promise<AccountModelCatalog> {
+  if(input.signal?.aborted)throw new AdapterContractError("MODEL_CATALOG_CANCELLED","Native catalog read was cancelled");
   const directory = async () => { const path = await realpath(input.workspacePath), s = await stat(path); if (!s.isDirectory()) throw invalid(); return digest({ path, dev: s.dev, ino: s.ino }); };
   const original = await directory(), auth = accountBinding();
   const executable = await realpath(input.executable);
   const executableStamp = async () => { const s = await stat(executable); return digest({ path: executable, size: s.size, mtime: s.mtimeMs, ino: s.ino }); };
   const originalExecutable = await executableStamp();
+  if(input.signal?.aborted)throw new AdapterContractError("MODEL_CATALOG_CANCELLED","Native catalog read was cancelled");
   const password = randomBytes(32).toString("base64url"), env: NodeJS.ProcessEnv = { ...process.env, PWD: input.workspacePath, OPENCODE_PASSWORD: password };
   delete env.OPENCODE_SERVER_PASSWORD; delete env.OPENCODE_PTY_HANDOFF;
   const child = spawn(input.executable, ["serve", "--stdio", "--hostname", "127.0.0.1", "--port", "0"], { cwd: input.workspacePath, shell: false, detached: process.platform !== "win32", env, stdio: ["pipe", "pipe", "pipe"] });
   const closed = new Promise<void>(resolve => child.once("close", () => resolve()));
   const abort = new AbortController(), timer = setTimeout(() => abort.abort(), 25000);
+  const cancel=()=>abort.abort();input.signal?.addEventListener("abort",cancel,{once:true});if(input.signal?.aborted)cancel();
   const kill = (signal: NodeJS.Signals) => { try { if (process.platform !== "win32" && child.pid) process.kill(-child.pid, signal); else child.kill(signal); } catch { /* Already exited. */ } };
   child.stderr.on("data", () => undefined); child.stdin.on("error", () => abort.abort()); child.on("error", () => abort.abort());
   let bytes = 0;
   try {
+    if(abort.signal.aborted)throw new AdapterContractError("MODEL_CATALOG_CANCELLED","Native catalog read was cancelled");
     const origin = await new Promise<string>((resolve, reject) => {
       let buffer = "";
       const fail = () => reject(invalid()); child.once("exit", fail); abort.signal.addEventListener("abort", fail, { once: true });
@@ -86,6 +90,7 @@ export async function readOpenCodeCatalog(input: { profile: CliAgentProfile; exe
     const contextFingerprint = digest({ profileId: input.profile.id, executable: originalExecutable, runnerId: input.context.runnerId, repositoryId: input.context.repositoryId, executionContextRef: input.context.executionContextRef, auth, defaultModel: nativeDefault.data, modelConfiguration: models });
     return normalizeOpenCodeCatalog(models, input.context, contextFingerprint);
   } finally {
+    input.signal?.removeEventListener("abort",cancel);
     clearTimeout(timer); abort.abort(); child.stdin.end(); kill("SIGTERM");
     const escalation = setTimeout(() => kill("SIGKILL"), 1000);
     await closed; clearTimeout(escalation); kill("SIGKILL");

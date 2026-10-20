@@ -8,7 +8,7 @@ import { AdapterContractError } from "./contracts.js";
 import type { CliAgentProfile } from "./ecosystem-cli.js";
 
 export type CatalogCliProvider = "cursor" | "qoder-cn" | "grok" | "antigravity";
-export interface NativeCliReadRequest { executable: string; args: string[]; workspacePath: string; environment?: Record<string, string> }
+export interface NativeCliReadRequest { executable: string; args: string[]; workspacePath: string; environment?: Record<string, string>;signal?:AbortSignal }
 export interface NativeCliReadResult { stdout: string; stderr: string; exitCode: number }
 const digest = (value: unknown) => createHash("sha256").update(JSON.stringify(value) ?? "null").digest("hex");
 const clean = (value: string) => value.replace(new RegExp(`${String.fromCharCode(27)}\\[[0-?]*[ -/]*[@-~]`, "g"), "");
@@ -23,11 +23,15 @@ export function cursorLoginIdentity(stdout:string,stderr=""):{status:"ready"|"mi
 
 /** Only the adapter's fixed read-only commands reach this private subprocess boundary. */
 export function readNativeCli(input: NativeCliReadRequest): Promise<NativeCliReadResult> {
+  if(input.signal?.aborted)return Promise.reject(new AdapterContractError("MODEL_CATALOG_CANCELLED","Native catalog read was cancelled"));
   return new Promise((resolve, reject) => {
     const child = spawn(input.executable, input.args, { cwd: input.workspacePath, shell: false, detached: process.platform !== "win32", stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, ...input.environment, PWD: input.workspacePath, NO_COLOR: "1" } });
     let stdout = "", stderr = "", bytes = 0, failed = false;
     const stop = () => { failed = true; signal("SIGTERM"); };
     const signal = (value: NodeJS.Signals) => { try { if (process.platform !== "win32" && child.pid) process.kill(-child.pid, value); else child.kill(value); } catch { /* The owned process may already have exited. */ } };
+    let cancellationKill:ReturnType<typeof setTimeout>|undefined;
+    const cancel=()=>{stop();cancellationKill??=setTimeout(()=>signal("SIGKILL"),2000);};
+    input.signal?.addEventListener("abort",cancel,{once:true});if(input.signal?.aborted)cancel();
     const timer = setTimeout(stop, 25000);
     const hardStop = setTimeout(() => { failed = true; signal("SIGKILL"); }, 27000);
     child.stdout.setEncoding("utf8"); child.stderr.setEncoding("utf8");
@@ -35,10 +39,11 @@ export function readNativeCli(input: NativeCliReadRequest): Promise<NativeCliRea
     child.stdout.on("data", chunk => collect(chunk, "stdout")); child.stderr.on("data", chunk => collect(chunk, "stderr"));
     child.on("error", () => { failed = true; });
     child.on("close", code => {
+      input.signal?.removeEventListener("abort",cancel);if(cancellationKill)clearTimeout(cancellationKill);
       clearTimeout(timer); clearTimeout(hardStop);
       // Model queries never leave an owned daemon behind, even after exit zero.
       signal("SIGKILL");
-      if (failed) reject(new AdapterContractError("NATIVE_CATALOG_UNAVAILABLE", "Native read-only query failed or timed out"));
+      if (failed) reject(new AdapterContractError(input.signal?.aborted?"MODEL_CATALOG_CANCELLED":"NATIVE_CATALOG_UNAVAILABLE", "Native read-only query failed, was cancelled or timed out"));
       else resolve({ stdout, stderr, exitCode: code ?? 1 });
     });
   });
@@ -72,9 +77,9 @@ export function normalizeNativeCliCatalog(provider: CatalogCliProvider, stdout: 
 }
 
 /** Hash sensitive native state locally; neither its contents nor native diagnostics leave the adapter. */
-export async function readNativeCliCatalog(input: { provider: CatalogCliProvider; profile: CliAgentProfile; executable: string; context: ModelCatalogContext; workspacePath: string; environment?: Record<string, string>; read?: (input: NativeCliReadRequest) => Promise<NativeCliReadResult> }): Promise<AccountModelCatalog> {
+export async function readNativeCliCatalog(input: { provider: CatalogCliProvider; profile: CliAgentProfile; executable: string; context: ModelCatalogContext; workspacePath: string; environment?: Record<string, string>;signal?:AbortSignal; read?: (input: NativeCliReadRequest) => Promise<NativeCliReadResult> }): Promise<AccountModelCatalog> {
   const read = input.read ?? readNativeCli;
-  const query = (args: string[]) => read({ executable: input.executable, args, workspacePath: input.workspacePath, ...(input.environment ? { environment: input.environment } : {}) });
+  const query = (args: string[]) => {if(input.signal?.aborted)throw new AdapterContractError("MODEL_CATALOG_CANCELLED","Native catalog read was cancelled");return read({ executable: input.executable, args, workspacePath: input.workspacePath, ...(input.environment ? { environment: input.environment } : {}),...(input.signal?{signal:input.signal}:{}) });};
   const qoder = input.provider === "qoder-cn";
   const configDir = input.profile.configDir ?? join(homedir(), ".qoder-cn");
   const accountArgs = input.provider === "cursor" ? ["status"] : qoder ? ["--config-dir", configDir, "status", "--output", "json"] : undefined;

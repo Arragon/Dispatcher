@@ -22,11 +22,11 @@ async function setup() {
   const f = { directory, services: [] as ControllerService[] }; fixtures.push(f);
   const starts: Array<Parameters<CodexBackend["start"]>[0]> = [];
   const cliStarts: CliStartInput[] = [];
-  const control = { usageEvents:[] as Array<{type:"usage";summary:string;observedAt:string;tokens:{input:number;output:number;cachedInput?:number}}>,failStart: false, completed: false, modelId: "catalog-model", authenticated:true,efforts:["low","medium"] };
+  const control = { usageEvents:[] as Array<{type:"usage";summary:string;observedAt:string;tokens:{input:number;output:number;cachedInput?:number}}>,failStart: false, completed: false, modelId: "catalog-model",modelIds:[] as string[], authenticated:true,efforts:["low","medium"] };
   const classificationRequests:Record<string,unknown>[]=[];
   const backend: CodexBackend = { start(input) { if(control.failStart) throw new Error("spawn fixture ENOENT"); starts.push(input); writeFileSync(join(input.workspacePath,"result.txt"),"completed locally\n"); return {status:()=>control.completed?"completed":"running",events:()=>control.usageEvents,cancel:async()=>undefined,result:async()=>({state:"completed",summary:"implemented",providerSessionId:"native-fixture-thread",events:control.usageEvents})}; } };
   const clock = { now: new Date() };
-  const make = async () => { const s = new ControllerService({ dataDirectory: join(directory,"data"), ownerToken: "publication-test-owner", withRunner: true, llmFetch:async(_input,init)=>{classificationRequests.push(JSON.parse(String(init?.body)));return new Response(JSON.stringify({choices:[{message:{content:JSON.stringify({status:"matched",primaryType:"fix",candidates:["fix"],evidence:[{field:"title",quote:"修复"}],explanation:"修复任务"})}}],usage:{prompt_tokens:10,completion_tokens:5}}));}, codexBackendFactory: () => backend, cliBackendFactory: () => ({start(input) { cliStarts.push(input); writeFileSync(join(input.workspacePath,"result.txt"),"completed locally\n"); return {status:()=>"completed",cancel:async()=>undefined,result:async()=>({state:"completed",summary:"implemented",providerSessionId:"native-cli-thread",events:[]})}; }}), codexNativeReader: async input => input.method==="account/read"?{account:control.authenticated?{type:"chatgpt",email:"fixture@example.invalid"}:null,requiresOpenaiAuth:true}:{data:[{model:control.modelId,displayName:"Catalog model",hidden:false,isDefault:true,defaultReasoningEffort:"medium",supportedReasoningEfforts:control.efforts.map(reasoningEffort=>({reasoningEffort}))}],nextCursor:null}, clock: () => clock.now, secretStore: { test: async (reference:string) => reference==="secret://llm/classifier",resolve:async()=>"fixture-secret" } as unknown as SecretStore }); f.services.push(s); await s.start({listen:false}); return s; };
+  const make = async () => { const s = new ControllerService({ dataDirectory: join(directory,"data"), ownerToken: "publication-test-owner", withRunner: true, llmFetch:async(_input,init)=>{classificationRequests.push(JSON.parse(String(init?.body)));return new Response(JSON.stringify({choices:[{message:{content:JSON.stringify({status:"matched",primaryType:"fix",candidates:["fix"],evidence:[{field:"title",quote:"修复"}],explanation:"修复任务"})}}],usage:{prompt_tokens:10,completion_tokens:5}}));}, codexBackendFactory: () => backend, cliBackendFactory: () => ({start(input) { cliStarts.push(input); writeFileSync(join(input.workspacePath,"result.txt"),"completed locally\n"); return {status:()=>"completed",cancel:async()=>undefined,result:async()=>({state:"completed",summary:"implemented",providerSessionId:"native-cli-thread",events:[]})}; }}), codexNativeReader: async input => input.method==="account/read"?{account:control.authenticated?{type:"chatgpt",email:"fixture@example.invalid"}:null,requiresOpenaiAuth:true}:{data:(control.modelIds.length?control.modelIds:[control.modelId]).map(model=>({model,displayName:"Catalog model",hidden:false,isDefault:true,defaultReasoningEffort:"medium",supportedReasoningEfforts:control.efforts.map(reasoningEffort=>({reasoningEffort}))})),nextCursor:null}, clock: () => clock.now, secretStore: { test: async (reference:string) => reference==="secret://llm/classifier",resolve:async()=>"fixture-secret" } as unknown as SecretStore }); f.services.push(s); await s.start({listen:false}); return s; };
   const service = await make();
   const config = service.configuration.current().config as DispatcherConfig;
   config.agentProfiles = [{id:"codex-local",alias:"Local",provider:"codex",runnerId:"local",settings:{codexHome:join(directory,"native"),model:"profile-default"}}];
@@ -38,6 +38,49 @@ async function setup() {
   return {service,root,clock,make,draft,preview,commit,starts,cliStarts,control,classificationRequests};
 }
 describe("task publication receipts", () => {
+  it("isolates simultaneous model choices and preserves both frozen Runs across restart",async()=>{
+    const f=await setup(),config=f.service.configuration.current().config;config.runners[0]!.capacity=2;
+    await f.service.configuration.applyPlan(f.service.configuration.buildPlan(config,"owner","web").id,{confirmed:true});
+    f.control.modelIds=["model-a","model-b"];
+    const catalog=(await f.service.app.inject({headers:OWNER,url:"/api/agents/profiles/codex-local/models?repositoryId=repo"})).json();
+    const previews=await Promise.all(f.control.modelIds.map((nativeModelId,index)=>f.preview({...f.draft,clientDraftId:`simultaneous-${index}`,startMode:"dispatch",execution:{profileId:"codex-local",selectionMode:"manual",selectionType:"explicit-model",nativeModelId,nativeParameters:{reasoningEffort:index?"medium":"low"},catalogRevision:catalog.revision,contextFingerprint:catalog.contextFingerprint,allowUnconfirmedModelAccess:true}})));
+    for(const response of previews)expect(response.json().canCommit).toBe(true);
+    const receipts=await Promise.all(previews.map((response,index)=>f.commit(response.json(),`simultaneous-${index}`).then(value=>value.json())));
+    expect(receipts.map(value=>value.state)).toEqual(["STARTED","STARTED"]);
+    expect(f.starts.map(value=>[value.model,value.reasoningEffort])).toEqual([["model-a","low"],["model-b","medium"]]);
+    const selections=receipts.map(value=>(f.service.database.getEntity("run",value.runId) as {executionSelection:unknown}).executionSelection);
+    await f.service.stop();const restarted=await f.make();
+    expect(receipts.map(value=>(restarted.database.getEntity("run",value.runId) as {executionSelection:unknown}).executionSelection)).toEqual(selections);
+    expect(restarted.configuration.current().config.agentProfiles[0]!.settings!.model).toBe("profile-default");expect(f.starts).toHaveLength(2);
+  });
+
+  it("bounds shutdown and retains unknown cleanup when a catalog reader ignores cancellation",async()=>{
+    const f=await setup(),entered=Promise.withResolvers<void>(),release=Promise.withResolvers<void>();
+    const original=CodexAdapter.prototype.modelCatalog;
+    const reader=vi.spyOn(CodexAdapter.prototype,"modelCatalog").mockImplementation(async function(this:CodexAdapter,context){entered.resolve();await release.promise;const {signal,...scope}=context;void signal;return original.call(this,scope);});
+    try{
+      const pending=f.service.app.inject({headers:OWNER,url:"/api/agents/profiles/codex-local/models?repositoryId=repo"}).then(value=>value);
+      await entered.promise;await f.service.stop();expect((await pending).json().code).toBe("CATALOG_CLOSED");
+      const db=new DatabaseSync(join(f.root,"..","data","dispatcher.sqlite"),{readOnly:true});
+      try{expect(JSON.parse(String(db.prepare("SELECT document_json FROM entities WHERE kind='catalog-lifecycle' AND id='shutdown'").get()!.document_json))).toMatchObject({state:"unknown",reasonCode:"CATALOG_CLEANUP_UNKNOWN",pendingReads:1});}finally{db.close();}
+    }finally{release.resolve();reader.mockRestore();}
+  });
+
+  it("aborts owned catalog reads and waits for cleanup before closing storage",async()=>{
+    const f=await setup(),entered=Promise.withResolvers<AbortSignal>(),release=Promise.withResolvers<void>();
+    const original=CodexAdapter.prototype.modelCatalog;
+    const reader=vi.spyOn(CodexAdapter.prototype,"modelCatalog").mockImplementation(async function(this:CodexAdapter,context){
+      entered.resolve(context.signal!);await release.promise;return original.call(this,context);
+    });
+    try{
+      const pending=f.service.app.inject({headers:OWNER,url:"/api/agents/profiles/codex-local/models?repositoryId=repo"}).then(value=>value);
+      const signal=await entered.promise;expect(signal).toBeInstanceOf(AbortSignal);
+      let stopped=false;const closing=f.service.stop().then(()=>{stopped=true;});
+      await new Promise(resolve=>setTimeout(resolve,10));expect(signal.aborted).toBe(true);expect(stopped).toBe(false);
+      release.resolve();expect((await pending).json().code).toBe("CATALOG_CLOSED");await closing;
+    }finally{release.resolve();reader.mockRestore();}
+  });
+
   it("freezes an explicitly reviewed account default as the sole Run selection",async()=>{
     const f=await setup(),config=f.service.configuration.current().config;config.agentProfiles[0]!.settings!.model="catalog-model";
     const plan=f.service.configuration.buildPlan(config,"owner","web");await f.service.configuration.applyPlan(plan.id,{confirmed:true});

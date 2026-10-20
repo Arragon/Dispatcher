@@ -194,8 +194,8 @@ export class CodexAdapter implements AgentAdapter {
     private readonly catalogRequest?: (input:CodexReadRequest)=>Promise<unknown>,
   ) {}
 
-  modelCatalog(context:ModelCatalogContext & {workspacePath:string}):Promise<AccountModelCatalog> {
-    return readCodexCatalog({profile:this.profile,context,workspacePath:context.workspacePath,...(this.catalogRequest?{request:this.catalogRequest}:{})});
+  modelCatalog(context:ModelCatalogContext & {workspacePath:string;signal?:AbortSignal}):Promise<AccountModelCatalog> {
+    return readCodexCatalog({profile:this.profile,context,workspacePath:context.workspacePath,...(context.signal?{signal:context.signal}:{}),...(this.catalogRequest?{request:this.catalogRequest}:{})});
   }
   async start(input: { runId: string; workspacePath: string; backendId?: string; prompt?: string; executionSelection?: ExecutionSelection }): Promise<AdapterSession> {
     const now = new Date().toISOString();
