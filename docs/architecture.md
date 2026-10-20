@@ -41,6 +41,12 @@ label persistently, boots it out and checks Controller exit/data ownership.
 Start uses kickstart without killing an existing process; restart waits for stop.
 Installed plist paths own CLI status/log selection. Definition changes require a
 separate reviewed upgrade; failed bootstrap never triggers blind bootout.
+New definitions also bind --log-dir to a private runtime subdirectory. Controller
+structured logs reuse Runner's bounded writer through the existing redacting
+logger; service failures record metadata, oversized entries retain an explicit
+marker and following records remain readable. Log-tail reads have byte/line
+limits, reject unsafe files and withhold unknown raw records. Raw pre-import
+launchd stdout/stderr still need separate lifecycle/retention qualification.
 
 Doctor runs separately from the Controller and copies bounded main/WAL files to
 a private temporary directory under source identity/size/timestamp checks. Only

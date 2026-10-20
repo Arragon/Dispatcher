@@ -173,6 +173,7 @@ import { LifecycleManager, type ServiceModule } from "./lifecycle.js";
 import { MESSAGING_INBOX_KIND, MessagingInbox, type MessagingInboxRecord } from "./messaging-inbox.js";
 
 export interface ControllerOptions {
+  logDestination?:{write(message:string):void};
   directoryPicker?:DirectoryPicker;
   dataDirectory: string;
   withRunner?: boolean;
@@ -540,7 +541,7 @@ export class ControllerService {
   private ownerToken: Promise<string> | undefined;
 
   constructor(readonly options: ControllerOptions) {
-    const logger = createLogger({ level: process.env.LOG_LEVEL ?? "info" });
+    const logger = createLogger({ level: process.env.LOG_LEVEL ?? "info" },options.logDestination);
     this.app = fastify({ loggerInstance: logger as unknown as FastifyBaseLogger, ajv: {customOptions:{coerceTypes:false,removeAdditional:false}} });
     this.database = new DispatcherDatabase(join(options.dataDirectory, "dispatcher.sqlite"));
     // Schema support is not native execution authority. Only this Controller

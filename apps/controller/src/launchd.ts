@@ -5,6 +5,7 @@ import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import {acquireInstanceLock} from "./instance-lock.js";
+import {readControllerLogTail} from "./controller-logs.js";
 
 export const LAUNCHD_LABEL = "dev.dispatcher.controller";
 export interface LaunchAgentDefinition {nodePath:string;cliPath:string;dataDirectory:string;logDirectory:string}
@@ -37,6 +38,7 @@ export function launchdPlist(input: LaunchAgentDefinition): string {
     <string>serve</string>
     <string>--with-runner</string>
     <string>--data-dir</string><string>${xml(input.dataDirectory)}</string>
+    <string>--log-dir</string><string>${xml(join(input.logDirectory,"runtime"))}</string>
   </array>
   <key>WorkingDirectory</key><string>${xml(input.dataDirectory)}</string>
   <key>EnvironmentVariables</key><dict><key>PATH</key><string>${xml(`${dirname(input.nodePath)}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin`)}</string></dict>
@@ -123,11 +125,12 @@ export async function readLaunchAgent(plistPath:string,read:(path:string)=>Promi
   try{
   absolutePath(plistPath);
   const value=JSON.parse(await read(plistPath)) as Record<string,unknown>,args=value.ProgramArguments;
-  if(value.Label!==LAUNCHD_LABEL||!Array.isArray(args)||args.length!==6||!args.every(arg=>typeof arg==="string")||args[2]!=="serve"||args[3]!=="--with-runner"||args[4]!=="--data-dir"||typeof value.StandardOutPath!=="string"||typeof value.StandardErrorPath!=="string")throw Error("SERVICE_DEFINITION_INVALID");
+  if(value.Label!==LAUNCHD_LABEL||!Array.isArray(args)||![6,8].includes(args.length)||!args.every(arg=>typeof arg==="string")||args[2]!=="serve"||args[3]!=="--with-runner"||args[4]!=="--data-dir"||typeof value.StandardOutPath!=="string"||typeof value.StandardErrorPath!=="string")throw Error("SERVICE_DEFINITION_INVALID");
   const definition={nodePath:args[0] as string,cliPath:args[1] as string,dataDirectory:args[5] as string,logDirectory:dirname(value.StandardOutPath)};
   for(const path of Object.values(definition))absolutePath(path);
   if(value.StandardOutPath!==join(definition.logDirectory,"controller.log")||value.StandardErrorPath!==join(definition.logDirectory,"controller.error.log"))throw Error("SERVICE_DEFINITION_INVALID");
+  if(args.length===8&&(args[6]!=="--log-dir"||args[7]!==join(definition.logDirectory,"runtime")))throw Error("SERVICE_DEFINITION_INVALID");
   return definition;
   }catch(error){throw Error("SERVICE_DEFINITION_INVALID",{cause:error});}
 }
-export function tailLog(path: string, lines = 100): string {return readFileSync(path, "utf8").split("\n").slice(-lines).join("\n");}
+export function tailLog(path: string, lines = 100): string {return readControllerLogTail(path,lines);}

@@ -1,6 +1,6 @@
 import { spawn as spawnProcess } from "node:child_process";
 import { OwnedProcessGroup } from "@dispatcher/adapters";
-import { chmodSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync,closeSync,constants,existsSync,fstatSync,lstatSync,mkdirSync,openSync,readdirSync,renameSync,rmSync,statSync,writeSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { arch, platform } from "node:os";
 import { randomUUID } from "node:crypto";
@@ -37,49 +37,56 @@ function redact(value: string): string {
 
 export class BoundedLogWriter {
   private readonly currentPath: string;
+  private readonly ownedNames:RegExp;
   private tailText = "";
   constructor(private readonly directory: string, private readonly name: string, private readonly budget: LogBudget = defaultBudget) {
+    if(!/^[a-z][a-z0-9_-]{0,63}$/i.test(name)||Object.values(budget).some(value=>!Number.isSafeInteger(value)||value<1))throw Error("LOG_BUDGET_INVALID");
     mkdirSync(directory, { recursive: true });
     this.currentPath = join(directory, `${name}.log`);
+    this.ownedNames=new RegExp(`^(?:${[...new Set([name,"stdout","stderr","pty"])].join("|")})\\.log(?:\\.\\d+)?$`);
   }
 
   write(input: string | Uint8Array): void {
     const text = redact(typeof input === "string" ? input : Buffer.from(input).toString("utf8"));
     const bytes = Buffer.byteLength(text);
-    const currentSize = existsSync(this.currentPath) ? statSync(this.currentPath).size : 0;
-    if (currentSize > 0 && currentSize + bytes > this.budget.maxFileBytes) this.rotate();
-    const allowed = Math.min(bytes, this.budget.maxFileBytes);
+    const currentSize = existsSync(this.currentPath) ? this.safeFile(this.currentPath).size : 0;
+    const allowed = Math.min(bytes, this.budget.maxFileBytes,this.budget.maxTotalBytes);
+    if (currentSize > 0 && currentSize + allowed > this.chunkLimitBytes) this.rotate();
     const chunk = Buffer.from(text).subarray(0, allowed);
-    writeFileSync(this.currentPath, chunk, { flag: "a", mode: 0o600 });
+    const descriptor=openSync(this.currentPath,constants.O_WRONLY|constants.O_APPEND|constants.O_CREAT|constants.O_NOFOLLOW|constants.O_NONBLOCK,0o600);
+    try{const file=fstatSync(descriptor);if(!file.isFile()||file.nlink!==1)throw Error("LOG_PATH_UNSAFE");let offset=0;while(offset<chunk.length)offset+=writeSync(descriptor,chunk,offset,chunk.length-offset);}finally{closeSync(descriptor);}
     this.tailText = (this.tailText + stripAnsi(chunk.toString("utf8"))).slice(-this.budget.tailBytes);
     this.enforceTotalBudget();
   }
 
   tail(): string { return this.tailText; }
+  get chunkLimitBytes():number{return Math.min(this.budget.maxFileBytes,this.budget.maxTotalBytes);}
   files(): string[] { return Array.from({ length: this.budget.retentionFiles }, (_, index) => index === 0 ? this.currentPath : `${this.currentPath}.${index}`).filter(existsSync); }
 
   private rotate(): void {
+    if(this.budget.retentionFiles===1){this.safeFile(this.currentPath);rmSync(this.currentPath);return;}
     const last = `${this.currentPath}.${this.budget.retentionFiles - 1}`;
-    if (existsSync(last)) rmSync(last);
+    if (existsSync(last)){this.safeFile(last);rmSync(last);}
     for (let index = this.budget.retentionFiles - 2; index >= 1; index -= 1) {
       const source = `${this.currentPath}.${index}`;
-      if (existsSync(source)) renameSync(source, `${this.currentPath}.${index + 1}`);
+      if (existsSync(source)){this.safeFile(source);renameSync(source, `${this.currentPath}.${index + 1}`);}
     }
     if (existsSync(this.currentPath)) renameSync(this.currentPath, `${this.currentPath}.1`);
   }
 
   private enforceTotalBudget(): void {
     const files = readdirSync(this.directory)
-      .filter((entry) => entry.endsWith(".log") || /\.log\.\d+$/.test(entry))
+      .filter((entry) => this.ownedNames.test(entry))
       .map((entry) => join(this.directory, entry))
       .filter(existsSync)
-      .map((path) => ({ path, bytes: statSync(path).size, modifiedAt: statSync(path).mtimeMs }))
+      .map((path) => ({ path, bytes: this.safeFile(path).size, modifiedAt: this.safeFile(path).mtimeMs }))
       .sort((left, right) => right.modifiedAt - left.modifiedAt);
     while (files.reduce((sum, file) => sum + file.bytes, 0) > this.budget.maxTotalBytes && files.length > 1) {
       const oldest = files.pop();
       if (oldest) rmSync(oldest.path);
     }
   }
+  private safeFile(path:string){const file=lstatSync(path);if(!file.isFile()||file.isSymbolicLink()||file.nlink!==1)throw Error("LOG_PATH_UNSAFE");return file;}
 }
 
 export type ExitClassification = "success" | "cancelled" | "timeout" | "idle-timeout" | "nonzero" | "signal" | "spawn-error";

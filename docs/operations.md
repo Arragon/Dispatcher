@@ -152,6 +152,17 @@ is still pending. Failed bootstrap keeps the definition and error for inspection
 These local lifecycle tests do not establish real login, sleep, Keychain, native
 Agent stop or A acceptance. No system daemon is installed.
 
+New service definitions bind `--log-dir <logs>/runtime`. Controller structured
+logs retain at most four 256 KiB files within a 1 MiB owned-stream budget. Unknown
+raw entries and oversized records become metadata markers, and unrelated *.log
+files are preserved. `logs --lines 100` reads at most 64 KiB, displays complete
+structured records after redaction, and rejects symlinks/nonregular files.
+`logs --stderr` inspects the launchd error file through the same safe reader;
+unstructured raw text is withheld. Old six-argument definitions remain readable
+for stop/status, while new definitions add the fixed runtime log path. Early
+pre-import/native stdout/stderr retention is still pending; structured-log bounds
+alone do not complete MAC-01's full log Gate.
+
 ## Native Remote Runner
 
 Build the Runner CLI, then inspect the platform-specific plan before applying

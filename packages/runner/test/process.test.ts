@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync,readdirSync, realpathSync, rmSync, statSync,symlinkSync,writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -9,6 +9,17 @@ function directory(): string { const value = mkdtempSync(join(tmpdir(), "dispatc
 afterEach(() => { for (const value of directories.splice(0)) rmSync(value, { recursive: true, force: true }); });
 
 describe("bounded raw logs", () => {
+  it("preserves a substituted log target instead of appending through its symlink",()=>{
+    const root=directory(),target=join(root,"preserved.txt");writeFileSync(target,"keep me");symlinkSync(target,join(root,"raw.log"));const writer=new BoundedLogWriter(root,"raw");expect(()=>writer.write("new log")).toThrow("LOG_PATH_UNSAFE");expect(readFileSync(target,"utf8")).toBe("keep me");
+  });
+  it("honors a total smaller than one file and a single retained file",()=>{
+    const root=directory(),writer=new BoundedLogWriter(root,"raw",{maxFileBytes:128,maxTotalBytes:32,retentionFiles:1,tailBytes:32});writer.write("a".repeat(100));writer.write("b".repeat(100));expect(writer.files()).toHaveLength(1);expect(readdirSync(root)).toEqual(["raw.log"]);expect(statSync(writer.files()[0]!).size).toBeLessThanOrEqual(32);
+  });
+  it("never reclaims an unrelated log when enforcing its owned stream budget",()=>{
+    const root=directory(),foreign=join(root,"user-notes.log");writeFileSync(foreign,"preserve local diagnostic notes".repeat(100));
+    const writer=new BoundedLogWriter(root,"controller",{maxFileBytes:32,maxTotalBytes:64,retentionFiles:2,tailBytes:32});for(let n=0;n<5;n++)writer.write("owned controller output\n");
+    expect(readFileSync(foreign,"utf8")).toBe("preserve local diagnostic notes".repeat(100));expect(writer.files().reduce((sum,file)=>sum+statSync(file).size,0)).toBeLessThanOrEqual(64);
+  });
   it("rotates, enforces a total budget, strips ANSI from tails, and redacts credentials", () => {
     const writer = new BoundedLogWriter(directory(), "raw", { maxFileBytes: 48, maxTotalBytes: 96, retentionFiles: 4, tailBytes: 80 });
     for (let index = 0; index < 8; index += 1) writer.write(`\u001b[31mline-${index} sk-secret-canary-1234567890\u001b[0m\n`);

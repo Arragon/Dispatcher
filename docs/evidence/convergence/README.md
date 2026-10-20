@@ -68,7 +68,7 @@ final convergence verification.
 | CV-06 | Controller nonblocking scoped collection/terminal retry verified at 115/1169; origin/attempt/time and account-quota qualification/UI pending |
 | CV-08 | continuation/worker/delivery/failure/cancel/pause Guard, failure priority drain, stop audit and read-only local start recovery qualification verified at 115/1204; ordinary local start composed; schema-8 writer increment verified at 116/1208; known-unsent cancellation/publication journal recovery verified at 116/1215; general guarded local recovery verified at 116/1218; captured reroute stage Guard and default Generic drain verified at 116/1224; shared guarded replacement startup and original owned-CLI cleanup verified at 116/1229; legacy/remote/qualified native recovery remain pending |
 | CV-12 | pending complete selection/control integration |
-| macOS service / LP / backup | MAC-01a CLI data-directory ownership verified at 117/1237; MAC-01b lifecycle/fixed definition verified at 117/1251; MAC-01c read-only doctor verified at 118/1264; release staging/logs/upgrade/recovery and real evidence pending |
+| macOS service / LP / backup | MAC-01a CLI data-directory ownership verified at 117/1237; MAC-01b lifecycle/fixed definition verified at 117/1251; MAC-01c read-only doctor verified at 118/1264; MAC-01d structured logs/safe tail verified at 119/1273; early stdio/release staging/upgrade/recovery and real evidence pending |
 | CV-07/09/10/11 | pending contracts/guards |
 | CV-13/14 and original Gates | pending implementation and evidence |
 
@@ -1466,3 +1466,44 @@ No original database opened and no live service mutation. MAC-01/R-013 remains
 open for logs, staging/upgrade/recovery and true service evidence. Rollback:
 58ec710 and matching schema-8 data backup. Official quota checked after unit and
 recorded in Linear.
+
+
+## MAC-01d bounded Controller structured logs and safe inspection
+
+Reuse the existing Runner BoundedLogWriter, with no package addition. A RED
+regression proves its former total-budget scan deleted an unrelated user-notes.log;
+retention now owns only its explicit stream family. No-follow regular-file writes
+reject substituted targets. Single retained-file and total<file budgets are also
+bounded. Existing stdout/stderr sharing, owned process/PTY/drain and verification
+regressions remain intact.
+
+Controller accepts a destination on its existing redacting logger. New launchd
+definitions bind --log-dir to their private runtime subdirectory, whose structured
+logs use four 256 KiB files / 1 MiB total. Runtime failure paths write sanitized
+metadata there. Each structured record is re-redacted and written separately; an
+oversized batch RED reproduces lost following records, then too-large entries
+become LOG_ENTRY_TOO_LARGE. Unknown unstructured entries are withheld. CLI logs
+reads at most 64 KiB/100 lines by default, capped options, no-follow regular files,
+full record parsing and redaction before display. Old six-argument plist reading
+is retained; new eight-argument definitions bind the exact log path.
+
+Target passes 3 files/39 tests, including Controller HTTP behavior/redaction,
+whole-file budget, stored JSON secret filtering, partial/raw record withholding,
+symlink preservation, oversized batch continuation and existing physical process
+checks. Final default `mise exec -- pnpm check` passes 119 files/1273 tests
+(42.00s test phase); diff check passes. Real macOS plutil lint/Unicode+space+XML
+JSON roundtrip and new runtime-log argument verification pass without launchctl
+mutation. Logs: /tmp/dispatcher-mac01d-red.log,
+/tmp/dispatcher-mac01d-oversize-red.log, /tmp/dispatcher-mac01d-final-target.log,
+/tmp/dispatcher-mac01d-final-check.log. Initial oversize fixture was over-redacted
+into a short token; use spaced text to reproduce actual byte truncation, keeping
+secret assertions intact. No deadline/skip/suppression added.
+
+MAC-01/R-013 stays open: launchd's raw early stdout/stderr descriptors are outside
+this structured writer, so its retention and pre-import failure evidence still
+need completion. No renaming/deleting open launchd files to pretend they rotate.
+Release staging, upgrade/rollback/recovery and real service Gates remain pending.
+R-006 wording corrected after repository inspection: persistence backup/restore
+functions exist; Controller HTTP backup/restore routes are not currently wired.
+No live data/service changed. Rollback: 1eb4056 with matching schema-8 backup.
+Official quota checked after unit and recorded in Linear.

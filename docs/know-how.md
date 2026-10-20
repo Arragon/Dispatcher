@@ -2,6 +2,13 @@
 
 ## M0–M10 invariants
 
+- Log retention owns an explicit stream family, not every *.log in a directory.
+  Keep foreign diagnostics intact and bound even one retained file when the total
+  budget is smaller than the per-file budget. Structured consumers must write
+  whole records individually and replace oversized entries with metadata; raw
+  byte truncation can hide following records. Never infer that rotating an app's
+  structured logs also bounds launchd's already-open stdout/stderr descriptors.
+
 - SQLite readOnly can still create WAL/SHM sidecars beside a source database.
   CLI doctor inspects a bounded private main/WAL copy after checking source
   stability; do not delete source sidecars to make a read appear unchanged.

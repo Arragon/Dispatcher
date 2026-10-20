@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { accessSync, constants, readFileSync, realpathSync } from "node:fs";
+import { accessSync, constants,existsSync, readFileSync, realpathSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
@@ -18,6 +18,11 @@ import { OWNER_TOKEN_REFERENCE } from "./control-auth.js";
 import { ControllerService } from "./service.js";
 import {acquireInstanceLock} from "./instance-lock.js";
 import {inspectLocalController} from "./doctor.js";
+import {createControllerLogDestination,readControllerLogTail} from "./controller-logs.js";
+let controllerLog:{write(message:string):void}|undefined;
+function serviceFailure(code:string):void {
+  if(controllerLog)controllerLog.write(JSON.stringify({level:50,time:Date.now(),msg:code})+"\n");else console.error(code);
+}
 
 function flag(args: string[], name: string, fallback?: string): string | undefined {
   const index = args.indexOf(name);
@@ -40,7 +45,10 @@ function servicePaths(args: string[]) {
 async function serve(args: string[]): Promise<void> {
   const ownership=acquireInstanceLock(dataDirectory(args));
   let service:ControllerService;
-  try{service = new ControllerService({
+  try{
+    const logDirectory=flag(args,"--log-dir");if(logDirectory)controllerLog=createControllerLogDestination(logDirectory);
+    service = new ControllerService({
+    ...(controllerLog?{logDestination:controllerLog}:{}),
     dataDirectory: ownership.dataDirectory,
     withRunner: args.includes("--with-runner"),
     host: flag(args, "--host") ?? "127.0.0.1",
@@ -54,12 +62,12 @@ async function serve(args: string[]): Promise<void> {
     stopping??=service.stop().then(()=>{ownership.release();process.exitCode=0;});
     await stopping;
   };
-  const onSignal=()=>void shutdown().catch(()=>{console.error("CONTROLLER_SHUTDOWN_UNCONFIRMED");process.exitCode=1;});
+  const onSignal=()=>void shutdown().catch(()=>{serviceFailure("CONTROLLER_SHUTDOWN_UNCONFIRMED");process.exitCode=1;});
   process.once("SIGINT", onSignal);
   process.once("SIGTERM", onSignal);
   try{await service.start();}catch(error){
     process.removeListener("SIGINT",onSignal);process.removeListener("SIGTERM",onSignal);
-    try{await service.stop();ownership.release();}catch{console.error("CONTROLLER_SHUTDOWN_UNCONFIRMED");}
+    try{await service.stop();ownership.release();}catch{serviceFailure("CONTROLLER_SHUTDOWN_UNCONFIRMED");}
     throw error;
   }
   if (process.stdout.isTTY) {
@@ -125,7 +133,10 @@ async function serviceCommand(command: string, args: string[]): Promise<void> {
   else if(command==="restart")await restartLaunchAgent(input);
   else if(command==="status")console.log(JSON.stringify({label:LAUNCHD_LABEL,...definition,...await statusLaunchAgent(input)},null,2));
   else if(command==="uninstall")await uninstallLaunchAgent(input);
-  else if(command==="logs")console.log(tailLog(join(definition.logDirectory,"controller.log")));
+  else if(command==="logs"){
+    const path=join(definition.logDirectory,"runtime","controller.log"),lines=Number(flag(args,"--lines","100"));
+    console.log(args.includes("--stderr")?readControllerLogTail(join(definition.logDirectory,"controller.error.log"),lines):existsSync(path)?readControllerLogTail(path,lines):tailLog(join(definition.logDirectory,"controller.log"),lines));
+  }
 }
 
 async function doctor(args: string[]): Promise<void> {
@@ -149,6 +160,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((error: unknown) => {
-  console.error(error instanceof Error ? error.message : "Dispatcher command failed");
+  if(controllerLog)serviceFailure("CONTROLLER_COMMAND_FAILED");else console.error(error instanceof Error ? error.message : "Dispatcher command failed");
   process.exitCode = 1;
 });
