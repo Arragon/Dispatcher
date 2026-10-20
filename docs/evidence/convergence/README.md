@@ -68,7 +68,7 @@ final convergence verification.
 | CV-06 | Controller nonblocking scoped collection/terminal retry verified at 115/1169; origin/attempt/time and account-quota qualification/UI pending |
 | CV-08 | continuation/worker/delivery/failure/cancel/pause Guard, failure priority drain, stop audit and read-only local start recovery qualification verified at 115/1204; ordinary local start composed; schema-8 writer increment verified at 116/1208; known-unsent cancellation/publication journal recovery verified at 116/1215; general guarded local recovery verified at 116/1218; captured reroute stage Guard and default Generic drain verified at 116/1224; shared guarded replacement startup and original owned-CLI cleanup verified at 116/1229; legacy/remote/qualified native recovery remain pending |
 | CV-12 | pending complete selection/control integration |
-| macOS service / LP / backup | MAC-01a CLI data-directory ownership verified at 117/1237; MAC-01b lifecycle/fixed definition verified at 117/1251; release staging/logs/upgrade/recovery and real evidence pending |
+| macOS service / LP / backup | MAC-01a CLI data-directory ownership verified at 117/1237; MAC-01b lifecycle/fixed definition verified at 117/1251; MAC-01c read-only doctor verified at 118/1264; release staging/logs/upgrade/recovery and real evidence pending |
 | CV-07/09/10/11 | pending contracts/guards |
 | CV-13/14 and original Gates | pending implementation and evidence |
 
@@ -1425,3 +1425,44 @@ upgrade/rollback/recovery and actual login/sleep/Keychain/Agent evidence. Rollba
 ce3f292 plus matching schema-8 data backup; preserve current installed plist and
 never restore it over a loaded unknown owner. No live service/data changed.
 Official quota checked after unit and recorded in Linear.
+
+
+## MAC-01c genuinely read-only diagnostic CLI
+
+Reproduced the old doctor on a disposable schema-5 fixture: exit 0 silently
+upgraded it to schema 8 and changed its bytes. Doctor no longer constructs
+DispatcherDatabase/ConfigurationEngine, initializes a missing directory or takes
+execution/writer ownership. It reuses persistence inspection and recovery
+inventory readers, reports schema/upgrade/integrity/barriers/aggregate counts,
+and always keeps executionReadiness=not-assessed. Unknown/future/corrupt or
+attention-required sources remain unresolved; no provider/lease/control writes.
+
+A first readOnly implementation still failed five full-file-set preservation
+assertions because SQLite created WAL/SHM beside the source. Keep those failures:
+all SQLite reads now use a private mode-700 temporary main/WAL copy, mode-600
+files, no-follow source descriptors and a 256 MiB/file limit. Source identity,
+size, nanosecond mtime/ctime and WAL/journal set must remain stable through copy.
+Changed/busy sources fail closed; only the newly owned temporary directory is
+removed. Raw source descriptors belong in this separate CLI process, never in a
+process holding business SQLite locks. This does not alter the shared online
+backup implementation or claim its complete recovery Gate.
+
+Fourteen doctor cases plus existing instance/launchd checks pass 3 files/38 tests:
+schema 3/5/7/8 preservation, no initialization, archive/restore barriers, unsafe
+symlink, corrupt data, metadata-change fault, rollback journal, future schema,
+committed WAL via a real CLI child and diagnosis while the data lock is held.
+All source files use hash comparisons, including WAL/SHM, without dumping data.
+The prior CLI doctor lock-rejection case intentionally becomes read-only active
+diagnosis; serve/config still reject before business opening. No expectation
+about source-byte preservation was weakened.
+
+Default `mise exec -- pnpm check` passes 118 files/1264 tests (41.91s test phase);
+diff check passes. Initial lint caught inline import types in the fault-injection
+test; use explicit type imports, no suppression. Logs:
+/tmp/dispatcher-mac01c-doctor-red.log, /tmp/dispatcher-mac01c-doctor-green.log,
+/tmp/dispatcher-mac01c-target.log, /tmp/dispatcher-mac01c-final-check.log.
+Three original source HEAD/status sets and all 11 WIP hashes rechecked unchanged.
+No original database opened and no live service mutation. MAC-01/R-013 remains
+open for logs, staging/upgrade/recovery and true service evidence. Rollback:
+58ec710 and matching schema-8 data backup. Official quota checked after unit and
+recorded in Linear.

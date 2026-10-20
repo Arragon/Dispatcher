@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { accessSync, constants, mkdirSync, readFileSync, realpathSync } from "node:fs";
+import { accessSync, constants, readFileSync, realpathSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
@@ -17,6 +17,7 @@ import { normalizeCliArguments } from "./cli-args.js";
 import { OWNER_TOKEN_REFERENCE } from "./control-auth.js";
 import { ControllerService } from "./service.js";
 import {acquireInstanceLock} from "./instance-lock.js";
+import {inspectLocalController} from "./doctor.js";
 
 function flag(args: string[], name: string, fallback?: string): string | undefined {
   const index = args.indexOf(name);
@@ -128,29 +129,19 @@ async function serviceCommand(command: string, args: string[]): Promise<void> {
 }
 
 async function doctor(args: string[]): Promise<void> {
-  const root = dataDirectory(args);
-  mkdirSync(root, { recursive: true, mode: 0o700 });
-  accessSync(root, constants.R_OK | constants.W_OK);
-  const database = new DispatcherDatabase(join(root, "dispatcher.sqlite"));
-  const result = {
-    node: process.versions.node,
-    nodeSupported: Number(process.versions.node.split(".")[0]) >= 24,
-    dataDirectory: root,
-    databaseIntegrity: database.integrityCheck(),
-    configurationRevision: new ConfigurationEngine(database).current().revision,
-  };
-  database.close();
+  const result=inspectLocalController(dataDirectory(args));
   console.log(JSON.stringify(result, null, 2));
-  if (!result.nodeSupported || !result.databaseIntegrity) process.exitCode = 1;
+  if(result.requiresAttention)process.exitCode=1;
 }
 
 async function main(): Promise<void> {
   const args = normalizeCliArguments(process.argv.slice(2));
   const command = args[0] ?? "serve";
   if (command === "serve") await serve(args);
-  else if (["config","doctor"].includes(command)){
+  else if(command==="doctor")await doctor(args);
+  else if (command==="config"){
     const ownership=acquireInstanceLock(dataDirectory(args));
-    try{if(command==="config")await configCommand(args);else await doctor(args);}finally{ownership.release();}
+    try{await configCommand(args);}finally{ownership.release();}
   }
   else if (command === "auth") await authCommand(args);
   else if (["install", "start", "stop", "restart", "status", "logs", "uninstall"].includes(command)) await serviceCommand(command, args);

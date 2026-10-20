@@ -29,8 +29,8 @@ Scale/HA remains
 outside this boundary.
 
 The production CLI acquires a separate SQLite exclusive transaction before
-constructing Controller or opening the business database for offline config/
-doctor commands. Its canonical data-directory lock remains held through verified
+constructing Controller or opening the business database for offline config
+commands. Its canonical data-directory lock remains held through verified
 shutdown; process exit releases kernel ownership, without PID expiry or deleting
 lock files. This protects CLI processes, not independently embedded library
 instances or an older binary that does not implement the protocol.
@@ -41,6 +41,13 @@ label persistently, boots it out and checks Controller exit/data ownership.
 Start uses kickstart without killing an existing process; restart waits for stop.
 Installed plist paths own CLI status/log selection. Definition changes require a
 separate reviewed upgrade; failed bootstrap never triggers blind bootout.
+
+Doctor runs separately from the Controller and copies bounded main/WAL files to
+a private temporary directory under source identity/size/timestamp checks. Only
+that copy enters SQLite inspection/recovery inventory; no source initialization,
+migration, journal recovery, lease restoration or provider work occurs. A busy,
+changed, future-schema or restore/archive source stays unresolved. Reports use
+aggregate metadata and never establish execution readiness.
 
 The personal MVP adds one Controller-owned `dispatchTask` path shared by HTTP
 and the confirmed operator-only `task.dispatch` semantic tool. Slack task and

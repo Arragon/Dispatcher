@@ -33,7 +33,7 @@ describe("Controller data-directory ownership",()=>{
       const probe=spawnSync(process.execPath,["--import","tsx","--input-type=module","-e",`import {acquireInstanceLock} from ${JSON.stringify(module)}; try{acquireInstanceLock(process.argv[1]).release();process.exitCode=2}catch(error){if(!error.message.startsWith('DATA_DIRECTORY_IN_USE'))throw error}`,directory],{timeout:5000});expect(probe.status,probe.stderr.toString()).toBe(0);
     }finally{lock.release();}
   });
-  it.each(["serve","doctor","config"])("blocks CLI %s before opening or migrating the business database",command=>{
+  it.each(["serve","config"])("blocks CLI %s before opening or migrating the business database",command=>{
     const directory=root(),database=join(directory,"dispatcher.sqlite");writeFileSync(database,"preserve source bytes");const lock=acquireInstanceLock(directory);
     try{
       const cli=fileURLToPath(new URL("../src/cli.ts",import.meta.url)),result=spawnSync(process.execPath,["--import","tsx",cli,command,...(command==="config"?["export"]:[]),"--data-dir",directory],{timeout:5000});

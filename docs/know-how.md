@@ -2,6 +2,12 @@
 
 ## M0–M10 invariants
 
+- SQLite readOnly can still create WAL/SHM sidecars beside a source database.
+  CLI doctor inspects a bounded private main/WAL copy after checking source
+  stability; do not delete source sidecars to make a read appear unchanged.
+  Compare the entire source file set by hashes in regression tests. Raw source
+  descriptors must remain outside a process that holds business SQLite locks.
+
 - `launchctl kickstart -k` kills an existing Controller; it is not a graceful
   restart. Disable before bootout for persistent explicit stop, wait for the
   reported PID and verify data-directory ownership before restart. A missing

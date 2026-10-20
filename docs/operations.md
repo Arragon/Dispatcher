@@ -27,7 +27,7 @@ The Controller listens on `127.0.0.1:8347`; open that address for the
 Dashboard. State defaults to `.dispatcher/`. Set `DISPATCHER_DATA_DIR` or pass
 `--data-dir <path>` to isolate it.
 
-CLI `serve`, offline `config` and offline `doctor` require exclusive ownership of
+CLI `serve` and offline `config` require exclusive ownership of
 the canonical data directory before opening its business database. A second
 process fails with `DATA_DIRECTORY_IN_USE`; use the running Controller's health,
 diagnostics and ConfigPlan APIs while it owns the directory. The separate
@@ -35,6 +35,17 @@ diagnostics and ConfigPlan APIs while it owns the directory. The separate
 while a process may own the directory. A crash releases the OS lock; successful
 shutdown releases it after Controller cleanup. This protection requires the new
 CLI and does not make an older binary compatible with a newer schema.
+
+`doctor --data-dir /absolute/data` is read-only and can inspect an active
+Controller's directory without writer ownership. It checks a private temporary
+copy of stable main/WAL files, each capped at 256 MiB, and removes only that
+owned copy on completion. Source changes, rollback journals, unsupported schemas
+or archive/restore barriers require attention; retry after settling the owning
+service. It never initializes a missing directory, upgrades a schema, resolves
+restoration or starts a provider. Exit 0 means the reported inspection needs no
+listed attention; `executionReadiness` remains `not-assessed`. Reports contain
+aggregate counts rather than records, transcripts or credentials. The old
+configurationRevision read was removed because it initialized configuration.
 
 Useful probes:
 
