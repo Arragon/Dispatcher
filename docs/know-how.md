@@ -465,6 +465,11 @@
   A per-run model/effort override belongs to its adapter session and must survive
   continuation independently of current profile defaults. Revalidate native
   account/project context before continuing a managed session.
+- Legacy usage collector event IDs do not prove cross-source native event identity.
+  Retain private raw evidence, attempt and optional occurrence time; never add
+  both collectors automatically or substitute collection time for billing time.
+  Expanding a stored finite number to decimal text preserves its stored value,
+  not lost upstream precision. Reject unsafe integers and unsupported scale.
 - Catalog parent-process close alone cannot confirm owned-group absence. Reuse
   OwnedProcessGroup, require drained callbacks and prioritize a cleanup-unknown
   error over usable response data; never signal a group again after absence.

@@ -78,3 +78,13 @@ v3 edit semantics with optional `NativeModelDefaultReviewV1`; evidence format
 Old `model-default-plan` records are retained and rejected for fresh review.
 This compatibility is required by persisted records; it is not response-shape
 negotiation or a second live selection authority.
+
+
+## Legacy usage read admission
+
+Legacy UsageMeasurement objects have source-specific identity, attempt and optional
+billing occurrence. The pure reader returns private historical evidence and
+explicitly unproven native event equivalence. It must not be sent directly to
+the canonical writer or counted alongside v3 observations. Preserve raw source
+records and reconcile event origin/attempt/time before producing canonical
+UsageObservationV1; collection time cannot stand in for missing billing time.

@@ -1,3 +1,4 @@
+import {fixtureMarker,fixtureOutcome,awaitFixtureReady} from "./catalog-fixtures.js";
 import { describe,expect,it,vi } from "vitest";
 import { readCodexCatalog, normalizeCodexCatalog } from "../src/codex-catalog.js";
 const context={profileId:"a",runnerId:"local",repositoryId:"repo",executionContextRef:"repo-context",reason:"open" as const};
@@ -32,14 +33,14 @@ it("reaps native RPC processes before returning and rejects mutating methods",as
 
 
 it("cancels an owned read-only RPC and confirms its process closure",async()=>{
-  const {readCodexNative}=await import("../src/codex-catalog.js");const {mkdtempSync,writeFileSync,readFileSync,chmodSync,rmSync,existsSync}=await import("node:fs");const {tmpdir}=await import("node:os");const {join}=await import("node:path");
+  const {readCodexNative}=await import("../src/codex-catalog.js");const {mkdtempSync,writeFileSync,readFileSync,chmodSync,rmSync}=await import("node:fs");const {tmpdir}=await import("node:os");const {join}=await import("node:path");
   const directory=mkdtempSync(join(tmpdir(),"codex-cancel-rpc-")),executable=join(directory,"native"),ready=join(directory,"ready"),closed=join(directory,"closed"),abort=new AbortController();
+  const marker=fixtureMarker(ready);let outcome:Promise<unknown>|undefined;
   try{
     writeFileSync(executable,`#!${process.execPath}\nprocess.on('SIGTERM',()=>{require('node:fs').writeFileSync(${JSON.stringify(closed)},'closed');process.exit(0);});require('node:fs').writeFileSync(${JSON.stringify(ready)},'ready');process.stdin.resume();`);chmodSync(executable,0o755);
-    const pending=readCodexNative({executable,codexHome:directory,workspacePath:directory,method:"model/list",params:{},signal:abort.signal});
-    const result=expect(pending).rejects.toMatchObject({code:"MODEL_CATALOG_CANCELLED"});
-    await expect.poll(()=>existsSync(ready)).toBe(true);abort.abort();await result;expect(readFileSync(closed,"utf8")).toBe("closed");
-  }finally{abort.abort();rmSync(directory,{recursive:true,force:true});}
+    outcome=fixtureOutcome(readCodexNative({executable,codexHome:directory,workspacePath:directory,method:"model/list",params:{},signal:abort.signal}));
+    await awaitFixtureReady(marker.ready,outcome);abort.abort();expect(await outcome).toMatchObject({error:{code:"MODEL_CATALOG_CANCELLED"}});expect(readFileSync(closed,"utf8")).toBe("closed");
+  }finally{abort.abort();await outcome;marker.close();rmSync(directory,{recursive:true,force:true});}
 });
 
 

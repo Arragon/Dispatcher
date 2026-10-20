@@ -806,6 +806,11 @@ period scope while preserving historical evidence; later deltas add only after
 that snapshot. Metrics use exact decimal strings with explicit units and
 inclusion relationships. Account periods are independent of task usage; time
 filters refer to observation timestamps, not inferred consumption intervals.
+The pure legacy measurement reader returns private read-only evidence, including
+attempt/source/native-session and optional billing occurrence. It does not
+produce canonical observations or totals. Cross-source event equivalence and
+canonical attempt/time admission still require explicit reconciliation; historical
+collection time is not a substitute for missing billing occurrence.
 Run.tokens remains the compatible latest-turn projection. Missing metrics and
 unavailable billing baselines stay unknown. Management reads never query a
 native provider. The current normalized token emitter is Codex; providers with

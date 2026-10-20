@@ -65,7 +65,8 @@ final convergence verification.
 | CV-03 | atomic reload + in-flight edits fixed; process-heavy test pool bounded at four parallel workers; two configured default checks passed 90/802; ready for whole-branch review |
 | CV-04 | migration/control/backup modules ported with v3 adaptation and protocol 2; targeted 12/101 and two default 90/802 gates passed; ready for whole-branch review |
 | CV-05 | in progress: catalog scope/lifecycle, default ConfigPlan, per-Run provenance and adapter selection fences pass 91/833 default gate; remaining legacy/catalog authority assertions tracked |
-| CV-06/08/12 | pending complete catalog/selection integration |
+| CV-06 | read-only legacy measurement decoder verified; canonical origin/attempt/time mapping and nonblocking runtime/quota wiring pending |
+| CV-08/12 | pending complete selection/control integration |
 | macOS service / LP / backup | pending safe shared foundation |
 | CV-07/09/10/11 | pending contracts/guards |
 | CV-13/14 and original Gates | pending implementation and evidence |
@@ -310,3 +311,41 @@ conditions. Independent CV-06 work may adapt the pure legacy observation reader
 against the frozen decimal contract, but collection/control-dependent writes
 must not be enabled before their prerequisites are composed. This is a scoped
 foundation unit, not permission to close CV-05 or its real Gates.
+
+
+## CV-06a private legacy measurement reader
+
+Added pure `readLegacyUsageMeasurement`, based on a499d84 domain/models and
+metering validation. The caller must identify the legacy format and record.
+The reader freezes private raw evidence, preserves source/turn/native-session/
+generation/attempt and optional billing occurrence, converts only safe stored
+numeric representations into decimal text and rejects unsupported precision,
+non-finite/negative/unsafe values, fractional token counts and invalid cache
+inclusion. Zero remains present; missing dimensions/inclusion/time stay missing.
+Exponent expansion uses decimal text positions, not quantity arithmetic.
+
+Its result is historical read-only evidence, not UsageObservationV1 or a second
+ledger. It always retains an unproven-native-event-identity diagnostic: collector
+UUIDs cannot establish cross-collector native event equivalence. It produces
+neither totals nor imports, and its private raw object must never be returned
+by an API projection. No provider query, native control or collection write was
+added. Canonical origin reconciliation/attempt/time mapping is R-010, followed
+by collector/quota integration after the required selection/control prerequisites.
+
+All five decoder cases first failed without the implementation. A specifically
+isolated fractional-token case also went RED before validation was added.
+Targeted decoder/catalog suite passes 3 files/29 tests. Default
+`mise exec -- pnpm check` passes 92 files/839 tests (36.02s test phase).
+Logs: `/tmp/dispatcher-cv06-legacy-read-red.log`,
+`/tmp/dispatcher-cv06-fractional-token-red.log`,
+`/tmp/dispatcher-cv06-readiness-legacy-targeted.log`,
+`/tmp/dispatcher-cv06-legacy-read-final-check.log`.
+
+The first full check had 838 passes and one newly added catalog-cancel fixture
+failure: Vitest's implicit 1s poll limit expired before its child wrote ready.
+These three cancellation fixtures now observe a filesystem readiness event,
+then trigger cancellation and await their real outcomes before cleanup. This
+removes the accidental startup-latency assertion and dangling async expectation;
+product query deadlines, process termination deadlines, test timeout and actual
+cancellation/closure expectations remain unchanged. No existing provider probe
+or product deadline was increased. Official quota after this unit: 90% remaining.

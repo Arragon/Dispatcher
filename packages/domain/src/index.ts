@@ -1,3 +1,4 @@
+export * from "./legacy-usage.js";
 export * from "./session-interaction.js";
 export * from "./legacy-selection.js";
 import type { NativeBinding, ExecutionContextRef } from "./session-interaction.js";
