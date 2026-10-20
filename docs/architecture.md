@@ -35,6 +35,13 @@ shutdown; process exit releases kernel ownership, without PID expiry or deleting
 lock files. This protects CLI processes, not independently embedded library
 instances or an older binary that does not implement the protocol.
 
+The per-user launchd definition binds absolute Node/CLI/data/log paths and a
+working directory. Abnormal exits are throttled; explicit stop disables the
+label persistently, boots it out and checks Controller exit/data ownership.
+Start uses kickstart without killing an existing process; restart waits for stop.
+Installed plist paths own CLI status/log selection. Definition changes require a
+separate reviewed upgrade; failed bootstrap never triggers blind bootout.
+
 The personal MVP adds one Controller-owned `dispatchTask` path shared by HTTP
 and the confirmed operator-only `task.dispatch` semantic tool. Slack task and
 profile aliases resolve before approval. A durable workflow origin and dispatch

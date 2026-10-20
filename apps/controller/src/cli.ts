@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { accessSync, constants, existsSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
+import { accessSync, constants, mkdirSync, readFileSync, realpathSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
@@ -12,7 +12,7 @@ import {
   validateConfig,
 } from "@dispatcher/config";
 import { DispatcherDatabase } from "@dispatcher/persistence";
-import { installLaunchAgent, LAUNCHD_LABEL, launchctl, tailLog } from "./launchd.js";
+import { installLaunchAgent, LAUNCHD_LABEL,readLaunchAgent,startLaunchAgent,stopLaunchAgent,restartLaunchAgent,statusLaunchAgent,uninstallLaunchAgent, tailLog } from "./launchd.js";
 import { normalizeCliArguments } from "./cli-args.js";
 import { OWNER_TOKEN_REFERENCE } from "./control-auth.js";
 import { ControllerService } from "./service.js";
@@ -108,25 +108,23 @@ async function configCommand(args: string[]): Promise<void> {
 }
 
 async function serviceCommand(command: string, args: string[]): Promise<void> {
-  if (process.platform !== "darwin") throw new Error("The M1 service prototype currently supports macOS launchd only");
+  if (process.platform !== "darwin") throw new Error("Controller background service management supports macOS launchd");
   const paths = servicePaths(args);
-  const domain = `gui/${process.getuid?.() ?? 0}`;
   if (command === "install") {
-    const cliPath = fileURLToPath(import.meta.url);
-    await installLaunchAgent({ plistPath: paths.plist, nodePath: process.execPath, cliPath, dataDirectory: paths.root, logDirectory: paths.logs });
+    const cliPath = realpathSync(resolve(flag(args,"--cli-path",fileURLToPath(import.meta.url))!)),nodePath=realpathSync(process.execPath);
+    accessSync(cliPath,constants.R_OK);accessSync(nodePath,constants.X_OK);
+    await installLaunchAgent({ plistPath: paths.plist, nodePath, cliPath, dataDirectory: paths.root, logDirectory: paths.logs });
     console.log(`Installed ${LAUNCHD_LABEL}`);
-  } else if (command === "start") await launchctl(["kickstart", "-k", `${domain}/${LAUNCHD_LABEL}`]);
-  else if (command === "stop") await launchctl(["kill", "SIGTERM", `${domain}/${LAUNCHD_LABEL}`]);
-  else if (command === "restart") await launchctl(["kickstart", "-k", `${domain}/${LAUNCHD_LABEL}`]);
-  else if (command === "status") console.log((await launchctl(["print", `${domain}/${LAUNCHD_LABEL}`])).stdout);
-  else if (command === "uninstall") {
-    try {
-      await launchctl(["bootout", domain, paths.plist]);
-    } finally {
-      if (existsSync(paths.plist)) unlinkSync(paths.plist);
-    }
+    return;
   }
-  else if (command === "logs") console.log(tailLog(join(paths.logs, "controller.log")));
+  const definition=await readLaunchAgent(paths.plist),input={...definition,plistPath:paths.plist};
+  if((args.includes("--data-dir")||process.env.DISPATCHER_DATA_DIR)&&realpathSync(paths.root)!==realpathSync(definition.dataDirectory))throw Error("SERVICE_DATA_DIRECTORY_MISMATCH: use the installed service data directory");
+  if(command==="start")await startLaunchAgent(input);
+  else if(command==="stop")await stopLaunchAgent(input);
+  else if(command==="restart")await restartLaunchAgent(input);
+  else if(command==="status")console.log(JSON.stringify({label:LAUNCHD_LABEL,...definition,...await statusLaunchAgent(input)},null,2));
+  else if(command==="uninstall")await uninstallLaunchAgent(input);
+  else if(command==="logs")console.log(tailLog(join(definition.logDirectory,"controller.log")));
 }
 
 async function doctor(args: string[]): Promise<void> {

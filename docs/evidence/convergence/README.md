@@ -68,7 +68,7 @@ final convergence verification.
 | CV-06 | Controller nonblocking scoped collection/terminal retry verified at 115/1169; origin/attempt/time and account-quota qualification/UI pending |
 | CV-08 | continuation/worker/delivery/failure/cancel/pause Guard, failure priority drain, stop audit and read-only local start recovery qualification verified at 115/1204; ordinary local start composed; schema-8 writer increment verified at 116/1208; known-unsent cancellation/publication journal recovery verified at 116/1215; general guarded local recovery verified at 116/1218; captured reroute stage Guard and default Generic drain verified at 116/1224; shared guarded replacement startup and original owned-CLI cleanup verified at 116/1229; legacy/remote/qualified native recovery remain pending |
 | CV-12 | pending complete selection/control integration |
-| macOS service / LP / backup | MAC-01a CLI data-directory ownership verified at 117/1237; service lifecycle/stable installation/logs/recovery and real evidence pending |
+| macOS service / LP / backup | MAC-01a CLI data-directory ownership verified at 117/1237; MAC-01b lifecycle/fixed definition verified at 117/1251; release staging/logs/upgrade/recovery and real evidence pending |
 | CV-07/09/10/11 | pending contracts/guards |
 | CV-13/14 and original Gates | pending implementation and evidence |
 
@@ -1383,3 +1383,45 @@ Independent service development proceeds while qualified native/remote CV-08
 activation remains closed per R-005. Rollback: fba8e9a and matching schema-8 data
 backup; do not remove a possibly owned lock file. Official quota checked after
 unit and recorded in Linear.
+
+
+## MAC-01b fixed launchd definition and safe lifecycle
+
+Reuse the existing per-user launchd adapter/CLI, no package addition. Plists now
+bind absolute paths/WorkingDirectory, explicit safe PATH/umask, RunAtLoad,
+SuccessfulExit=false with ThrottleInterval=30 and ExitTimeOut=60. Managed worktree
+and temporary runtime paths are rejected. CLI can select --cli-path for an
+existing stable release; it does not copy/build a release at install time.
+
+Installation publishes a complete mode-600 plist without overwriting an existing
+definition. Matching reinstall/start never uses kickstart -k. A differing file
+requires reviewed upgrade; failed bootstrap retains evidence without blind
+bootout. Stop checks loaded plist ownership, persistently disables, boots out,
+waits for the reported Controller PID and checks the data lock. Restart and
+uninstall depend on that confirmed stop. A manually started Controller blocks
+restart. Non-install CLI commands decode the installed definition through native
+plutil rather than select logs/data from cwd. Status returns only selected
+metadata, never raw launchctl environment output; command errors are bounded and
+classified by typed exit status, not message substring.
+
+Sources: [Apple launchd guide](https://developer.apple.com/library/archive/documentation/MacOSX/Conceptual/BPSystemStartup/Chapters/CreatingLaunchdJobs.html)
+and this host's `man launchctl`/`man launchd.plist` for disable persistence,
+kickstart -k, SuccessfulExit, ThrottleInterval and ExitTimeOut. Read-only
+`launchctl print gui/501/dev.dispatcher.controller` confirmed absent, exit 113;
+no host lifecycle mutation was run. A temporary generated plist with Chinese,
+spaces and ampersand paths passes real /usr/bin/plutil lint and JSON decode
+roundtrip on darwin/Node v24.21.0. This is parser evidence, not service evidence.
+
+RED: 13 new/updated lifecycle assertions fail against the prototype. GREEN:
+17 lifecycle/definition cases, plus instance/CLI target 3 files/26 tests. Full
+default `mise exec -- pnpm check` passes 117 files/1251 tests (42.12s test phase);
+diff check passes. Logs: /tmp/dispatcher-mac01b-red.log,
+/tmp/dispatcher-mac01b-green.log, /tmp/dispatcher-mac01b-target.log,
+/tmp/dispatcher-mac01b-check.log. Existing KeepAlive=false and blind-replacement
+expectations intentionally change to the approved daily-service behavior.
+
+MAC-01/R-013 remains open for release staging, bounded/redacted logs, doctor,
+upgrade/rollback/recovery and actual login/sleep/Keychain/Agent evidence. Rollback:
+ce3f292 plus matching schema-8 data backup; preserve current installed plist and
+never restore it over a loaded unknown owner. No live service/data changed.
+Official quota checked after unit and recorded in Linear.

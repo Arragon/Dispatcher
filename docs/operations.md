@@ -106,12 +106,15 @@ master key before starting:
 export DISPATCHER_SECRET_STORE_KEY='<at-least-16-characters>'
 ```
 
-## macOS launchd prototype
+## macOS Controller background service
 
-Build first so the CLI path exists, then use:
+Build and stage the complete workspace and dependencies at a persistent release
+path first. Service installation does not copy a worktree into a release. It
+rejects managed worktree or temporary Node/CLI paths. Select its absolute CLI
+path explicitly when invoking installation from a development checkout:
 
 ```bash
-pnpm dispatcher -- install
+pnpm dispatcher -- install --cli-path /absolute/persistent/release/apps/controller/dist/cli.js --data-dir /absolute/persistent/data
 pnpm dispatcher -- status
 pnpm dispatcher -- restart
 pnpm dispatcher -- logs
@@ -119,9 +122,24 @@ pnpm dispatcher -- stop
 pnpm dispatcher -- uninstall
 ```
 
-The prototype installs `dev.dispatcher.controller` in the current user's
+The CLI installs `dev.dispatcher.controller` in the current user's
 `~/Library/LaunchAgents`, writes logs under the selected data directory, and
-uses a 30-second restart throttle. It does not install a system daemon.
+uses a 30-second abnormal-exit restart throttle with a 60-second launchd shutdown
+allowance. Paths and working directory stay fixed in its plist; status/logs read
+that definition even when invoked from another directory. Status returns only
+selected metadata and does not dump launchctl environment values. Account
+executables outside its fixed PATH need their registered absolute executable.
+
+`start` enables the service and uses bootstrap or kickstart without `-k`.
+`stop` disables it across logins, boots it out, waits for the reported Controller
+PID and checks data-directory ownership. `restart` must finish that stop before
+enabling/start; stop uncertainty prevents restart/uninstall. `uninstall` retains
+all user data and removes the plist only after confirmed Controller stop.
+Changing installed runtime/data paths returns `SERVICE_UPGRADE_REQUIRED` and
+preserves the existing definition; the reviewed upgrade/backup/rollback command
+is still pending. Failed bootstrap keeps the definition and error for inspection.
+These local lifecycle tests do not establish real login, sleep, Keychain, native
+Agent stop or A acceptance. No system daemon is installed.
 
 ## Native Remote Runner
 

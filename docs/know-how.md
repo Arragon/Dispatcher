@@ -2,6 +2,12 @@
 
 ## M0–M10 invariants
 
+- `launchctl kickstart -k` kills an existing Controller; it is not a graceful
+  restart. Disable before bootout for persistent explicit stop, wait for the
+  reported PID and verify data-directory ownership before restart. A missing
+  service label alone does not prove a manually started Controller stopped.
+  Keep failed or differing definitions for inspection instead of blind bootout.
+
 - Keep the Controller instance-lock SQLite file separate from the business WAL
   database and never delete/recreate it to clear ownership. On POSIX, opening and
   closing an extra descriptor to an existing lock inode can release locks held
