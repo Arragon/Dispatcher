@@ -176,6 +176,32 @@ permanent or exhausted failures to the dead-letter store.
 
 ## Configuration and secrets
 
+Native session persistence now uses migrations 4 (`native_session_interaction`)
+and 5 (`minimum_writer_protocol`): canonical Session-keyed bindings, revision/
+epoch CAS, command receipts, observation checkpoints and identity diagnostics.
+Migration 6 (`v3_native_convergence_writer_protocol`) atomically raises the
+writer protocol to 2 so an already-open personal-local protocol-1 binary cannot
+erase v3 execution choices. Schema 4/5 retain their original SQL and semantics.
+Connections register `dispatcher_writer_protocol()` before writes; upgraded
+triggers reject older writers. Nested repository operations use savepoints so
+a caught inner failure cannot partially commit native identity changes.
+New Run execution choices remain v3 `ExecutionSelection`, independently frozen
+from historical `modelSelection` records. Native binding validates a new Run
+against its frozen contract's repository/base commit; current config cannot
+repair missing historical identity.
+
+The Controller currently refuses live persisted native execution/control and
+unadapted legacy model selections before
+its control runtime is composed, before restoring leases or starting workers.
+Schema compatibility alone is not permission to take over another native writer.
+Missing/conflicting old binding facts remain diagnostic and do not acquire
+AUTOMATED control. This staged integration does not enable native takeover UI.
+
+SQLite online backups are consistent private archives with checksums and an
+inventory. Archives refuse live startup; restore targets must be new directories
+and retain a durable reconciliation barrier. Restoring bytes alone never
+authorizes replay of Agent starts, inputs, outbox or delivery side effects.
+
 Runner credential revocation first denies the in-memory identity, closes its
 connection and persists a new opaque identity epoch, then revokes Run leases
 before awaiting secret-store work. Authentication and remote RPC replies recheck

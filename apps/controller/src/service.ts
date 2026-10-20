@@ -531,6 +531,15 @@ export class ControllerService {
     const logger = createLogger({ level: process.env.LOG_LEVEL ?? "info" });
     this.app = fastify({ loggerInstance: logger as unknown as FastifyBaseLogger, ajv: {customOptions:{coerceTypes:false,removeAdditional:false}} });
     this.database = new DispatcherDatabase(join(options.dataDirectory, "dispatcher.sqlite"));
+    // Schema support is not native execution authority. Until CV-08 composes
+    // the control runtime, never restore leases for another native writer.
+    const persistedRuns=this.database.listEntities<JsonValue>("run") as unknown as Run[];
+    const nativeSessions=new Set(this.database.handle.prepare("SELECT session_id FROM native_bindings").all().map(row=>row.session_id));
+    const controlledRuns=new Set(this.database.handle.prepare("SELECT active_run_id FROM session_controls").all().map(row=>row.active_run_id));
+    if(persistedRuns.some(run=>!isTerminalRunState(run.state)&&(run.executionRef||Object.hasOwn(run,"modelSelection")||nativeSessions.has(run.sessionId)||controlledRuns.has(run.id)))||[...controlledRuns].some(id=>!persistedRuns.some(run=>run.id===id))){
+      this.database.close();
+      throw new TaskDispatchError("NATIVE_CONTROL_RUNTIME_UNAVAILABLE",409,"This database has native execution requiring the control runtime. Keep the original binary/data backup until native control integration is qualified.");
+    }
     this.profileProbes=new ProfileProbeService(this.database,()=>this.now());
     this.credentialContext=new CredentialContext(this.database);
     this.directorySelections=new DirectorySelections(options.directoryPicker);

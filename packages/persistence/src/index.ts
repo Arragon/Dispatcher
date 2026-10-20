@@ -1,6 +1,13 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { isDeepStrictEqual } from "node:util";
+import { InteractionStoreError, migrateNativeInteractions } from "./interaction-store.js";
+import { assertDatabaseLocationOperational, assertDatabaseOperational, assertDatabaseSchema, CONVERGENCE_SCHEMA_NAME, databaseWriterProtocol, installWriterGate, upgradeConvergenceWriterGate } from "./database-compatibility.js";
+
+export * from "./interaction-store.js";
+export * from "./database-compatibility.js";
+export * from "./backup.js";
 
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
@@ -9,6 +16,7 @@ export interface Migration {
   version: number;
   name: string;
   sql: string;
+  afterApply?: (database: DispatcherDatabase) => void;
 }
 
 export const migrations: readonly Migration[] = [
@@ -187,6 +195,85 @@ export const migrations: readonly Migration[] = [
       ) STRICT;
     `,
   },
+  {
+    version: 4,
+    name: "native_session_interaction",
+    sql: `
+      CREATE TABLE native_bindings (
+        session_kind TEXT NOT NULL DEFAULT 'session' CHECK (session_kind = 'session'),
+        session_id TEXT PRIMARY KEY,
+        binding_key TEXT NOT NULL UNIQUE,
+        profile_id TEXT NOT NULL,
+        execution_ref_id TEXT NOT NULL,
+        document_json TEXT NOT NULL,
+        FOREIGN KEY(session_kind, session_id) REFERENCES entities(kind, id)
+      ) STRICT;
+      CREATE TABLE session_controls (
+        session_kind TEXT NOT NULL DEFAULT 'session' CHECK (session_kind = 'session'),
+        session_id TEXT PRIMARY KEY,
+        active_run_id TEXT NOT NULL,
+        epoch INTEGER NOT NULL CHECK (epoch >= 1),
+        revision INTEGER NOT NULL CHECK (revision >= 1),
+        state TEXT NOT NULL CHECK (state IN ('AUTOMATED','HANDOFF_REQUESTED','HUMAN','RECONCILING','CONFLICT')),
+        document_json TEXT NOT NULL,
+        FOREIGN KEY(session_kind, session_id) REFERENCES entities(kind, id)
+      ) STRICT;
+      CREATE TABLE interaction_commands (
+        session_kind TEXT NOT NULL DEFAULT 'session' CHECK (session_kind = 'session'),
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        semantic_hash TEXT NOT NULL,
+        state TEXT NOT NULL CHECK (state IN ('RESERVED','SENDING','ACKNOWLEDGED','UNKNOWN','FAILED','CANCELLED')),
+        revision INTEGER NOT NULL CHECK (revision >= 1),
+        document_json TEXT NOT NULL,
+        FOREIGN KEY(session_kind, session_id) REFERENCES entities(kind, id)
+      ) STRICT;
+      CREATE INDEX interaction_commands_pending_idx ON interaction_commands(session_id, state);
+      CREATE TABLE native_observations (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL REFERENCES native_bindings(session_id),
+        observer_generation INTEGER NOT NULL CHECK (observer_generation >= 1),
+        observer_sequence INTEGER NOT NULL CHECK (observer_sequence >= 1),
+        control_epoch INTEGER NOT NULL CHECK (control_epoch >= 1),
+        document_json TEXT NOT NULL,
+        UNIQUE(id, session_id)
+      ) STRICT;
+      CREATE TABLE native_observation_checkpoints (
+        session_id TEXT PRIMARY KEY REFERENCES native_bindings(session_id),
+        observation_id TEXT NOT NULL REFERENCES native_observations(id),
+        observer_generation INTEGER NOT NULL CHECK (observer_generation >= 1),
+        observer_sequence INTEGER NOT NULL CHECK (observer_sequence >= 1),
+        control_epoch INTEGER NOT NULL CHECK (control_epoch >= 1),
+        FOREIGN KEY(observation_id, session_id) REFERENCES native_observations(id, session_id)
+      ) STRICT;
+      CREATE TABLE control_audit (
+        sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+        id TEXT NOT NULL UNIQUE,
+        session_id TEXT NOT NULL REFERENCES session_controls(session_id),
+        document_json TEXT NOT NULL
+      ) STRICT;
+      CREATE TABLE native_identity_diagnostics (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        code TEXT NOT NULL,
+        binding_key TEXT
+      ) STRICT;
+      CREATE INDEX native_identity_diagnostics_key_idx ON native_identity_diagnostics(binding_key);
+    `,
+    afterApply: migrateNativeInteractions,
+  },
+  {
+    version: 5,
+    name: "minimum_writer_protocol",
+    sql: "",
+    afterApply: database => installWriterGate(database.handle),
+  },
+  {
+    version: 6,
+    name: CONVERGENCE_SCHEMA_NAME,
+    sql: "",
+    afterApply: database => upgradeConvergenceWriterGate(database.handle),
+  },
 ] as const;
 
 export class MigrationError extends Error {
@@ -295,15 +382,29 @@ function rowObject(value: unknown): Record<string, unknown> | undefined {
 
 export class DispatcherDatabase {
   readonly handle: DatabaseSync;
+  private savepointSequence = 0;
+  private writerProtocol = 0;
 
   constructor(readonly path: string, appliedMigrations: readonly Migration[] = migrations) {
+    assertDatabaseLocationOperational(path);
     if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
     this.handle = new DatabaseSync(path, { timeout: 5_000, enableForeignKeyConstraints: true });
-    this.handle.exec("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;");
-    this.migrate(appliedMigrations);
+    try {
+      assertDatabaseSchema(this.handle,appliedMigrations);
+      assertDatabaseOperational(this.handle);
+      this.handle.exec("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;");
+      this.migrate(appliedMigrations);
+    } catch (error) {
+      this.handle.close();
+      throw error;
+    }
   }
 
   migrate(appliedMigrations: readonly Migration[] = migrations): void {
+    assertDatabaseSchema(this.handle,appliedMigrations);
+    assertDatabaseOperational(this.handle);
+    this.writerProtocol=appliedMigrations.some(m=>m.version===5&&m.name==="minimum_writer_protocol")?databaseWriterProtocol(this.handle):0;
+    this.handle.function("dispatcher_writer_protocol",{deterministic:true},()=>this.writerProtocol);
     this.handle.exec(`
       CREATE TABLE IF NOT EXISTS schema_migrations (
         version INTEGER PRIMARY KEY,
@@ -316,28 +417,36 @@ export class DispatcherDatabase {
     );
     for (const migration of [...appliedMigrations].sort((left, right) => left.version - right.version)) {
       if (existing.has(migration.version)) continue;
+      const previousWriterProtocol=this.writerProtocol;
       try {
         this.transaction(() => {
+          if(migration.version===6&&migration.name===CONVERGENCE_SCHEMA_NAME)this.writerProtocol=2;
           this.handle.exec(migration.sql);
+          migration.afterApply?.(this);
           this.handle
             .prepare("INSERT INTO schema_migrations(version, name, applied_at) VALUES (?, ?, ?)")
             .run(migration.version, migration.name, new Date().toISOString());
         });
       } catch (error) {
+        this.writerProtocol=previousWriterProtocol;
         throw new MigrationError(migration, error);
       }
     }
   }
 
   transaction<T>(operation: () => T): T {
-    if (this.handle.isTransaction) return operation();
-    this.handle.exec("BEGIN IMMEDIATE");
+    // A caller may catch an inner operation's error and still commit its work.
+    // Savepoints keep that failed operation atomic without aborting the caller.
+    const savepoint = this.handle.isTransaction ? `dispatcher_${++this.savepointSequence}` : undefined;
+    const previousWriterProtocol=this.writerProtocol;
+    this.handle.exec(savepoint ? `SAVEPOINT ${savepoint}` : "BEGIN IMMEDIATE");
     try {
       const result = operation();
-      this.handle.exec("COMMIT");
+      this.handle.exec(savepoint ? `RELEASE SAVEPOINT ${savepoint}` : "COMMIT");
       return result;
     } catch (error) {
-      this.handle.exec("ROLLBACK");
+      this.handle.exec(savepoint ? `ROLLBACK TO SAVEPOINT ${savepoint}; RELEASE SAVEPOINT ${savepoint}` : "ROLLBACK");
+      this.writerProtocol=previousWriterProtocol;
       throw error;
     }
   }
@@ -352,6 +461,37 @@ export class DispatcherDatabase {
   }
 
   saveEntity(kind: string, id: string, document: JsonValue, updatedAt = new Date().toISOString()): void {
+    const previous=["run","session","adapter-session","model-routing-decision"].includes(kind)?this.getEntity<JsonValue>(kind,id):undefined;
+    const before=previous&&typeof previous==="object"&&!Array.isArray(previous)?previous:undefined;
+    const after=document&&typeof document==="object"&&!Array.isArray(document)?document:undefined;
+    if((kind==="session"||kind==="adapter-session")&&before?.nativeBinding){
+      const binding=before.nativeBinding as Record<string,JsonValue>;
+      const projection=kind==="session"?"nativeSessionId":"providerSessionId";
+      if(!after||!isDeepStrictEqual(before.nativeBinding,after.nativeBinding)||after[projection]!==binding.nativeSessionId||before.profileId!==after.profileId||before.id!==after.id)throw new InteractionStoreError("NATIVE_IDENTITY_CHANGED");
+      const frozenFields=kind==="session"?["providerId",...(before.executionRef!==undefined?["executionRef"]:[])]:["runId","backendId"];
+      if(frozenFields.some(field=>!isDeepStrictEqual(before[field],after[field])))throw new InteractionStoreError("NATIVE_IDENTITY_CHANGED");
+      if(kind==="session"&&after.executionRef&&typeof after.executionRef==="object"&&!Array.isArray(after.executionRef)&&after.executionRef.id!==binding.executionRefId)throw new InteractionStoreError("NATIVE_IDENTITY_CHANGED");
+    }
+    if(kind==="model-routing-decision"&&before){
+      const frozen=(value:Record<string,JsonValue>)=>Object.fromEntries(Object.entries(value).filter(([key])=>!["status","confirmation","runId","consumedAt"].includes(key)));
+      const same=isDeepStrictEqual(before,after);
+      if(!same&&(!after||before.status!=="ready"||after.status!=="consumed"||typeof after.runId!=="string"||typeof after.consumedAt!=="string"||!after.confirmation||!isDeepStrictEqual(frozen(before),frozen(after))))throw new ImmutableRoutingDecisionError();
+    }
+    if(kind === "run") {
+      if(after?.executionSelection!==undefined&&after.modelSelection!==undefined)throw new ImmutableRunSelectionError();
+      const sessionId=before?.sessionId??after?.sessionId;
+      const session=typeof sessionId==="string"?this.getEntity<JsonValue>("session",sessionId):undefined;
+      const binding=session&&typeof session==="object"&&!Array.isArray(session)?session.nativeBinding:undefined;
+      if(binding&&typeof binding==="object"&&!Array.isArray(binding)&&(!after||after.providerSessionId!==binding.nativeSessionId||after.profileId!==binding.profileId||after.runnerId!==binding.runnerId||after.sessionId!==sessionId||before?.providerId!==undefined&&before.providerId!==after.providerId))throw new InteractionStoreError("NATIVE_IDENTITY_CHANGED");
+      const selection=previous && typeof previous === "object" && !Array.isArray(previous) ? previous.modelSelection : undefined;
+      const next=document && typeof document === "object" && !Array.isArray(document) ? document.modelSelection : undefined;
+      if(selection!==undefined && JSON.stringify(selection)!==JSON.stringify(next)) {
+        throw new ImmutableRunSelectionError();
+      }
+      if(before?.executionSelection!==undefined&&!isDeepStrictEqual(before.executionSelection,after?.executionSelection))throw new ImmutableRunSelectionError();
+      if(before?.modelRoutingDecision!==undefined&&!isDeepStrictEqual(before.modelRoutingDecision,after?.modelRoutingDecision))throw new ImmutableRoutingDecisionError();
+      if(before?.executionRef!==undefined&&!isDeepStrictEqual(before.executionRef,after?.executionRef))throw new ImmutableExecutionContextError();
+    }
     this.handle
       .prepare(`
         INSERT INTO entities(kind, id, document_json, updated_at) VALUES (?, ?, ?, ?)
@@ -870,4 +1010,16 @@ export class DispatcherDatabase {
   close(): void {
     this.handle.close();
   }
+}
+export class ImmutableRunSelectionError extends Error {
+  readonly code="IMMUTABLE_RUN_SELECTION";
+  constructor(){super("A bound Run model/effort/pricing selection cannot change or be removed");this.name="ImmutableRunSelectionError";}
+}
+export class ImmutableRoutingDecisionError extends Error {
+  readonly code="IMMUTABLE_ROUTING_DECISION";
+  constructor(){super("A frozen routing decision and its consumed Run reference cannot change");this.name="ImmutableRoutingDecisionError";}
+}
+export class ImmutableExecutionContextError extends Error {
+  readonly code="IMMUTABLE_EXECUTION_CONTEXT";
+  constructor(){super("Run execution context is immutable");this.name="ImmutableExecutionContextError";}
 }

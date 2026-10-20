@@ -2,6 +2,20 @@
 
 ## M0–M10 invariants
 
+- Native database migrations need both the schema and the connection-local
+  `dispatcher_writer_protocol()` function. A schema-5 database is not compatible
+  with a binary that only knows migrations 1–3; do not delete writer triggers.
+- Convergence schema 6 requires writer protocol 2. Protocol 1 understands native
+  control but not v3 immutable selections. Backups must use the protocol from
+  their own schema; upgrading only a restored copy must not change the source.
+  Rolling back an outer transaction must also restore connection writer state.
+- A caught failure inside an outer SQLite transaction needs a savepoint to
+  undo partial native binding/projection writes. Merely detecting an existing
+  transaction and running the inner callback is not atomic.
+- Backup archives and restored databases intentionally refuse live startup.
+  Archive and restore-pending markers must not be removed to force recovery;
+  reconcile provider/Run receipts before authorizing any replay.
+
 - The frozen architecture/roadmap dated 2026-09-15 is authoritative over the
   tracker. Tracker differences are reconciled to the document, not vice versa.
 - `domain` and `protocol` are pure contracts. Run `pnpm boundaries` after any

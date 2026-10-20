@@ -41,6 +41,11 @@ cannot silently select a different shape by `version:1` or missing fields.
   `minimum_writer_protocol`, including their SQL/afterApply semantics and
   `dispatcher_writer_protocol()` registration. Never remove writer triggers.
   Use backups and old-schema fixtures only, not the original live data.
+- The verified source catalogs stop at 3/5, so allocate migration 6 for writer
+  protocol 2. Old protocol-1 clients do not understand v3 immutable selections;
+  leaving protocol 1 writable would let them erase new facts. Replace the gate
+  transactionally during migration 6, preserving migration 4/5 definitions,
+  and restore connection-local protocol on migration/outer-transaction rollback.
 - One canonical Session id keys NativeBinding and SessionControl. Unknown or
   conflicting legacy identity is read-only and cannot become AUTOMATED by
   filling fields from current config. Lease/currentRun/task revision and
