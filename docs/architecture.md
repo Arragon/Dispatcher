@@ -250,12 +250,20 @@ the same coordinator and acknowledge only their own Task transitions.
 Usage reads now run outside that lane and business advancement, with scoped
 coalescing, terminal retry and shutdown fencing. Execution resource facts come
 from owned status/results independently of billing reads. Query failures retain
-unknown telemetry without declaring the provider down. Fail/cancel/pause/reroute/
-start/recovery remain pending; native startup admission stays closed. Failure
+unknown telemetry without declaring the provider down. Reroute/start/recovery
+and failure priority drain remain pending; native startup admission stays closed. Failure
 cleanup retains unavailable capacity and the existing Session stop receipt until
 owned execution has stopped and captured authority is rechecked. Unconfirmed
 stops require reconciliation; saved terminal snapshots cannot prove local process
 termination. Native-bound runtimes require qualified session-scoped stop evidence.
+Operator cancellation pins its caller and fence before queuing, revokes/aborts
+existing work, and rechecks authority at the adapter's final stop callback. It
+retains owned command/process drain before atomically committing Run and Task
+cancellation. Unknown stop receipts block another blind stop; a proven unsent
+rejection clears only its own stop intent. Explicit cancellation may stop an
+expired lease's original invocation but cannot authorize continuation. Pause
+uses the same lane/final callback and rejects missing admission acknowledgement.
+Local native-bound cancellation stays closed until a qualified stop is wired.
 
 Codex CLI start/send/resume accept an optional synchronous `beforeSend` admission
 callback. Creation captures request fields before storing intent, then checks

@@ -347,7 +347,10 @@ export class NativeInteractions {
     if(!run||run.sessionId!==fence.sessionId||principal.profileId!==undefined&&principal.profileId!==run.profileId)return reject("SESSION_OWNER_MISMATCH");
     const session=this.database.getEntity<JsonValue>("session",fence.sessionId) as unknown as Session|undefined;
     const adapter=this.database.getEntity<JsonValue>("adapter-session",fence.sessionId) as unknown as AdapterSession|undefined;
-    if(session&&(session.profileId!==run.profileId||session.providerId!==run.providerId)||adapter&&(adapter.id!==run.sessionId||adapter.runId!==run.id||adapter.profileId!==run.profileId)||!session&&!adapter)return reject("SESSION_OWNER_MISMATCH");
+    // A lost legacy Runner start reply can leave only its reserved Run/lease.
+    // Cancel may revoke that exact lease; all native session writes still need identity.
+    const unstartedStop=operation==="cancel"&&run.sessionId===`unstarted:${run.id}`&&!session&&!adapter&&!this.store.control(run.sessionId)&&!this.store.binding(run.sessionId);
+    if(session&&(session.profileId!==run.profileId||session.providerId!==run.providerId)||adapter&&(adapter.id!==run.sessionId||adapter.runId!==run.id||adapter.profileId!==run.profileId)||!session&&!adapter&&!unstartedStop)return reject("SESSION_OWNER_MISMATCH");
     if(read)return {allowed:true};
     if(run.revokedLeaseIds?.includes(run.leaseId)&&!["cancel","fail","cleanup-input"].includes(operation))return reject("STALE_RUN_AUTHORITY");
     if(hasNativeExternalWriteBlocker(this.database,run))return reject("NATIVE_STATE_UNKNOWN");
@@ -384,7 +387,7 @@ export class NativeInteractions {
     const task=this.database.getCanonicalTask<JsonValue>(run.taskId);
     if(!task||task.revision!==fence.expectedTaskRevision)return reject("STALE_TASK_REVISION");
     if(["DONE","FAILED","CANCELLED"].includes((task.document as {state:string}).state))return reject("TERMINAL_TASK");
-    if((task.document as {currentRunId?:string}).currentRunId!==run.id||fence.expectedCurrentRunId!==run.id||run.generation!==fence.generation||run.leaseId!==fence.leaseId||operation!=="fail"&&run.leaseExpiresAt&&(!Number.isFinite(Date.parse(run.leaseExpiresAt))||Date.parse(run.leaseExpiresAt)<=this.now().getTime()))return reject("STALE_RUN_AUTHORITY");
+    if((task.document as {currentRunId?:string}).currentRunId!==run.id||fence.expectedCurrentRunId!==run.id||run.generation!==fence.generation||run.leaseId!==fence.leaseId||!["fail","cancel"].includes(operation)&&run.leaseExpiresAt&&(!Number.isFinite(Date.parse(run.leaseExpiresAt))||Date.parse(run.leaseExpiresAt)<=this.now().getTime()))return reject("STALE_RUN_AUTHORITY");
     const storedControl=this.store.control(run.sessionId);
     if((storedControl?.revision??0)!==fence.expectedControlRevision||(storedControl?.epoch??0)!==fence.expectedControlEpoch)return reject("STALE_CONTROL_REVISION");
     const control:SessionControl=storedControl??{version:1,sessionId:run.sessionId,activeRunId:run.id,state:"AUTOMATED",exclusion:"none",revision:0,epoch:0,updatedAt:run.startedAt??""};

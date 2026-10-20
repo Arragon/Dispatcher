@@ -2,6 +2,12 @@
 
 ## M0–M10 invariants
 
+- Stop/pause admission must run after adapter preparation awaits. Confirm that
+  the adapter actually called it before trusting success. Keep Generic CLI's
+  cancellation latch before a detached-start check, after admission, so a late
+  owned process cannot escape cleanup. Unknown stop acknowledgement retains the
+  existing Session stop fence and does not authorize another blind SDK call.
+
 - Usage queries cannot run inside the Session mutation lane or business progress
   awaits. Keep execution facts from owned status/results separate from telemetry
   read health. A read failure is not provider-down proof; queued/late reads must

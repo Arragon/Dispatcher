@@ -172,6 +172,38 @@ describe("personal Slack–Linear loop", () => {
     else await expect(f.service.semanticTools.execute("run.cancel",{target:f.run().id},{...resumeContext,workflowId:"human-owner-cancel"})).rejects.toMatchObject({code:"HUMAN_CANCEL_CONFIRMATION_REQUIRED"});
     expect(f.run().state).toBe("ACTIVE");expect(f.task().state).toBe("RUNNING");expect(f.control.cancellations).toBe(0);
   });
+  it("rejects pause of a persisted HUMAN owner before invoking the adapter",async()=>{
+    const f=await setup();await f.service.app.inject({headers:OWNER,method:"POST",url:`/api/tasks/${f.taskId}/dispatch`,payload:{}});humanOwned(f);
+    const adapter=(f.service as unknown as {agentAdapters:Map<string,AgentAdapter>}).agentAdapters.get("orion")!,pause=vi.spyOn(adapter,"pause");
+    await expect(f.service.semanticTools.execute("run.pause",{target:f.run().id},{...resumeContext,workflowId:"human-pause"})).rejects.toMatchObject({code:"NATIVE_WRITE_LOCKED"});expect(pause).not.toHaveBeenCalled();expect(f.run().state).toBe("ACTIVE");
+  });
+  it.each(["cancel","failure"] as const)("rechecks control at the final %s stop after an adapter await",async action=>{
+    const f=await setup();await f.service.app.inject({headers:OWNER,method:"POST",url:`/api/tasks/${f.taskId}/dispatch`,payload:{}});const lock=controlled(f),adapter=(f.service as unknown as {agentAdapters:Map<string,AgentAdapter>}).agentAdapters.get("orion")!,cancel=adapter.cancel.bind(adapter),entered=Promise.withResolvers<void>(),ready=Promise.withResolvers<void>();
+    vi.spyOn(adapter,"cancel").mockImplementation(async(...args)=>{entered.resolve();await ready.promise;return cancel(...args);});
+    if(action==="failure")f.control.now=new Date(f.control.now.getTime()+16*60_000);
+    const pending=action==="failure"?f.service.runBackgroundCycle().then(value=>({value}),error=>({error})):f.service.semanticTools.execute("run.cancel",{target:f.run().id},{...resumeContext,workflowId:"late-cancel"}).then(value=>({value}),error=>({error}));
+    try{await entered.promise;lock();ready.resolve();await pending;expect(f.control.cancellations).toBe(0);expect(f.run().state).toBe("RUNNER_UNAVAILABLE");expect(f.task().state).not.toBe("CANCELLED");}finally{ready.resolve();await pending;}
+  });
+  it("rechecks Task revision at final pause and never overwrites a concurrent edit",async()=>{
+    const f=await setup();await f.service.app.inject({headers:OWNER,method:"POST",url:`/api/tasks/${f.taskId}/dispatch`,payload:{}});const adapter=(f.service as unknown as {agentAdapters:Map<string,AgentAdapter>}).agentAdapters.get("orion")!,entered=Promise.withResolvers<void>(),ready=Promise.withResolvers<void>();let writes=0;
+    vi.spyOn(adapter,"pause").mockImplementation(async(id,beforeSend)=>{entered.resolve();await ready.promise;beforeSend?.();writes++;return {...(await adapter.status(id)),state:"PAUSED"};});
+    const pending=f.service.semanticTools.execute("run.pause",{target:f.run().id},{...resumeContext,workflowId:"late-pause"}).then(value=>({value}),error=>({error}));
+    try{await entered.promise;const task=f.service.database.getCanonicalTask<JsonValue>(f.taskId)!;f.service.database.writeCanonicalTask(f.taskId,task.revision,task.document);ready.resolve();expect(await pending).toHaveProperty("error");expect(writes).toBe(0);expect(f.task().state).toBe("RUNNING");expect(f.run().state).toBe("ACTIVE");}finally{ready.resolve();await pending;}
+  });
+  it("keeps an opaque cancellation acknowledgement unconfirmed when the final callback was skipped",async()=>{
+    const f=await setup();await f.service.app.inject({headers:OWNER,method:"POST",url:`/api/tasks/${f.taskId}/dispatch`,payload:{}});const adapter=(f.service as unknown as {agentAdapters:Map<string,AgentAdapter>}).agentAdapters.get("orion")!,cancel=adapter.cancel.bind(adapter);
+    vi.spyOn(adapter,"cancel").mockImplementation(id=>cancel(id));
+    await expect(f.service.semanticTools.execute("run.cancel",{target:f.run().id},{...resumeContext,workflowId:"opaque-stop"})).rejects.toMatchObject({code:"NATIVE_CAPABILITY_UNVERIFIED"});expect(f.run().state).toBe("RUNNER_UNAVAILABLE");expect(f.service.database.getEntity("adapter-session",f.run().sessionId)).toMatchObject({authority:{stopState:"unconfirmed"}});
+  });
+  it("does not blindly resend a stop whose native acknowledgement was lost",async()=>{
+    const f=await setup();await f.service.app.inject({headers:OWNER,method:"POST",url:`/api/tasks/${f.taskId}/dispatch`,payload:{}});const adapter=(f.service as unknown as {agentAdapters:Map<string,AgentAdapter>}).agentAdapters.get("orion")!,cancel=vi.spyOn(adapter,"cancel").mockRejectedValue(Error("lost stop acknowledgement"));
+    await expect(f.service.semanticTools.execute("run.cancel",{target:f.run().id},{...resumeContext,workflowId:"unknown-stop-one"})).rejects.toThrow();
+    await expect(f.service.semanticTools.execute("run.cancel",{target:f.run().id},{...resumeContext,workflowId:"unknown-stop-two"})).rejects.toMatchObject({code:"CANCELLATION_UNCONFIRMED"});expect(cancel).toHaveBeenCalledTimes(1);expect(f.run().state).toBe("RUNNER_UNAVAILABLE");
+  });
+  it("permits explicit owned cancellation after lease expiry without granting continuation",async()=>{
+    const f=await setup();await f.service.app.inject({headers:OWNER,method:"POST",url:`/api/tasks/${f.taskId}/dispatch`,payload:{}});const run=f.run();f.control.now=new Date(f.control.now.getTime()+16*60_000);
+    await f.service.semanticTools.execute("run.cancel",{target:run.id},{...resumeContext,workflowId:"expired-stop"});expect(f.run().state).toBe("CANCELLED");expect(f.task().state).toBe("CANCELLED");expect(f.control.cancellations).toBe(1);
+  });
   function webAnswer(f:Awaited<ReturnType<typeof setup>>,id:string){
     const run=f.run();return f.service.app.inject({headers:OWNER,method:"POST",url:`/api/agents/profiles/${run.profileId}/sessions/${run.sessionId}/input`,payload:{inputId:id,message:"continue",authority:{runId:run.id,generation:run.generation,leaseId:run.leaseId,lastActivityAt:run.lastActivityAt,taskRevision:f.service.database.getCanonicalTask(f.taskId)!.revision}}}).then(value=>value);
   }
@@ -303,7 +335,7 @@ describe("personal Slack–Linear loop", () => {
     const originalContract = f.service.database.getEntity("run-contract", old.id), verification = f.service.database.getEntity("run-verification-config", old.id);
     f.service.database.saveTaskContract(old.taskId, { ...(originalContract as object), goal: "MUTATED task contract", verification: ["not-the-frozen-check"] } as JsonValue);
     const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>(), cancel = adapters.get(old.profileId)!.cancel.bind(adapters.get(old.profileId)!);
-    vi.spyOn(adapters.get(old.profileId)!, "cancel").mockImplementation(async id => { entered.resolve(); await release.promise; return cancel(id); });
+    vi.spyOn(adapters.get(old.profileId)!, "cancel").mockImplementation(async (...args) => { entered.resolve(); await release.promise; return cancel(...args); });
     let observed: unknown;
     f.control.onStart = () => { const id = f.task().currentRunId!; observed = { run: f.service.database.getEntity("run", id), old: f.service.database.getEntity("run", old.id), currentRunId: id }; };
     const pending = f.service.semanticTools.execute("run.reroute", { target: old.id, profileId: "vega" }, { ...resumeContext, workflowId: "frozen-reroute" });
@@ -326,7 +358,7 @@ describe("personal Slack–Linear loop", () => {
   it("lets task cancellation win while reroute is awaiting the original writer stop", async () => {
     const f = await rerouteFixture(), old = f.run(), adapter = (f.service as unknown as { agentAdapters: Map<string, AgentAdapter> }).agentAdapters.get(old.profileId)!;
     const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>(), cancel = adapter.cancel.bind(adapter);
-    vi.spyOn(adapter, "cancel").mockImplementation(async id => { entered.resolve(); await release.promise; return cancel(id); });
+    vi.spyOn(adapter, "cancel").mockImplementation(async (...args) => { entered.resolve(); await release.promise; return cancel(...args); });
     const reroute = f.service.semanticTools.execute("run.reroute", { target: old.id, profileId: "vega" }, { ...resumeContext, workflowId: "racing-reroute" }).then(value => ({ value }), error => ({ error }));
     await entered.promise;
     const cancelling = f.service.semanticTools.execute("task.cancel", { target: old.taskId }, { ...resumeContext, workflowId: "cancel-reroute" }).then(value => ({ value }), error => ({ error }));release.resolve();

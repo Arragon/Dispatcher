@@ -1,7 +1,7 @@
 import {parseNativeModelDefaultReview,qualifyNativeModelDefault,readNativeModelDefaultEvidence} from "./model-defaults.js";
 import type {RunGitDelivery,ScmDeliverySelection,MutationFence} from "@dispatcher/domain";
-import {NativeInteractions,InteractionGuardError,type ControllerInteractionOperation} from "./native-interactions.js";
-import {AdapterAdmissionError} from "@dispatcher/adapters";
+import {NativeInteractions,InteractionGuardError,type ControllerInteractionOperation,type InteractionPrincipal} from "./native-interactions.js";
+import {AdapterAdmissionError,assertAdapterWriteAdmission} from "@dispatcher/adapters";
 import { resolveProfileExecutionContext } from "./execution-context.js";
 import { ProfileProbeService } from "./profile-probes.js";
 import { CredentialContext } from "./credential-context.js";
@@ -827,8 +827,10 @@ export class ControllerService {
         const local=adapter instanceof CodexAdapter||adapter instanceof QoderAdapter||adapter instanceof StructuredCliAdapter||adapter instanceof GenericCliAdapter;
         if(local&&(await adapter.diagnostics?.(session.id))?.attached!==true)throw new AdapterContractError("SESSION_DETACHED","Saved native state is not owned process termination evidence");
         assertAuthority();
-        const stopped=await adapter.cancel(session.id);
-        if(!["CANCELLED","COMPLETED","FAILED"].includes(stopped.state))throw new AdapterContractError("CANCELLATION_UNCONFIRMED","Owned failure cleanup did not confirm termination");
+        let admitted=false;
+        const stopped=await adapter.cancel(session.id,()=>{assertAdapterWriteAdmission(assertAuthority);admitted=true;});
+        if(!admitted)throw new AdapterContractError("NATIVE_CAPABILITY_UNVERIFIED","Stop backend omitted final admission");
+        if(stopped.id!==session.id||stopped.runId!==current.id||!["CANCELLED","COMPLETED","FAILED"].includes(stopped.state))throw new AdapterContractError("CANCELLATION_UNCONFIRMED","Owned failure cleanup did not confirm termination");
         assertAuthority();this.saveSessionStop(stopped,"confirmed");this.uncertainSessionStops.delete(session.id);
         this.database.transaction(()=>{
           assertAuthority();
@@ -843,7 +845,8 @@ export class ControllerService {
         this.fleetEvents.publish("run.changed",current.id,{id:current.id,state:"FAILED"});
         const failed=this.database.getEntity<JsonValue>("run",current.id) as unknown as Run;await this.notifyAttention(failed);
       }catch(error){
-        if(this.sessionStopState(session)!=="confirmed")try{this.saveSessionStop(session,"unconfirmed");}catch(recordError){this.app.log.warn({error:redactValue(recordError),runId:current.id},"Failure cleanup remains unconfirmed");}
+        if(error instanceof AdapterAdmissionError){this.uncertainSessionStops.delete(session.id);this.saveSessionStop(session,"none");this.nativeInteractions.acknowledgeSettledMutationOutcome(current.sessionId);}
+        else if(this.sessionStopState(session)!=="confirmed")try{this.saveSessionStop(session,"unconfirmed");}catch(recordError){this.app.log.warn({error:redactValue(recordError),runId:current.id},"Failure cleanup remains unconfirmed");}
         this.markRemoteUnavailable(current.id,"Owned failure cleanup is unconfirmed; inspect the original execution","NATIVE_OUTCOME_UNKNOWN",current);
         throw error;
       }
@@ -1814,7 +1817,7 @@ export class ControllerService {
   }
   private async cleanupStaleInput(run:Run,fence:MutationFence):Promise<void> {
     const decision=this.nativeInteractions.authorizeInteraction({id:"input-cleanup",roles:["operator"],profileId:run.profileId},"cleanup-input",fence);
-    if(decision.allowed)await this.agentAdapters.get(run.profileId)?.cancel(fence.sessionId);
+    if(decision.allowed)await this.agentAdapters.get(run.profileId)?.cancel(fence.sessionId,()=>this.nativeInteractions.assertInteraction({id:"input-cleanup",roles:["operator"],profileId:run.profileId},"cleanup-input",fence));
   }
 
   private async notifyResourceRecovery(run: Run, idempotencyKey: string): Promise<void> {
@@ -2188,71 +2191,91 @@ export class ControllerService {
     const result=await this.remoteRequest(run.runnerId,{type:"native.run_finalize",runId:run.id},run,`native-finalize:${run.id}:${run.generation}`) as {runId?:unknown;settledAt?:unknown}|undefined;
     if(!result||result.runId!==run.id||typeof result.settledAt!=="string"||!Number.isFinite(Date.parse(result.settledAt)))throw new AdapterContractError("REMOTE_RESULT_INVALID","Owning Runner did not confirm execution finalization");
   }
-  private cancelRunExecution(run:Run):Promise<Run> {
+  private cancelRunExecution(run:Run,principal:InteractionPrincipal={id:"operator",roles:["operator"],profileId:run.profileId}):Promise<Run> {
     if (isTerminalRunState(run.state)) return Promise.resolve(run);
-    if(!run.sessionId.startsWith("unstarted:"))this.nativeInteractions.assertCancellation({id:"operator",roles:["operator"],profileId:run.profileId},this.nativeInteractions.fenceFor(run,`cancel:${run.id}:${run.generation}`));
+    const authority={principal:structuredClone(principal),fence:this.nativeInteractions.fenceFor(run,`cancel:${run.id}:${run.generation}`)};
+    if(!run.sessionId.startsWith("unstarted:"))this.nativeInteractions.assertCancellation(authority.principal,authority.fence);
     this.runReroutes.get(run.id)?.abort();
     const pending = this.runCancellations.get(run.id);
     if (pending) return pending;
     this.cancelledRunIds.add(run.id);
-    const cancellation = Promise.resolve().then(() => this.stopRunExecution(run)).finally(() => { this.runCancellations.delete(run.id); });
+    const cancellation = Promise.resolve().then(() => this.stopRunExecution(run,"CANCELLED",authority)).finally(() => { this.runCancellations.delete(run.id); });
     this.runCancellations.set(run.id, cancellation);
     return cancellation;
   }
-  private async stopRunExecution(run:Run, terminalState: "CANCELLED" | "SUPERSEDED" = "CANCELLED"):Promise<Run> {
+  private async stopRunExecution(run:Run, terminalState: "CANCELLED" | "SUPERSEDED" = "CANCELLED",authority?:{principal:InteractionPrincipal;fence:MutationFence}):Promise<Run> {
     const latest = this.database.getEntity<JsonValue>("run", run.id) as unknown as Run | undefined;
-    if (latest && isTerminalRunState(latest.state)) return latest;
+    if(!latest||latest.generation!==run.generation||latest.leaseId!==run.leaseId)throw new InteractionGuardError("STALE_RUN_AUTHORITY");
+    if (isTerminalRunState(latest.state)) return latest;
     const remote=this.configuration.current().config.runners.some(runner=>runner.id===run.runnerId&&runner.mode==="remote");
+    if(!remote&&run.sessionId.startsWith("unstarted:")){
+      // Preserve the existing startup projection only for one exact legacy owner.
+      const sessions=(this.database.listEntities<JsonValue>("adapter-session") as unknown as AdapterSession[]).filter(session=>session.runId===run.id&&session.profileId===run.profileId);
+      const task=this.database.getCanonicalTask<JsonValue>(run.taskId);
+      if(sessions.length!==1||latest.sessionId!==run.sessionId||(task?.document as unknown as Task)?.currentRunId!==run.id||authority&&task?.revision!==authority.fence.expectedTaskRevision)throw new AdapterContractError("SESSION_DETACHED","Native startup session identity is unconfirmed");
+      const session=sessions[0]!;
+      if(session.nativeBinding||run.executionRef||session.execution&&(session.execution.generation!==run.generation||session.execution.leaseId!==run.leaseId))throw new InteractionGuardError("NATIVE_IDENTITY_CHANGED");
+      latest.sessionId=session.id;if(session.providerSessionId)latest.providerSessionId=session.providerSessionId;
+      this.database.saveEntity("run",latest.id,json(latest));run=latest;
+      authority={principal:authority?.principal??{id:"operator",roles:["operator"],profileId:run.profileId},fence:this.nativeInteractions.fenceFor(run,`cancel:${run.id}:${run.generation}`)};
+    }
+    const principal=authority?.principal??{id:"operator",roles:["operator"],profileId:run.profileId};
+    const fence=authority?.fence??this.nativeInteractions.fenceFor(run,`cancel:${run.id}:${run.generation}`);
+    const assertAuthority=()=>this.nativeInteractions.assertCancellation(principal,fence);
+    assertAuthority();
+    const session=this.database.getEntity<JsonValue>("adapter-session",run.sessionId) as unknown as AdapterSession|undefined;
+    if(!remote&&(run.executionRef||session?.nativeBinding||this.database.handle.prepare("SELECT 1 FROM native_bindings WHERE session_id=?").get(run.sessionId)))throw new InteractionGuardError("NATIVE_CAPABILITY_UNVERIFIED");
+    if(session&&this.sessionStopUncertain(session))throw new AdapterContractError("CANCELLATION_UNCONFIRMED","Previous native stop needs reconciliation before retry");
     this.restoreLeaseAuthority(run);
     this.leaseAuthority.revoke(run.id,run.leaseId,run.generation,"Cancelled by operator",this.now().toISOString());
     this.persistLatestLeaseAudit(run.id);
     const localCommand = this.localCommands.get(run.id), advancing = this.runAdvances.get(run.id);
     localCommand?.controller.abort();
     this.markRemoteUnavailable(run.id, "Cancellation requested; waiting for owned execution to stop", "NATIVE_OUTCOME_UNKNOWN", run);
-    if(remote){
+    fence.expectedTaskRevision=this.database.getCanonicalTask<JsonValue>(run.taskId)!.revision;
+    this.nativeInteractions.acknowledgeTaskRevision(run);
+    return this.nativeInteractions.withMutationLane(run.sessionId,async()=>{
+      assertAuthority();this.nativeInteractions.assertInteraction(principal,"cancel",fence);
+      if(session){this.uncertainSessionStops.add(session.id);this.saveSessionStop(session,"requested");}
       try{
-        const stopped=await this.remoteRequest(run.runnerId,{type:"lease.revoke",leaseId:run.leaseId,generation:run.generation,reason:"Cancelled by operator"},run,`native-cancel-lease:${run.id}:${run.generation}`) as {runId?:unknown;leaseId?:unknown;generation?:unknown;revokedAt?:unknown}|undefined;
-        if(!stopped||stopped.runId!==run.id||stopped.leaseId!==run.leaseId||stopped.generation!==run.generation||typeof stopped.revokedAt!=="string"||!Number.isFinite(Date.parse(stopped.revokedAt)))throw new AdapterContractError("REMOTE_RESULT_INVALID","Owning Runner did not confirm cancellation");
-      }catch(error){this.markRemoteUnavailable(run.id,"Cancellation has fenced authority; native termination is unconfirmed","REMOTE_LEASE_INVALID",run);throw error;}
-    }else try{
-      const adapter=this.agentAdapters.get(run.profileId);if(!adapter)throw new AdapterContractError("SESSION_DETACHED","Native backend is unavailable");
-      let sessionId = run.sessionId;
-      if (sessionId.startsWith("unstarted:")) {
-        const sessions = (this.database.listEntities<JsonValue>("adapter-session") as unknown as AdapterSession[]).filter(session => session.runId === run.id && session.profileId === run.profileId);
-        if (sessions.length !== 1) throw new AdapterContractError("SESSION_DETACHED", "Native startup session identity is unconfirmed");
-        sessionId = sessions[0]!.id;
-        const current = this.database.getEntity<JsonValue>("run", run.id) as unknown as Run | undefined;
-        if (!current || current.leaseId !== run.leaseId || current.generation !== run.generation) throw new AdapterContractError("SESSION_DETACHED", "Canonical startup authority changed");
-        current.sessionId = sessionId;
-        if (sessions[0]!.providerSessionId) current.providerSessionId = sessions[0]!.providerSessionId;
-        this.database.saveEntity("run", current.id, json(current));
-      }
-      const stopped=await adapter.cancel(sessionId);if(!["CANCELLED","COMPLETED","FAILED"].includes(stopped.state))throw new AdapterContractError("SESSION_DETACHED","Native termination is unconfirmed");
-    }catch(error){this.markRemoteUnavailable(run.id,"Cancellation has fenced authority; inspect the original native process before continuing","NATIVE_OUTCOME_UNKNOWN",run);throw error;}
-    try {
-      await localCommand?.settled.catch(error => { if (!(error instanceof AdapterContractError && error.code === "RUN_CANCELLED")&&!(error instanceof LocalGitDeliveryError&&error.code==="COMMIT_ABORTED")) throw error; });
-      await advancing?.catch(() => undefined);
-    } catch (error) {
-      this.markRemoteUnavailable(run.id, "Cancellation has fenced authority; owned command cleanup is unconfirmed", "NATIVE_OUTCOME_UNKNOWN", run);
-      throw error;
-    }
-    const current=this.database.getEntity<JsonValue>("run",run.id) as unknown as Run|undefined;
-    if(!current||current.leaseId!==run.leaseId||current.generation!==run.generation)throw new SemanticPolicyError("INVALID_INPUT","Run authority changed during cancellation");
-    this.database.transaction(() => {
-      if (!isTerminalRunState(current.state)) {
-        const settledState = terminalState === "SUPERSEDED" && !this.runReroutes.get(run.id)?.signal.aborted ? "SUPERSEDED" : "CANCELLED";
-        assertRunTransition(current.state, settledState); current.state = settledState; current.endedAt = this.now().toISOString();
-        delete current.recoveryState; delete current.recoveryReason;
-        this.database.saveEntity("run", current.id, json(current));
-      }
-      for (const value of this.database.listEntities<JsonValue>("task-publication")) {
-        const publication = value as unknown as PublicationRecord;
-        if (publication.receipt?.runId === current.id) this.publications.markOutcome(publication.owner, publication.preview.publicationId, current);
+        if(remote){
+          assertAuthority();
+          const stopped=await this.remoteRequest(run.runnerId,{type:"lease.revoke",leaseId:run.leaseId,generation:run.generation,reason:"Cancelled by operator"},run,`native-cancel-lease:${run.id}:${run.generation}`) as {runId?:unknown;leaseId?:unknown;generation?:unknown;revokedAt?:unknown}|undefined;
+          if(!stopped||stopped.runId!==run.id||stopped.leaseId!==run.leaseId||stopped.generation!==run.generation||typeof stopped.revokedAt!=="string"||!Number.isFinite(Date.parse(stopped.revokedAt)))throw new AdapterContractError("REMOTE_RESULT_INVALID","Owning Runner did not confirm cancellation");
+        }else{
+          const adapter=this.agentAdapters.get(run.profileId);if(!adapter)throw new AdapterContractError("SESSION_DETACHED","Native backend is unavailable");
+          let admitted=false;
+          const beforeStop=()=>{assertAdapterWriteAdmission(()=>{assertAuthority();if(this.agentAdapters.get(run.profileId)!==adapter)throw new InteractionGuardError("SESSION_OWNER_MISMATCH");});admitted=true;};
+          const stopped=await adapter.cancel(run.sessionId,beforeStop);
+          if(!admitted)throw new AdapterContractError("NATIVE_CAPABILITY_UNVERIFIED","Stop backend omitted final admission");
+          if(stopped.id!==run.sessionId||stopped.runId!==run.id||!["CANCELLED","COMPLETED","FAILED"].includes(stopped.state))throw new AdapterContractError("SESSION_DETACHED","Native termination is unconfirmed");
+          assertAuthority();if(session){this.saveSessionStop(stopped,"confirmed");this.uncertainSessionStops.delete(session.id);}
+        }
+        await localCommand?.settled.catch(error=>{if(!(error instanceof AdapterContractError&&error.code==="RUN_CANCELLED")&&!(error instanceof LocalGitDeliveryError&&error.code==="COMMIT_ABORTED"))throw error;});
+        await advancing?.catch(()=>undefined);
+        assertAuthority();
+        if(remote&&session){this.saveSessionStop({...session,state:"CANCELLED"},"confirmed");this.uncertainSessionStops.delete(session.id);}
+        const current=this.database.getEntity<JsonValue>("run",run.id) as unknown as Run;
+        this.database.transaction(()=>{
+          assertAuthority();
+          const settledState=terminalState==="SUPERSEDED"&&!this.runReroutes.get(run.id)?.signal.aborted?"SUPERSEDED":"CANCELLED";
+          assertRunTransition(current.state,settledState);current.state=settledState;current.endedAt=this.now().toISOString();delete current.recoveryState;delete current.recoveryReason;
+          this.database.saveEntity("run",current.id,json(current));
+          if(settledState==="CANCELLED"){
+            const task=this.database.getCanonicalTask<JsonValue>(current.taskId)!;
+            this.tasks.execute({id:`cancel-task:${current.id}:${current.generation}`,taskId:current.taskId,baseRevision:task.revision,actor:principal.id,command:{type:"task.transition",state:"CANCELLED"}});
+            this.nativeInteractions.acknowledgeTaskRevision(current);
+          }
+          for(const value of this.database.listEntities<JsonValue>("task-publication")){const publication=value as unknown as PublicationRecord;if(publication.receipt?.runId===current.id)this.publications.markOutcome(publication.owner,publication.preview.publicationId,current);}
+        });
+        this.nativeInteractions.acknowledgeSettledMutationOutcome(run.sessionId);
+        this.fleetEvents.publish("run.changed",current.id,{id:current.id,state:current.state});this.cancelledRunIds.delete(current.id);return current;
+      }catch(error){
+        if(error instanceof AdapterAdmissionError){if(session){this.uncertainSessionStops.delete(session.id);this.saveSessionStop(session,"none");}this.nativeInteractions.acknowledgeSettledMutationOutcome(run.sessionId);}
+        else if(session&&this.sessionStopState(session)!=="confirmed")try{this.saveSessionStop(session,"unconfirmed");}catch{/* Retain the in-memory uncertainty fence. */}
+        this.markRemoteUnavailable(run.id,"Cancellation has fenced authority; inspect the original execution before continuing","NATIVE_OUTCOME_UNKNOWN",run);throw error;
       }
     });
-    this.fleetEvents.publish("run.changed", current.id, { id: current.id, state: current.state });
-    this.cancelledRunIds.delete(current.id);
-    return current;
   }
   private async inspectRepository(plan:Parameters<WorkspaceManager["inspect"]>[0]):Promise<{baseCommit:string;root:string}> {
     const config=this.configuration.current().config,repository=config.repositories.find(repository=>repository.id===plan.repositoryId);
@@ -2818,7 +2841,7 @@ export class ControllerService {
         const task = stored.document as unknown as Task;
         if (task.state === "DONE" || task.state === "FAILED") throw new SemanticPolicyError("INVALID_INPUT", `Task ${taskId} cannot be cancelled from ${task.state}`);
         const run = task.currentRunId ? this.database.getEntity<JsonValue>("run", task.currentRunId) as unknown as Run | undefined : undefined;
-        if (run && !isTerminalRunState(run.state)) await this.cancelRunExecution(run);
+        if (run && !isTerminalRunState(run.state)) await this.cancelRunExecution(run,context.principal);
         const current=this.database.getCanonicalTask<JsonValue>(taskId),latest=current?.document as unknown as Task|undefined;
         if(!current||!latest||latest.currentRunId!==task.currentRunId)throw new SemanticPolicyError("INVALID_INPUT","Task authority changed during cancellation");
         if (latest.state !== "CANCELLED") this.tasks.execute({ id: `semantic:${context.workflowId}`, taskId, baseRevision: current.revision, actor: context.principal.id, command: { type: "task.transition", state: "CANCELLED" } });
@@ -2843,7 +2866,7 @@ export class ControllerService {
         const runId = String(target);
         const run = this.database.getEntity<JsonValue>("run", runId) as unknown as Run | undefined;
         if (!run) throw new SemanticPolicyError("INVALID_INPUT", `Unknown run ${runId}`);
-        const cancelled=await this.cancelRunExecution(run);
+        const cancelled=await this.cancelRunExecution(run,context.principal);
         const stored = this.database.getCanonicalTask<JsonValue>(run.taskId),task = stored?.document as unknown as Task | undefined;
         if (cancelled.state==="CANCELLED"&&stored && task?.currentRunId===run.id && !["DONE", "FAILED", "CANCELLED"].includes(task.state)) this.tasks.execute({ id: `semantic:${context.workflowId}`, taskId: run.taskId, baseRevision: stored.revision, actor: context.principal.id, command: { type: "task.transition", state: "CANCELLED" } });
         return cancelled;
@@ -2857,17 +2880,29 @@ export class ControllerService {
         if (!run || run.state !== "ACTIVE") throw new SemanticPolicyError("INVALID_INPUT", `Run ${runId} is not active`);
         const adapter = this.agentAdapters.get(run.profileId);
         if (!adapter) throw new SemanticPolicyError("INVALID_INPUT", `Profile ${run.profileId} is unavailable`);
-        await adapter.pause(run.sessionId);
-        assertRunTransition(run.state, "WAITING_USER");
-        run.state = "WAITING_USER";
-        run.activitySummary = "Paused by operator";
-        run.lastActivityAt = new Date().toISOString();
-        this.database.saveEntity("run", run.id, json(run));
-        const stored = this.database.getCanonicalTask<JsonValue>(run.taskId);
-        const task = stored?.document as unknown as Task | undefined;
-        if (stored && task?.state === "RUNNING") this.tasks.execute({ id: `semantic:${context.workflowId}`, taskId: run.taskId, baseRevision: stored.revision, actor: context.principal.id, command: { type: "task.transition", state: "WAITING_USER" } });
-        this.fleetEvents.publish("run.changed", run.id, { id: run.id, state: run.state, lastActivityAt: run.lastActivityAt });
-        return run;
+        const principal=structuredClone(context.principal),fence=this.nativeInteractions.fenceFor(run,`pause:${run.id}:${context.workflowId}`);
+        this.nativeInteractions.assertInteraction(principal,"pause",fence);
+        return this.nativeInteractions.withMutationLane(run.sessionId,async()=>{
+          const assertAuthority=()=>{this.nativeInteractions.assertInteraction(principal,"pause",fence);if(this.agentAdapters.get(run.profileId)!==adapter)throw new InteractionGuardError("SESSION_OWNER_MISMATCH");};
+          assertAuthority();let sent=false;
+          try{
+            const session=await adapter.pause(run.sessionId,()=>{assertAdapterWriteAdmission(assertAuthority);sent=true;});
+            if(!sent||session.id!==run.sessionId||session.runId!==run.id||session.state!=="PAUSED")throw new AdapterContractError("NATIVE_OUTCOME_UNKNOWN","Pause acknowledgement is unconfirmed");
+            assertAuthority();
+            const current=this.database.getEntity<JsonValue>("run",run.id) as unknown as Run;
+            this.database.transaction(()=>{
+              assertAuthority();assertRunTransition(current.state,"WAITING_USER");current.state="WAITING_USER";current.activitySummary="Paused by operator";current.lastActivityAt=this.now().toISOString();this.database.saveEntity("run",current.id,json(current));
+              const stored=this.database.getCanonicalTask<JsonValue>(run.taskId)!;
+              if((stored.document as unknown as Task).state==="RUNNING")this.tasks.execute({id:`semantic:${context.workflowId}`,taskId:run.taskId,baseRevision:stored.revision,actor:principal.id,command:{type:"task.transition",state:"WAITING_USER"}});
+              this.nativeInteractions.acknowledgeTaskRevision(current);
+            });
+            this.nativeInteractions.acknowledgeSettledMutationOutcome(run.sessionId);this.fleetEvents.publish("run.changed",current.id,{id:current.id,state:current.state,lastActivityAt:current.lastActivityAt});return current;
+          }catch(error){
+            if(error instanceof AdapterAdmissionError||!sent&&error instanceof AdapterContractError&&error.code==="UNSUPPORTED_CAPABILITY")this.nativeInteractions.acknowledgeSettledMutationOutcome(run.sessionId);
+            else this.markRemoteUnavailable(run.id,"Native pause is unconfirmed; inspect the original execution","NATIVE_OUTCOME_UNKNOWN",run);
+            throw error;
+          }
+        });
       },
     });
     this.semanticTools.register({

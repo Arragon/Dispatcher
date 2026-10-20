@@ -66,7 +66,7 @@ final convergence verification.
 | CV-04 | migration/control/backup modules ported with v3 adaptation and protocol 2; targeted 12/101 and two default 90/802 gates passed; ready for whole-branch review |
 | CV-05 | in progress: catalog scope/lifecycle, default ConfigPlan, per-Run provenance and adapter selection fences pass 91/833 default gate; legacy HTTP/Slack/reroute choice now integrated at 109/1085; remaining catalog/control assertions tracked |
 | CV-06 | Controller nonblocking scoped collection/terminal retry verified at 115/1169; origin/attempt/time and account-quota qualification/UI pending |
-| CV-08 | continuation/worker/delivery/failure and adapter stop Guard increments verified at 115/1180; Controller cancel/pause/reroute/start/recovery and native qualification remain pending |
+| CV-08 | continuation/worker/delivery/failure/cancel/pause Guard increments verified at 115/1187; priority drain, reroute/start/recovery and native qualification remain pending |
 | CV-12 | pending complete selection/control integration |
 | macOS service / LP / backup | pending safe shared foundation |
 | CV-07/09/10/11 | pending contracts/guards |
@@ -993,3 +993,43 @@ RED: 5 new final-stop cases failed before implementation. Rebuilt target passes
 This is adapter admission plumbing only; Controller stop/pause composition and
 qualified native stop remain open in R-005. No live data or service changed.
 Rollback: 91b04b3 and its matching backup.
+
+
+## CV-08m Controller final cancellation and pause Guard
+
+Cancellation captures the semantic caller and complete Task/Run/control fence
+before asynchronous dispatch. It revokes/aborts the original work before queuing
+its owned stop, then checks the same fence at the adapter callback and after
+stop/drain. Run and Task cancellation commit atomically only after confirmation.
+The existing Session stopState persists unknown outcomes and blocks blind stop
+retries. Known unsent admission rejection clears only its own pending stop;
+opaque adapters that omit final admission cannot report confirmed cancellation.
+Failure and stale-input cleanup also forward the final callback. Pause now uses
+the mutation lane and final callback, validates the returned identity/state, and
+rechecks before its atomic Run/Task update. HUMAN ownership blocks legacy pause.
+Explicit cancellation permits stopping an expired original lease but never
+permits continuation from it. Local native-bound stop remains closed.
+
+Ruling: retain the existing Runner lease-revoke contract when an unknown legacy
+start has no Controller Session ID. Shared cancel Guard accepts only the exact
+unstarted:<runId> placeholder with no Session, binding or control row; all Task,
+Run, lease, principal and zero-control fence checks still apply. It grants only
+cancellation and waits for owning Runner acknowledgement. Full regression caught
+this supported consumer, so it was preserved rather than bypassing authority.
+
+RED: original implementation failed HUMAN pause and both late-control stop cases.
+The initial new pause fixture incorrectly supplied the next revision to a CAS
+writer; correcting that fixture then reproduced the intended stale-write failure.
+Additional opaque-stop receipt failed before its callback proof was added.
+Target personal-loop + physical lifecycle: 2 files/81 tests; remote + shared Guard:
+2 files/36 tests. Existing async cancellation test wrappers now forward the new
+callback; no assertion/deadline weakened. Default `mise exec -- pnpm check` passes 115 files/1187 tests (40.12s test phase).
+`git diff --check` passes. Official quota after unit: 59% remaining, ordinary use allowed.
+Logs: /tmp/dispatcher-cv08m-stop-red.log, /tmp/dispatcher-cv08m-pause-red.log,
+/tmp/dispatcher-cv08m-stop-receipt-red.log, /tmp/dispatcher-cv08m-target.log,
+/tmp/dispatcher-cv08m-remote-target.log, /tmp/dispatcher-cv08m-final-check.log.
+
+Remaining: failure priority drain, legacy startup/reroute/recovery composition,
+durable actor/fence metadata for stop audit, full qualified native stop and real
+Gates. This increment supplies no real account/process GUI evidence. Source and
+rollback: cb31c22 with matching data backup; original workspaces/data unchanged.
