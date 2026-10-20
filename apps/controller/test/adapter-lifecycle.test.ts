@@ -220,11 +220,13 @@ describe("all-provider adapter lifecycle", () => {
       const descendant = `process.on('SIGTERM',()=>{});require('node:fs').writeFileSync(${JSON.stringify(ready)},JSON.stringify({pid:process.pid,parent:process.ppid}));setInterval(()=>{},1000)`;
       const body = `require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(descendant)}],{stdio:'ignore'}).unref();process.on('SIGTERM',()=>{});setInterval(()=>{},1000)`;
       await f.apply(config => { config.agentProfiles = [{ id: "qoder", alias: "Qoder", provider: "qoder", runnerId: "local" }]; config.repositories[0]!.verificationCommands = [{ id: "wait", file: process.execPath, args: ["-e", body], required: true, timeoutMs: 15_000, outputLimitBytes: 1024 }]; });
-      const session = (await f.start("qoder")).json().session;
+      const workspace=await f.service.workspaces.create({repositoryId:"fixture",taskId:"task",runId:"run",attempt:1,baseRef:"main",scopePaths:[]});
+      const adapter=(f.service as unknown as {agentAdapters:Map<string,AgentAdapter>}).agentAdapters.get("qoder")!;
+      const session=await adapter.start({runId:"run",workspacePath:workspace.path,prompt:"hello"});
       const now = new Date().toISOString();
       f.service.database.writeCanonicalTask("task", 0, { id: "task", projectId: "fixture", title: "Task", state: "VERIFYING", currentRunId: "run", createdAt: now, updatedAt: now });
       f.service.database.saveTaskContract("task", { version: 1, revision: 1, goal: "done", scope: ["README.md"], acceptanceCriteria: ["done"], verification: ["wait"], constraints: [], delivery: { type: "none", repository: "fixture" } });
-      f.service.database.saveEntity("run", "run", { id: "run", taskId: "task", runnerId: "local", providerId: "qoder", profileId: "qoder", sessionId: session.id, state: "VERIFYING", attempt: 1, generation: 1, leaseId: "lease", taskRevision: 1, contractRevision: 1, worktree: f.workspace.path, branch: f.workspace.branch, startedAt: now, lastActivityAt: now, verification: { state: "PENDING", commands: ["wait"] } });
+      f.service.database.saveEntity("run", "run", { id: "run", taskId: "task", runnerId: "local", providerId: "qoder", profileId: "qoder", sessionId: session.id, state: "VERIFYING", attempt: 1, generation: 1, leaseId: "lease", taskRevision: 1, contractRevision: 1, worktree: workspace.path, branch: workspace.branch, startedAt: now, lastActivityAt: now, verification: { state: "PENDING", commands: ["wait"] } });
       f.service.database.saveEntity("task-publication", "publication", { owner: "operator", preview: { publicationId: "publication" }, receipt: { publicationId: "publication", taskId: "task", runId: "run", state: "STARTED" } });
       advancing = f.service.app.inject({ method: "POST", url: "/api/runs/run/advance", headers: OWNER }); void advancing.then(() => undefined);
       await vi.waitFor(() => expect(existsSync(ready)).toBe(true)); ({ pid: child, parent } = JSON.parse(readFileSync(ready, "utf8")));

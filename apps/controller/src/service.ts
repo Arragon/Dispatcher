@@ -758,6 +758,7 @@ export class ControllerService {
 
   private fenceDelivery(run: Run, operation: "verify" | "commit" | "branch" | "push" | "pull-request" | "complete"): void {
     const current = this.database.getEntity<JsonValue>("run", run.id) as unknown as Run | undefined;
+    this.assertRunInteraction(run,current?.state==="VERIFYING"?"verify":"deliver");
     const task=this.database.getCanonicalTask<JsonValue>(run.taskId)?.document as unknown as Task|undefined;
     if(task?.currentRunId!==run.id||task.state!=="VERIFYING")throw new ConnectorError("CONFLICT","Task no longer authorizes this verification/delivery",{retryable:false,operation:"delivery"});
     const remote = this.configuration.current().config.runners.some(runner => runner.id === run.runnerId && runner.mode === "remote");
@@ -1712,6 +1713,7 @@ export class ControllerService {
   }
 
   private saveAdvancedRun(run: Run, expectedState: Run["state"]): void {
+    if(this.nativeInteractions.hasAuthorityContext(run.sessionId))this.assertRunInteraction(run,"advance");
     const current = this.database.getEntity<JsonValue>("run", run.id) as unknown as Run | undefined;
     if (this.cancelledRunIds.has(run.id) || !current || current.generation !== run.generation || current.leaseId !== run.leaseId || current.state !== expectedState) throw new ConnectorError("CONFLICT", "Run changed while advancement was awaiting work", { retryable: false });
     // Heartbeats can renew the same generation while verification or SCM awaits.
@@ -1730,6 +1732,7 @@ export class ControllerService {
       return { waiting: false, run, task: storedTask.document as unknown as Task, deliveries: this.database.listDeliveryEvidence<JsonValue>(run.taskId) };
     }
 
+    this.assertRunInteraction(run,"advance");
     if (run.state === "ACTIVE") {
       const adapter = this.agentAdapters.get(run.profileId);
       if (!adapter) throw new ConnectorError("PERMANENT", `Profile ${run.profileId} is unavailable`);
@@ -1748,6 +1751,7 @@ export class ControllerService {
         const current = this.database.getCanonicalTask<JsonValue>(run.taskId)!;
         if ((current.document as unknown as Task).state === "RUNNING") {
           this.tasks.execute({ id: `run:${run.id}:${run.generation}:waiting-user:${current.revision}`, taskId: run.taskId, baseRevision: current.revision, actor: "run-worker", command: { type: "task.transition", state: "WAITING_USER" } });
+          this.nativeInteractions.acknowledgeTaskRevision(run);
         }
         return { waiting: true, run, task: this.database.getCanonicalTask<JsonValue>(run.taskId)!.document as unknown as Task, deliveries: [] };
       }
@@ -1764,6 +1768,7 @@ export class ControllerService {
         const current = this.database.getCanonicalTask<JsonValue>(run.taskId)!;
         if ((current.document as unknown as Task).state === "RUNNING") {
           this.tasks.execute({ id: `run:${run.id}:resource-blocked`, taskId: run.taskId, baseRevision: current.revision, actor: "run-worker", command: { type: "task.transition", state: "WAITING_RESOURCE" } });
+          this.nativeInteractions.acknowledgeTaskRevision(run);
         }
         return { waiting: true, run, task: this.database.getCanonicalTask<JsonValue>(run.taskId)!.document as unknown as Task, deliveries: [] };
       }
@@ -1776,6 +1781,7 @@ export class ControllerService {
         const current = this.database.getCanonicalTask<JsonValue>(run.taskId)!;
         if ((current.document as unknown as Task).state === "RUNNING") {
           this.tasks.execute({ id: `run:${run.id}:failed`, taskId: run.taskId, baseRevision: current.revision, actor: "run-worker", command: { type: "task.transition", state: "FAILED" } });
+          this.nativeInteractions.acknowledgeTaskRevision(run);
         }
         if(adapter instanceof RemoteNativeAdapter)await this.finalizeRemoteRun(run);
         return { waiting: false, run, task: this.database.getCanonicalTask<JsonValue>(run.taskId)!.document as unknown as Task, deliveries: [] };
@@ -1789,6 +1795,7 @@ export class ControllerService {
       const current = this.database.getCanonicalTask<JsonValue>(run.taskId)!;
       if ((current.document as unknown as Task).state === "RUNNING") {
         this.tasks.execute({ id: `run:${run.id}:verifying`, taskId: run.taskId, baseRevision: current.revision, actor: "run-worker", command: { type: "task.transition", state: "VERIFYING" } });
+        this.nativeInteractions.acknowledgeTaskRevision(run);
       }
     }
 
@@ -1804,7 +1811,9 @@ export class ControllerService {
       const summaries: string[] = [];
       let blocked = false;
       if (this.agentAdapters.get(run.profileId) instanceof RemoteNativeAdapter) {
+        this.fenceDelivery(run,"verify");
         const results = await this.remoteRequest(run.runnerId,{type:"native.run_verify",runId:run.id},run,`native-verify:${run.id}:${run.generation}`);
+        this.fenceDelivery(run,"verify");
         const commands=frozen??repository!.verificationCommands;
         if(!Array.isArray(results)||results.length!==contract.verification.length)throw new AdapterContractError("REMOTE_RESULT_INVALID","Owning Runner returned an incomplete verification receipt");
         for(const [index,result] of results.entries()) {
@@ -1831,6 +1840,7 @@ export class ControllerService {
               summaries.push(`${commandId}:unregistered`); blocked = true; continue;
             }
             if (controller.signal.aborted) throw new AdapterContractError("RUN_CANCELLED", "Verification stopped after cancellation");
+            this.fenceDelivery(run,"verify");
             summaries.push(`${commandId}:${result.status}`);
             if (result.required && result.status !== "passed") blocked = true;
           }
@@ -1850,6 +1860,7 @@ export class ControllerService {
         const current = this.database.getCanonicalTask<JsonValue>(run.taskId)!;
         if ((current.document as unknown as Task).state === "VERIFYING") {
           this.tasks.execute({ id: `run:${run.id}:verification-failed`, taskId: run.taskId, baseRevision: current.revision, actor: "run-worker", command: { type: "task.transition", state: "FAILED" } });
+          this.nativeInteractions.acknowledgeTaskRevision(run);
         }
         if(this.agentAdapters.get(run.profileId) instanceof RemoteNativeAdapter)await this.finalizeRemoteRun(run);
         return { waiting: false, run, task: this.database.getCanonicalTask<JsonValue>(run.taskId)!.document as unknown as Task, deliveries: [] };
@@ -1892,6 +1903,7 @@ export class ControllerService {
         assertRunTransition(run.state,"COMPLETE");run.state="COMPLETE";run.endedAt=this.now().toISOString();
         this.saveAdvancedRun(run,"DELIVERING");this.database.saveEntity("run-result",run.id,json(result));
         this.tasks.execute({id:`run:${run.id}:review`,taskId:run.taskId,baseRevision:current.revision,actor:"run-worker",command:{type:"task.transition",state:"REVIEW"}});
+        this.nativeInteractions.acknowledgeTaskRevision(run);
       });
       this.fleetEvents.publish("run.changed",run.id,{id:run.id,state:run.state});
       return {waiting:false,run,task:this.database.getCanonicalTask<JsonValue>(run.taskId)!.document as unknown as Task,deliveries:[]};
@@ -1924,10 +1936,12 @@ export class ControllerService {
     let current = this.database.getCanonicalTask<JsonValue>(run.taskId)!;
     if ((current.document as unknown as Task).state === "VERIFYING") {
       this.tasks.execute({ id: `run:${run.id}:review`, taskId: run.taskId, baseRevision: current.revision, actor: "run-worker", command: { type: "task.transition", state: "REVIEW" } });
+      this.nativeInteractions.acknowledgeTaskRevision(run);
       current = this.database.getCanonicalTask<JsonValue>(run.taskId)!;
     }
     if (pullRequest?.url) {
       this.tasks.execute({ id: `run:${run.id}:delivery-comment`, taskId: run.taskId, baseRevision: current.revision, actor: "run-worker", command: { type: "task.comment", body: `Pull request ready: ${pullRequest.url}` } });
+      this.nativeInteractions.acknowledgeTaskRevision(run);
     }
     await this.drainProjections();
     return {
@@ -3120,8 +3134,13 @@ export class ControllerService {
     if (this.cancelledRunIds.has(runId)) return Promise.reject(new AdapterContractError("RUN_CANCELLED", "Cancelled authority forbids further advancement"));
     const existing = this.runAdvances.get(runId);
     if (existing) return existing;
-    const advance = (async () => {
+    const run=this.database.getEntity<JsonValue>("run",runId) as unknown as Run|undefined;
+    if(!run)return Promise.reject(new ConnectorError("PERMANENT",`Unknown run ${runId}`));
+    const fence=this.nativeInteractions.fenceFor(run,`worker:${run.id}:${run.generation}`);
+    const advance = this.nativeInteractions.withMutationLane(run.sessionId,async () => {
+      if(run.state!=="COMPLETE")this.nativeInteractions.assertInteraction({id:"run-worker",roles:["operator"],profileId:run.profileId},"advance",fence);
       const advanced = await this.advanceRun(runId);
+      this.nativeInteractions.acknowledgeSettledMutationOutcome(run.sessionId);
       this.fleetEvents.publish("run.changed", advanced.run.id, { id: advanced.run.id, taskId: advanced.run.taskId, state: advanced.run.state, lastActivityAt: advanced.run.lastActivityAt });
       try {
         await this.notifyAttention(advanced.run);
@@ -3130,7 +3149,7 @@ export class ControllerService {
         this.app.log.error({ error: redactValue(error), runId: advanced.run.id }, "attention notification failed");
       }
       return advanced;
-    })().finally(() => {
+    }).finally(() => {
       this.runAdvances.delete(runId);
     });
     this.runAdvances.set(runId, advance);

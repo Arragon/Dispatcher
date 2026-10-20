@@ -151,6 +151,20 @@ describe("personal Slack–Linear loop", () => {
   function webAnswer(f:Awaited<ReturnType<typeof setup>>,id:string){
     const run=f.run();return f.service.app.inject({headers:OWNER,method:"POST",url:`/api/agents/profiles/${run.profileId}/sessions/${run.sessionId}/input`,payload:{inputId:id,message:"continue",authority:{runId:run.id,generation:run.generation,leaseId:run.leaseId,lastActivityAt:run.lastActivityAt,taskRevision:f.service.database.getCanonicalTask(f.taskId)!.revision}}}).then(value=>value);
   }
+  it("blocks background verification and delivery under a locked control epoch",async()=>{
+    const f=await setup();expect((await f.service.app.inject({headers:OWNER,method:"POST",url:`/api/tasks/${f.taskId}/dispatch`,payload:{profileId:"orion"}})).statusCode).toBe(201);
+    controlled(f)();f.control.turn="completed";await f.service.runBackgroundCycle();
+    expect(f.run().state).toBe("ACTIVE");expect(f.task().state).toBe("RUNNING");expect(f.control.pushes).toBe(0);expect(f.control.prs).toBe(0);expect(f.control.cancellations).toBe(0);
+  });
+  it.each(["control","task-revision"] as const)("rechecks %s after background native status awaited",async change=>{
+    const f=await setup();await f.service.app.inject({headers:OWNER,method:"POST",url:`/api/tasks/${f.taskId}/dispatch`,payload:{profileId:"orion"}});
+    const lock=controlled(f),adapter=(f.service as unknown as {agentAdapters:Map<string,AgentAdapter>}).agentAdapters.get("orion")!,status=adapter.status.bind(adapter),entered=Promise.withResolvers<void>(),ready=Promise.withResolvers<void>();
+    vi.spyOn(adapter,"status").mockImplementation(async(...args)=>{entered.resolve();await ready.promise;return status(...args);});f.control.turn="completed";
+    const cycle=f.service.runBackgroundCycle();
+    try{await entered.promise;if(change==="control")lock();else{const task=f.service.database.getCanonicalTask<Task>(f.taskId)!;f.service.database.writeCanonicalTask(f.taskId,task.revision,JSON.parse(JSON.stringify({...task.document,title:"Concurrent edit"})) as JsonValue);}ready.resolve();await cycle;
+      expect(f.run().state).toBe("ACTIVE");expect(f.task().state).toBe("RUNNING");expect(f.control.pushes).toBe(0);expect(f.control.prs).toBe(0);expect(f.control.cancellations).toBe(0);
+    }finally{ready.resolve();await cycle;}
+  });
   it.each(["http","operator","slack"] as const)("blocks %s continuation under a locked control epoch",async channel=>{
     const f=await waitingFixture();controlled(f)();f.control.turn="running";
     if(channel==="http")expect((await webAnswer(f,"locked-input-123")).statusCode).toBe(409);

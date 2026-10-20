@@ -245,8 +245,10 @@ is checked again by the final adapter callback. A proven pre-write rejection
 is distinct from an uncertain response after sending. Slack input shares durable
 Run-input receipts with Web and resume, so a lost reply cannot authorize a
 cross-channel resend. Stale cleanup must retain the captured epoch and never
-stop a new control owner. Worker/delivery/start/cancel composition is still
-pending; the startup barrier and unavailable native controls remain in force.
+stop a new control owner. Worker advancement and existing verification/Git/PR/completion fences now use
+the same coordinator and acknowledge only their own Task transitions.
+Fail/cancel/pause/reroute/start/recovery and nonblocking telemetry composition
+remain pending; the startup barrier and unavailable native controls stay in force.
 
 Codex CLI start/send/resume accept an optional synchronous `beforeSend` admission
 callback. Creation captures request fields before storing intent, then checks

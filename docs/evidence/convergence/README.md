@@ -830,3 +830,42 @@ and safe recovery are still pending in R-005. Native UI and startup admission
 remain closed; no real provider, database or macOS service Gate is claimed.
 Rollback is a33da7c on the isolated candidate; originals/data stay intact.
 Official quota checked after the unit; percentage recorded in Linear.
+
+
+## CV-08j background advancement and verification/delivery Guard
+
+Background/API advancement now shares the Session mutation lane with input,
+captures Task/control authority before queuing, checks it before reading native
+status and again before saving an advanced Run. Existing verification, local Git,
+commit/push/PR and completion fences now also check the coordinator. Remote
+verification checks before/after its existing transport request. Own synchronous
+Task transitions explicitly acknowledge only their newly committed revision;
+concurrent edits during awaits cannot acquire that acknowledgement. Known
+completed advancement clears its mutation marker before notification-only work.
+
+RED: all three locked-control/awaited-status/control-or-Task revision cases
+advanced to COMPLETE on the old service. They now stop with the Run ACTIVE,
+Task RUNNING and zero push/PR/cancel. Target Controller/personal loop passes
+2 files/64 tests. Initial full gate exposed another legacy fixture that assigned
+a standalone trial Session to a different canonical Run/worktree. It now creates
+its real canonical workspace and Session with the same Run ID; every original
+process-tree termination/cancellation receipt assertion remains. That lifecycle
+suite passes 1 file/15 tests, including real owned descendant drain.
+Final default `mise exec -- pnpm check` passes 114 files/1158 tests (40.77s test
+phase); `git diff --check` passes. Logs:
+`/tmp/dispatcher-cv08-worker-guard-red.log`,
+`/tmp/dispatcher-cv08-worker-guard-green.log`,
+`/tmp/dispatcher-cv08-worker-controller-target.log`,
+`/tmp/dispatcher-cv08-worker-check.log`,
+`/tmp/dispatcher-cv08-worker-physical-cancel-green.log`,
+`/tmp/dispatcher-cv08-worker-final-check.log`.
+
+Remaining safety work before activation: fail/cancel/pause/reroute/start and
+startup recovery composition. R-010 is now the immediate next dependency:
+advanceRun still awaits captureProfileResource and standalone usage is awaited
+by the background loop. A slow read could occupy the new shared lane and delay
+input. Separate passive execution-resource facts from usage collection and fence
+late telemetry, then verify cancellation/input/lease independence. This is an
+open integration limitation, not a passed nonblocking-metering Gate. No native
+controls or real service/data were enabled. Rollback is 40f3232; original sources
+are unchanged. Official quota checked after this unit; percentage in Linear.
