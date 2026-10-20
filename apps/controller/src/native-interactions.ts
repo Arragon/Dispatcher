@@ -1089,6 +1089,11 @@ export class NativeInteractions {
     if(control.state!=="AUTOMATED")throw new InteractionStoreError("NATIVE_WRITE_LOCKED");
     this.assertDriftPolicy(run);
   }
+  assertNativeStartProjection(commandId:string):void {
+    const command=this.store.command(commandId);
+    if(!command||command.type!=="start"||!["ACKNOWLEDGED","UNKNOWN","FAILED"].includes(command.state))throw new InteractionGuardError("NATIVE_START_OUTCOME_UNKNOWN");
+    try{this.assertNativeStartAuthority(command);}catch(error){throw new InteractionGuardError(error instanceof InteractionStoreError?error.code:"STALE_RUN_AUTHORITY");}
+  }
   cancelReservedStart(run:Run):boolean {
     return this.database.transaction(()=>{
       const command=this.startForRun(run.id);if(command?.state!=="RESERVED")return false;

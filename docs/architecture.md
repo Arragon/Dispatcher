@@ -271,6 +271,16 @@ rejection clears only its own stop intent. Explicit cancellation may stop an
 expired lease's original invocation but cannot authorize continuation. Pause
 uses the same lane/final callback and rejects missing admission acknowledgement.
 Local native-bound cancellation stays closed until a qualified stop is wired.
+Ordinary embedded dispatch now reserves its Session/control/start intent in the
+same transaction as the queued Run. Adapter preparation precedes final SENDING
+admission; the receipt then settles against that exact identity. Final Task/Run
+projection checks the queued Task revision and original control. A concurrent
+revision, including a canonical comment, keeps its content and requires manual
+reconciliation rather than accepting stale startup. Basic execution-context and
+native model-catalog fingerprints have distinct meanings; final admission pins
+the former while the existing selection preflight validates the latter. Remote
+startup retains its separate owning-Runner contract pending CV-12 composition.
+A new minimum-writer increment remains required before live activation.
 Failure revokes and aborts its original owned verification command before
 waiting for the Session lane, then requires both adapter stop and owned command
 drain before FAILED. Stop intent audit stays on the existing Session authority

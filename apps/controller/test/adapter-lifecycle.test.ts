@@ -245,8 +245,8 @@ describe("all-provider adapter lifecycle", () => {
     let finish!: () => void, entered!: () => void;
     const gate = new Promise<void>(resolve => { finish = resolve; });
     const admitted = new Promise<void>(resolve => { entered = resolve; });
-    const create = vi.fn(async () => { entered(); await gate; return { sessionId: "native", status: "running", pullRequests: [] }; });
-    const f = await fixture({ devinBackendFactory: () => ({ health: async () => ({ ok: true }), create, get: async () => ({ sessionId: "native", status: "completed", pullRequests: [] }), send: async () => { throw new Error("unused"); } }) });
+    const create = vi.fn<DevinBackend["create"]>(async (_input,beforeSend) => { entered(); await gate; beforeSend?.();return { sessionId: "native", status: "running", pullRequests: [] }; });
+    const f = await fixture({ devinBackendFactory: () => ({ supportsFinalAdmission:true,health: async () => ({ ok: true }), create, get: async () => ({ sessionId: "native", status: "completed", pullRequests: [] }), send: async () => { throw new Error("unused"); } }) });
     let started: ReturnType<typeof f.start> | undefined;
     try {
       await f.apply(config => { config.agentProfiles = [{ id: "devin", alias: "Devin", provider: "devin", runnerId: "local", credentialRef: "secret://devin/account", settings: { organizationId: "org-fixture" } }]; });

@@ -66,7 +66,7 @@ final convergence verification.
 | CV-04 | migration/control/backup modules ported with v3 adaptation and protocol 2; targeted 12/101 and two default 90/802 gates passed; ready for whole-branch review |
 | CV-05 | in progress: catalog scope/lifecycle, default ConfigPlan, per-Run provenance and adapter selection fences pass 91/833 default gate; legacy HTTP/Slack/reroute choice now integrated at 109/1085; remaining catalog/control assertions tracked |
 | CV-06 | Controller nonblocking scoped collection/terminal retry verified at 115/1169; origin/attempt/time and account-quota qualification/UI pending |
-| CV-08 | continuation/worker/delivery/failure/cancel/pause Guard, failure priority drain, stop audit and read-only local start recovery qualification verified at 115/1201; reroute/start runtime/recovery and native qualification remain pending |
+| CV-08 | continuation/worker/delivery/failure/cancel/pause Guard, failure priority drain, stop audit and read-only local start recovery qualification verified at 115/1204; ordinary local start composed; writer increment, reserved-start cancellation, reroute/recovery and native qualification remain pending |
 | CV-12 | pending complete selection/control integration |
 | macOS service / LP / backup | pending safe shared foundation |
 | CV-07/09/10/11 | pending contracts/guards |
@@ -1092,3 +1092,47 @@ This foundation does not yet switch ordinary dispatch to the guarded start
 callbacks, recover owned process attachment or open native control. Those stay
 in R-005. No source/live database or service changed. Rollback: 3709924 with its
 matching backup.
+
+
+## CV-08p ordinary local dispatch start composition
+
+Embedded dispatch reserves the immutable Dispatcher Session ID, initial control
+and native start receipt in its existing Task/Run reservation transaction. It
+uses Scheduler's final sending/settlement callbacks; preparation cannot silently
+acquire a new Task revision, control epoch, profile adapter or execution context.
+SENDING is committed at final native I/O. The returned session/receipt and final
+Task/Run projection must match the original authority. Source selection remains
+ExecutionSelection. Native catalog and base execution fingerprints are distinct;
+freeze the base context at reservation and retain the existing fresh catalog
+preflight. Remote startup retains its owning-Runner contract for CV-12.
+
+Ruling: a canonical comment changes Task revision just like another edit. The
+approved strict revision requirement intentionally changes the prior startup
+comment test: preserve the comment, return conflict, retain one UNKNOWN start and
+manual unavailable capacity without automatic resend/cleanup of an uncertain
+owner. Strengthen that regression with inbox/receipt/start-count checks. This is
+an intentional behavior change, not weakened verification. Pre-create rejected
+startup cannot overwrite a concurrent Task edit. Owned worktrees are retained
+when a canonical Run reservation exists. Source preflight errors no longer
+justify deleting a referenced worktree.
+
+Three new start cases failed before implementation. Targets: local/start/recovery
+3 files/108 tests; publication/real Git delivery/lifecycle 3 files/84 tests. The
+full suite exposed a wrong base-vs-catalog fingerprint comparison; correct their
+separate authority rather than weakening selection checks. Two OS-error fixtures
+now supply actual ENOENT codes, retaining their original FAILED assertions. The
+async Devin test backend honors the final callback after its gate; all original
+capacity/delivery assertions remain. A new comment assertion initially used a
+nonexistent persistence helper; it now checks the existing canonical inbox API.
+Default `mise exec -- pnpm check` passes 115 files/1204 tests (41.05s test phase);
+`git diff --check` passes. Official quota checked after unit; percentage in Linear.
+Logs: /tmp/dispatcher-cv08p-start-red.log,
+/tmp/dispatcher-cv08p-start-green.log, /tmp/dispatcher-cv08p-green-target.log,
+/tmp/dispatcher-cv08p-publication-target.log, /tmp/dispatcher-cv08p-final-check.log.
+
+Before activation, R-011 requires a new minimum-writer protocol so intermediate
+protocol-3 binaries cannot write the upgraded candidate. Follow-ups: known-unsent
+start cancellation, priority startup outcome/reconciliation, legacy adoption,
+reroute, complete recovery and qualified native stop. No live database/service
+changed; no native or A/B Gate closes. Source/rollback: eba4b2f with matching
+pre-activation data backup, never an older binary against an incompatible DB.

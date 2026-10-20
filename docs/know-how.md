@@ -2,6 +2,11 @@
 
 ## M0–M10 invariants
 
+- ExecutionSelection.contextFingerprint may describe a native model catalog; it
+  is not always the base execution-context fingerprint. Preserve separate checks
+  for catalog choice and the captured profile/workspace credential context.
+  Classify local ENOENT only from a real error code, not message text.
+
 - Interaction commands store a semantic hash, not their full reservation input.
   Recovery must reconstruct and compare that exact frozen input read-only; never
   call reserveCommand as a probe after Task revisions advance. An initial

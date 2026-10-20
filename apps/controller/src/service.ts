@@ -2,7 +2,7 @@ import {isGuardedControllerStart} from "./start-recovery.js";
 import {parseNativeModelDefaultReview,qualifyNativeModelDefault,readNativeModelDefaultEvidence} from "./model-defaults.js";
 import type {RunGitDelivery,ScmDeliverySelection,MutationFence} from "@dispatcher/domain";
 import {NativeInteractions,InteractionGuardError,type ControllerInteractionOperation,type InteractionPrincipal} from "./native-interactions.js";
-import {AdapterAdmissionError,assertAdapterWriteAdmission} from "@dispatcher/adapters";
+import {AdapterAdmissionError,assertAdapterWriteAdmission,type AdapterStartOutcome} from "@dispatcher/adapters";
 import { resolveProfileExecutionContext } from "./execution-context.js";
 import { ProfileProbeService } from "./profile-probes.js";
 import { CredentialContext } from "./credential-context.js";
@@ -2593,9 +2593,20 @@ export class ControllerService {
     if(!remote)this.database.transaction(()=>{this.database.saveEntity("workspace-handle",runId,json(workspace));this.database.saveEntity("workspace-intent",runId,json({...workspacePlan,state:"CREATED",path:workspace.path}));});
     const runContract:TaskContract={...contract,workspace:{...contract.workspace,repositoryId,baseRef:workspace.baseRef,baseCommit:workspace.baseRevision}};
     let dispatched: Awaited<ReturnType<CanonicalScheduler["dispatch"]>>;
+    let startAdmission:(()=>void)|undefined,startFence:MutationFence|undefined,startContextFingerprint:string|undefined,startAdapter:AgentAdapter|undefined;
     this.dispatchingRuns.add(runId);
     try {
       dispatched = await scheduler.dispatch({
+        ...(!remote?{
+          onRunStartSending:(run:Run)=>{
+            if(this.cancelledRunIds.has(run.id)||!startAdmission)throw new InteractionGuardError("STALE_RUN_AUTHORITY");
+            const selection=run.executionSelection!;
+            const context=this.resolveProfileExecutionContext(run.profileId,repositoryId,"start");
+            if(this.configuration.current().revision!==selection.configRevision||context.fingerprint!==startContextFingerprint||this.agentAdapters.get(run.profileId)!==startAdapter)throw new InteractionGuardError("EXECUTION_CONTEXT_DRIFT");
+            startAdmission();
+          },
+          onRunStartSettled:(run:Run,outcome:AdapterStartOutcome)=>{this.nativeInteractions.settleNativeStart(`native-start:${run.id}`,outcome);},
+        }:{}),
         task: stored.document as unknown as Task,
         taskRevision: stored.revision,
         contract:runContract,
@@ -2632,7 +2643,8 @@ export class ControllerService {
         },
         runId,
         onRunStarting: (run, decision) => {
-          this.resolveProfileExecutionContext(run.profileId,repositoryId,"start");
+          startContextFingerprint=this.resolveProfileExecutionContext(run.profileId,repositoryId,"start").fingerprint;
+          startAdapter=decision.selected!.adapter;
           if(!run.executionSelection)run.executionSelection=this.compileLegacyRunSelection(run,repositoryId,decision.selected!.adapter);
           const selectedModel = this.configuration.current().config.agentProfiles.find((profile) => profile.id === run.profileId)?.settings?.model;
           if(publication?.selection?.requestedModel)run.model={id:publication.selection.requestedModel,source:"selection"};
@@ -2653,12 +2665,17 @@ export class ControllerService {
             const bound = this.tasks.execute({ id: `dispatch:${run.id}:bound`, taskId, baseRevision: current.revision, actor: "scheduler", command: { type: "task.set-current-run", runId: run.id } });
             this.tasks.execute({ id: `dispatch:${run.id}:queued`, taskId, baseRevision: bound.revision, actor: "scheduler", command: { type: "task.transition", state: "QUEUED" } });
             if (idempotencyKey) this.database.saveEntity("task-dispatch", idempotencyKey, json({ run, routing: { explanation: decision.explanation, eligible: decision.eligible, rejected: decision.rejected } }));
+            if(!remote){
+              const command=this.nativeInteractions.reserveNativeStart({run,actorId:publication?.owner??"scheduler",resumable:decision.selected!.adapter.manifest.capabilities.resume,backendId:run.executionSelection!.backendId,configRevision:run.executionSelection!.configRevision,semantics:{controllerStartVersion:1,runnerMode:"embedded",contractHash:contentHash(runContract)}});
+              startFence=structuredClone(command.fence);
+            }
           });
+          if(!remote)startAdmission=this.nativeInteractions.nativeStartAdmission(`native-start:${run.id}`);
           this.restoreLeaseAuthority(run);
         },
       });
     } catch (error) {
-      if(!remote){const cleanup = await this.workspaces.cleanupPlan(workspace);if (cleanup.safe) await this.workspaces.cleanup(cleanup);}
+      if(!remote&&!this.database.getEntity("run",runId)){const cleanup = await this.workspaces.cleanupPlan(workspace);if (cleanup.safe) await this.workspaces.cleanup(cleanup);}
       if (error instanceof TaskDispatchError || error instanceof ConnectorError) throw error;
       throw new TaskDispatchError("DISPATCH_UNAVAILABLE", 409, error instanceof Error ? error.message : "Dispatch is unavailable");
     }finally{this.dispatchingRuns.delete(runId);}
@@ -2671,6 +2688,7 @@ export class ControllerService {
       this.database.transaction(() => {
         const current = this.database.getCanonicalTask<JsonValue>(taskId)!;
         const task = current.document as unknown as Task;
+        if(startFence){if(current.revision!==startFence.expectedTaskRevision)throw new TaskDispatchError("TASK_CHANGED",409,"Task revision changed during native startup");this.nativeInteractions.assertNativeStartProjection(`native-start:${dispatched.run.id}`);}
         if (task.state !== "QUEUED" || task.currentRunId !== dispatched.run.id) throw new TaskDispatchError("TASK_CHANGED", 409, "Task changed during agent startup");
         this.saveAdvancedRun(dispatched.run, "STARTING");
         const state = dispatched.run.state === "FAILED" ? "FAILED" : dispatched.run.state==="RUNNER_UNAVAILABLE"?"WAITING_RESOURCE":"RUNNING";
@@ -2679,11 +2697,22 @@ export class ControllerService {
         if (idempotencyKey) this.database.saveEntity("task-dispatch", idempotencyKey, json(result));
       });
     } catch (error) {
-      if (!dispatched.run.sessionId.startsWith("unstarted:")) {
-        try { await this.agentAdapters.get(dispatched.run.profileId)?.cancel(dispatched.run.sessionId); }
-        catch (cleanupError) { this.app.log.warn({ error: redactValue(cleanupError), runId: dispatched.run.id }, "dispatch cleanup failed"); }
+      if(startFence){
+        const current=this.database.getEntity<JsonValue>("run",dispatched.run.id) as unknown as Run|undefined;
+        if(current&&current.generation===startFence.generation&&current.leaseId===startFence.leaseId&&current.sessionId===startFence.sessionId&&!isTerminalRunState(current.state)){
+          // Project the recorded external outcome without acknowledging a concurrent Task edit.
+          current.state=dispatched.run.state==="FAILED"?"FAILED":"RUNNER_UNAVAILABLE";current.resumePolicy="manual";current.failureReason=dispatched.run.failureReason??"Native startup authority changed; inspect the original execution";
+          if(current.state==="FAILED")current.endedAt=this.now().toISOString();else current.recoveryReason="NATIVE_OUTCOME_UNKNOWN";
+          this.database.saveEntity("run",current.id,json(current));
+          if(current.state!=="FAILED")try{await this.cleanupStaleInput(current,startFence);}catch(cleanupError){this.app.log.warn({error:redactValue(cleanupError),runId:current.id},"Guarded startup cleanup is unconfirmed");}
+        }
+      }else{
+        if (!dispatched.run.sessionId.startsWith("unstarted:")) {
+          try { await this.agentAdapters.get(dispatched.run.profileId)?.cancel(dispatched.run.sessionId); }
+          catch (cleanupError) { this.app.log.warn({ error: redactValue(cleanupError), runId: dispatched.run.id }, "dispatch cleanup failed"); }
+        }
+        await this.failRun(dispatched.run, "Task or run authority changed during agent startup");
       }
-      await this.failRun(dispatched.run, "Task or run authority changed during agent startup");
       throw error;
     }
     this.fleetEvents.publish("run.changed", dispatched.run.id, { id: dispatched.run.id, taskId: dispatched.run.taskId, state: dispatched.run.state });

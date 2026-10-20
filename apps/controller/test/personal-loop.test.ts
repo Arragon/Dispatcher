@@ -44,7 +44,7 @@ async function setup(options: { realCodex?: boolean; executable?: string; verifi
   const linear: Array<Record<string, unknown>> = [];
   const control = { turn: "running" as "running" | "waiting" | "completed" | "failed", ci: "pending" as "pending" | "success" | "failure", slackFailures: 0, ciFailures: 0, prs: 0, pushes: 0, cancellations: 0, now: new Date(), throwStart: false, prState: "open" as "open" | "closed", merged: false, headCommit: "commit-1", pushGate: undefined as Promise<void> | undefined, onStart: undefined as (() => void) | undefined };
   const backend: CodexBackend = { start: (input) => {
-    if (control.throwStart) throw new Error("spawn missing-codex ENOENT");
+    if (control.throwStart) throw Object.assign(new Error("spawn missing-codex ENOENT"),{code:"ENOENT"});
     starts.push({ prompt: input.prompt, ...(input.model?{model:input.model}:{}), ...(input.providerSessionId ? { providerSessionId: input.providerSessionId } : {}) });
     control.onStart?.();
     return { cancel: async () => { control.cancellations += 1; }, status: () => control.turn === "running" ? "running" : "completed", result: async (): Promise<CodexTurnResult> => ({ state: control.turn === "running" ? "completed" : control.turn, summary: control.turn === "waiting" ? "Choose the implementation approach" : control.turn === "failed" ? "agent crashed" : "implemented", providerSessionId: "provider-thread-1", events: control.turn === "waiting" ? [{ type: "waiting", reason: "input_required" }] : [] }) };
@@ -223,6 +223,16 @@ describe("personal Slack–Linear loop", () => {
   it("does not turn confirmed failure cleanup unknown when attention notification fails",async()=>{
     const f=await setup();await f.service.app.inject({headers:OWNER,method:"POST",url:`/api/tasks/${f.taskId}/dispatch`,payload:{}});const internals=f.service as unknown as {failRun(run:Run,reason:string):Promise<void>;notifyAttention(run:Run):Promise<void>;markRemoteUnavailable(...args:unknown[]):void};vi.spyOn(internals,"notifyAttention").mockRejectedValue(Error("notification unavailable"));const unavailable=vi.spyOn(internals,"markRemoteUnavailable");await internals.failRun(f.run(),"lease expired");
     expect(f.run().state).toBe("FAILED");expect(f.task().state).toBe("FAILED");expect(unavailable).toHaveBeenCalledTimes(1);expect(f.service.database.getEntity("adapter-session",f.run().sessionId)).toMatchObject({authority:{stopState:"confirmed"}});
+  });
+  it("reserves one local Session and start receipt before native creation",async()=>{
+    const f=await setup();let during:unknown;f.control.onStart=()=>{const run=f.run();during={run,command:new InteractionStore(f.service.database).command(`native-start:${run.id}`),control:new InteractionStore(f.service.database).control(run.sessionId)};};
+    expect((await f.service.app.inject({headers:OWNER,method:"POST",url:`/api/tasks/${f.taskId}/dispatch`,payload:{}})).statusCode).toBe(201);const run=f.run();
+    expect(during).toMatchObject({run:{id:run.id,sessionId:run.sessionId,state:"STARTING"},command:{state:"SENDING",fence:{sessionId:run.sessionId,generation:run.generation,leaseId:run.leaseId}},control:{state:"AUTOMATED",epoch:1,revision:1}});expect(run.sessionId).not.toMatch(/^unstarted:/);expect(new InteractionStore(f.service.database).command(`native-start:${run.id}`)?.state).toBe("ACKNOWLEDGED");expect(f.starts).toHaveLength(1);
+  });
+  it.each(["task","control"] as const)("rejects local native creation when %s authority changes during adapter preparation",async change=>{
+    const f=await setup(),adapter=(f.service as unknown as {agentAdapters:Map<string,AgentAdapter>}).agentAdapters.get("orion")!,start=adapter.start.bind(adapter),entered=Promise.withResolvers<void>(),ready=Promise.withResolvers<void>();vi.spyOn(adapter,"start").mockImplementation(async input=>{entered.resolve();await ready.promise;return start(input);});
+    const pending=f.service.app.inject({headers:OWNER,method:"POST",url:`/api/tasks/${f.taskId}/dispatch`,payload:{}}).then(value=>value);
+    try{await entered.promise;if(change==="control")controlled(f)();else{const task=f.service.database.getCanonicalTask<JsonValue>(f.taskId)!;f.service.database.writeCanonicalTask(f.taskId,task.revision,{...(task.document as Record<string,JsonValue>),title:"Concurrent reviewed edit"});}ready.resolve();expect((await pending).statusCode).toBe(409);expect(f.starts).toHaveLength(0);if(change==="task")expect(f.task()).toMatchObject({title:"Concurrent reviewed edit",state:"QUEUED"});}finally{ready.resolve();await pending;}
   });
   function webAnswer(f:Awaited<ReturnType<typeof setup>>,id:string){
     const run=f.run();return f.service.app.inject({headers:OWNER,method:"POST",url:`/api/agents/profiles/${run.profileId}/sessions/${run.sessionId}/input`,payload:{inputId:id,message:"continue",authority:{runId:run.id,generation:run.generation,leaseId:run.leaseId,lastActivityAt:run.lastActivityAt,taskRevision:f.service.database.getCanonicalTask(f.taskId)!.revision}}}).then(value=>value);
@@ -622,7 +632,7 @@ describe("personal Slack–Linear loop", () => {
     expect(f.service.database.listEntities("run")).toHaveLength(1);
   });
 
-  it("keeps dispatch coherent when a canonical comment arrives during agent startup", async () => {
+  it("preserves a concurrent comment and requires reconciliation after native startup loses its Task revision", async () => {
     const f = await setup();
     f.control.onStart = () => {
       const current = f.service.database.getCanonicalTask<JsonValue>(f.taskId)!;
@@ -631,9 +641,12 @@ describe("personal Slack–Linear loop", () => {
       f.service.tasks.execute({ id: "comment-during-start", taskId: f.taskId, baseRevision: current.revision, actor: "owner", command: { type: "task.comment", body: "Keep this comment" } });
     };
     const response = await f.service.app.inject({ headers: OWNER, method: "POST", url: `/api/tasks/${f.taskId}/dispatch`, payload: {} });
-    expect(response.statusCode).toBe(201);
-    expect(f.task()).toMatchObject({ state: "RUNNING", currentRunId: f.run().id });
-    expect(f.run().state).toBe("ACTIVE");
+    expect(response.statusCode).toBe(409);
+    expect(f.task()).toMatchObject({ state: "QUEUED", currentRunId: f.run().id });
+    expect(f.run()).toMatchObject({state:"RUNNER_UNAVAILABLE",recoveryReason:"NATIVE_OUTCOME_UNKNOWN",resumePolicy:"manual"});
+    expect(new InteractionStore(f.service.database).command(`native-start:${f.run().id}`)?.state).toBe("UNKNOWN");
+    expect(f.starts).toHaveLength(1);expect(f.control.cancellations).toBe(0);
+    expect(f.service.database.getInboxEvent("command:comment-during-start")?.normalized).toMatchObject({command:{type:"task.comment",body:"Keep this comment"}});
   });
 
   it("reports a closed PR and invalidates old CI evidence even when the CI read is unavailable", async () => {
