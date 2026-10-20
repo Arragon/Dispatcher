@@ -2,6 +2,12 @@
 
 ## M0–M10 invariants
 
+- Capture a reroute fence before its queue/preflight awaits. The original Run
+  becomes terminal before replacement reservation, so post-stop reuse needs a
+  narrow stage guard, not a fresh general mutation fence. Require the original
+  revoked lease, unchanged Task/control and scoped stop proof; preserve dirty
+  worktree files on rejection. Settled idempotency reads still bypass writes.
+
 - A reserved Dispatcher Session UUID exists before the native SDK runs. Startup
   recovery must read its command receipt, not infer creation from that UUID.
   ACK proves creation, not liveness after Controller restart. Keep RESERVED

@@ -431,6 +431,21 @@ export class NativeInteractions {
   assertCancellation(principal:InteractionPrincipal,fence:MutationFence,humanInterruptConfirmed=false):void {
     this.assertStopFence(fence);const decision=this.evaluateInteraction(principal,"cancel",fence,undefined,humanInterruptConfirmed);if(!decision.allowed)throw new InteractionGuardError(decision.code);
   }
+  assertStoppedReroute(principal:InteractionPrincipal,fence:MutationFence):void {
+    this.assertStopFence(fence);this.assertInteraction(principal,"collect",fence);
+    if(!principal.roles.some(role=>["operator","admin"].includes(role)))throw new InteractionGuardError("FORBIDDEN");
+    const run=this.database.getEntity<JsonValue>("run",fence.runId) as unknown as Run;
+    const task=this.database.getCanonicalTask<JsonValue>(run.taskId),control=this.store.control(fence.sessionId);
+    const adapter=this.database.getEntity<JsonValue>("adapter-session",fence.sessionId) as unknown as (AdapterSession&{authority?:{stopState?:string}})|undefined;
+    if(run.state!=="SUPERSEDED"||run.generation!==fence.generation||run.leaseId!==fence.leaseId||!Array.isArray(run.revokedLeaseIds)||!run.revokedLeaseIds.includes(fence.leaseId))throw new InteractionGuardError("STALE_RUN_AUTHORITY");
+    if(!task||task.revision!==fence.expectedTaskRevision||(task.document as {currentRunId?:string}).currentRunId!==run.id||fence.expectedCurrentRunId!==run.id||!["RUNNING","WAITING_USER","WAITING_RESOURCE"].includes((task.document as {state:string}).state))throw new InteractionGuardError("STALE_TASK_REVISION");
+    if((control?.revision??0)!==fence.expectedControlRevision||(control?.epoch??0)!==fence.expectedControlEpoch)throw new InteractionGuardError("STALE_CONTROL_REVISION");
+    if(control&&(control.state!=="AUTOMATED"||control.activeRunId!==run.id))throw new InteractionGuardError("NATIVE_WRITE_LOCKED");
+    if(run.executionRef||adapter?.nativeBinding||this.store.binding(run.sessionId))throw new InteractionGuardError("NATIVE_CAPABILITY_UNVERIFIED");
+    if(!adapter||adapter.runId!==run.id||adapter.profileId!==run.profileId||adapter.workspacePath!==run.worktree||adapter.authority?.stopState!=="confirmed"||!["CANCELLED","COMPLETED","FAILED"].includes(adapter.state)||adapter.execution&&(adapter.execution.generation!==run.generation||adapter.execution.leaseId!==run.leaseId||adapter.execution.attempt!==run.attempt))throw new InteractionGuardError("NATIVE_STOP_UNCONFIRMED");
+    if(hasNativeExternalWriteBlocker(this.database,run)||this.hasUncertainCommand(run.sessionId)||this.hasUnconfirmedNativeQueue(run.sessionId))throw new InteractionGuardError("NATIVE_COMMAND_OUTCOME_UNKNOWN");
+    this.assertDriftPolicy(run);
+  }
   recordUnsentCancellation(principal:InteractionPrincipal,fence:MutationFence,humanInterruptConfirmed=false):CancelResolution {
     this.assertStopFence(fence);this.assertInteraction(principal,"collect",fence);
     const run=this.database.getEntity<JsonValue>("run",fence.runId) as unknown as Run;const task=this.database.getCanonicalTask<JsonValue>(run.taskId)!;

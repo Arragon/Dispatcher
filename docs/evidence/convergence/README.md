@@ -66,7 +66,7 @@ final convergence verification.
 | CV-04 | migration/control/backup modules ported with v3 adaptation and protocol 2; targeted 12/101 and two default 90/802 gates passed; ready for whole-branch review |
 | CV-05 | in progress: catalog scope/lifecycle, default ConfigPlan, per-Run provenance and adapter selection fences pass 91/833 default gate; legacy HTTP/Slack/reroute choice now integrated at 109/1085; remaining catalog/control assertions tracked |
 | CV-06 | Controller nonblocking scoped collection/terminal retry verified at 115/1169; origin/attempt/time and account-quota qualification/UI pending |
-| CV-08 | continuation/worker/delivery/failure/cancel/pause Guard, failure priority drain, stop audit and read-only local start recovery qualification verified at 115/1204; ordinary local start composed; schema-8 writer increment verified at 116/1208; known-unsent cancellation/publication journal recovery verified at 116/1215; general guarded local recovery verified at 116/1218; remaining reroute/legacy/qualified native recovery and native qualification remain pending |
+| CV-08 | continuation/worker/delivery/failure/cancel/pause Guard, failure priority drain, stop audit and read-only local start recovery qualification verified at 115/1204; ordinary local start composed; schema-8 writer increment verified at 116/1208; known-unsent cancellation/publication journal recovery verified at 116/1215; general guarded local recovery verified at 116/1218; captured reroute stage Guard verified at 116/1222; replacement start/legacy/qualified native recovery remain and native qualification remain pending |
 | CV-12 | pending complete selection/control integration |
 | macOS service / LP / backup | pending safe shared foundation |
 | CV-07/09/10/11 | pending contracts/guards |
@@ -1245,4 +1245,38 @@ This does not reattach native processes or open foreign/native binding/HUMAN
 records. Atomic legacy adoption, reroute/remote composition, qualified native
 context/stop and real recovery/soak remain in R-005/R-003/R-004. No original data
 or service changed. Source/rollback: 4b3f634 with matching schema-8 backup.
+Official quota checked after unit; percentage recorded in Linear.
+
+
+## CV-08s captured reroute preflight and stopped-owner stage Guard
+
+Reroute now captures the original Run/profile/Task/control fence before queuing.
+The existing receipt lookup remains first inside execution, preserving idempotent
+reads after authority changes. A new mutation must pass its captured Guard before
+and after standalone refresh and again across delivery/stop awaits. Stop uses
+the real actor and that original fence, acknowledging only its own synchronous
+unavailable Task transition.
+
+Post-stop reuse cannot use general reroute authority because the old Run is now
+SUPERSEDED. A narrow coordinator guard requires its exact revoked lease, Task
+revision/currentRun, unchanged AUTOMATED control, matching adapter invocation and
+confirmed owned-stop receipt. Native bindings/executionRef, uncertain commands,
+unconfirmed queues and external blockers remain rejected. Worktree restore
+checks this stage again before replacement reservation. Dirty/untracked local
+files stay intact when any authority check fails.
+
+All four new queue/refresh/post-stop Task/control cases fail before the fix, then
+pass. Full personal loop plus shared Guard passes 2 files/90 tests, retaining
+original frozen-context, idempotent outcome and cancellation-race assertions.
+Default `mise exec -- pnpm check` passes 116 files/1222 tests (40.59s test phase);
+`git diff --check` passes. Logs: /tmp/dispatcher-cv08s-reroute-red.log,
+/tmp/dispatcher-cv08s-reroute-green.log, /tmp/dispatcher-cv08s-target.log,
+/tmp/dispatcher-cv08s-check.log. No assertion/deadline weakened.
+
+Replacement start still needs the shared reserved-start path. Inspection of stop
+status found R-012: Generic child status sets cancelled before owned group drain
+finishes, unlike the Codex/Qoder/Structured close handlers that await drain
+before terminal completion. Reproduce and repair this before further activation;
+no provider/real-process Gate is claimed by metadata fixtures. Original data and
+services unchanged. Source/rollback: a872c18 plus matching schema-8 backup.
 Official quota checked after unit; percentage recorded in Linear.

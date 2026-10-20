@@ -1,6 +1,6 @@
 import { createHmac } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync,readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -373,6 +373,20 @@ describe("personal Slack–Linear loop", () => {
     return f;
   }
 
+  it("retains the pre-queue reroute control fence instead of adopting the next owner",async()=>{
+    const f=await rerouteFixture(),old=f.run(),lock=controlled(f),ready=Promise.withResolvers<void>();const internals=f.service as unknown as {dispatchQueue:Promise<void>;rerouteRun(id:string,profileId:string,context:{actorId:string;workflowId:string}):Promise<unknown>};internals.dispatchQueue=ready.promise;
+    const pending=internals.rerouteRun(old.id,"vega",{actorId:"owner",workflowId:"queued-reroute"}).then(value=>({value}),error=>({error}));lock();ready.resolve();expect(await pending).toHaveProperty("error");expect(f.starts).toHaveLength(1);expect(f.control.cancellations).toBe(0);expect(f.run().state).toBe("ACTIVE");
+  });
+  it("rechecks the original Task revision after reroute refresh awaits",async()=>{
+    const f=await rerouteFixture(),old=f.run(),entered=Promise.withResolvers<void>(),ready=Promise.withResolvers<void>(),internals=f.service as unknown as {refreshLocalTrialSessions():Promise<void>};const refresh=internals.refreshLocalTrialSessions.bind(f.service);vi.spyOn(internals,"refreshLocalTrialSessions").mockImplementationOnce(async()=>{entered.resolve();await ready.promise;return refresh();});
+    const pending=f.service.semanticTools.execute("run.reroute",{target:old.id,profileId:"vega"},{...resumeContext,workflowId:"stale-refresh-reroute"}).then(value=>({value}),error=>({error}));
+    try{await entered.promise;const task=f.service.database.getCanonicalTask<JsonValue>(old.taskId)!;f.service.database.writeCanonicalTask(old.taskId,task.revision,{...(task.document as Record<string,JsonValue>),title:"New intent during refresh"});ready.resolve();expect(await pending).toHaveProperty("error");expect(f.starts).toHaveLength(1);expect(f.control.cancellations).toBe(0);expect(f.task()).toMatchObject({title:"New intent during refresh",currentRunId:old.id});}finally{ready.resolve();await pending;}
+  });
+  it.each(["control","task"] as const)("rechecks %s after owned stop and before reusing the worktree for reroute",async change=>{
+    const f=await rerouteFixture(),old=f.run(),lock=controlled(f),entered=Promise.withResolvers<void>(),ready=Promise.withResolvers<void>(),restore=f.service.workspaces.restore.bind(f.service.workspaces);writeFileSync(join(old.worktree!,"local-uncommitted.txt"),"preserve local work");vi.spyOn(f.service.workspaces,"restore").mockImplementationOnce(async handle=>{entered.resolve();await ready.promise;return restore(handle);});
+    const pending=f.service.semanticTools.execute("run.reroute",{target:old.id,profileId:"vega"},{...resumeContext,workflowId:`stale-stopped-${change}`}).then(value=>({value}),error=>({error}));
+    try{await entered.promise;expect(f.control.cancellations).toBe(1);if(change==="control")lock();else{const task=f.service.database.getCanonicalTask<JsonValue>(old.taskId)!;f.service.database.writeCanonicalTask(old.taskId,task.revision,{...(task.document as Record<string,JsonValue>),title:"New intent after owned stop"});}ready.resolve();expect(await pending).toHaveProperty("error");expect(f.starts).toHaveLength(1);expect(f.task().currentRunId).toBe(old.id);expect(f.service.workspaces.get(old.worktree!)?.runId).toBe(old.id);expect(readFileSync(join(old.worktree!,"local-uncommitted.txt"),"utf8")).toBe("preserve local work");}finally{ready.resolve();await pending;}
+  });
   it("stops old ownership before a reserved reroute and retains frozen context through owning commit and restart", async () => {
     const f = await rerouteFixture(), old = f.run(), adapters = (f.service as unknown as { agentAdapters: Map<string, AgentAdapter> }).agentAdapters;
     const originalContract = f.service.database.getEntity("run-contract", old.id), verification = f.service.database.getEntity("run-verification-config", old.id);

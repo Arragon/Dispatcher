@@ -2773,12 +2773,14 @@ export class ControllerService {
   }
 
   private rerouteRun(runId: string, profileId: string, context: { actorId: string; workflowId: string }): Promise<{ supersededRunId: string; run: Run }> {
-    const result = this.dispatchQueue.then(() => this.performReroute(runId, profileId, context));
+    const run=this.database.getEntity<JsonValue>("run",runId) as unknown as Run|undefined;
+    const authority=run?{principal:{id:context.actorId,roles:["operator"],profileId:run.profileId},fence:this.nativeInteractions.fenceFor(run,`reroute:${contentHash(context)}`)}:undefined;
+    const result = this.dispatchQueue.then(() => this.performReroute(runId, profileId, context,authority));
     this.dispatchQueue = result.then(() => undefined, () => undefined);
     return result;
   }
 
-  private async performReroute(runId: string, profileId: string, context: { actorId: string; workflowId: string }): Promise<{ supersededRunId: string; run: Run }> {
+  private async performReroute(runId: string, profileId: string, context: { actorId: string; workflowId: string },authority:{principal:InteractionPrincipal;fence:MutationFence}|undefined): Promise<{ supersededRunId: string; run: Run }> {
     const receiptId = contentHash(context), receipt = this.database.getEntity<JsonValue>("run-reroute", receiptId) as { previousRunId: string; profileId: string; runId: string } | undefined;
     if (receipt) {
       if (receipt.previousRunId !== runId || receipt.profileId !== profileId) throw new SemanticPolicyError("INVALID_INPUT", "Reroute identity already belongs to another replacement");
@@ -2786,7 +2788,9 @@ export class ControllerService {
       if (!run) throw new SemanticPolicyError("INVALID_INPUT", "Reserved replacement requires operator inspection");
       return { supersededRunId: runId, run };
     }
-    await this.refreshLocalTrialSessions();
+    if(!authority)throw new SemanticPolicyError("INVALID_INPUT","Original reroute authority is unavailable");
+    const assertReroute=()=>this.nativeInteractions.assertInteraction(authority.principal,"reroute",authority.fence);
+    assertReroute();await this.refreshLocalTrialSessions();assertReroute();
     const run = this.database.getEntity<JsonValue>("run", runId) as unknown as Run | undefined;
     const snapshot = this.configuration.current(), profile = snapshot.config.agentProfiles.find(entry => entry.id === profileId), adapter = this.agentAdapters.get(profileId);
     const previousAdapter = run ? this.agentAdapters.get(run.profileId) : undefined;
@@ -2808,7 +2812,8 @@ export class ControllerService {
     let replacementId: string | undefined;
     const assertTaskOwner = (stopped: boolean): void => {
       const current = this.database.getEntity<JsonValue>("run", run.id) as unknown as Run | undefined;
-      const task = this.database.getCanonicalTask<JsonValue>(run.taskId)?.document as unknown as Task | undefined;
+      const taskRecord=this.database.getCanonicalTask<JsonValue>(run.taskId),task=taskRecord?.document as unknown as Task|undefined;
+      if(stopped)this.nativeInteractions.assertStoppedReroute(authority.principal,authority.fence);else assertReroute();
       if (controller.signal.aborted || this.configuration.current().revision !== snapshot.revision || !current || current.generation !== run.generation || current.leaseId !== run.leaseId || current.state !== (stopped ? "SUPERSEDED" : run.state) || task?.currentRunId !== run.id || !["RUNNING", "WAITING_USER", "WAITING_RESOURCE"].includes(task.state)) throw new SemanticPolicyError("INVALID_INPUT", "Task or execution authority changed during reroute");
       this.resolveProfileExecutionContext(profileId, repository.id, "start");
     };
@@ -2821,7 +2826,7 @@ export class ControllerService {
       await checkDelivery(); assertTaskOwner(false);
       this.runInputs.assertAvailable({ runId: run.id, sessionId: run.sessionId, generation: run.generation, authorityHash: contentHash({ runId: run.id, generation: run.generation, leaseId: run.leaseId, lastActivityAt: run.lastActivityAt }) });
       this.cancelledRunIds.add(run.id);
-      const stopping = Promise.resolve().then(() => this.stopRunExecution(run, "SUPERSEDED")).finally(() => { this.runCancellations.delete(run.id); });
+      const stopping = Promise.resolve().then(() => this.stopRunExecution(run, "SUPERSEDED",authority)).finally(() => { this.runCancellations.delete(run.id); });
       this.runCancellations.set(run.id, stopping);
       const stopped = await stopping; assertTaskOwner(true);
       await this.workspaces.restore(workspace); assertTaskOwner(true);

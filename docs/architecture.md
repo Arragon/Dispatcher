@@ -308,7 +308,14 @@ A sealed FAILED start receipt may finish only its original queued Task revision;
 a later edit is retained. This projects a past no-creation fact even after lease
 expiry, without granting execution authority. Waiting/verification/delivery
 phases retain their existing paths. Existing startup caches/publication receipts
-share one scoped projection helper. Known no-send cancellation uses START_FAILED
+share one scoped projection helper.
+Reroute captures its old Run/profile/Task/control fence before the dispatch queue.
+A stored outcome is readable without reacquiring mutation authority. Otherwise
+refresh and stop preflight retain the original fence. Once the old Run is
+SUPERSEDED, a dedicated stage guard requires its revoked original lease, exact
+current Task revision/control, confirmed scoped adapter stop and no uncertain
+commands before reusing its worktree. It rejects native-bound or executionRef
+sessions. Replacement startup composition remains separate work. Known no-send cancellation uses START_FAILED
 with the cancellation reason; sent/unknown cancellation stays distinct.
 
 Codex CLI start/send/resume accept an optional synchronous `beforeSend` admission
