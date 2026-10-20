@@ -1,4 +1,5 @@
 import {freezeExecutionSelection} from "./execution-selection.js";
+import {turnExecutionResource} from "./execution-resource.js";
 import {
   AdapterContractError,
   assertAdapterStartAdmission,
@@ -144,7 +145,7 @@ export class LocalServiceAdapter implements AgentAdapter {
     const session = this.require(sessionId);
     const snapshot = await this.requestSnapshot(renderSessionPath(this.profile.statusPath, requireProviderSession(session)));
     this.snapshots.set(sessionId, snapshot);
-    return this.update(sessionId, { state: mapState(snapshot.state) });
+    return this.update(sessionId, { state: mapState(snapshot.state),executionResource:turnExecutionResource(snapshot.resource?[{...snapshot.resource,type:"resource"}]:[],snapshot.state,new Date().toISOString()) });
   }
   async result(sessionId: string): Promise<AdapterResult> {
     const current = this.require(sessionId);

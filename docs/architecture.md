@@ -247,8 +247,11 @@ Run-input receipts with Web and resume, so a lost reply cannot authorize a
 cross-channel resend. Stale cleanup must retain the captured epoch and never
 stop a new control owner. Worker advancement and existing verification/Git/PR/completion fences now use
 the same coordinator and acknowledge only their own Task transitions.
-Fail/cancel/pause/reroute/start/recovery and nonblocking telemetry composition
-remain pending; the startup barrier and unavailable native controls stay in force.
+Usage reads now run outside that lane and business advancement, with scoped
+coalescing, terminal retry and shutdown fencing. Execution resource facts come
+from owned status/results independently of billing reads. Query failures retain
+unknown telemetry without declaring the provider down. Fail/cancel/pause/reroute/
+start/recovery remain pending; native startup admission stays closed.
 
 Codex CLI start/send/resume accept an optional synchronous `beforeSend` admission
 callback. Creation captures request fields before storing intent, then checks

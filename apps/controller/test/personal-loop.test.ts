@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { AdapterContractError, type AgentAdapter, type CodexBackend, type CodexTurnResult } from "@dispatcher/adapters";
 import type { DispatcherConfig, SecretMetadata, SecretStore } from "@dispatcher/config";
 import type { Run, Task, TaskContract } from "@dispatcher/domain";
-import { InteractionStore,type JsonValue } from "@dispatcher/persistence";
+import { DispatcherDatabase,InteractionStore,type JsonValue } from "@dispatcher/persistence";
 import { ControllerService } from "../src/service.js";
 
 const OWNER = { authorization: "Bearer test-owner-token" };
@@ -155,6 +155,72 @@ describe("personal Slack–Linear loop", () => {
     const f=await setup();expect((await f.service.app.inject({headers:OWNER,method:"POST",url:`/api/tasks/${f.taskId}/dispatch`,payload:{profileId:"orion"}})).statusCode).toBe(201);
     controlled(f)();f.control.turn="completed";await f.service.runBackgroundCycle();
     expect(f.run().state).toBe("ACTIVE");expect(f.task().state).toBe("RUNNING");expect(f.control.pushes).toBe(0);expect(f.control.prs).toBe(0);expect(f.control.cancellations).toBe(0);
+  });
+  it.each(["reply","cancel","lease"] as const)("keeps %s independent of a pending usage reader",async action=>{
+    const f=await setup();await f.service.app.inject({headers:OWNER,method:"POST",url:`/api/tasks/${f.taskId}/dispatch`,payload:{profileId:"orion"}});
+    const adapter=(f.service as unknown as {agentAdapters:Map<string,AgentAdapter>}).agentAdapters.get("orion")!,entered=Promise.withResolvers<void>(),ready=Promise.withResolvers<Record<string,unknown>>();
+    const usage=vi.spyOn(adapter,"usage").mockImplementation(async()=>{entered.resolve();return ready.promise;});
+    const quick=async<T>(pending:PromiseLike<T>)=>Promise.race([pending,new Promise<undefined>(resolve=>setTimeout(resolve,500))]);
+    if(action==="reply")f.control.turn="waiting";
+    const advancing=action==="lease"?f.service.runBackgroundCycle():f.service.app.inject({headers:OWNER,method:"POST",url:`/api/runs/${f.run().id}/advance`}).then(value=>value);
+    let cancellation:Promise<unknown>|undefined;
+    try{
+      await entered.promise;
+      if(action==="reply"){
+        expect(await quick(advancing)).toBeDefined();expect(f.run().state).toBe("WAITING_USER");f.control.turn="running";
+        const reply=await quick(webAnswer(f,"usage-held-answer"));expect(reply?.statusCode).toBe(200);expect(f.starts).toHaveLength(2);
+      }else if(action==="cancel"){
+        cancellation=f.service.semanticTools.execute("run.cancel",{target:f.run().id},{...resumeContext,workflowId:"usage-held-cancel"});
+        expect(await quick(cancellation)).toMatchObject({state:"CANCELLED"});expect(f.run().state).toBe("CANCELLED");
+      }else{
+        expect(await quick(Promise.resolve(advancing).then(()=>true))).toBe(true);
+        const before=f.run().leaseExpiresAt;f.control.now=new Date(f.control.now.getTime()+11*60_000);
+        expect(await quick(f.service.runBackgroundCycle().then(()=>true))).toBe(true);expect(f.run().leaseExpiresAt).not.toBe(before);expect(usage).toHaveBeenCalledTimes(1);
+      }
+    }finally{ready.resolve({state:"UNKNOWN",source:"probe",confidence:"low"});await advancing;await cancellation;}
+  });
+  it("keeps telemetry read failure separate from a completed native execution",async()=>{
+    const f=await setup();await f.service.app.inject({headers:OWNER,method:"POST",url:`/api/tasks/${f.taskId}/dispatch`,payload:{profileId:"orion"}});
+    const adapter=(f.service as unknown as {agentAdapters:Map<string,AgentAdapter>}).agentAdapters.get("orion")!;vi.spyOn(adapter,"usage").mockRejectedValue(Error("telemetry reader unavailable"));f.control.turn="completed";
+    await f.service.runBackgroundCycle();expect(f.run().state).toBe("COMPLETE");expect(f.task().state).toBe("REVIEW");
+    expect(f.service.database.listEntities("usage-error")).toContainEqual(expect.objectContaining({status:"unknown"}));
+  });
+  function usageFact(f:Awaited<ReturnType<typeof setup>>,eventId:string){
+    const run=f.run();return {observations:[{version:1,eventId,profileId:run.profileId,runId:run.id,sessionId:run.sessionId,turnId:"native-turn",scope:"turn",mode:"snapshot",observedAt:f.control.now.toISOString(),source:"native-event",completeness:"complete",metrics:[{name:"input",value:"12",unit:"tokens"}]}]};
+  }
+  it("rejects late usage after account context changes and keeps historical sessions out of new credentials",async()=>{
+    const f=await setup();await f.service.app.inject({headers:OWNER,method:"POST",url:`/api/tasks/${f.taskId}/dispatch`,payload:{}});
+    const adapter=(f.service as unknown as {agentAdapters:Map<string,AgentAdapter>}).agentAdapters.get("orion")!,ready=Promise.withResolvers<Record<string,unknown>>(),entered=Promise.withResolvers<void>();
+    const usage=vi.spyOn(adapter,"usage").mockImplementation(async()=>{entered.resolve();return ready.promise;});f.control.turn="completed";
+    try{
+      await f.service.runBackgroundCycle();await entered.promise;expect(f.run().state).toBe("COMPLETE");
+      const config=structuredClone(f.service.configuration.current().config);config.agentProfiles[0]!.alias="Changed account context";const plan=f.service.configuration.buildPlan(config,"fixture","web");expect((await f.service.app.inject({headers:OWNER,method:"POST",url:`/api/config/plans/${plan.id}/apply`,payload:{confirmed:true}})).statusCode).toBe(200);
+      ready.resolve(usageFact(f,"late-old-account"));await new Promise(resolve=>setTimeout(resolve,0));
+      expect(f.service.database.listEntities("usage-observation")).toHaveLength(0);expect(f.service.database.getEntity("usage-read-state",f.run().id)).toMatchObject({state:"unknown",reasonCode:"USAGE_SOURCE_CHANGED"});
+      f.control.now=new Date(f.control.now.getTime()+60_000);await f.service.runBackgroundCycle();expect(usage).toHaveBeenCalledTimes(1);
+    }finally{ready.resolve({});}
+  });
+  it("closes pending usage admission during shutdown and rejects a late result",async()=>{
+    const f=await setup();await f.service.app.inject({headers:OWNER,method:"POST",url:`/api/tasks/${f.taskId}/dispatch`,payload:{}});
+    const adapter=(f.service as unknown as {agentAdapters:Map<string,AgentAdapter>}).agentAdapters.get("orion")!,ready=Promise.withResolvers<Record<string,unknown>>(),entered=Promise.withResolvers<void>();
+    vi.spyOn(adapter,"usage").mockImplementation(async()=>{entered.resolve();return ready.promise;});f.control.turn="completed";
+    try{
+      await f.service.runBackgroundCycle();await entered.promise;const runId=f.run().id,fact=usageFact(f,"late-after-shutdown");await f.service.stop();ready.resolve(fact);await new Promise(resolve=>setTimeout(resolve,0));
+      const db=new DispatcherDatabase(join(f.service.options.dataDirectory,"dispatcher.sqlite"));try{expect(db.listEntities("usage-observation")).toHaveLength(0);expect(db.getEntity("usage-read-state",runId)).toMatchObject({state:"unknown",reasonCode:"USAGE_SHUTDOWN_PENDING"});}finally{db.close();}
+    }finally{ready.resolve({});}
+  });
+  it("retries terminal usage failures independently and retains the last successful read scope",async()=>{
+    const f=await setup();await f.service.app.inject({headers:OWNER,method:"POST",url:`/api/tasks/${f.taskId}/dispatch`,payload:{}});
+    const adapter=(f.service as unknown as {agentAdapters:Map<string,AgentAdapter>}).agentAdapters.get("orion")!,usage=vi.spyOn(adapter,"usage").mockRejectedValueOnce(Error("transient reader failure")).mockResolvedValue(usageFact(f,"terminal-usage-retry"));f.control.turn="completed";
+    await f.service.runBackgroundCycle();expect(f.run().state).toBe("COMPLETE");expect(f.service.database.getEntity("usage-read-state",f.run().id)).toMatchObject({state:"unknown",readAttempts:1});
+    f.control.now=new Date(f.control.now.getTime()+2_000);await f.service.runBackgroundCycle();await vi.waitFor(()=>expect(f.service.database.getEntity("usage-read-state",f.run().id)).toMatchObject({state:"complete",readAttempts:2,lastSuccessAt:f.control.now.toISOString(),lastSuccessfulScopeKey:expect.any(String)}));
+    expect(f.service.database.listEntities("usage-observation")).toHaveLength(1);expect(usage).toHaveBeenCalledTimes(2);expect(f.starts).toHaveLength(1);
+  });
+  it("does not invoke queued usage after its captured control scope changes",async()=>{
+    const f=await setup();await f.service.app.inject({headers:OWNER,method:"POST",url:`/api/tasks/${f.taskId}/dispatch`,payload:{}});
+    const adapter=(f.service as unknown as {agentAdapters:Map<string,AgentAdapter>}).agentAdapters.get("orion")!,usage=vi.spyOn(adapter,"usage");
+    (f.service as unknown as {kickDueRunUsage:()=>void}).kickDueRunUsage();controlled(f)();await new Promise(resolve=>setTimeout(resolve,0));
+    expect(usage).not.toHaveBeenCalled();expect(f.service.database.getEntity("usage-read-state",f.run().id)).toMatchObject({state:"unknown",reasonCode:"USAGE_SOURCE_CHANGED"});
   });
   it.each(["control","task-revision"] as const)("rechecks %s after background native status awaited",async change=>{
     const f=await setup();await f.service.app.inject({headers:OWNER,method:"POST",url:`/api/tasks/${f.taskId}/dispatch`,payload:{profileId:"orion"}});

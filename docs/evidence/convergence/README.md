@@ -869,3 +869,66 @@ late telemetry, then verify cancellation/input/lease independence. This is an
 open integration limitation, not a passed nonblocking-metering Gate. No native
 controls or real service/data were enabled. Rollback is 40f3232; original sources
 are unchanged. Official quota checked after this unit; percentage in Linear.
+
+
+## CV-06c / R-010 Controller nonblocking usage collection
+
+Canonical and standalone usage collection now run outside business advancement
+and its Session mutation lane. Canonical reads coalesce per Run with at most four
+owned underlying reads. Versioned read state retains actual read-attempt counts,
+backoff, last successful scope/time, terminal retries and unknown outcomes. It
+uses the existing UsageObservationV1 ledger; no second billing ledger, historical
+backfill, inferred native IDs or provider price evidence was introduced. A
+complete account-period observation alone cannot finish a Run's collection.
+
+Collector scope pins owning adapter, Run generation/lease, Session/invocation,
+control revision/epoch, original Session account context and current credential/
+native configuration fingerprint. A queued read rechecks before SDK entry and
+cannot query through changed or non-AUTOMATED control. Late old-context results
+are discarded with scoped diagnostic state. Historical sessions cannot borrow
+new credentials. Shutdown closes admission first, records pending UNKNOWN and
+fences every late callback; failure to persist shutdown metadata does not skip
+physical service cleanup. Manual resource reads also stop waiting on shutdown.
+Underlying read cancellation/remote disappearance is not claimed by a closed
+consumer; uncertain producers stay separate from execution authority.
+
+Codex/Qoder/CLI status snapshots retain execution-resource facts from already
+owned lifecycle results. HTTP status facts and existing remote status projections
+use the same bounded metadata shape. They do not wait for billing queries.
+Native success can establish execution availability while remaining quota stays
+unknown. Missing usage/price values are not zero. Devin no longer invents a full
+remaining session balance when consumed usage is absent. Query failure/no data
+records read diagnostics and probe backoff without declaring PROVIDER_DOWN.
+Known old resource events retain their original observation time; they are not
+refreshed into a new successful check. Existing explicit recovery/probe behavior
+and the stale-evidence regression remain covered.
+
+RED: all four pending-read/reply/cancel/lease and read-failure cases failed on the
+previous Controller; two provider resource/unknown-balance cases, two late-source/
+shutdown-state cases and the queued-source case also went RED. The lease fixture
+was corrected to reach the existing five-minutes-left renewal threshold rather
+than expecting renewal after one minute; its required renewal assertion stays.
+The shutdown fixture captures IDs/facts before closing its database. Terminal
+retry plus last-success scope checks pass. Initial lint rejected an inline import
+type annotation; used the existing type import, without suppression. A full gate
+then exposed an existing Qoder consumer omitting its event array; missing events
+remain unknown instead of breaking its unchanged model-continuation assertion.
+No old assertion/timeout was weakened or skipped.
+
+Final rebuilt target passes 3 files/63 tests. Default `mise exec -- pnpm check`
+passes 115 files/1169 tests (40.95s test phase); `git diff --check` passes. Logs:
+`/tmp/dispatcher-cv06-controller-nonblocking-red.log`,
+`/tmp/dispatcher-cv06-resource-separation-red.log`,
+`/tmp/dispatcher-cv06-usage-lifecycle-red-2.log`,
+`/tmp/dispatcher-cv06-queued-source-red.log`,
+`/tmp/dispatcher-cv06-controller-final-check-2.log`,
+`/tmp/dispatcher-cv06-final-target.log`,
+`/tmp/dispatcher-cv06-final-all-check.log`.
+
+R-010's Controller blocking path is locally resolved. CV-06 stays open for full
+legacy-origin/attempt/time reconciliation, scoped account-quota TTL/UI and native
+capability/real-account qualification. Cost engine/price precision remains CV-07;
+this unit does not establish billing or native handoff evidence. R-005 still
+requires fail/cancel/pause/reroute/start/recovery composition before activation.
+Rollback is 26fa064 with its matching data; original workspaces/data unchanged.
+Official quota checked after the unit; percentage recorded in Linear.

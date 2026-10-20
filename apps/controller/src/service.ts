@@ -491,6 +491,10 @@ export class ControllerService {
   private readonly directorySelections:DirectorySelections;
   private readonly runInputs:RunInputReceipts;
   private readonly usageObservations:UsageObservations;
+  private readonly usageReads=new Map<string,{runId:string;profileId:string;promise:Promise<void>}>();
+  private usageReadClosed=false;
+  private readonly usageShutdown=new AbortController();
+  private standaloneUsageRead:Promise<void>|undefined;
   private readonly secureLinks: SecureDashboardLinkIssuer;
   private readonly messagingChannels = new Map<string, string>();
   private readonly agentAdapters = new Map<string, AgentAdapter>();
@@ -664,7 +668,8 @@ export class ControllerService {
     this.background = new BackgroundLoop([
       { name: "embedded-leases", run: () => this.renewEmbeddedLeases() },
       { name: "messaging-inbox", run: () => this.processMessagingInbox(worker.inboxBatchSize ?? 10) },
-      { name: "standalone-usage", run: () => this.collectStandaloneUsage() },
+      { name: "standalone-usage", run: async () => {this.kickStandaloneUsage();} },
+      { name: "run-usage", run: async () => {this.kickDueRunUsage();} },
       { name: "run-advancement", run: () => this.advanceDueRuns(worker.maxConcurrentRuns ?? 2, worker.runBaseDelayMs ?? 1_000, worker.runMaxDelayMs ?? 5 * 60_000) },
       { name: "run-attention", run: () => this.notifyDueAttention() },
       { name: "delivery-reconcile", run: () => this.reconcileDeliveryRuns(worker.maxConcurrentRuns ?? 2) },
@@ -723,6 +728,13 @@ export class ControllerService {
   async stop(): Promise<void> {
     if (this.stopping) return this.stopping;
     this.stopping = (async () => {
+      this.usageReadClosed=true;
+      this.usageShutdown.abort();
+      for(const read of this.usageReads.values())try{
+        const state=this.database.getEntity<JsonValue>("usage-read-state",read.runId);
+        this.database.saveEntity("usage-error",read.runId,{runId:read.runId,profileId:read.profileId,status:"unknown",reasonCode:"USAGE_SHUTDOWN_PENDING",observedAt:this.now().toISOString()});
+        if(state&&typeof state==="object"&&!Array.isArray(state))this.database.saveEntity("usage-read-state",read.runId,json({...state,state:"unknown",reasonCode:"USAGE_SHUTDOWN_PENDING",closedAt:this.now().toISOString()}));
+      }catch(error){this.app.log.warn({error:redactValue(error),runId:read.runId},"Usage shutdown evidence could not be persisted");}
       this.catalogShutdown.abort();
       await this.directorySelections.close();
       await this.lifecycle.stop();
@@ -1432,33 +1444,108 @@ export class ControllerService {
     }catch(error){this.database.saveEntity("usage-error",identity,{...reference,status:"unknown",reasonCode:error instanceof UsageObservationError?error.code:"USAGE_UNAVAILABLE",observedAt:this.now().toISOString()});this.app.log.warn({error:redactValue(error),...reference},"Native usage observation rejected");return false;}
   }
   private async collectStandaloneUsage():Promise<void>{
+    if(this.usageReadClosed)return;
     const sessions=(this.database.listEntities<JsonValue>("adapter-session") as unknown as BoundSession[]).filter(session=>{
       if(this.canonicalSession(session)||!session.profileId||!session.turnId||this.sessionContextState(session)!=="current")return false;
       const cursor=this.database.getEntity<JsonValue>("standalone-usage-cursor",session.id) as {turnId?:string}|undefined;
       return !["COMPLETED","CANCELLED","FAILED"].includes(session.state)||cursor?.turnId!==session.turnId;
     });
     await runBounded(sessions,4,async session=>{
+      if(this.usageReadClosed)return;
       const adapter=this.agentAdapters.get(session.profileId!);if(!adapter?.usageObservations)return;
       try{
         await adapter.status(session.id);
+        if(this.usageReadClosed)return;
         const observations=await adapter.usageObservations(session.id),current=this.database.getEntity<JsonValue>("adapter-session",session.id) as unknown as BoundSession|undefined;
-        if(!current||current.profileId!==session.profileId||current.runId!==session.runId||current.turnId!==session.turnId||current.authority?.fingerprint!==session.authority?.fingerprint||this.canonicalSession(current)||this.sessionContextState(current)!=="current")return;
+        if(this.usageReadClosed||!current||current.profileId!==session.profileId||current.runId!==session.runId||current.turnId!==session.turnId||current.authority?.fingerprint!==session.authority?.fingerprint||this.canonicalSession(current)||this.sessionContextState(current)!=="current")return;
         if(this.saveUsageObservations(observations,{profileId:session.profileId!,runId:session.runId,sessionId:session.id,standalone:true})&&["COMPLETED","CANCELLED","FAILED"].includes(current.state))this.database.saveEntity("standalone-usage-cursor",session.id,{turnId:current.turnId!});
-      }catch(error){this.database.saveEntity("usage-error",`session:${session.id}`,{profileId:session.profileId!,sessionId:session.id,status:"unknown",reasonCode:error instanceof UsageObservationError?error.code:"USAGE_UNAVAILABLE",observedAt:this.now().toISOString()});}
+      }catch(error){if(!this.usageReadClosed)this.database.saveEntity("usage-error",`session:${session.id}`,{profileId:session.profileId!,sessionId:session.id,status:"unknown",reasonCode:error instanceof UsageObservationError?error.code:"USAGE_UNAVAILABLE",observedAt:this.now().toISOString()});}
     });
   }
 
-  private async captureProfileResource(profileId: string, adapter: AgentAdapter, sessionId: string): Promise<ResourceSnapshot | undefined> {
-    if (!adapter.usage) return undefined;
-    const usage = await adapter.usage(sessionId);
+  private kickStandaloneUsage():void {
+    if(this.usageReadClosed||this.standaloneUsageRead)return;
+    this.standaloneUsageRead=this.collectStandaloneUsage().catch(error=>{if(!this.usageReadClosed)this.app.log.warn({error:redactValue(error)},"Standalone usage collection failed");}).finally(()=>{this.standaloneUsageRead=undefined;});
+  }
+  private kickDueRunUsage():void {
+    if(this.usageReadClosed)return;
+    for(const value of this.database.listEntities<JsonValue>("run")){if(this.usageReads.size>=4)break;const run=value as unknown as Run;if(typeof run.sessionId==="string"&&!run.sessionId.startsWith("unstarted:"))this.kickRunUsage(run);}
+  }
+  private usageSourceScope(run:Run,adapter:AgentAdapter):string|undefined {
+      try{
+        const current=this.database.getEntity<JsonValue>("run",run.id) as unknown as Run|undefined;
+        const session=this.database.getEntity<JsonValue>("adapter-session",run.sessionId) as unknown as AdapterSession|undefined;
+        if(this.agentAdapters.get(run.profileId)!==adapter||!current||!session||current.sessionId!==run.sessionId||current.profileId!==run.profileId||session.runId!==run.id||session.profileId!==run.profileId||current.generation!==run.generation||current.leaseId!==run.leaseId)return;
+        if(this.sessionContextState(session)!=="current")return;
+        const control=this.database.handle.prepare("SELECT epoch,revision,state FROM session_controls WHERE session_id=?").get(run.sessionId);
+        if(control&&control.state!=="AUTOMATED")return;
+        return contentHash({runId:current.id,generation:current.generation,leaseId:current.leaseId,sessionId:session.id,turnId:session.turnId,nativeInvocationId:session.nativeInvocationId,...(!session.turnId&&!session.nativeInvocationId?{episode:current.lastActivityAt}:{}),control,context:this.resolveProfileExecutionContext(run.profileId,undefined,"probe").fingerprint});
+      }catch{return;}
+  }
+
+  private kickRunUsage(run:Run):void {
+    if(this.usageReadClosed||this.usageReads.has(run.id)||this.usageReads.size>=4)return;
+    const adapter=this.agentAdapters.get(run.profileId);if(!adapter?.usage)return;
+    const scope=()=>this.usageSourceScope(run,adapter);
+    const scopeKey=scope();if(!scopeKey)return;
+    const previous=this.database.getEntity<JsonValue>("usage-read-state",run.id) as {scopeKey?:string;state?:string;readAttempts?:number;nextAttemptAt?:string;lastSuccessAt?:string;lastSuccessfulScopeKey?:string}|undefined;
+    if(previous?.scopeKey===scopeKey&&(previous.state==="complete"||Date.parse(previous.nextAttemptAt??"")>this.now().getTime()))return;
+    const readAttempts=previous?.scopeKey===scopeKey?(previous.readAttempts??0)+1:1;
+    const record={version:1,runId:run.id,profileId:run.profileId,sessionId:run.sessionId,scopeKey,readAttempts,requestedAt:this.now().toISOString(),...(previous?.lastSuccessAt?{lastSuccessAt:previous.lastSuccessAt,lastSuccessfulScopeKey:previous.lastSuccessfulScopeKey}:{})};
+    this.database.saveEntity("usage-read-state",run.id,json({...record,state:"pending"}));
+    const current=():boolean=>{
+      if(this.usageReadClosed)return false;
+      if(scope()===scopeKey)return true;
+      const pending=this.database.getEntity<JsonValue>("usage-read-state",run.id) as {scopeKey?:string}|undefined;
+      if(pending?.scopeKey===scopeKey)this.database.saveEntity("usage-read-state",run.id,json({...record,state:"unknown",reasonCode:"USAGE_SOURCE_CHANGED",completedAt:this.now().toISOString()}));
+      return false;
+    };
+    const promise=Promise.resolve().then(async()=>{
+      try{
+        if(!current())return;
+        const usage=await adapter.usage!(run.sessionId);
+        if(!current())return;
+        this.recordProfileResource(run.profileId,run.sessionId,usage);
+        const complete=this.recordProfileUsage(run.profileId,run.sessionId,usage);
+        if(!complete)this.database.saveEntity("usage-error",run.id,{runId:run.id,profileId:run.profileId,status:"unknown",reasonCode:Array.isArray(usage.observations)&&usage.observations.length?"USAGE_PARTIAL":"USAGE_NOT_REPORTED",observedAt:this.now().toISOString()});
+        this.database.saveEntity("usage-read-state",run.id,json({...record,state:complete?"complete":"unknown",completedAt:this.now().toISOString(),...(complete?{lastSuccessAt:this.now().toISOString(),lastSuccessfulScopeKey:scopeKey}:{}),nextAttemptAt:new Date(this.now().getTime()+backoffDelayMs(readAttempts,1_000,5*60_000)).toISOString()}));
+      }catch(error){
+        if(!current())return;
+        this.database.saveEntity("usage-error",run.id,{runId:run.id,profileId:run.profileId,status:"unknown",reasonCode:error instanceof UsageObservationError?error.code:"USAGE_UNAVAILABLE",observedAt:this.now().toISOString()});
+        this.database.saveEntity("usage-read-state",run.id,json({...record,state:"unknown",completedAt:this.now().toISOString(),nextAttemptAt:new Date(this.now().getTime()+backoffDelayMs(readAttempts,1_000,5*60_000)).toISOString()}));
+      }
+    }).finally(()=>{this.usageReads.delete(run.id);});
+    this.usageReads.set(run.id,{runId:run.id,profileId:run.profileId,promise});void promise.catch(error=>{if(!this.usageReadClosed)this.app.log.warn({error:redactValue(error),runId:run.id},"Usage persistence failed");});
+  }
+
+  private recordProfileUsage(profileId:string,sessionId:string,usage:Record<string,unknown>):boolean {
     const usageRun=this.database.listEntities<JsonValue>("run").map(value=>value as unknown as Run).find(run=>run.profileId===profileId&&run.sessionId===sessionId);
-    if(usageRun&&usage.observations!==undefined)this.saveUsageObservations(usage.observations,{profileId,runId:usageRun.id,sessionId,generation:usageRun.generation});
+    const recorded=usageRun&&usage.observations!==undefined?this.saveUsageObservations(usage.observations,{profileId,runId:usageRun.id,sessionId,generation:usageRun.generation}):false;
     const reportedTokens = usage.tokens as { input?: unknown; output?: unknown; cachedInput?: unknown } | undefined;
     if (reportedTokens && Number.isSafeInteger(reportedTokens.input) && Number.isSafeInteger(reportedTokens.output) && Number(reportedTokens.input) >= 0 && Number(reportedTokens.output) >= 0) {
       const tokens = { input: Number(reportedTokens.input), output: Number(reportedTokens.output), ...(Number.isSafeInteger(reportedTokens.cachedInput) && Number(reportedTokens.cachedInput) >= 0 && Number(reportedTokens.cachedInput) <= Number(reportedTokens.input) ? { cachedInput: Number(reportedTokens.cachedInput) } : {}) };
       const run = this.database.listEntities<JsonValue>("run").map((value) => value as unknown as Run).find((value) => value.profileId === profileId && value.sessionId === sessionId);
       if (run) this.database.saveEntity("run-telemetry", run.id, json({ tokens, tokenScope: "latest-turn", telemetryAt: this.now().toISOString() }));
     }
+    const relevant=recorded&&Array.isArray(usage.observations)?usage.observations.filter(value=>value&&["turn","run","session"].includes(value.scope)):[];
+    return Boolean(relevant.length&&relevant.every(value=>value.completeness==="complete"));
+  }
+
+  private async captureProfileResource(profileId: string, adapter: AgentAdapter, sessionId: string): Promise<ResourceSnapshot | undefined> {
+    if (!adapter.usage||this.usageReadClosed) return undefined;
+    const session=this.database.getEntity<JsonValue>("adapter-session",sessionId) as unknown as AdapterSession|undefined;
+    const run=session?this.database.getEntity<JsonValue>("run",session.runId) as unknown as Run|undefined:undefined;
+    const scope=run?this.usageSourceScope(run,adapter):undefined;if(!run||!scope)return undefined;
+    const signal=this.usageShutdown.signal;let cancel:()=>void=()=>{};
+    const closed=new Promise<never>((_,reject)=>{cancel=()=>reject(new AdapterContractError("USAGE_READ_CLOSED","Usage read admission is closed"));signal.addEventListener("abort",cancel,{once:true});if(signal.aborted)cancel();});
+    let usage:Record<string,unknown>;
+    try{usage=await Promise.race([adapter.usage(sessionId),closed]);}finally{signal.removeEventListener("abort",cancel);}
+    if(this.usageReadClosed||this.usageSourceScope(run,adapter)!==scope)return undefined;
+    this.recordProfileUsage(profileId,sessionId,usage);
+    return this.recordProfileResource(profileId,sessionId,usage);
+  }
+
+  private recordProfileResource(profileId:string,sessionId:string,usage:Record<string,unknown>):ResourceSnapshot|undefined {
     const state = typeof usage.state === "string" && RESOURCE_STATES.includes(usage.state as ResourceState)
       ? usage.state as ResourceState
       : undefined;
@@ -1470,12 +1557,13 @@ export class ControllerService {
     const snapshot: ResourceSnapshot = {
       profileId,
       state,
-      ...(typeof usage.reason === "string" ? { reason: usage.reason } : {}),
+      ...(typeof usage.reason === "string" ? { reason: String(redactValue(usage.reason)) } : {}),
       ...(typeof usage.resetsAt === "string" ? { resetsAt: usage.resetsAt } : {}),
       source: reportedSource ?? (usage.source === "error" ? "error" : "session"),
       confidence: usage.confidence === "high" || usage.confidence === "medium" ? usage.confidence : "low",
       checkedAt:(()=>{const session=this.database.getEntity<JsonValue>("adapter-session",sessionId) as unknown as AdapterSession|undefined,candidate=[usage.checkedAt,usage.observedAt,...(["event","error","session"].includes(String(usage.source))?[session?.updatedAt]:[])].find(value=>typeof value==="string"&&Number.isFinite(Date.parse(value)));return typeof candidate==="string"?new Date(candidate).toISOString():new Date().toISOString();})(),
     };
+    if(snapshot.state==="UNKNOWN")return snapshot;
     this.database.saveEntity("resource-signal", `${profileId}:${snapshot.source}`, json(snapshot), snapshot.checkedAt);
     const assessment = this.resourceRegistry.record(snapshot);
     const effective: ResourceSnapshot = {
@@ -1508,6 +1596,7 @@ export class ControllerService {
       .sort((left, right) => (right.lastActivityAt ?? right.startedAt ?? "").localeCompare(left.lastActivityAt ?? left.startedAt ?? ""))[0];
     if (!run) return undefined;
     const snapshot = await this.captureProfileResource(profileId, adapter, run.sessionId);
+    if(this.usageReadClosed)return undefined;
     if (!snapshot) return undefined;
     const scheduled = this.resourceProbes.list().find((entry) => entry.profileId === profileId);
     if (scheduled?.status === "PROBING") {
@@ -1544,24 +1633,24 @@ export class ControllerService {
   }
 
   private async runDueResourceProbes(): Promise<void> {
-    if (this.resourceProbeRunning) return;
+    if (this.resourceProbeRunning||this.usageReadClosed) return;
     this.resourceProbeRunning = true;
     try {
       for (const due of this.resourceProbes.due()) {
         this.database.saveEntity("resource-probe-schedule", due.profileId, json(due), due.lastProbeAt ?? due.nextProbeAt);
         try {
           const result = await this.probeProfileResource(due.profileId);
+          if(this.usageReadClosed)return;
           if (!result) {
             const unavailable: ResourceSnapshot = { profileId: due.profileId, state: "UNKNOWN", reason: "Provider did not return a resource probe", source: "probe", confidence: "low", checkedAt: new Date().toISOString() };
-            this.resourceRegistry.record(unavailable);
-            this.database.saveEntity("resource-signal", `${due.profileId}:probe`, json(unavailable), unavailable.checkedAt);
+            this.database.saveEntity("resource-probe-error",due.profileId,{profileId:due.profileId,status:"unknown",reasonCode:"RESOURCE_NOT_REPORTED",observedAt:unavailable.checkedAt});
             const completed = this.resourceProbes.complete(due.profileId, unavailable);
             this.database.saveEntity("resource-probe-schedule", due.profileId, json(completed), completed.lastProbeAt ?? completed.nextProbeAt);
           }
         } catch (error) {
-          const failed: ResourceSnapshot = { profileId: due.profileId, state: "PROVIDER_DOWN", reason: error instanceof Error ? error.message : "Resource probe failed", source: "probe", confidence: "medium", checkedAt: new Date().toISOString() };
-          this.resourceRegistry.record(failed);
-          this.database.saveEntity("resource-signal", `${due.profileId}:probe`, json(failed), failed.checkedAt);
+          if(this.usageReadClosed)return;
+          const failed: ResourceSnapshot = { profileId: due.profileId, state: "UNKNOWN", reason: "Resource read is unavailable", source: "probe", confidence: "low", checkedAt: new Date().toISOString() };
+          this.database.saveEntity("resource-probe-error",due.profileId,{profileId:due.profileId,status:"unknown",reasonCode:error instanceof AdapterContractError?error.code:"RESOURCE_READ_UNAVAILABLE",observedAt:failed.checkedAt});
           const completed = this.resourceProbes.complete(due.profileId, failed);
           this.database.saveEntity("resource-probe-schedule", due.profileId, json(completed), completed.lastProbeAt ?? completed.nextProbeAt);
         }
@@ -1738,7 +1827,8 @@ export class ControllerService {
       if (!adapter) throw new ConnectorError("PERMANENT", `Profile ${run.profileId} is unavailable`);
       const session = await adapter.status(run.sessionId);
       if(session.providerSessionId)run.providerSessionId=session.providerSessionId;
-      const resource = await this.captureProfileResource(run.profileId, adapter, run.sessionId);
+      this.kickRunUsage(run);
+      const resource=session.executionResource?this.recordProfileResource(run.profileId,run.sessionId,session.executionResource):undefined;
       if (session.state === "RUNNING" || session.state === "STARTING") {
         return { waiting: true, run, task: storedTask.document as unknown as Task, deliveries: [] };
       }

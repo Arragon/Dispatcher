@@ -1,4 +1,5 @@
 import {readReadyTurnResult,rememberTurnResult,usageSnapshotUnavailable,type PassiveTurnResult} from "./usage-snapshot.js";
+import {turnExecutionResource} from "./execution-resource.js";
 import {assertSessionModelBinding,freezeExecutionSelection,sessionModel} from "./execution-selection.js";
 import { OwnedProcessGroup } from "./owned-process.js";
 import { readCodexCatalog, type CodexReadRequest } from "./codex-catalog.js";
@@ -335,6 +336,7 @@ export class CodexAdapter implements AgentAdapter {
     if (this.cancelled.has(sessionId)||this.require(sessionId).state === "CANCELLED") return structuredClone(this.require(sessionId));
     return this.update(sessionId, {
       state: result.state === "completed" ? "COMPLETED" : result.state === "cancelled" ? "CANCELLED" : result.state === "waiting" ? "PAUSED" : "FAILED",
+      executionResource:turnExecutionResource(result.events,result.state,new Date().toISOString()),
       ...(result.providerSessionId ? { providerSessionId: result.providerSessionId } : {}),
     });
   }

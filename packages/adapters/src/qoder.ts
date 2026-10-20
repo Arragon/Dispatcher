@@ -1,5 +1,6 @@
 import {assertSessionModelBinding,freezeExecutionSelection,sessionModel} from "./execution-selection.js";
 import {readReadyTurnResult,rememberTurnResult,usageSnapshotUnavailable,type PassiveTurnResult} from "./usage-snapshot.js";
+import {turnExecutionResource} from "./execution-resource.js";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { access } from "node:fs/promises";
@@ -230,7 +231,7 @@ export class QoderAdapter implements AgentAdapter {
     const result = await turn.result();
     rememberTurnResult(this.usageResults,turn,result);
     if (this.cancelledSessions.has(sessionId)) return structuredClone(this.require(sessionId));
-    return this.update(sessionId, { state: result.state === "completed" ? "COMPLETED" : result.state === "cancelled" ? "CANCELLED" : result.state === "waiting" ? "PAUSED" : "FAILED" });
+    return this.update(sessionId, { state: result.state === "completed" ? "COMPLETED" : result.state === "cancelled" ? "CANCELLED" : result.state === "waiting" ? "PAUSED" : "FAILED",executionResource:turnExecutionResource(result.events,result.state,new Date().toISOString()) });
   }
   private require(id: string): AdapterSession { const session = this.store.load(id); if (!session) throw new AdapterContractError("SESSION_NOT_FOUND", `Unknown session ${id}`); if (session.profileId !== this.profile.id) throw new AdapterContractError("SESSION_PROFILE_MISMATCH", "Session belongs to a different configured account"); return session; }
   private update(id: string, changes: Partial<AdapterSession>): AdapterSession { const updated = { ...this.require(id), ...changes, updatedAt: new Date().toISOString() }; this.store.save(updated); return structuredClone(updated); }

@@ -1,4 +1,5 @@
 import {assertSessionModelBinding,freezeExecutionSelection,sessionModel} from "./execution-selection.js";
+import {turnExecutionResource} from "./execution-resource.js";
 import { OwnedProcessGroup } from "./owned-process.js";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { promisify } from "node:util";
@@ -436,6 +437,7 @@ export class StructuredCliAdapter implements AgentAdapter {
     if (this.cancelled.has(sessionId)||this.require(sessionId).state === "CANCELLED") return structuredClone(this.require(sessionId));
     return this.update(sessionId, {
       state: result.state === "completed" ? "COMPLETED" : result.state === "cancelled" ? "CANCELLED" : result.state === "waiting" ? "PAUSED" : "FAILED",
+      executionResource:turnExecutionResource(result.events,result.state,new Date().toISOString()),
       ...(result.providerSessionId ? { providerSessionId: result.providerSessionId } : {}),
     });
   }

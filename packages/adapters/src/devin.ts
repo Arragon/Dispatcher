@@ -1,4 +1,5 @@
 import {freezeExecutionSelection} from "./execution-selection.js";
+import {turnExecutionResource} from "./execution-resource.js";
 import {
   AdapterContractError,
   assertAdapterStartAdmission,
@@ -178,7 +179,9 @@ export class DevinAdapter implements AgentAdapter {
     if (!session.providerSessionId) return structuredClone(session);
     const snapshot = await this.backend.get(session.providerSessionId);
     this.snapshots.set(sessionId, snapshot);
-    return this.update(sessionId, { state: mapState(snapshot.status) });
+    const resource=turnExecutionResource([],snapshot.status,new Date().toISOString()),consumed=snapshot.acusConsumed,limit=this.profile.maxSessionAcu;
+    if(limit&&consumed!==undefined){resource.state=consumed>=limit?"QUOTA_EXHAUSTED":consumed/limit>=0.8?"LOW":resource.state;resource.confidence="high";if(consumed>=limit)resource.reason="Native session reached its configured execution budget";}
+    return this.update(sessionId, { state: mapState(snapshot.status),executionResource:resource });
   }
   async result(sessionId: string): Promise<AdapterResult> {
     const session = await this.status(sessionId);
@@ -196,9 +199,9 @@ export class DevinAdapter implements AgentAdapter {
     const consumed = snapshot?.acusConsumed;
     const limit = this.profile.maxSessionAcu;
     return {
-      state: limit && consumed !== undefined && consumed >= limit ? "QUOTA_EXHAUSTED" : limit && consumed !== undefined && consumed / limit >= 0.8 ? "LOW" : "AVAILABLE",
+      state: consumed===undefined?"UNKNOWN":limit && consumed >= limit ? "QUOTA_EXHAUSTED" : limit && consumed / limit >= 0.8 ? "LOW" : "AVAILABLE",
       ...(consumed === undefined ? {} : { consumed }),
-      ...(limit === undefined ? {} : { limit, remaining: Math.max(0, limit - (consumed ?? 0)) }),
+      ...(limit === undefined ? {} : { limit,...(consumed!==undefined?{remaining:Math.max(0,limit-consumed)}:{}) }),
       source: "sdk",
       confidence: consumed === undefined ? "low" : "high",
     };

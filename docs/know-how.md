@@ -2,6 +2,11 @@
 
 ## M0–M10 invariants
 
+- Usage queries cannot run inside the Session mutation lane or business progress
+  awaits. Keep execution facts from owned status/results separate from telemetry
+  read health. A read failure is not provider-down proof; queued/late reads must
+  retain their original account, invocation and control scope.
+
 - Native input cleanup uses its captured control/invocation fence. A lost reply
   does not authorize cancellation of a new control owner or a second input.
   Persist the accepted input outcome before notification-only work; notification

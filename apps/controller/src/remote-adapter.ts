@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from "node:util";
-import { AdapterContractError,assertAdapterWriteAdmission, type AdapterEvent, type AdapterManifest, type AdapterResult, type AdapterSession, type AgentAdapter } from "@dispatcher/adapters";
+import { AdapterContractError,assertAdapterWriteAdmission,turnExecutionResource, type AdapterEvent, type AdapterManifest, type AdapterResult, type AdapterSession, type AgentAdapter } from "@dispatcher/adapters";
 import type { ExecutionSelection, Run } from "@dispatcher/domain";
 import type { CommandPayload } from "@dispatcher/protocol";
 import { remoteCommandHash } from "@dispatcher/runner";
@@ -32,6 +32,8 @@ export class RemoteNativeAdapter implements AgentAdapter {
   private session(value: unknown, run: Run, starting = false): AdapterSession {
     if (!object(value) || !text(value.id) || value.runId !== run.id || value.profileId !== run.profileId || value.backendId !== run.executionSelection?.backendId || value.workspacePath !== run.worktree || !["STARTING", "RUNNING", "PAUSED", "CANCELLED", "COMPLETED", "FAILED"].includes(String(value.state)) || !date(value.createdAt) || !date(value.updatedAt) || !starting && value.id !== run.sessionId || value.providerSessionId !== undefined && !text(value.providerSessionId) || run.providerSessionId!==undefined&&value.providerSessionId!==run.providerSessionId || value.processId !== undefined && (!Number.isSafeInteger(value.processId) || Number(value.processId) <= 0) || !run.executionSelection || !isDeepStrictEqual(value.executionSelection, nativeSelection(run.executionSelection))) throw new AdapterContractError("COMMAND_OUTCOME_UNKNOWN", "Owning Runner response does not prove the reserved native session identity");
     const session: AdapterSession = { id: value.id, runId: run.id, profileId: run.profileId, backendId: String(value.backendId), workspacePath: run.worktree!, state: value.state as AdapterSession["state"], createdAt: value.createdAt, updatedAt: value.updatedAt, executionSelection: structuredClone(run.executionSelection), ...(value.providerSessionId ? { providerSessionId: String(value.providerSessionId) } : {}), ...(value.processId !== undefined ? { processId: Number(value.processId) } : {}) };
+    const resource=object(value.executionResource)?value.executionResource:undefined;
+    session.executionResource=turnExecutionResource(resource?[{...resource,type:"resource",observedAt:resource.checkedAt}]:[],String(value.state).toLowerCase(),value.updatedAt);
     this.options.saveSession(session); return session;
   }
   reconcileSession(value:unknown,run:Run):AdapterSession {

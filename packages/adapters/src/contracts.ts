@@ -1,5 +1,5 @@
 import type { NativeInteractionPort } from "./interaction-contracts.js";
-import type { NativeBinding, ExecutionContextRef, TurnObservation, ExecutionSelection, AccountModelCatalog, ModelCatalogContext, UsageObservationV1 } from "@dispatcher/domain";
+import type { NativeBinding, ExecutionContextRef, TurnObservation, ExecutionSelection, AccountModelCatalog, ModelCatalogContext, UsageObservationV1,ResourceState } from "@dispatcher/domain";
 export type AdapterPlatform = "darwin" | "linux" | "win32";
 export type BackendKind = "sdk" | "api" | "daemon" | "headless-cli" | "pty";
 
@@ -33,6 +33,8 @@ export interface AdapterManifest {
 export type AdapterSessionState = "STARTING" | "RUNNING" | "PAUSED" | "CANCELLED" | "COMPLETED" | "FAILED";
 
 export interface AdapterSession {
+  /** Execution facts already observed by status/result; independent of billing reads. */
+  executionResource?:{state:ResourceState;reason?:string;resetsAt?:string;source:"session"|"error";confidence:"high"|"medium"|"low";checkedAt:string};
   executionSelection?: ExecutionSelection;
   /** A present empty snapshot preserves a known omission; absent is historical data. */
   legacyModel?:{id?:string};
