@@ -66,7 +66,7 @@ final convergence verification.
 | CV-04 | migration/control/backup modules ported with v3 adaptation and protocol 2; targeted 12/101 and two default 90/802 gates passed; ready for whole-branch review |
 | CV-05 | in progress: catalog scope/lifecycle, default ConfigPlan, per-Run provenance and adapter selection fences pass 91/833 default gate; legacy HTTP/Slack/reroute choice now integrated at 109/1085; remaining catalog/control assertions tracked |
 | CV-06 | Controller nonblocking scoped collection/terminal retry verified at 115/1169; origin/attempt/time and account-quota qualification/UI pending |
-| CV-08 | continuation/worker/delivery/failure/cancel/pause Guard, failure priority drain, stop audit and read-only local start recovery qualification verified at 115/1204; ordinary local start composed; schema-8 writer increment verified at 116/1208; known-unsent cancellation/publication journal recovery verified at 116/1215; general guarded local recovery verified at 116/1218; captured reroute stage Guard and default Generic drain verified at 116/1224; replacement start/legacy/qualified native recovery remain and native qualification remain pending |
+| CV-08 | continuation/worker/delivery/failure/cancel/pause Guard, failure priority drain, stop audit and read-only local start recovery qualification verified at 115/1204; ordinary local start composed; schema-8 writer increment verified at 116/1208; known-unsent cancellation/publication journal recovery verified at 116/1215; general guarded local recovery verified at 116/1218; captured reroute stage Guard and default Generic drain verified at 116/1224; shared guarded replacement startup and original owned-CLI cleanup verified at 116/1229; legacy/remote/qualified native recovery remain pending |
 | CV-12 | pending complete selection/control integration |
 | macOS service / LP / backup | pending safe shared foundation |
 | CV-07/09/10/11 | pending contracts/guards |
@@ -1311,3 +1311,38 @@ R-012's local default-executor defect is fixed; this does not qualify a native
 provider/shared-host stop or formal A/B Gate. No live data/service changed.
 Source/rollback: 3102d03 with its matching schema-8 backup. Official quota checked
 after unit; percentage recorded in Linear.
+
+
+## CV-08u shared replacement start and original owned-CLI cleanup
+
+Ordinary local dispatch and same-Runner reroute now use one reservation helper:
+fixed Dispatcher Session, actual attempt/generation/lease, initial control and
+start receipt commit with the canonical reservation. The final SDK callback
+checks the captured base execution context, ConfigPlan revision, adapter identity
+and original Task/control frame. Reroute no longer creates an unguarded Session
+or cancels whichever adapter row happens to match after a stale acknowledgement.
+
+A narrow cleanup-start operation may stop only the original attached CLI under
+its captured generation/lease/AUTOMATED epoch and exact start-command fence.
+Other uncertain commands, native bindings/executionRef, detached handles and new
+control owners remain closed. Final stop admission runs after adapter awaits;
+requested/confirmed/unconfirmed stop evidence remains durable. Its owned wrapper
+stop does not settle the native UNKNOWN start or grant a new session/capacity.
+
+Three new replacement cases reproduce RED before implementation: missing receipt/
+control at creation, Task drift during preparation still spawning, and HUMAN
+control being cancelled after creation. They pass with two additional cleanup
+cases for control change at final stop admission and detached handle. The old
+comment-during-start expectation intentionally changes from no cleanup to exactly
+one qualified owned stop; canonical comment/Task preservation and UNKNOWN/manual
+Run assertions remain. Existing reroute stale-Task cleanup and lost-reply
+idempotency assertions remain intact.
+
+Target: 3 files/172 tests passed. Default `mise exec -- pnpm check` passes
+116 files/1229 tests (41.87s test phase), including build/typecheck/lint/boundaries.
+`git diff --check` passes. Logs: /tmp/dispatcher-cv08u-replacement-red.log,
+/tmp/dispatcher-cv08u-target.log, /tmp/dispatcher-cv08u-check.log. No timeout,
+skip or suppression added. Metadata/controlled SDK fixtures do not qualify a real
+provider handoff/stop or A/B Gate. Source/rollback: 730bd3b with matching schema-8
+backup. No live data/service changed. Official quota checked after unit; result
+recorded in Linear.

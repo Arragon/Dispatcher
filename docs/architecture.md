@@ -58,8 +58,11 @@ retaining the complete frozen prompt, verification configuration and SCM target.
 An atomic workspace-transfer record moves the existing physical worktree/branch
 to the next Run/attempt; startup restores only its latest owner. A durable
 actor/workflow receipt replays the replacement identity after a lost start
-response. Pre/post-start authority checks stop stale children without reviving
-cancelled tasks. SCM preflight requalifies the original target/context, while
+response. Replacement and ordinary local starts share the reserved Session,
+start receipt, execution-context checks and final SDK admission. Stale-start
+cleanup can stop only the original attached CLI under its captured AUTOMATED
+control fence; it leaves the native start UNKNOWN and never stops a new human
+owner or shared native host. SCM preflight requalifies the original target/context, while
 unrelated changes since the old Run do not replace its frozen verification.
 
 Embedded Runner heartbeats renew non-terminal leases while verification or SCM

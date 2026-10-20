@@ -240,7 +240,8 @@ interface DeliveryFeedback {
 const CREDENTIAL_PATTERN = /(?:sk-|xox[baprs]-|gh[op]_)[a-z0-9_-]{8,}/i;
 const ADVANCEABLE_RUN_STATES = new Set<Run["state"]>(["ACTIVE", "VERIFYING", "DELIVERING"]);
 
-interface SessionStopIntent {version:1;actorId:string;operation:"cancel"|"fail";fence:MutationFence;requestedAt:string}
+interface SessionStopIntent {version:1;actorId:string;operation:"cancel"|"fail"|"cleanup-start";fence:MutationFence;requestedAt:string}
+interface LocalStartAdmission {fence:MutationFence;adapter:AgentAdapter;beforeSend():void;settled(outcome:AdapterStartOutcome):void;assertProjection():void}
 interface SessionAuthority {version:1;fingerprint:string;repositoryId?:string;stopState:NativeSessionConsoleView["stopState"];stopIntent?:SessionStopIntent}
 type BoundSession=AdapterSession&{authority?:SessionAuthority};
 class DatabaseSessionStore implements SessionStore {
@@ -1868,6 +1869,44 @@ export class ControllerService {
     if(decision.allowed)await this.agentAdapters.get(run.profileId)?.cancel(fence.sessionId,()=>this.nativeInteractions.assertInteraction({id:"input-cleanup",roles:["operator"],profileId:run.profileId},"cleanup-input",fence));
   }
 
+  private reserveLocalStart(run:Run,contract:TaskContract,adapter:AgentAdapter,actorId:string,repositoryId:string):LocalStartAdmission {
+    const fingerprint=this.resolveProfileExecutionContext(run.profileId,repositoryId,"start").fingerprint;
+    const command=this.nativeInteractions.reserveNativeStart({run,actorId,resumable:adapter.manifest.capabilities.resume,backendId:run.executionSelection!.backendId,configRevision:run.executionSelection!.configRevision,semantics:{controllerStartVersion:1,runnerMode:"embedded",contractHash:contentHash(contract)}});
+    const admit=this.nativeInteractions.nativeStartAdmission(command.id);
+    return {fence:structuredClone(command.fence),adapter,beforeSend:()=>{
+      if(this.cancelledRunIds.has(run.id))throw new InteractionGuardError("STALE_RUN_AUTHORITY");
+      if(this.configuration.current().revision!==run.executionSelection!.configRevision||this.resolveProfileExecutionContext(run.profileId,repositoryId,"start").fingerprint!==fingerprint||this.agentAdapters.get(run.profileId)!==adapter)throw new InteractionGuardError("EXECUTION_CONTEXT_DRIFT");
+      admit();
+    },settled:outcome=>{this.nativeInteractions.settleNativeStart(command.id,outcome);},assertProjection:()=>this.nativeInteractions.assertNativeStartProjection(command.id)};
+  }
+
+  private async cleanupStaleStart(run:Run,admission:LocalStartAdmission):Promise<void> {
+    const {fence,adapter}=admission,principal={id:"start-cleanup",roles:["operator"],profileId:run.profileId};
+    if(!(adapter instanceof CodexAdapter||adapter instanceof QoderAdapter||adapter instanceof StructuredCliAdapter||adapter instanceof GenericCliAdapter))return;
+    if(!this.nativeInteractions.authorizeInteraction(principal,"cleanup-start",fence).allowed)return;
+    await this.nativeInteractions.withMutationLane(fence.sessionId,async()=>{
+      const assertAuthority=()=>this.nativeInteractions.assertInteraction(principal,"cleanup-start",fence);
+      assertAuthority();
+      const session=this.database.getEntity<JsonValue>("adapter-session",fence.sessionId) as unknown as AdapterSession|undefined;
+      if(!session||this.sessionStopUncertain(session)||this.sessionStopState(session)==="confirmed"||(await adapter.diagnostics?.(fence.sessionId))?.attached!==true)return;
+      assertAuthority();
+      this.uncertainSessionStops.add(session.id);
+      this.saveSessionStop(session,"requested",{version:1,actorId:principal.id,operation:"cleanup-start",fence,requestedAt:this.now().toISOString()});
+      try{
+        let admitted=false;
+        const stopped=await adapter.cancel(fence.sessionId,()=>{assertAdapterWriteAdmission(assertAuthority);admitted=true;});
+        if(!admitted)throw new AdapterContractError("NATIVE_CAPABILITY_UNVERIFIED","Stop backend omitted final admission");
+        if(stopped.id!==fence.sessionId||stopped.runId!==fence.runId||!["CANCELLED","COMPLETED","FAILED"].includes(stopped.state))throw new AdapterContractError("CANCELLATION_UNCONFIRMED","Original startup process termination is unconfirmed");
+        assertAuthority();this.saveSessionStop(stopped,"confirmed");this.uncertainSessionStops.delete(session.id);
+        this.nativeInteractions.acknowledgeSettledMutationOutcome(fence.sessionId);
+      }catch(error){
+        if(error instanceof AdapterAdmissionError){this.uncertainSessionStops.delete(session.id);this.saveSessionStop(session,"none");this.nativeInteractions.acknowledgeSettledMutationOutcome(fence.sessionId);}
+        else try{this.saveSessionStop(session,"unconfirmed");}catch{/* Retain the in-memory uncertainty fence. */}
+        throw error;
+      }
+    });
+  }
+
   private async notifyResourceRecovery(run: Run, idempotencyKey: string): Promise<void> {
     const existing = this.database.getEntity<JsonValue>("resource-recovery-notification", idempotencyKey);
     if (existing) return;
@@ -2645,19 +2684,16 @@ export class ControllerService {
     if(!remote)this.database.transaction(()=>{this.database.saveEntity("workspace-handle",runId,json(workspace));this.database.saveEntity("workspace-intent",runId,json({...workspacePlan,state:"CREATED",path:workspace.path}));});
     const runContract:TaskContract={...contract,workspace:{...contract.workspace,repositoryId,baseRef:workspace.baseRef,baseCommit:workspace.baseRevision}};
     let dispatched: Awaited<ReturnType<CanonicalScheduler["dispatch"]>>;
-    let startAdmission:(()=>void)|undefined,startFence:MutationFence|undefined,startContextFingerprint:string|undefined,startAdapter:AgentAdapter|undefined;
+    let localStart:LocalStartAdmission|undefined;
     this.dispatchingRuns.add(runId);
     try {
       dispatched = await scheduler.dispatch({
         ...(!remote?{
           onRunStartSending:(run:Run)=>{
-            if(this.cancelledRunIds.has(run.id)||!startAdmission)throw new InteractionGuardError("STALE_RUN_AUTHORITY");
-            const selection=run.executionSelection!;
-            const context=this.resolveProfileExecutionContext(run.profileId,repositoryId,"start");
-            if(this.configuration.current().revision!==selection.configRevision||context.fingerprint!==startContextFingerprint||this.agentAdapters.get(run.profileId)!==startAdapter)throw new InteractionGuardError("EXECUTION_CONTEXT_DRIFT");
-            startAdmission();
+            if(!localStart||localStart.fence.runId!==run.id)throw new InteractionGuardError("STALE_RUN_AUTHORITY");
+            localStart.beforeSend();
           },
-          onRunStartSettled:(run:Run,outcome:AdapterStartOutcome)=>{this.nativeInteractions.settleNativeStart(`native-start:${run.id}`,outcome);},
+          onRunStartSettled:(_run:Run,outcome:AdapterStartOutcome)=>{localStart!.settled(outcome);},
         }:{}),
         task: stored.document as unknown as Task,
         taskRevision: stored.revision,
@@ -2695,8 +2731,6 @@ export class ControllerService {
         },
         runId,
         onRunStarting: (run, decision) => {
-          startContextFingerprint=this.resolveProfileExecutionContext(run.profileId,repositoryId,"start").fingerprint;
-          startAdapter=decision.selected!.adapter;
           if(!run.executionSelection)run.executionSelection=this.compileLegacyRunSelection(run,repositoryId,decision.selected!.adapter);
           const selectedModel = this.configuration.current().config.agentProfiles.find((profile) => profile.id === run.profileId)?.settings?.model;
           if(publication?.selection?.requestedModel)run.model={id:publication.selection.requestedModel,source:"selection"};
@@ -2717,12 +2751,8 @@ export class ControllerService {
             const bound = this.tasks.execute({ id: `dispatch:${run.id}:bound`, taskId, baseRevision: current.revision, actor: "scheduler", command: { type: "task.set-current-run", runId: run.id } });
             this.tasks.execute({ id: `dispatch:${run.id}:queued`, taskId, baseRevision: bound.revision, actor: "scheduler", command: { type: "task.transition", state: "QUEUED" } });
             if (idempotencyKey) this.database.saveEntity("task-dispatch", idempotencyKey, json({ run, routing: { explanation: decision.explanation, eligible: decision.eligible, rejected: decision.rejected } }));
-            if(!remote){
-              const command=this.nativeInteractions.reserveNativeStart({run,actorId:publication?.owner??"scheduler",resumable:decision.selected!.adapter.manifest.capabilities.resume,backendId:run.executionSelection!.backendId,configRevision:run.executionSelection!.configRevision,semantics:{controllerStartVersion:1,runnerMode:"embedded",contractHash:contentHash(runContract)}});
-              startFence=structuredClone(command.fence);
-            }
+            if(!remote)localStart=this.reserveLocalStart(run,runContract,decision.selected!.adapter,publication?.owner??"scheduler",repositoryId);
           });
-          if(!remote)startAdmission=this.nativeInteractions.nativeStartAdmission(`native-start:${run.id}`);
           this.restoreLeaseAuthority(run);
         },
       });
@@ -2740,7 +2770,7 @@ export class ControllerService {
       this.database.transaction(() => {
         const current = this.database.getCanonicalTask<JsonValue>(taskId)!;
         const task = current.document as unknown as Task;
-        if(startFence){if(current.revision!==startFence.expectedTaskRevision)throw new TaskDispatchError("TASK_CHANGED",409,"Task revision changed during native startup");this.nativeInteractions.assertNativeStartProjection(`native-start:${dispatched.run.id}`);}
+        if(localStart){if(current.revision!==localStart.fence.expectedTaskRevision)throw new TaskDispatchError("TASK_CHANGED",409,"Task revision changed during native startup");localStart.assertProjection();}
         if (task.state !== "QUEUED" || task.currentRunId !== dispatched.run.id) throw new TaskDispatchError("TASK_CHANGED", 409, "Task changed during agent startup");
         this.saveAdvancedRun(dispatched.run, "STARTING");
         const state = dispatched.run.state === "FAILED" ? "FAILED" : dispatched.run.state==="RUNNER_UNAVAILABLE"?"WAITING_RESOURCE":"RUNNING";
@@ -2749,14 +2779,15 @@ export class ControllerService {
         if (idempotencyKey) this.database.saveEntity("task-dispatch", idempotencyKey, json(result));
       });
     } catch (error) {
-      if(startFence){
+      if(localStart){
+        const startFence=localStart.fence;
         const current=this.database.getEntity<JsonValue>("run",dispatched.run.id) as unknown as Run|undefined;
         if(current&&current.generation===startFence.generation&&current.leaseId===startFence.leaseId&&current.sessionId===startFence.sessionId&&!isTerminalRunState(current.state)){
           // Project the recorded external outcome without acknowledging a concurrent Task edit.
           current.state=dispatched.run.state==="FAILED"?"FAILED":"RUNNER_UNAVAILABLE";current.resumePolicy="manual";current.failureReason=dispatched.run.failureReason??"Native startup authority changed; inspect the original execution";
           if(current.state==="FAILED")current.endedAt=this.now().toISOString();else current.recoveryReason="NATIVE_OUTCOME_UNKNOWN";
           this.database.saveEntity("run",current.id,json(current));
-          if(current.state!=="FAILED")try{await this.cleanupStaleInput(current,startFence);}catch(cleanupError){this.app.log.warn({error:redactValue(cleanupError),runId:current.id},"Guarded startup cleanup is unconfirmed");}
+          if(current.state!=="FAILED")try{await this.cleanupStaleStart(current,localStart);}catch(cleanupError){this.app.log.warn({error:redactValue(cleanupError),runId:current.id},"Guarded startup cleanup is unconfirmed");}
         }
       }else{
         if (!dispatched.run.sessionId.startsWith("unstarted:")) {
@@ -2832,8 +2863,10 @@ export class ControllerService {
       await this.workspaces.restore(workspace); assertTaskOwner(true);
       const task = this.database.getCanonicalTask<JsonValue>(run.taskId)!;
       const scheduler = new CanonicalScheduler(() => this.dispatchCandidates(profileId).filter(candidate => candidate.runnerId === run.runnerId));
-      replacementId = randomUUID(); let reservedRevision: number | undefined;
+      replacementId = randomUUID(); let reservedRevision: number | undefined, replacementStart:LocalStartAdmission|undefined;
       const dispatched = await scheduler.dispatch({
+        onRunStartSending:()=>{if(controller.signal.aborted||!replacementStart)throw new InteractionGuardError("STALE_RUN_AUTHORITY");replacementStart.beforeSend();},
+        onRunStartSettled:(_run,outcome)=>{replacementStart!.settled(outcome);},
         task: task.document as unknown as Task, taskRevision: task.revision, contract, requirements, workspacePath: workspace.path, runId: replacementId, replacement: stopped,
         onRunStarting: (replacement,decision) => {
           assertTaskOwner(true);
@@ -2852,6 +2885,7 @@ export class ControllerService {
             const current = this.database.getCanonicalTask<JsonValue>(run.taskId)!;
             reservedRevision = this.tasks.execute({ id: `reroute:${replacement.id}:bind`, taskId: run.taskId, baseRevision: current.revision, actor: context.actorId, command: { type: "task.set-current-run", runId: replacement.id } }).revision;
             this.database.saveEntity("run-reroute", receiptId, json({ previousRunId: run.id, profileId, runId: replacement.id }));
+            replacementStart=this.reserveLocalStart(replacement,contract,decision.selected!.adapter,context.actorId,repository.id);
           });
           this.restoreLeaseAuthority(replacement); this.dispatchingRuns.add(replacement.id);
         },
@@ -2869,13 +2903,13 @@ export class ControllerService {
         this.database.transaction(() => {
           const current = this.database.getCanonicalTask<JsonValue>(run.taskId)!, task = current.document as unknown as Task;
           if (controller.signal.aborted || task.currentRunId !== dispatched.run.id || current.revision !== reservedRevision) throw new SemanticPolicyError("INVALID_INPUT", "Task authority changed during replacement startup");
+          replacementStart!.assertProjection();
           this.saveAdvancedRun(dispatched.run, "STARTING");
           const nextState = dispatched.run.state === "FAILED" ? "FAILED" : dispatched.run.state === "ACTIVE" ? "RUNNING" : undefined;
           if (nextState && task.state !== nextState) this.tasks.execute({ id: `reroute:${dispatched.run.id}:${nextState}`, taskId: run.taskId, baseRevision: current.revision, actor: context.actorId, command: { type: "task.transition", state: nextState } });
         });
       } catch (error) {
-        const sessions = (this.database.listEntities<JsonValue>("adapter-session") as unknown as AdapterSession[]).filter(session => session.runId === dispatched.run.id && session.profileId === profileId);
-        if (sessions.length === 1) try { await adapter.cancel(sessions[0]!.id); } catch (cleanupError) { this.app.log.warn({ error: redactValue(cleanupError), runId: dispatched.run.id }, "stale reroute cleanup is unconfirmed"); }
+        if(replacementStart)try{await this.cleanupStaleStart(dispatched.run,replacementStart);}catch(cleanupError){this.app.log.warn({error:redactValue(cleanupError),runId:dispatched.run.id},"stale reroute cleanup is unconfirmed");}
         this.dispatchingRuns.delete(dispatched.run.id);
         this.markRemoteUnavailable(dispatched.run.id, "Replacement startup authority changed; inspect the original native process", "NATIVE_OUTCOME_UNKNOWN", dispatched.run);
         throw error;

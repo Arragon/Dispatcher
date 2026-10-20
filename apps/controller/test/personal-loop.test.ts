@@ -387,6 +387,20 @@ describe("personal Slack–Linear loop", () => {
     const pending=f.service.semanticTools.execute("run.reroute",{target:old.id,profileId:"vega"},{...resumeContext,workflowId:`stale-stopped-${change}`}).then(value=>({value}),error=>({error}));
     try{await entered.promise;expect(f.control.cancellations).toBe(1);if(change==="control")lock();else{const task=f.service.database.getCanonicalTask<JsonValue>(old.taskId)!;f.service.database.writeCanonicalTask(old.taskId,task.revision,{...(task.document as Record<string,JsonValue>),title:"New intent after owned stop"});}ready.resolve();expect(await pending).toHaveProperty("error");expect(f.starts).toHaveLength(1);expect(f.task().currentRunId).toBe(old.id);expect(f.service.workspaces.get(old.worktree!)?.runId).toBe(old.id);expect(readFileSync(join(old.worktree!,"local-uncommitted.txt"),"utf8")).toBe("preserve local work");}finally{ready.resolve();await pending;}
   });
+  it("reserves the replacement Session/control/start receipt and preserves actual reroute counters",async()=>{
+    const f=await rerouteFixture(),old=f.run();let observed:unknown;f.control.onStart=()=>{const current=f.run(),store=new InteractionStore(f.service.database);observed={run:current,command:store.command(`native-start:${current.id}`),control:store.control(current.sessionId)};};
+    const result=await f.service.semanticTools.execute("run.reroute",{target:old.id,profileId:"vega"},{...resumeContext,workflowId:"guarded-replacement"}) as unknown as {run:Run};expect(observed).toMatchObject({run:{id:result.run.id,sessionId:result.run.sessionId,state:"STARTING",generation:2,attempt:2},command:{state:"SENDING",actorId:"owner",fence:{sessionId:result.run.sessionId,generation:2,leaseId:result.run.leaseId}},control:{state:"AUTOMATED",revision:1,epoch:1}});expect(result.run.sessionId).not.toMatch(/^unstarted:/);expect(new InteractionStore(f.service.database).command(`native-start:${result.run.id}`)?.state).toBe("ACKNOWLEDGED");expect(f.starts).toHaveLength(2);
+  });
+  it("rejects replacement native creation when Task revision changes during adapter preparation",async()=>{
+    const f=await rerouteFixture(),old=f.run(),adapter=(f.service as unknown as {agentAdapters:Map<string,AgentAdapter>}).agentAdapters.get("vega")!,start=adapter.start.bind(adapter),entered=Promise.withResolvers<void>(),ready=Promise.withResolvers<void>();vi.spyOn(adapter,"start").mockImplementation(async input=>{entered.resolve();await ready.promise;return start(input);});
+    const pending=f.service.semanticTools.execute("run.reroute",{target:old.id,profileId:"vega"},{...resumeContext,workflowId:"stale-replacement-preparation"}).then(value=>({value}),error=>({error}));
+    try{await entered.promise;const task=f.service.database.getCanonicalTask<JsonValue>(old.taskId)!;f.service.database.writeCanonicalTask(old.taskId,task.revision,{...(task.document as Record<string,JsonValue>),title:"New replacement intent"});ready.resolve();expect(await pending).toHaveProperty("error");expect(f.starts).toHaveLength(1);expect(f.control.cancellations).toBe(1);expect(f.task().title).toBe("New replacement intent");}finally{ready.resolve();await pending;}
+  });
+  it("does not stop a replacement that acquired HUMAN control before its start acknowledgement",async()=>{
+    const f=await rerouteFixture(),old=f.run(),adapter=(f.service as unknown as {agentAdapters:Map<string,AgentAdapter>}).agentAdapters.get("vega")!,start=adapter.start.bind(adapter),entered=Promise.withResolvers<void>(),ready=Promise.withResolvers<void>();vi.spyOn(adapter,"start").mockImplementation(async input=>{const session=await start(input);entered.resolve();await ready.promise;return session;});
+    const pending=f.service.semanticTools.execute("run.reroute",{target:old.id,profileId:"vega"},{...resumeContext,workflowId:"human-replacement-ack"}).then(value=>({value}),error=>({error}));
+    try{await entered.promise;humanOwned(f);const task=f.service.database.getCanonicalTask<JsonValue>(old.taskId)!;f.service.database.writeCanonicalTask(old.taskId,task.revision,{...(task.document as Record<string,JsonValue>),title:"Native human owns this candidate"});ready.resolve();expect(await pending).toHaveProperty("error");expect(f.control.cancellations).toBe(1);expect(f.starts).toHaveLength(2);expect(new InteractionStore(f.service.database).control(f.run().sessionId)?.state).toBe("HUMAN");}finally{ready.resolve();await pending;}
+  });
   it("stops old ownership before a reserved reroute and retains frozen context through owning commit and restart", async () => {
     const f = await rerouteFixture(), old = f.run(), adapters = (f.service as unknown as { agentAdapters: Map<string, AgentAdapter> }).agentAdapters;
     const originalContract = f.service.database.getEntity("run-contract", old.id), verification = f.service.database.getEntity("run-verification-config", old.id);
@@ -672,8 +686,23 @@ describe("personal Slack–Linear loop", () => {
     expect(f.task()).toMatchObject({ state: "QUEUED", currentRunId: f.run().id });
     expect(f.run()).toMatchObject({state:"RUNNER_UNAVAILABLE",recoveryReason:"NATIVE_OUTCOME_UNKNOWN",resumePolicy:"manual"});
     expect(new InteractionStore(f.service.database).command(`native-start:${f.run().id}`)?.state).toBe("UNKNOWN");
-    expect(f.starts).toHaveLength(1);expect(f.control.cancellations).toBe(0);
+    expect(f.starts).toHaveLength(1);expect(f.control.cancellations).toBe(1);
+    expect(f.service.database.getEntity("adapter-session",f.run().sessionId)).toMatchObject({authority:{stopState:"confirmed",stopIntent:{operation:"cleanup-start"}}});
     expect(f.service.database.getInboxEvent("command:comment-during-start")?.normalized).toMatchObject({command:{type:"task.comment",body:"Keep this comment"}});
+  });
+
+  it("rechecks original control at the final stale-start stop boundary",async()=>{
+    const f=await setup(),adapter=(f.service as unknown as {agentAdapters:Map<string,AgentAdapter>}).agentAdapters.get("orion")!,cancel=adapter.cancel.bind(adapter),entered=Promise.withResolvers<void>(),ready=Promise.withResolvers<void>();
+    vi.spyOn(adapter,"cancel").mockImplementation(async(...args)=>{entered.resolve();await ready.promise;return cancel(...args);});
+    f.control.onStart=()=>{const task=f.service.database.getCanonicalTask<JsonValue>(f.taskId)!;f.service.database.writeCanonicalTask(f.taskId,task.revision,{...(task.document as Record<string,JsonValue>),title:"Changed intent"});};
+    const pending=f.service.app.inject({headers:OWNER,method:"POST",url:`/api/tasks/${f.taskId}/dispatch`,payload:{}});
+    try{await entered.promise;humanOwned(f);ready.resolve();expect((await pending).statusCode).toBe(409);expect(f.control.cancellations).toBe(0);expect(f.service.database.getEntity("adapter-session",f.run().sessionId)).toMatchObject({authority:{stopState:"none"}});expect(new InteractionStore(f.service.database).control(f.run().sessionId)?.state).toBe("HUMAN");}finally{ready.resolve();await pending;}
+  });
+
+  it("keeps detached stale startup unknown without interpreting saved status as owned stop evidence",async()=>{
+    const f=await setup(),adapter=(f.service as unknown as {agentAdapters:Map<string,AgentAdapter>}).agentAdapters.get("orion")!;vi.spyOn(adapter,"diagnostics").mockResolvedValue({attached:false});
+    f.control.onStart=()=>{const task=f.service.database.getCanonicalTask<JsonValue>(f.taskId)!;f.service.database.writeCanonicalTask(f.taskId,task.revision,{...(task.document as Record<string,JsonValue>),title:"Detached startup"});};
+    expect((await f.service.app.inject({headers:OWNER,method:"POST",url:`/api/tasks/${f.taskId}/dispatch`,payload:{}})).statusCode).toBe(409);expect(f.control.cancellations).toBe(0);expect(f.run()).toMatchObject({state:"RUNNER_UNAVAILABLE",recoveryReason:"NATIVE_OUTCOME_UNKNOWN"});expect(new InteractionStore(f.service.database).command(`native-start:${f.run().id}`)?.state).toBe("UNKNOWN");
   });
 
   it("reports a closed PR and invalidates old CI evidence even when the CI read is unavailable", async () => {

@@ -18,6 +18,11 @@
   ACK proves creation, not liveness after Controller restart. Keep RESERVED
   no-send evidence intact; explicit cancellation may atomically settle it without
   SDK I/O. Test rollback against the entire Run/Task records, not state alone.
+- Replacement startup must use the same reservation/final admission as ordinary
+  startup, with its actual attempt/generation. A stale Task may justify stopping
+  the original attached CLI only under the captured control fence. Recheck after
+  preparation and directly before cancel; do not turn owned wrapper termination
+  into native session/capacity proof or settle its UNKNOWN start receipt.
 - Startup recovery must cover canonical Runs without publication records. Match
   the qualified journal and original queued Task revision before completing a
   not-created failure projection. Do not acknowledge a later edit or infer an

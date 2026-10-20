@@ -13,7 +13,7 @@ import { interruptNativeSession, type NativeStopProof, type NativeStopSource, ty
 const json=(value:unknown):JsonValue=>JSON.parse(JSON.stringify(value)) as JsonValue;
 export type NativeStartOutcome=AdapterStartOutcome;
 export interface InteractionPrincipal {id:string;roles:readonly string[];profileId?:string}
-export type ControllerInteractionOperation=InteractionOperation|"advance"|"resume"|"reroute"|"pause"|"fail"|"cleanup-input"|"request-handoff";
+export type ControllerInteractionOperation=InteractionOperation|"advance"|"resume"|"reroute"|"pause"|"fail"|"cleanup-input"|"cleanup-start"|"request-handoff";
 export class InteractionGuardError extends Error {constructor(readonly code:string){super(code);this.name="InteractionGuardError";}}
 interface MutationLane {sessionId:string;controlRevision:number;controlEpoch:number;taskRevision?:number;ownsLane:boolean;mutationAuthorized?:boolean;mutationRecordId?:string}
 export interface NativeCommandOutcome {commandId:string;state:NativeCommandReceipt["state"]|"reserved"|"cancelled";execution:"unconfirmed"|"running"|"completed"|"failed";requiresReconciliation:boolean;receipt:NativeCommandReceipt}
@@ -352,7 +352,7 @@ export class NativeInteractions {
     const unstartedStop=operation==="cancel"&&run.sessionId===`unstarted:${run.id}`&&!session&&!adapter&&!this.store.control(run.sessionId)&&!this.store.binding(run.sessionId);
     if(session&&(session.profileId!==run.profileId||session.providerId!==run.providerId)||adapter&&(adapter.id!==run.sessionId||adapter.runId!==run.id||adapter.profileId!==run.profileId)||!session&&!adapter&&!unstartedStop)return reject("SESSION_OWNER_MISMATCH");
     if(read)return {allowed:true};
-    if(run.revokedLeaseIds?.includes(run.leaseId)&&!["cancel","fail","cleanup-input"].includes(operation))return reject("STALE_RUN_AUTHORITY");
+    if(run.revokedLeaseIds?.includes(run.leaseId)&&!["cancel","fail","cleanup-input","cleanup-start"].includes(operation))return reject("STALE_RUN_AUTHORITY");
     if(hasNativeExternalWriteBlocker(this.database,run))return reject("NATIVE_STATE_UNKNOWN");
     if(["continue","steer","approval","resume","advance","verify","deliver","reroute"].includes(operation)){try{this.assertDriftPolicy(run);const policy=this.database.getEntity<JsonValue>("native-drift-policy",run.id) as unknown as FrozenDriftPolicy|undefined;if(this.store.control(run.sessionId)?.state==="AUTOMATED"&&!policy?.policy.permissionFingerprint&&this.firstHumanEpoch(run.sessionId)!==null)return reject("NATIVE_POLICY_UNVERIFIED");}catch(error){return reject(error instanceof InteractionGuardError?error.code:"NATIVE_DRIFT_POLICY_INVALID");}}
     if(operation==="deliver"&&this.database.getEntity("native-verification-invalidation",run.id))return reject("NATIVE_REVERIFICATION_REQUIRED");
@@ -374,14 +374,19 @@ export class NativeInteractions {
     }else if(session?.nativeBinding||adapter?.nativeBinding)return reject("NATIVE_BINDING_MISSING");
     const streamCheckpoint=this.database.getEntity<JsonValue>("native-event-checkpoint",run.sessionId) as unknown as NativeEventCheckpoint|undefined;
     if(streamCheckpoint&&(streamCheckpoint.needsSnapshot||streamCheckpoint.needsHistory)&&!["cancel","reject-approval","request-handoff"].includes(operation))return reject("NATIVE_STATE_UNKNOWN");
-    if(operation==="cleanup-input"){
+    if(operation==="cleanup-input"||operation==="cleanup-start"){
       // A stale answer may stop only the original Adapter execution. Never stop a handed-off writer.
       const control=this.store.control(run.sessionId);
       if(run.generation!==fence.generation||run.leaseId!==fence.leaseId)return reject("STALE_RUN_AUTHORITY");
       if((control?.revision??0)!==fence.expectedControlRevision||(control?.epoch??0)!==fence.expectedControlEpoch)return reject("STALE_CONTROL_REVISION");
       if(control&&control.state!=="AUTOMATED")return reject("NATIVE_WRITE_LOCKED");
-      if(!adapter||(adapter.execution?.generation??run.generation)!==fence.generation)return reject("STALE_RUN_AUTHORITY");
-      if(this.hasUncertainCommand(run.sessionId,own))return reject("NATIVE_COMMAND_OUTCOME_UNKNOWN");
+      if(!adapter||(adapter.execution?.generation??run.generation)!==fence.generation||adapter.execution?.leaseId!==undefined&&adapter.execution.leaseId!==fence.leaseId)return reject("STALE_RUN_AUTHORITY");
+      if(operation==="cleanup-start"){
+        const start=this.startForRun(run.id);
+        if(binding||run.executionRef||!start||!isDeepStrictEqual(start.fence,fence)||!["SENDING","UNKNOWN","ACKNOWLEDGED"].includes(start.state))return reject("NATIVE_IDENTITY_CHANGED");
+        // Only this original start may be uncertain. Stopping its owned CLI does not settle its native outcome.
+        if(this.database.handle.prepare("SELECT 1 FROM interaction_commands WHERE session_id=? AND state IN ('SENDING','UNKNOWN') AND id!=? LIMIT 1").get(run.sessionId,start.id))return reject("NATIVE_COMMAND_OUTCOME_UNKNOWN");
+      }else if(this.hasUncertainCommand(run.sessionId,own))return reject("NATIVE_COMMAND_OUTCOME_UNKNOWN");
       return {allowed:true};
     }
     const task=this.database.getCanonicalTask<JsonValue>(run.taskId);
