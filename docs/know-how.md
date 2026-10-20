@@ -2,6 +2,11 @@
 
 ## M0–M10 invariants
 
+- Interaction commands store a semantic hash, not their full reservation input.
+  Recovery must reconstruct and compare that exact frozen input read-only; never
+  call reserveCommand as a probe after Task revisions advance. An initial
+  AUTOMATED control row alone cannot qualify a source candidate for recovery.
+
 - Stop/pause admission must run after adapter preparation awaits. Confirm that
   the adapter actually called it before trusting success. Keep Generic CLI's
   cancellation latch before a detached-start check, after admission, so a late

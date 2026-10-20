@@ -66,7 +66,7 @@ final convergence verification.
 | CV-04 | migration/control/backup modules ported with v3 adaptation and protocol 2; targeted 12/101 and two default 90/802 gates passed; ready for whole-branch review |
 | CV-05 | in progress: catalog scope/lifecycle, default ConfigPlan, per-Run provenance and adapter selection fences pass 91/833 default gate; legacy HTTP/Slack/reroute choice now integrated at 109/1085; remaining catalog/control assertions tracked |
 | CV-06 | Controller nonblocking scoped collection/terminal retry verified at 115/1169; origin/attempt/time and account-quota qualification/UI pending |
-| CV-08 | continuation/worker/delivery/failure/cancel/pause Guard, failure priority drain and stop audit verified at 115/1191; reroute/start/recovery and native qualification remain pending |
+| CV-08 | continuation/worker/delivery/failure/cancel/pause Guard, failure priority drain, stop audit and read-only local start recovery qualification verified at 115/1201; reroute/start runtime/recovery and native qualification remain pending |
 | CV-12 | pending complete selection/control integration |
 | macOS service / LP / backup | pending safe shared foundation |
 | CV-07/09/10/11 | pending contracts/guards |
@@ -1059,3 +1059,36 @@ Rechecked all three source HEAD/status snapshots and all 11 WIP file SHA-256
 hashes: unchanged. No original data/service touched. Rollback: cd2821a plus its
 matching backup. R-005 remains open for start/reroute/recovery and qualified
 native context/stop; no formal or real-provider Gate is closed.
+
+
+## CV-08o read-only local start recovery qualification
+
+Before wiring startup sending, the constructor barrier can recognize only this
+Controller's exact unbound embedded start reservation: frozen selection, frozen
+contract hash, marker, Session/profile/backend, invocation, lease/generation and
+initial AUTOMATED revision/epoch 1, exclusion none. Native binding/executionRef,
+legacy modelSelection, changed ownership, malformed/corrupt records and orphan
+control remain blocked. Missing ACK adapter projection is rejected. Admission
+performs no native call, retry or mutation replay.
+
+InteractionCommand intentionally stores only its semantic hash. Reuse the
+existing hash algorithm through a new read-only matchesCommand method, rather
+than persisting private request input or calling reserveCommand as a probe.
+The first helper assumed full semantics were persisted; inspection corrected
+that assumption. The initial corrupted-Run-selection fixture was correctly
+blocked by immutable selection enforcement; replace it with a conflicting
+adapter projection to test recovery without disabling that safeguard.
+
+Three positive boot cases failed before implementation. Final target passes
+14 cases, including the unchanged four original fail-closed candidate cases and
+seven corrupt certificate cases. Default `mise exec -- pnpm check` passes
+115 files/1201 tests (41.73s test phase); `git diff --check` passes.
+Official quota checked after unit; percentage recorded in Linear.
+Logs: /tmp/dispatcher-cv08o-preflight-red.log,
+/tmp/dispatcher-cv08o-preflight-green.log,
+/tmp/dispatcher-cv08o-preflight-final-target.log, /tmp/dispatcher-cv08o-check.log.
+
+This foundation does not yet switch ordinary dispatch to the guarded start
+callbacks, recover owned process attachment or open native control. Those stay
+in R-005. No source/live database or service changed. Rollback: 3709924 with its
+matching backup.

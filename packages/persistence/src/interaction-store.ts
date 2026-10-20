@@ -5,6 +5,7 @@ import type { DispatcherDatabase, JsonValue } from "./index.js";
 
 const json=(value:unknown):JsonValue=>JSON.parse(JSON.stringify(value)) as JsonValue;
 const stable=(value:JsonValue):JsonValue=>Array.isArray(value)?value.map(stable):value!==null&&typeof value==="object"?Object.fromEntries(Object.keys(value).sort().map(key=>[key,stable(value[key]!)])):value;
+const commandSemanticHash=(input:unknown)=>createHash("sha256").update(JSON.stringify(stable(json(input)))).digest("hex");
 export class InteractionStoreError extends Error {constructor(readonly code:string){super(code);this.name="InteractionStoreError";}}
 export type CommandState="RESERVED"|"SENDING"|"ACKNOWLEDGED"|"UNKNOWN"|"FAILED"|"CANCELLED";
 export interface InteractionCommand {
@@ -118,10 +119,14 @@ export class InteractionStore {
       this.database.handle.prepare("INSERT INTO control_audit(id,session_id,document_json) VALUES(?,?,?)").run(randomUUID(),input.sessionId,JSON.stringify(audit));return next;
     });
   }
+  /** Compare a frozen reservation without admitting or replaying its mutation. */
+  matchesCommand(input:Parameters<InteractionStore["reserveCommand"]>[0]):boolean {
+    return this.command(input.id)?.semanticHash===commandSemanticHash(input);
+  }
   reserveCommand(input:{id:string;actorId:string;profileId:string;type:string;fence:MutationFence;semantics:JsonValue;backendId?:string;configRevision?:number}):InteractionCommand {
     return this.database.transaction(()=>{
       if(input.id!==input.fence.commandId||!input.id||input.id.length>200||!input.actorId||!input.type)throw new InteractionStoreError("INVALID_COMMAND");
-      const semanticHash=createHash("sha256").update(JSON.stringify(stable(json(input)))).digest("hex");
+      const semanticHash=commandSemanticHash(input);
       const existing=this.command(input.id);if(existing){if(existing.semanticHash!==semanticHash)throw new InteractionStoreError("IDEMPOTENCY_CONFLICT");return existing;}
       const fence=input.fence;const control=this.assertAuthority(input.profileId,fence);
       if(input.type==="release-control"&&control.state!=="HANDOFF_REQUESTED")throw new InteractionStoreError("NATIVE_WRITE_LOCKED");

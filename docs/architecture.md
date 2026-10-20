@@ -212,6 +212,13 @@ evidence. An uncertain receipt never authorizes a retry. Native event checkpoint
 hold bounded metadata and provider cursors separately from transport replay,
 command identity and ACKs in the Runner journal. These helpers are foundations;
 Controller admission remains closed until all write paths use the shared Guard.
+The startup barrier may recognize this Controller's unbound local start journal
+only when its original command semantic hash matches the frozen Run selection,
+contract hash and embedded-runner marker. It also validates exact Session, lease,
+generation, backend and the initial AUTOMATED/exclusion-none control. Corrupt or
+foreign records, native bindings, executionRef and post-handoff control still
+fail closed. Qualification performs no native call or mutation replay and does
+not claim that a persisted process is attached or stopped.
 Drift comparison uses the frozen v3 model/effort; an omitted native default
 cannot be compared to a fabricated bound model. Missing account identity stays
 unknown, and exact policy requires a provider-confirmed account fingerprint.
