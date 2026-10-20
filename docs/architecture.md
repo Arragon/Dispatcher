@@ -237,6 +237,17 @@ remain readable across authority changes, while sending needs current authority.
 This coordinator is ported but is not yet composed into the v3 service entry
 points; the startup barrier and unavailable native controls remain in force.
 
+Codex CLI start/send/resume accept an optional synchronous `beforeSend` admission
+callback. Creation captures request fields before storing intent, then checks
+admission immediately before invoking the backend. Same-session input checks
+after awaiting the previous result and again after storing its new turn intent.
+Async/non-void guards are rejected without awaiting them. Only a local guard
+rejection produces a `not-sent` admission error; a creation rejection before
+backend invocation additionally proves `not-created`. Native backend failures
+do not gain that proof. Existing consumers may omit the callback; full Controller
+composition and qualification of other writers remain required before enabling
+native control transitions.
+
 SQLite online backups are consistent private archives with checksums and an
 inventory. Archives refuse live startup; restore targets must be new directories
 and retain a durable reconciliation barrier. Restoring bytes alone never

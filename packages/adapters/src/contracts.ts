@@ -81,10 +81,10 @@ export interface AgentAdapter {
   readonly manifest: AdapterManifest;
   readonly supportsExecutionSelection?: boolean;
   modelCatalog?(context: ModelCatalogContext & {workspacePath:string;signal?:AbortSignal}): Promise<AccountModelCatalog>;
-  start(input: { runId: string; workspacePath: string; backendId?: string; prompt?: string; executionSelection?: ExecutionSelection }): Promise<AdapterSession>;
-  send(sessionId: string, message: string): Promise<AdapterEvent>;
+  start(input: { runId: string; workspacePath: string; backendId?: string; prompt?: string; executionSelection?: ExecutionSelection; beforeSend?:()=>void }): Promise<AdapterSession>;
+  send(sessionId: string, message: string, beforeSend?:()=>void): Promise<AdapterEvent>;
   pause(sessionId: string): Promise<AdapterSession>;
-  resume(sessionId: string): Promise<AdapterSession>;
+  resume(sessionId: string, beforeSend?:()=>void): Promise<AdapterSession>;
   cancel(sessionId: string): Promise<AdapterSession>;
   status(sessionId: string): Promise<AdapterSession>;
   result(sessionId: string): Promise<AdapterResult>;
@@ -98,6 +98,25 @@ export class AdapterContractError extends Error {
   constructor(readonly code: string, message: string) {
     super(message);
     this.name = "AdapterContractError";
+  }
+}
+
+export class AdapterStartError extends AdapterContractError {
+  constructor(readonly creationOutcome:"not-created"|"unknown",code:string,message:string){super(code,message);this.name="AdapterStartError";}
+}
+/** Produced only at the final local boundary, before invoking any native write. */
+export class AdapterAdmissionError extends AdapterContractError {
+  readonly dispatch="not-sent";
+  constructor(code:string){super(code,"Native write admission rejected");this.name="AdapterAdmissionError";}
+}
+export function assertAdapterWriteAdmission(guard:(()=>void)|undefined):void {
+  if(!guard)return;
+  try{
+    const outcome:unknown=guard();
+    if(outcome!==undefined){void Promise.resolve(outcome).catch(()=>undefined);throw new AdapterAdmissionError("NATIVE_CAPABILITY_UNVERIFIED");}
+  }catch(error){
+    const code=(error as {code?:unknown})?.code;
+    throw new AdapterAdmissionError(typeof code==="string"&&/^[A-Z][A-Z0-9_]{0,79}$/.test(code)?code:"NATIVE_WRITE_ADMISSION_REJECTED");
   }
 }
 

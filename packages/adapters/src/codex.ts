@@ -8,6 +8,8 @@ import { randomUUID } from "node:crypto";
 import { promisify } from "node:util";
 import {
   AdapterContractError,
+  AdapterStartError,
+  assertAdapterWriteAdmission,
   validateManifest,
   type AdapterEvent,
   type AdapterManifest,
@@ -200,16 +202,17 @@ export class CodexAdapter implements AgentAdapter {
   modelCatalog(context:ModelCatalogContext & {workspacePath:string;signal?:AbortSignal}):Promise<AccountModelCatalog> {
     return readCodexCatalog({profile:this.profile,context,workspacePath:context.workspacePath,...(context.signal?{signal:context.signal}:{}),...(this.catalogRequest?{request:this.catalogRequest}:{})});
   }
-  async start(input: { runId: string; workspacePath: string; backendId?: string; prompt?: string; executionSelection?: ExecutionSelection }): Promise<AdapterSession> {
+  async start(input: { runId: string; workspacePath: string; backendId?: string; prompt?: string; executionSelection?: ExecutionSelection; beforeSend?:()=>void }): Promise<AdapterSession> {
+    const request={...input};
     const backendId="codex-exec-json";
-    if(input.backendId!==undefined&&input.backendId!==backendId)throw new AdapterContractError("BACKEND_MISMATCH","Requested backend differs from the owning Codex adapter");
-    const selection=freezeExecutionSelection(input.executionSelection,{profileId:this.profile.id,providerId:this.manifest.id,backendId,selection:true,reasoning:true});
+    if(request.backendId!==undefined&&request.backendId!==backendId)throw new AdapterContractError("BACKEND_MISMATCH","Requested backend differs from the owning Codex adapter");
+    const selection=freezeExecutionSelection(request.executionSelection,{profileId:this.profile.id,providerId:this.manifest.id,backendId,selection:true,reasoning:true});
     const now = new Date().toISOString();
     const session: AdapterSession = {
       id: randomUUID(),
-      runId: input.runId,
-      backendId: input.backendId ?? "codex-exec-json",
-      workspacePath: input.workspacePath,
+      runId: request.runId,
+      backendId: request.backendId ?? "codex-exec-json",
+      workspacePath: request.workspacePath,
       state: "STARTING",
       profileId: this.profile.id,
       ...(selection?{executionSelection:selection}:{legacyModel:{...(this.profile.model?{id:this.profile.model}:{})}}),
@@ -220,12 +223,14 @@ export class CodexAdapter implements AgentAdapter {
     this.store.save(session);
     assertSessionModelBinding(this.store.load(session.id),session);
     const model=sessionModel(session);
+    try{assertAdapterWriteAdmission(request.beforeSend);}
+    catch(error){this.update(session.id,{state:"FAILED"});throw new AdapterStartError("not-created",(error as AdapterContractError).code,"Native creation admission rejected before Codex invocation");}
     const turn = this.backend.start({
       executable: this.profile.executable ?? "codex",
       codexHome: this.profile.codexHome,
-      workspacePath: input.workspacePath,
+      workspacePath: request.workspacePath,
       ...(typeof session.executionSelection?.nativeParameters.reasoningEffort==="string" ? {reasoningEffort:session.executionSelection.nativeParameters.reasoningEffort}:{}),
-      prompt: input.prompt ?? "Inspect the task context and report readiness.",
+      prompt: request.prompt ?? "Inspect the task context and report readiness.",
       ...(model?{model}:{}),
     });
     this.turns.set(session.id, turn);
@@ -235,7 +240,7 @@ export class CodexAdapter implements AgentAdapter {
     return structuredClone(session);
   }
 
-  async send(sessionId: string, message: string): Promise<AdapterEvent> {
+  async send(sessionId: string, message: string, beforeSend?:()=>void): Promise<AdapterEvent> {
     if (this.cancelled.has(sessionId)||this.require(sessionId).state === "CANCELLED") throw new AdapterContractError("SESSION_CANCELLED", "A cancelled Codex session cannot accept input");
     if(!this.turns.has(sessionId)&&["STARTING","RUNNING"].includes(this.require(sessionId).state))throw new AdapterContractError("SESSION_DETACHED","Inspect the original native process before continuing this session");
     if (this.sending.has(sessionId) || (this.require(sessionId).state === "RUNNING" && this.turns.get(sessionId)?.status() === "running")) throw new AdapterContractError("SESSION_BUSY", "Wait for the active Codex turn before sending another message");
@@ -248,7 +253,9 @@ export class CodexAdapter implements AgentAdapter {
     if (this.cancelled.has(sessionId)||this.require(sessionId).state === "CANCELLED") throw new AdapterContractError("SESSION_CANCELLED", "A cancelled Codex session cannot accept input");
     if (!session.providerSessionId) throw new AdapterContractError("SESSION_NOT_RESUMABLE", "Codex did not return a provider session id");
     const model=sessionModel(session);
+    assertAdapterWriteAdmission(beforeSend);
     const turnStartedAt=new Date().toISOString();this.store.save({ ...session, state: "STARTING",turnId:randomUUID(),turnStartedAt,updatedAt:turnStartedAt });
+    assertAdapterWriteAdmission(beforeSend);
     const turn = this.backend.start({
       executable: this.profile.executable ?? "codex",
       codexHome: this.profile.codexHome,
@@ -266,8 +273,8 @@ export class CodexAdapter implements AgentAdapter {
     } finally { this.sending.delete(sessionId); }
   }
   async pause(): Promise<AdapterSession> { throw new AdapterContractError("UNSUPPORTED_CAPABILITY", "Codex exec does not support pausing a live turn"); }
-  async resume(sessionId: string): Promise<AdapterSession> {
-    await this.send(sessionId, "Continue from the existing task context.");
+  async resume(sessionId: string, beforeSend?:()=>void): Promise<AdapterSession> {
+    await this.send(sessionId, "Continue from the existing task context.",beforeSend);
     return this.status(sessionId);
   }
   async cancel(sessionId: string): Promise<AdapterSession> {

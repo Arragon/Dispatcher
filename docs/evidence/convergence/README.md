@@ -533,3 +533,40 @@ verification/delivery/cancel composition and recovery. Keep v3 physical drain,
 run-input receipts, native startup barrier and unavailable takeover UI intact.
 No real account, primary worktree or live DB/service was used. Official quota
 checked after the unit; percentage recorded in Linear.
+
+
+## CV-08d Codex CLI final native write admission
+
+Added optional synchronous beforeSend to the existing adapter start/send/resume
+contract and implemented its final boundary in Codex CLI. Same-session writes
+check again after the previous result await and directly before native start,
+including after new-turn intent storage. Resume forwards the same captured guard.
+Async/non-void guards are rejected immediately with a sanitized error; rejected
+Promises are consumed without waiting. Only this pre-native boundary produces
+a typed not-sent admission receipt. Initial creation rejection additionally
+reports not-created and marks its adapter intent failed; backend failures do not
+receive that proof. Cancellation and existing unguarded consumers are unchanged.
+
+Creation snapshots the incoming request before intent persistence, preserving
+its original callback, managed cwd and prompt. This complements the existing
+immutable model/effort snapshot rather than rereading mutable caller input.
+No alternate Controller router or runtime authority was introduced. The shared
+signatures alone do not qualify other adapters; their actual final sites must
+be adapted/verified before native control capabilities are enabled.
+
+RED: all seven initial final-admission cases failed before implementation. Two
+additional capture cases then failed when caller input changed during intent
+storage. Final rebuilt targeted suite passes three files/36 tests, including
+original Codex and execution-selection regressions. Default
+`mise exec -- pnpm check` passes 108 files/1078 tests (41.64s test phase).
+Logs: `/tmp/dispatcher-cv08-codex-admission-red.log`,
+`/tmp/dispatcher-cv08-codex-admission-capture-red.log`,
+`/tmp/dispatcher-cv08-codex-admission-green-2.log`,
+`/tmp/dispatcher-cv08-codex-admission-final-check.log`.
+
+This unit has no Controller service wiring or real provider/GUI acceptance.
+R-005 still requires reserved Session identity/execution context, v3 input and
+receipt/worker/delivery integration, other native writers and recovery. Native
+startup admission remains closed; do not close CV-08 or original Gates. Rollback
+is this isolated branch's previous SHA; original workspaces/data remain intact.
+Official quota checked after this unit; percentage is recorded in Linear.
