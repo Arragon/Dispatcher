@@ -85,6 +85,7 @@ export class BoundedLogWriter {
 export type ExitClassification = "success" | "cancelled" | "timeout" | "idle-timeout" | "nonzero" | "signal" | "spawn-error";
 export interface ActivityEvent { sessionId: string; stream: "stdout" | "stderr" | "lifecycle"; summary: string; occurredAt: string; }
 export interface ProcessResult { sessionId: string; exitCode: number | null; signal: NodeJS.Signals | null; classification: ExitClassification; stdoutTail: string; stderrTail: string; durationMs: number; }
+export interface ProcessTreeStatus {state:"present"|"empty"|"unknown";scope:"owned-process-group"|"unverified"}
 export interface ManagedProcessHandle {
   id: string;
   pid: number;
@@ -92,6 +93,7 @@ export interface ManagedProcessHandle {
   cancel(): Promise<void>;
   status(): { state: "running" | "completed"; pid: number };
   result(): Promise<ProcessResult>;
+  treeStatus?(): ProcessTreeStatus;
   subscribe(handler: (event: ActivityEvent) => void): () => void;
 }
 
@@ -168,6 +170,7 @@ export class ProcessManager {
       send: async (data) => { if (!child.stdin?.writable) throw new Error("Process input is closed"); child.stdin.write(data); },
       cancel: async () => { terminate("cancelled"); await resultPromise; },
       status: () => ({ state: settled ? "completed" : "running", pid: child.pid! }),
+      treeStatus: () => ownership.treeStatus(),
       result: async () => await resultPromise,
       subscribe: (handler) => { listeners.add(handler); return () => listeners.delete(handler); },
     };
@@ -238,6 +241,7 @@ export class ProcessManager {
       send: async (data) => terminal.write(data),
       cancel: async () => { terminate("cancelled"); await resultPromise; },
       status: () => ({ state: settled ? "completed" : "running", pid: terminal.pid }),
+      treeStatus: () => ownership.treeStatus(),
       result: async () => await resultPromise,
       subscribe: (handler) => { listeners.add(handler); return () => listeners.delete(handler); },
     };

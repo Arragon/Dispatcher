@@ -211,6 +211,19 @@ Drift comparison uses the frozen v3 model/effort; an omitted native default
 cannot be compared to a fabricated bound model. Missing account identity stays
 unknown, and exact policy requires a provider-confirmed account fingerprint.
 
+`NativeRuntimeHosts` owns explicit host claims independently of sessions. It
+coalesces only the same native store/backend/execution scope, captures methods
+and ownership before awaits, drains admitted interrupts and pins unknown results
+without reacquisition. External hosts are detached, never stopped. Owned host
+stop additionally needs native quiescence, an empty owned process group and
+backend containment evidence. Local transport cleanup cannot prove native tools,
+writer release or deletion. ProcessManager exposes optional fresh process-tree
+observations through its existing OwnedProcessGroup; POSIX group absence latches
+to avoid probing a reused numeric PID. PTY/Windows tree membership stays unknown.
+Existing handles without tree evidence remain valid consumers but cannot prove
+host cleanup. Recovery decisions may request read-only reobservation, never start
+or resume execution automatically.
+
 SQLite online backups are consistent private archives with checksums and an
 inventory. Archives refuse live startup; restore targets must be new directories
 and retain a durable reconciliation barrier. Restoring bytes alone never

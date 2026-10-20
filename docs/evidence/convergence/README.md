@@ -424,3 +424,49 @@ real native handoff are not yet composed. Controller's native startup barrier
 remains in place. No live database or native account was used. The source host
 manager and its process-tree proof need the following increment; no release UI
 or parallel controller router is exposed.
+
+
+## CV-08b native host lifetime and process-tree proof
+
+Ported the a499d84 NativeRuntimeHosts manager alongside the read observer,
+without replacing the v3 remote NativeRunnerRuntime. Explicit scope/profile and
+execution claims are captured before awaits; host ownership conflicts and lost
+interrupt receipts retain UNKNOWN. Owned root/local callback cleanup and native
+writer/tool release remain independent. External hosts never receive stop.
+Owned host stop needs quiescence, drained claims/commands, physical owned-group
+absence and separately qualified backend containment. Late owned acquisitions
+can be cleaned locally without changing the earlier unknown public receipt.
+
+Existing ProcessManager and all of its original cleanup behavior remain in place.
+It now exposes optional process-tree facts using the existing OwnedProcessGroup.
+POSIX absence latches before PID reuse; EPERM is unknown. PTY/Windows and old
+handles without tree facts cannot prove host cleanup. New native recovery
+decisions preserve binding/deletion identity and never auto-start execution.
+
+Ruling: three newly migrated source assertions assumed its old ProcessManager
+left descendants alive after root exit. Target v3 already drains owned groups
+before result. Preserve this stronger behavior: assert actual descendants are
+absent, retain an explicit surviving-tree negative decision, and use real escaped
+detached descendants for the unreadable/deleted-native-history chaos cases.
+Such escaped children still live outside an empty group, which cannot establish
+backend containment. No pre-existing target assertion was changed or skipped.
+Cost: Linux/Windows behavior still needs original platform qualification; current
+physical evidence is Apple Silicon macOS only. New POSIX-specific PID-reuse test
+is platform-conditional, and the new PTY-uncertainty assertion runs everywhere.
+
+RED: 49 source host cases failed before host manager/reconcile were available;
+two new tree-status tests failed before producer support. After the first port,
+three source assertions exposed the cleanup semantic difference above. Adapted
+source cases plus original ProcessManager/distributed regressions passed 5 files/
+85 tests. Final default `mise exec -- pnpm check` passed 102 files/980 tests
+(46.91s test phase). Logs: `/tmp/dispatcher-cv08-hosts-red.log`,
+`/tmp/dispatcher-cv08-tree-status-red.log`,
+`/tmp/dispatcher-cv08-hosts-green.log`,
+`/tmp/dispatcher-cv08-hosts-adapted-green.log`,
+`/tmp/dispatcher-cv08-hosts-final-check.log`.
+
+No real provider/backend containment qualification or Controller Guard admission
+is claimed; R-005/R-008 and original native/GUI Gates stay open. Rollback remains
+the original compatible binary/data or this isolated candidate's prior SHA; no
+original DB/service was opened. Official quota checked after this unit; remaining
+percentage is recorded in its Linear checkpoint.

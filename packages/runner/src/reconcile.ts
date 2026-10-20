@@ -1,3 +1,5 @@
+import type { NativeBinding, NativeObservation, NativeProcessState } from "@dispatcher/domain";
+import type { ProcessTreeStatus } from "./process.js";
 export interface ControllerRunSnapshot {
   runId: string;
   generation: number;
@@ -54,4 +56,21 @@ export function reconcileRunnerState(
     if(expected.requiresNativeOwnership&&actual.attached!==true&&!(actual.nativeState==="COMPLETE"&&actual.resultAvailable===true))return {runId,action:"ATTENTION",reason:"native process ownership is unconfirmed"};
     return { runId, action: "KEEP", reason: "runner and controller state agree" };
   });
+}
+
+export interface NativeRecoveryDecision {
+  action:"KEEP"|"REOBSERVE"|"CONTINUE_HISTORY"|"ATTENTION";
+  reasonCode:string;startsExecution:false;requiresExplicitCommand:boolean;
+}
+/** A stored running snapshot never grants a replacement process permission to resume. */
+export function reconcileNativeRuntime(input:{binding:NativeBinding;persistedState:NativeObservation["state"];processState?:NativeProcessState;processTree?:ProcessTreeStatus;canObserve?:boolean;canContinueHistory?:boolean}):NativeRecoveryDecision {
+  const result=(action:NativeRecoveryDecision["action"],reasonCode:string):NativeRecoveryDecision=>({action,reasonCode,startsExecution:false,requiresExplicitCommand:action==="CONTINUE_HISTORY"});
+  if(input.binding.version!==1||input.binding.identityState!=="bound"||!input.binding.nativeSessionId||input.binding.nativeSessionId.startsWith("unstarted:"))return result("ATTENTION","NATIVE_RUNTIME_BINDING_UNAVAILABLE");
+  if(input.persistedState==="deleted")return result("ATTENTION","NATIVE_SESSION_DELETED");
+  if(input.processState==="completed"&&input.processTree?.state==="present")return result("ATTENTION","NATIVE_BACKGROUND_PROCESS_SURVIVES");
+  if(input.processState==="completed"&&input.processTree?.state==="unknown")return result("ATTENTION","NATIVE_PROCESS_TREE_UNKNOWN");
+  if(input.processState==="running")return result("KEEP","NATIVE_RUNTIME_HANDLE_PRESENT");
+  if(input.canObserve)return result("REOBSERVE","NATIVE_READ_ONLY_REOBSERVATION");
+  if(input.persistedState==="idle"&&input.canContinueHistory)return result("CONTINUE_HISTORY","NATIVE_HISTORY_CONTINUATION_REQUIRES_COMMAND");
+  return result("ATTENTION","NATIVE_RUNTIME_HANDLE_MISSING");
 }

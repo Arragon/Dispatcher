@@ -5,6 +5,7 @@ interface OwnedTerminalProcess {
   kill(signal?: string): void;
   onExit(listener: () => void): unknown;
 }
+export interface OwnedProcessTreeStatus {state:"present"|"empty"|"unknown";scope:"owned-process-group"|"unverified"}
 
 /** Owns only a child created by this process, never a recovered or inferred PID. */
 export class OwnedProcessGroup {
@@ -19,16 +20,26 @@ export class OwnedProcessGroup {
     } else child.onExit(exited);
   }
   stop():Promise<void>{return this.stopping??=this.drain();}
+  treeStatus():OwnedProcessTreeStatus {
+    // PTY and Windows APIs do not establish membership of a POSIX child group.
+    if(process.platform==="win32"||!("once" in this.child))return {state:"unknown",scope:"unverified"};
+    try{return {state:this.probe(),scope:"owned-process-group"};}
+    catch{return {state:"unknown",scope:"owned-process-group"};}
+  }
+  private probe():OwnedProcessTreeStatus["state"] {
+    if(this.drained||!this.child.pid)return "empty";
+    try{process.kill(-this.child.pid,0);return "present";}
+    catch(error){
+      if((error as NodeJS.ErrnoException).code==="ESRCH"){this.drained=true;return "empty";}
+      if((error as NodeJS.ErrnoException).code==="EPERM")return "unknown";
+      throw error;
+    }
+  }
   private alive():boolean {
     if(this.drained||!this.child.pid)return false;
     if(process.platform==="win32")return !this.exited;
-    try{process.kill(-this.child.pid,0);return true;}
-    catch(error){
-      if((error as NodeJS.ErrnoException).code==="ESRCH")return false;
-      // Permission uncertainty is not absence; retain the original bounded stop deadline.
-      if((error as NodeJS.ErrnoException).code==="EPERM")return true;
-      throw error;
-    }
+    // Unknown permissions cannot be treated as absence while draining.
+    return this.probe()!=="empty";
   }
   private signal(signal:NodeJS.Signals):void {
     try{if(process.platform!=="win32"&&this.child.pid)process.kill(-this.child.pid,signal);else this.child.kill(signal);}
