@@ -17,7 +17,8 @@
     "check": "pnpm typecheck && pnpm lint && pnpm boundaries && pnpm test",
     "dev": "pnpm --filter @dispatcher/controller dev -- --with-runner",
     "dispatcher": "pnpm --filter @dispatcher/controller dispatcher",
-    "benchmark": "node benchmarks/run.mjs"
+    "benchmark": "node benchmarks/run.mjs",
+    "stage:controller": "node scripts/stage-controller.mjs"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

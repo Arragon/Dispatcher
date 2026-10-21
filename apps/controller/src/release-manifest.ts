@@ -66,7 +66,7 @@ export function createControllerReleaseManifest(runtimeDirectory:string,metadata
 }
 export function verifyControllerRelease(directory:string):{manifest:ControllerReleaseManifest;cliPath:string;nodePath:string}{
  const root=realpathSync(directory);
- try{lstatSync(join(root,"release-preparing.json"));throw Error("RELEASE_NOT_READY");}catch(error){if(!error||typeof error!=="object"||!("code" in error)||error.code!=="ENOENT")throw error;}
+ for(const marker of ["release-preparing.json","release-failed.json"]){try{lstatSync(join(root,marker));throw Error("RELEASE_NOT_READY");}catch(error){if(!error||typeof error!=="object"||!("code" in error)||error.code!=="ENOENT")throw error;}}
  const path=join(root,"release.json"),file=lstatSync(path);
  if(!file.isFile()||file.isSymbolicLink()||file.nlink!==1||file.size>16*1024*1024)throw Error("RELEASE_MANIFEST_INVALID");
  let manifest:ControllerReleaseManifest;

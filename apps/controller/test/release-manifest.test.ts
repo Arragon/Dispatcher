@@ -34,4 +34,5 @@ describe("fixed Controller release closure",()=>{
  it("rejects a mismatched runtime host and leaves every artifact intact",()=>{
   const f=fixture(),manifest=seal(f);writeFileSync(join(f.directory,"release.json"),JSON.stringify({...manifest,platform:"different-host"}));const before=readdirSync(f.runtime);expect(()=>verifyControllerRelease(f.directory)).toThrow("RELEASE_RUNTIME_MISMATCH");expect(readdirSync(f.runtime)).toEqual(before);expect(dirname(f.runtime)).toBe(f.directory);
  });
+ it("keeps a failed staging marker closed even when runtime bytes still match",()=>{const f=fixture();seal(f);writeFileSync(join(f.directory,"release-failed.json"),"{}");expect(()=>verifyControllerRelease(f.directory)).toThrow("RELEASE_NOT_READY");});
 });
