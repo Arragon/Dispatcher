@@ -17,3 +17,5 @@ export { OwnedProcessGroup } from "./owned-process.js";
 
 export * from "./interaction-contracts.js";
 export * from "./native-requests.js";
+
+export * from "./native-access.js";

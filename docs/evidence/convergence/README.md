@@ -1741,3 +1741,28 @@ final whitespace-only cleanup and diff check pass. Logs:
 /tmp/dispatcher-cv07b-check.log. No dependency/schema, API display or data migration.
 CV-07 still pending authoritative billing admission/Controller/UI and real account
 evidence. Rollback 2f47f70 with matching schema-8 backup. Official quota checked.
+
+
+## CV-09a qualified native access descriptions
+
+Port committed a499d84 native-access.ts and its entire 24-case suite unchanged.
+Separate trusted registrations, exact URL allowlist, scope/profile/store identity,
+viewer/Runner host and UI-roundtrip evidence are all required for exact session
+entries. Project/application entries retain explicit labels. Unknown redirects,
+pairing/credential URLs/argv, shells, foreign hosts/workspaces and missing proof
+fall back to bounded sanitized instructions. Resolver/validator describe only;
+they never launch, resolve credentials, follow URLs or contact native accounts.
+
+Missing module RED then 24 cases GREEN. Default full check passes 127 files/1352
+tests (43.26s), diff check passes. Logs: /tmp/dispatcher-cv09a-red.log,
+/tmp/dispatcher-cv09a-green.log, /tmp/dispatcher-cv09a-check.log. Core/runtime/UI
+composition and real native clients still pending; no live entry enabled.
+Rollback 4a7737e with matching schema-8 backup. Full source modules/tests retained
+without skips or rewritten expectations; no dependency/schema changes.
+
+Additional informational baseline: existing `pnpm benchmark -- --scenario smoke
+--duration 5` exercised the real Controller fixture at source 4a7737e; five samples,
+CPU average 10.02%, RSS max116408320B. This includes cold startup, is marked
+informational and does not pass idle CPU/soak Gate. Report remains ignored under
+.dispatcher/benchmarks/2026-10-21T01-03-00.190Z-smoke.json and command output
+/tmp/dispatcher-cv13-smoke.log. No real provider/browser/launchd evidence implied.
