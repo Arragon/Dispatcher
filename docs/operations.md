@@ -209,6 +209,7 @@ reviewed offline switch and do not complete the upgrade/rollback Gate.
 
 ```bash
 pnpm dispatcher -- apply-upgrade --record /absolute/new-backup/service-upgrade.json --plan-id <reviewed-id> --confirm
+pnpm dispatcher -- rollback-upgrade --record /absolute/new-backup/service-upgrade.json --plan-id <reviewed-id> --confirm
 pnpm dispatcher -- reconcile-upgrade --record /absolute/new-backup/service-upgrade.json --plan-id <reviewed-id> --confirm
 ```
 
@@ -223,6 +224,17 @@ These commands never restore user data, start/replay a native session, or clear 
 unknown external effect. CLI service mutations share a separate OS operation lock;
 status/log reads remain available. After database changes, rollback requires a
 matching backup and separately qualified recovery. Do not remove barriers manually.
+
+Rollback uses that same reviewed plan only after a confirmed switch and while
+the database main/WAL bytes still match preparation. It verifies both pinned
+releases and disabled/unloaded supervision, journals a separate reverse transaction,
+retains all previous transaction locations and restores only the old definition.
+It leaves service activation explicit. A failed reverse install keeps the same
+writer barrier; reconciliation can restore its pre-rollback candidate or confirm
+the old definition already installed. Original version-one forward journals without
+a direction field remain reconcilable. Changed data requires backup recovery,
+not this definition-only command. A rolled-back plan cannot be reapplied; prepare
+and review a new plan. This is not changed-data recovery or real host acceptance.
 
 New service definitions bind `--log-dir <logs>/runtime`. Controller structured
 logs retain at most four 256 KiB files within a 1 MiB owned-stream budget. Unknown

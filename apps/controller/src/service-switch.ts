@@ -8,7 +8,9 @@ import { copyStableDatabaseSnapshot } from "./database-snapshot.js";
 import { inspectUpgradeSnapshot, prepareServiceUpgrade, type ServiceUpgradePlan } from "./service-upgrade.js";
 
 type State = "PREPARED" | "APPLYING" | "SWITCH_UNCONFIRMED" | "SWITCHED" | "ROLLED_BACK";
-interface RecordV1 { version: 1; state: State; plan: ServiceUpgradePlan; restoreValidated: true; secretStoreIncluded: false; nativeStorageIncluded: false; transaction?: { nonce: string; directory: string; markerSha256: string }; [key: string]: unknown }
+type Direction = "forward" | "rollback";
+interface Transaction { nonce: string; directory: string; markerSha256: string; direction?: Direction }
+interface RecordV1 { version: 1; state: State; plan: ServiceUpgradePlan; restoreValidated: true; secretStoreIncluded: false; nativeStorageIncluded: false; transaction?: Transaction; previousTransactions?: Transaction[]; [key: string]: unknown }
 interface Options { recordPath: string; expectedPlanId: string; confirmed: boolean; executor?: LaunchctlExecutor; expectedDataDirectory?: string }
 interface FileOperations { rename: (from: string, to: string) => void; link: (from: string, to: string) => void }
 export interface ServiceSwitchResult { state: "SWITCHED" | "ROLLED_BACK"; planId: string; replayed: boolean; activationRequired: true }
@@ -50,10 +52,11 @@ function assertSource(plan: ServiceUpgradePlan, source: string): void {
   try { if (JSON.stringify(inspectUpgradeSnapshot(snapshot.path)) !== JSON.stringify(plan.database)) throw Error("SERVICE_UPGRADE_PLAN_CHANGED"); } finally { snapshot.close(); }
 }
 async function unloaded(plan: ServiceUpgradePlan, execute: LaunchctlExecutor): Promise<void> { if ((await statusLaunchAgent({ ...plan.previous, plistPath: plan.plistPath, executor: execute })).loaded) throw Error("SERVICE_STOP_REQUIRED"); }
-function markerText(record: RecordV1, recordPath: string): string { return JSON.stringify({ version: 1, kind: "service-definition-switch", planId: record.plan.id, recordPath, nonce: record.transaction!.nonce }); }
+function markerText(record: RecordV1, recordPath: string): string { const transaction=record.transaction!;return JSON.stringify({ version: 1, kind: "service-definition-switch", planId: record.plan.id, recordPath, nonce: transaction.nonce,...(transaction.direction?{direction:transaction.direction}:{}) }); }
+function definitions(record: RecordV1) { return record.transaction?.direction === "rollback" ? {from:record.plan.candidate,to:record.plan.previous}:{from:record.plan.previous,to:record.plan.candidate}; }
 function assertTransaction(record: RecordV1, path: string): void {
   const transaction = record.transaction, parent = dirname(record.plan.plistPath);
-  if (!transaction || !/^[a-f0-9-]{36}$/.test(transaction.nonce) || dirname(transaction.directory) !== parent || !/^\.dispatcher-upgrade-[A-Za-z0-9]+$/.test(basename(transaction.directory))) throw Error("SERVICE_UPGRADE_RECONCILIATION_REQUIRED");
+  if (!transaction || transaction.direction!==undefined&&!['forward','rollback'].includes(transaction.direction) || !/^[a-f0-9-]{36}$/.test(transaction.nonce) || dirname(transaction.directory) !== parent || !/^\.dispatcher-upgrade-[A-Za-z0-9]+$/.test(basename(transaction.directory))) throw Error("SERVICE_UPGRADE_RECONCILIATION_REQUIRED");
   const dir = lstatSync(transaction.directory); if (!dir.isDirectory() || dir.isSymbolicLink() || dir.mode & 0o077 || process.getuid && dir.uid !== process.getuid()) throw Error("SERVICE_UPGRADE_RECONCILIATION_REQUIRED");
   if (digest(markerText(record, path)) !== transaction.markerSha256) throw Error("SERVICE_UPGRADE_RECONCILIATION_REQUIRED");
 }
@@ -64,7 +67,7 @@ function installedHash(record: RecordV1): string | undefined {
   const current = sealed(path, 64 * 1024, 2);
   if (current.stat.nlink === 2) {
     const nextPath = join(record.transaction!.directory, "next.plist"), next = sealed(nextPath, 64 * 1024, 2);
-    if (current.sha256 !== record.plan.candidate.definitionSha256 || next.sha256 !== current.sha256 || next.stat.dev !== current.stat.dev || next.stat.ino !== current.stat.ino) throw Error("SERVICE_UPGRADE_DEFINITION_UNRESOLVED");
+    if (current.sha256 !== definitions(record).to.definitionSha256 || next.sha256 !== current.sha256 || next.stat.dev !== current.stat.dev || next.stat.ino !== current.stat.ino) throw Error("SERVICE_UPGRADE_DEFINITION_UNRESOLVED");
     unlinkSync(nextPath); syncDirectory(dirname(nextPath)); syncDirectory(dirname(path));
   }
   return sealed(path, 64 * 1024).sha256;
@@ -72,37 +75,47 @@ function installedHash(record: RecordV1): string | undefined {
 
 /** Only local definition bytes change; database writes and service activation stay closed. */
 export async function switchServiceUpgrade(input: Options, files: FileOperations = { rename: renameSync, link: linkSync }): Promise<ServiceSwitchResult> {
+  return changeDefinition(input,"forward",files);
+}
+/** A definition-only rollback is qualified only while the prepared database bytes remain unchanged. */
+export async function rollbackServiceUpgrade(input: Options, files: FileOperations = { rename: renameSync, link: linkSync }): Promise<ServiceSwitchResult> {
+  return changeDefinition(input,"rollback",files);
+}
+async function changeDefinition(input: Options, direction: Direction, files: FileOperations): Promise<ServiceSwitchResult> {
   const displace = files.rename, install = files.link;
   const { recordPath: requested, expectedPlanId, confirmed, executor, expectedDataDirectory } = input;
   if (!confirmed) throw Error("SERVICE_UPGRADE_CONFIRMATION_REQUIRED");
   const recordPath = resolve(requested), initial = readRecord(recordPath, expectedPlanId), plan = initial.record.plan, execute = executor ?? launchctl;
   if (expectedDataDirectory && realpathSync(expectedDataDirectory) !== realpathSync(plan.previous.dataDirectory)) throw Error("SERVICE_DATA_DIRECTORY_MISMATCH");
-  if (initial.record.state === "SWITCHED") {
+  const rollback=direction==="rollback",from=rollback?plan.candidate:plan.previous,to=rollback?plan.previous:plan.candidate,completed=rollback?"ROLLED_BACK":"SWITCHED";
+  if (initial.record.state === completed) {
     if (existsSync(`${join(realpathSync(plan.previous.dataDirectory), "dispatcher.sqlite")}.restore-pending`)) throw Error("SERVICE_UPGRADE_RECONCILIATION_REQUIRED");
-    if (sealed(plan.plistPath, 64 * 1024).sha256 !== plan.candidate.definitionSha256) throw Error("SERVICE_UPGRADE_DEFINITION_UNRESOLVED");
-    return { state: "SWITCHED", planId: plan.id, replayed: true, activationRequired: true };
+    if (sealed(plan.plistPath, 64 * 1024).sha256 !== to.definitionSha256) throw Error("SERVICE_UPGRADE_DEFINITION_UNRESOLVED");
+    return { state: completed, planId: plan.id, replayed: true, activationRequired: true };
   }
-  if (initial.record.state !== "PREPARED") throw Error("SERVICE_UPGRADE_RECONCILIATION_REQUIRED");
-  const fresh = await prepareServiceUpgrade({ current: plan.previous, plistPath: plan.plistPath, targetReleaseDirectory: plan.candidate.release!.directory, backupDirectory: plan.backupDirectory, executor: execute });
-  if (fresh.plan.id !== plan.id) throw Error("SERVICE_UPGRADE_PLAN_CHANGED");
+  if (initial.record.state !== (rollback?"SWITCHED":"PREPARED")) throw Error("SERVICE_UPGRADE_RECONCILIATION_REQUIRED");
+  if(!rollback){
+    const fresh = await prepareServiceUpgrade({ current: plan.previous, plistPath: plan.plistPath, targetReleaseDirectory: plan.candidate.release!.directory, backupDirectory: plan.backupDirectory, executor: execute });
+    if (fresh.plan.id !== plan.id) throw Error("SERVICE_UPGRADE_PLAN_CHANGED");
+  }
   const ownership = acquireInstanceLock(plan.previous.dataDirectory), source = join(ownership.dataDirectory, "dispatcher.sqlite"), barrier = `${source}.restore-pending`;
   let record = initial.record, recordHash = initial.sha256, started = false;
   try {
-    assertDatabaseLocationOperational(source); assertSource(plan, source); await unloaded(plan, execute); assertLaunchAgentDefinition({ ...plan.previous, plistPath: plan.plistPath });
+    assertDatabaseLocationOperational(source); assertSource(plan, source); await unloaded(plan, execute); assertLaunchAgentDefinition({ ...from, plistPath: plan.plistPath });
     if (sealed(recordPath).sha256 !== recordHash) throw Error("SERVICE_UPGRADE_RECORD_CHANGED");
     await execute(["disable", `gui/${process.getuid?.() ?? 0}/${LAUNCHD_LABEL}`]);
     const directory = mkdtempSync(join(dirname(plan.plistPath), ".dispatcher-upgrade-")), nonce = randomUUID();
-    record = { ...record, state: "APPLYING", transaction: { nonce, directory, markerSha256: "" } }; record.transaction!.markerSha256 = digest(markerText(record, recordPath));
+    record = { ...record, state: "APPLYING",...(record.transaction?{previousTransactions:[...(record.previousTransactions??[]),record.transaction]}:{}), transaction: { nonce, directory, markerSha256: "",direction } }; record.transaction!.markerSha256 = digest(markerText(record, recordPath));
     recordHash = saveRecord(recordPath, record, recordHash); started = true;
     durable(barrier, markerText(record, recordPath));
-    const next = join(directory, "next.plist"), displaced = join(directory, "previous.plist"); durable(next, launchdPlist(plan.candidate));
-    assertLaunchAgentDefinition({ ...plan.previous, plistPath: plan.plistPath }); displace(plan.plistPath, displaced); syncDirectory(directory); syncDirectory(dirname(plan.plistPath));
-    if (sealed(displaced, 64 * 1024).sha256 !== plan.previous.definitionSha256) throw Error("SERVICE_UPGRADE_DEFINITION_UNRESOLVED");
-    install(next, plan.plistPath); if (installedHash(record) !== plan.candidate.definitionSha256) throw Error("SERVICE_UPGRADE_DEFINITION_UNRESOLVED");
-    assertSource(plan, source); await unloaded(plan, execute); assertControllerReleaseBinding(plan.candidate.release!, plan.candidate.cliPath, plan.candidate.nodePath);
-    record = { ...record, state: "SWITCHED", installedDefinitionChanged: true }; recordHash = saveRecord(recordPath, record, recordHash);
+    const next = join(directory, "next.plist"), displaced = join(directory, "previous.plist"); durable(next, launchdPlist(to));
+    assertLaunchAgentDefinition({ ...from, plistPath: plan.plistPath }); displace(plan.plistPath, displaced); syncDirectory(directory); syncDirectory(dirname(plan.plistPath));
+    if (sealed(displaced, 64 * 1024).sha256 !== from.definitionSha256) throw Error("SERVICE_UPGRADE_DEFINITION_UNRESOLVED");
+    install(next, plan.plistPath); if (installedHash(record) !== to.definitionSha256) throw Error("SERVICE_UPGRADE_DEFINITION_UNRESOLVED");
+    assertSource(plan, source); await unloaded(plan, execute); assertControllerReleaseBinding(to.release!, to.cliPath, to.nodePath);
+    record = { ...record, state: completed, installedDefinitionChanged: !rollback }; recordHash = saveRecord(recordPath, record, recordHash);
     removeMarker(barrier, record.transaction!.markerSha256);
-    return { state: "SWITCHED", planId: plan.id, replayed: false, activationRequired: true };
+    return { state: completed, planId: plan.id, replayed: false, activationRequired: true };
   } catch (error) {
     if (!started) throw error;
     try { saveRecord(recordPath, { ...record, state: "SWITCH_UNCONFIRMED" }, recordHash); } catch { /* Preserve the last durable journal and barrier. */ }
@@ -124,7 +137,7 @@ export async function reconcileServiceUpgrade(input: Options): Promise<ServiceSw
     let actual = installedHash(record);
     if (actual === undefined) {
       const displaced = join(record.transaction!.directory, "previous.plist");
-      if (sealed(displaced, 64 * 1024).sha256 !== plan.previous.definitionSha256) throw Error("SERVICE_UPGRADE_DEFINITION_UNRESOLVED");
+      if (sealed(displaced, 64 * 1024).sha256 !== definitions(record).from.definitionSha256) throw Error("SERVICE_UPGRADE_DEFINITION_UNRESOLVED");
       copyFileSync(displaced, plan.plistPath, constants.COPYFILE_EXCL);
       const fd = openSync(plan.plistPath, constants.O_RDONLY | constants.O_NOFOLLOW); try { fsyncSync(fd); } finally { closeSync(fd); } syncDirectory(dirname(plan.plistPath)); actual = installedHash(record);
     }

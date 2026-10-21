@@ -89,6 +89,11 @@ unloaded supervision. It may finish a known install or restore its captured old
 definition, and removes only its own nonce-bound deployment marker. Unrelated
 restore barriers, changed data and foreign definitions remain blocked. No schema,
 trigger, native effect, data restore or automatic service activation is performed.
+The explicit reverse operation reuses that journal/barrier protocol only after a
+confirmed switch with unchanged prepared database bytes. It retains prior
+transaction locations and records direction so missing-definition recovery restores
+the correct pre-operation bytes. Historical forward records remain readable.
+Once data changes, definition-only rollback is unqualified and remains blocked.
 
 Controller locates its default static root through the owning Web package's
 exported index.html, so deployed packages retain the same UI. Release preflight

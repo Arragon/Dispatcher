@@ -2292,3 +2292,26 @@ Private catalog-diagnostic reports/schema and /tmp/dispatcher-codex-{schema-0163
 read-diagnostic,transport-diagnostic}.log retain metadata only. Earlier real
 native-default execution evidence remains scoped to its earlier trial; this does
 not qualify explicit model/effort or native handoff. Continue independent work.
+
+
+## MAC-01o explicit offline definition rollback
+
+Reuse the same reviewed upgrade journal/barrier for a reverse definition switch.
+The database main/WAL must exactly match preparation; both releases, source/target
+definitions and unloaded supervision are rechecked. Retain prior transaction
+locations and direction, including interrupted retries. Old V1 forward journals
+without direction remain reconcilable. Failed reverse installation restores the
+captured pre-rollback candidate; lost-response reconciliation can confirm the
+installed old definition. Foreign edits/restore markers stay untouched. No data
+restore, schema change, native effect or service activation occurs.
+
+Four new behavior groups first failed due to missing rollback implementation;
+target11 cases then passed. Added original V1 journal compatibility, default build,
+typecheck/lint/boundaries passed; default tests145 files/1456 cases produced one
+failure in the existing concurrent Codex-profile test: simultaneous same-repository
+Git worktree add read another incomplete .git/worktrees/.../commondir. The other
+1455 passed, including rollback. Retain /tmp/dispatcher-service-rollback-{red,
+target,check}.log. Do not call this a passing full gate. Track the concurrency
+failure in R-001; continue an independent scoped correction rather than weaken
+the assertion or serialize the test. Rollback source283c018, compatible schema8
+backup; changed-data recovery and real host service Gates remain open.

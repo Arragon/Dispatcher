@@ -22,7 +22,7 @@ import {createControllerLogDestination} from "./controller-logs.js";
 import {createLocalDatabaseBackup,restoreLocalDatabase} from "./local-backups.js";
 import {assertControllerReleaseBinding,bindControllerRelease,SERVICE_RELEASE_ADMISSION_VERSION} from "./release-manifest.js";
 import {prepareServiceUpgrade} from "./service-upgrade.js";
-import {switchServiceUpgrade,reconcileServiceUpgrade} from "./service-switch.js";
+import {switchServiceUpgrade,rollbackServiceUpgrade,reconcileServiceUpgrade} from "./service-switch.js";
 let controllerLog:{write(message:string):void}|undefined;
 function serviceFailure(code:string):void {
   if(controllerLog)controllerLog.write(JSON.stringify({level:50,time:Date.now(),msg:code})+"\n");else console.error(code);
@@ -133,10 +133,10 @@ async function serviceCommand(command: string, args: string[]): Promise<void> {
 
 async function serviceCommandUnlocked(command: string, args: string[]): Promise<void> {
   const paths = servicePaths(args);
-  if(["apply-upgrade","reconcile-upgrade"].includes(command)){
+  if(["apply-upgrade","rollback-upgrade","reconcile-upgrade"].includes(command)){
     const recordPath=flag(args,"--record"),expectedPlanId=flag(args,"--plan-id");
-    if(!recordPath||!expectedPlanId)throw Error("Use apply-upgrade|reconcile-upgrade --record <prepared-record> --plan-id <reviewed-id> --confirm");
-    const operation=command==="apply-upgrade"?switchServiceUpgrade:reconcileServiceUpgrade;
+    if(!recordPath||!expectedPlanId)throw Error("Use apply-upgrade|rollback-upgrade|reconcile-upgrade --record <prepared-record> --plan-id <reviewed-id> --confirm");
+    const operation=command==="apply-upgrade"?switchServiceUpgrade:command==="rollback-upgrade"?rollbackServiceUpgrade:reconcileServiceUpgrade;
     console.log(JSON.stringify(await operation({recordPath,expectedPlanId,confirmed:args.includes("--confirm"),...((args.includes("--data-dir")||process.env.DISPATCHER_DATA_DIR)?{expectedDataDirectory:paths.root}:{})}),null,2));return;
   }
   if (command === "install") {
@@ -194,8 +194,8 @@ async function main(): Promise<void> {
     try{await configCommand(args);}finally{ownership.release();}
   }
   else if (command === "auth") await authCommand(args);
-  else if (["install", "start", "stop", "restart", "status", "logs", "uninstall", "prepare-upgrade", "apply-upgrade", "reconcile-upgrade"].includes(command)) await serviceCommand(command, args);
-  else throw new Error("Usage: dispatcher serve|config|auth|install|start|stop|restart|status|doctor|logs|backup|restore|prepare-upgrade|apply-upgrade|reconcile-upgrade|runtime-contract|uninstall");
+  else if (["install", "start", "stop", "restart", "status", "logs", "uninstall", "prepare-upgrade", "apply-upgrade", "rollback-upgrade", "reconcile-upgrade"].includes(command)) await serviceCommand(command, args);
+  else throw new Error("Usage: dispatcher serve|config|auth|install|start|stop|restart|status|doctor|logs|backup|restore|prepare-upgrade|apply-upgrade|rollback-upgrade|reconcile-upgrade|runtime-contract|uninstall");
 }
 
 main().catch((error: unknown) => {

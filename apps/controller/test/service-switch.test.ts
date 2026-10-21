@@ -6,7 +6,7 @@ import { DispatcherDatabase } from "@dispatcher/persistence";
 import { DatabaseSync } from "node:sqlite";
 import { upgradeFixture } from "./fixtures/service-upgrade.js";
 import { prepareServiceUpgrade } from "../src/service-upgrade.js";
-import { switchServiceUpgrade, reconcileServiceUpgrade } from "../src/service-switch.js";
+import { switchServiceUpgrade, rollbackServiceUpgrade, reconcileServiceUpgrade } from "../src/service-switch.js";
 import {startLaunchAgent} from "../src/launchd.js";
 
 const roots: string[] = []; afterEach(() => { for (const value of roots.splice(0)) rmSync(value, { recursive: true, force: true }); });
@@ -52,4 +52,42 @@ it("leaves the known deployment barrier intact if a non-cooperating writer chang
 it("rejects service start at the existing database location barrier before supervisor mutation",async()=>{
   const f=await fixture();writeFileSync(f.barrier,'{"kind":"actual-restore"}');f.calls.length=0;
   await expect(startLaunchAgent({...f.input.current,plistPath:f.input.plistPath,executor:f.options.executor})).rejects.toThrowError(expect.objectContaining({code:"RESTORE_RECONCILIATION_REQUIRED"}));expect(f.calls).toHaveLength(0);
+});
+it("rolls a switched definition back without changing data or activating a service and preserves both transactions",async()=>{
+  const f=await fixture(),before=hash(f.path);await switchServiceUpgrade(f.options);
+  const forward=JSON.parse(readFileSync(f.options.recordPath,"utf8")).transaction;
+  expect(await rollbackServiceUpgrade(f.options)).toMatchObject({state:"ROLLED_BACK",replayed:false,activationRequired:true});
+  expect(hash(f.input.plistPath)).toBe(f.previousHash);expect(hash(f.path)).toBe(before);expect(existsSync(f.barrier)).toBe(false);
+  const record=JSON.parse(readFileSync(f.options.recordPath,"utf8"));expect(record.transaction.direction).toBe("rollback");expect(record.previousTransactions).toEqual([forward]);expect(existsSync(join(forward.directory,"previous.plist"))).toBe(true);
+  expect(await rollbackServiceUpgrade(f.options)).toMatchObject({state:"ROLLED_BACK",replayed:true});
+  await expect(switchServiceUpgrade(f.options)).rejects.toThrow("SERVICE_UPGRADE_RECONCILIATION_REQUIRED");
+  expect(f.calls.some(args=>["bootstrap","kickstart","enable"].includes(args[0]!))).toBe(false);
+});
+it("rejects rollback after database writes or without confirmation and preserves the candidate definition",async()=>{
+  const f=await fixture();await switchServiceUpgrade(f.options);
+  await expect(rollbackServiceUpgrade({...f.options,confirmed:false})).rejects.toThrow("SERVICE_UPGRADE_CONFIRMATION_REQUIRED");
+  const db=new DispatcherDatabase(f.path);db.saveEntity("fixture","post-upgrade-write",{changed:true});db.checkpoint();db.close();
+  await expect(rollbackServiceUpgrade(f.options)).rejects.toThrow("SERVICE_UPGRADE_PLAN_CHANGED");
+  expect(hash(f.input.plistPath)).toBe(f.candidateHash);expect(existsSync(f.barrier)).toBe(false);
+});
+it("restores the pre-rollback candidate on a failed rollback install and settles a lost rollback response",async()=>{
+  const f=await fixture();await switchServiceUpgrade(f.options);
+  await expect(rollbackServiceUpgrade(f.options,{rename:renameSync,link:()=>{throw Error("fixture-rollback-install-failure");}})).rejects.toThrow("SERVICE_UPGRADE_SWITCH_UNCONFIRMED");
+  expect(existsSync(f.barrier)).toBe(true);expect(existsSync(f.input.plistPath)).toBe(false);
+  expect(await reconcileServiceUpgrade(f.options)).toMatchObject({state:"SWITCHED"});expect(hash(f.input.plistPath)).toBe(f.candidateHash);expect(existsSync(f.barrier)).toBe(false);
+  await expect(rollbackServiceUpgrade(f.options,{rename:renameSync,link:(from,to)=>{linkSync(from,to);throw Error("fixture-lost-rollback-response");}})).rejects.toThrow("SERVICE_UPGRADE_SWITCH_UNCONFIRMED");
+  expect(await reconcileServiceUpgrade(f.options)).toMatchObject({state:"ROLLED_BACK"});expect(hash(f.input.plistPath)).toBe(f.previousHash);expect(existsSync(f.barrier)).toBe(false);
+  expect(JSON.parse(readFileSync(f.options.recordPath,"utf8")).previousTransactions).toHaveLength(2);
+});
+it("reconciles a version-one forward transaction that predates the direction field",async()=>{
+  const f=await fixture();await expect(switchServiceUpgrade(f.options,{rename:renameSync,link:()=>{throw Error("fixture-pre-direction");}})).rejects.toThrow("SERVICE_UPGRADE_SWITCH_UNCONFIRMED");
+  const record=JSON.parse(readFileSync(f.options.recordPath,"utf8"));delete record.transaction.direction;
+  const marker=JSON.stringify({version:1,kind:"service-definition-switch",planId:record.plan.id,recordPath:f.options.recordPath,nonce:record.transaction.nonce});writeFileSync(f.barrier,marker);record.transaction.markerSha256=createHash("sha256").update(marker).digest("hex");writeFileSync(f.options.recordPath,JSON.stringify(record));
+  expect(await reconcileServiceUpgrade(f.options)).toMatchObject({state:"ROLLED_BACK"});expect(hash(f.input.plistPath)).toBe(f.previousHash);
+});
+it("preserves foreign definitions and unrelated restore barriers during rollback",async()=>{
+  const f=await fixture();await switchServiceUpgrade(f.options);writeFileSync(f.barrier,'{"kind":"actual-restore"}');
+  await expect(rollbackServiceUpgrade(f.options)).rejects.toThrow("RESTORE_RECONCILIATION_REQUIRED");expect(readFileSync(f.barrier,"utf8")).toContain("actual-restore");rmSync(f.barrier);
+  await expect(rollbackServiceUpgrade(f.options,{rename:renameSync,link:(_from,to)=>{writeFileSync(to,"preserve rollback edit",{flag:"wx",mode:0o600});throw Error("fixture-editor");}})).rejects.toThrow("SERVICE_UPGRADE_SWITCH_UNCONFIRMED");
+  await expect(reconcileServiceUpgrade(f.options)).rejects.toThrow("SERVICE_UPGRADE_DEFINITION_UNRESOLVED");expect(readFileSync(f.input.plistPath,"utf8")).toBe("preserve rollback edit");expect(existsSync(f.barrier)).toBe(true);
 });
