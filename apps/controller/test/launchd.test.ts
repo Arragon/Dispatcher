@@ -1,9 +1,10 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync,mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { installLaunchAgent, launchdPlist,readLaunchAgent,statusLaunchAgent, startLaunchAgent,stopLaunchAgent,restartLaunchAgent,uninstallLaunchAgent,LaunchctlError,type LaunchctlExecutor } from "../src/launchd.js";
 import {acquireInstanceLock} from "@dispatcher/persistence";
+import * as release from "../src/release-manifest.js";
 
 const directories: string[] = [];
 afterEach(() => {
@@ -96,5 +97,19 @@ describe("launchd prototype", () => {
     expect(await readLaunchAgent(input.plistPath,async()=>JSON.stringify(value))).toEqual({nodePath:input.nodePath,cliPath:input.cliPath,dataDirectory:input.dataDirectory,logDirectory:input.logDirectory});
     await expect(readLaunchAgent(input.plistPath,async()=>JSON.stringify({...value,ProgramArguments:[...value.ProgramArguments,"--owner-token","private-value"]}))).rejects.toThrow("SERVICE_DEFINITION_INVALID");
     await expect(readLaunchAgent(input.plistPath,async()=>"not JSON private-value")).rejects.toThrow(/^SERVICE_DEFINITION_INVALID$/);
+  });
+  it("roundtrips the fixed release/source pin through its nonsecret plist environment",async()=>{
+    const input={...fixture(),cliPath:"/opt/dispatcher/runtime/dist/cli.js",release:{directory:"/opt/dispatcher",sourceSha:"a".repeat(40)}};
+    expect(launchdPlist(input)).toContain("DISPATCHER_RELEASE_SHA");
+    const definition=await readLaunchAgent(input.plistPath,async()=>JSON.stringify({Label:"dev.dispatcher.controller",ProgramArguments:[input.nodePath,input.cliPath,"serve","--with-runner","--data-dir",input.dataDirectory,"--log-dir",join(input.logDirectory,"runtime")],StandardOutPath:join(input.logDirectory,"controller.log"),StandardErrorPath:join(input.logDirectory,"controller.error.log"),EnvironmentVariables:{DISPATCHER_RELEASE_DIRECTORY:input.release.directory,DISPATCHER_RELEASE_SHA:input.release.sourceSha}}));
+    expect(definition).toMatchObject({release:input.release});
+  });
+  it.each(["install","start","restart"] as const)("rejects a changed bound release before %s mutates launchd or the plist",async action=>{
+    const input={...fixture(),cliPath:"/opt/dispatcher/runtime/dist/cli.js",release:{directory:"/opt/dispatcher",sourceSha:"a".repeat(40)}},executor=vi.fn(async()=>({stdout:"",stderr:""}));const proof=vi.spyOn(release,"assertControllerReleaseBinding").mockImplementation(()=>{throw Error("RELEASE_CONTENT_CHANGED");});
+    try{await expect((action==="install"?installLaunchAgent:action==="start"?startLaunchAgent:restartLaunchAgent)({...input,executor})).rejects.toThrow("RELEASE_CONTENT_CHANGED");expect(executor).not.toHaveBeenCalled();expect(existsSync(input.plistPath)).toBe(false);}finally{proof.mockRestore();}
+  });
+  it("permits confirmed stop of a changed bound release without an activation check",async()=>{
+    const input={...fixture(),cliPath:"/opt/dispatcher/runtime/dist/cli.js",release:{directory:"/opt/dispatcher",sourceSha:"a".repeat(40)}},s=supervisor(input.plistPath),proof=vi.spyOn(release,"assertControllerReleaseBinding").mockImplementation(()=>{throw Error("RELEASE_CONTENT_CHANGED");});
+    try{await stopLaunchAgent({...input,executor:s.executor,waitForExit:async()=>{}});expect(proof).not.toHaveBeenCalled();expect(s.calls.map(args=>args[0])).toEqual(["print","disable","bootout","print"]);}finally{proof.mockRestore();}
   });
 });

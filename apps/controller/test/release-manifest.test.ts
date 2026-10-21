@@ -2,14 +2,23 @@ import {linkSync,mkdirSync,mkdtempSync,readFileSync,readdirSync,realpathSync,ren
 import {tmpdir} from "node:os";
 import {dirname,join} from "node:path";
 import {afterEach,describe,expect,it} from "vitest";
-import {createControllerReleaseManifest,detachReleaseHardlinks,inspectReleaseRuntime,verifyControllerRelease} from "../src/release-manifest.js";
+import {assertControllerReleaseBinding,bindControllerRelease,createControllerReleaseManifest,detachReleaseHardlinks,inspectReleaseRuntime,verifyControllerRelease} from "../src/release-manifest.js";
 
 const roots:string[]=[];function root(){const value=realpathSync(mkdtempSync(join(tmpdir(),"dispatcher-release-")));roots.push(value);return value;}
 afterEach(()=>{for(const path of roots.splice(0))rmSync(path,{recursive:true,force:true});});
 function fixture(){const directory=root(),runtime=join(directory,"runtime");mkdirSync(join(runtime,"dist"),{recursive:true});writeFileSync(join(runtime,"package.json"),JSON.stringify({name:"@dispatcher/controller",type:"module"}));writeFileSync(join(runtime,"dist","cli.js"),'export {};\n');return {directory,runtime};}
-const metadata=()=>({sourceSha:"a".repeat(40),nodePath:realpathSync(process.execPath),nodeVersion:process.versions.node,pnpmVersion:"11.19.0",lockSha256:"b".repeat(64),deployedLockSha256:"c".repeat(64),platform:process.platform,architecture:process.arch,schemaVersion:8,writerProtocol:4});
+const metadata=()=>({sourceSha:"a".repeat(40),nodePath:realpathSync(process.execPath),nodeVersion:process.versions.node,pnpmVersion:"11.19.0",lockSha256:"b".repeat(64),deployedLockSha256:"c".repeat(64),platform:process.platform,architecture:process.arch,schemaVersion:8,writerProtocol:4,releaseAdmissionVersion:1 as const});
 function seal(f:ReturnType<typeof fixture>){const manifest=createControllerReleaseManifest(f.runtime,metadata());writeFileSync(join(f.directory,"release.json"),JSON.stringify(manifest),{mode:0o600});return manifest;}
 describe("fixed Controller release closure",()=>{
+ it("binds exact release/source/Node/CLI identity and rejects a changed source pin",()=>{
+  const f=fixture();seal(f);const cli=join(f.runtime,"dist","cli.js"),binding=bindControllerRelease(cli,realpathSync(process.execPath));expect(binding).toEqual({directory:f.directory,sourceSha:"a".repeat(40)});expect(()=>assertControllerReleaseBinding(binding,cli,realpathSync(process.execPath))).not.toThrow();expect(()=>assertControllerReleaseBinding({...binding,sourceSha:"d".repeat(40)},cli,realpathSync(process.execPath))).toThrow("RELEASE_BINDING_CHANGED");
+ });
+ it("keeps v1 package manifests inspectable but never infers their missing startup admission",()=>{
+  const f=fixture(),current=seal(f),legacy={...current,version:1};delete (legacy as {releaseAdmissionVersion?:number}).releaseAdmissionVersion;writeFileSync(join(f.directory,"release.json"),JSON.stringify(legacy));expect(verifyControllerRelease(f.directory).manifest.version).toBe(1);expect(()=>bindControllerRelease(join(f.runtime,"dist","cli.js"),realpathSync(process.execPath))).toThrow("RELEASE_ADMISSION_UNSUPPORTED");
+ });
+ it("refuses to bind a different entrypoint even when its file is inside a sealed release",()=>{
+  const f=fixture(),other=join(f.runtime,"dist","other.js");writeFileSync(other,"export {};\n");seal(f);expect(()=>bindControllerRelease(other,realpathSync(process.execPath))).toThrow("RELEASE_BINDING_CHANGED");
+ });
  it("seals real file bytes and relative links and remains valid after moving the release",()=>{
   const f=fixture();symlinkSync("cli.js",join(f.runtime,"dist","alias.js"));const manifest=seal(f);expect(manifest.runtime.files.length).toBe(3);expect(verifyControllerRelease(f.directory)).toMatchObject({manifest:{sourceSha:"a".repeat(40)},cliPath:join(f.runtime,"dist","cli.js")});const moved=join(root(),"moved");renameSync(f.directory,moved);expect(verifyControllerRelease(moved).cliPath).toBe(join(moved,"runtime","dist","cli.js"));
  });

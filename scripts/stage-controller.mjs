@@ -57,14 +57,16 @@ async function smoke(runtime){
  `;
  const env={...process.env,NODE_PATH:'',NODE_OPTIONS:''};
  const result=await execute(process.execPath,['--input-type=module','-e',code,runtime],{cwd:runtime,env,maxBuffer:1024*1024,timeout:30000});
- return JSON.parse(result.stdout.trim());
+ const contract=JSON.parse((await execute(process.execPath,[join(runtime,'dist/cli.js'),'runtime-contract'],{cwd:runtime,env,maxBuffer:64*1024,timeout:5000})).stdout);
+ if(contract.releaseAdmissionVersion!==1)throw Error('RELEASE_ADMISSION_UNSUPPORTED');
+ return {...JSON.parse(result.stdout.trim()),releaseAdmissionVersion:contract.releaseAdmissionVersion};
 }
 async function main(){
  const args=process.argv.slice(2),source=resolve(dirname(fileURLToPath(import.meta.url)),'..');if(args[0]==='--')args.shift();
  const helper=()=>import(pathToFileURL(join(source,'apps/controller/dist/release-manifest.js')).href);
  if(args[0]==='verify'){
   const directory=args[1];if(!directory)throw Error('Use stage-controller.mjs verify <release-directory>');
-  const verified=(await helper()).verifyControllerRelease(directory);console.log(JSON.stringify({verified:true,sourceSha:verified.manifest.sourceSha,cliPath:verified.cliPath,nodePath:verified.nodePath,smokeScope:verified.manifest.smokeScope}));return;
+  const verified=(await helper()).verifyControllerRelease(directory);console.log(JSON.stringify({verified:true,sourceSha:verified.manifest.sourceSha,cliPath:verified.cliPath,nodePath:verified.nodePath,smokeScope:verified.manifest.smokeScope,activationAdmission:verified.manifest.version===2&&verified.manifest.releaseAdmissionVersion===1}));return;
  }
  const index=args.indexOf('--out'),output=index>=0?args[index+1]:undefined;
  if(!output||!isAbsolute(output))throw Error('Use pnpm stage:controller --out <new-absolute-release-directory>');
@@ -88,7 +90,7 @@ async function main(){
   const moved=join(release,'runtime-relocated');renameSync(runtime,moved);relocated=true;
   console.log(JSON.stringify({phase:'relocated-smoke',sourceSha}));const result=await smoke(moved);renameSync(moved,runtime);relocated=false;
   if(requireCleanSource(source)!==sourceSha)throw Error('RELEASE_SOURCE_CHANGED');
-  const manifest=createControllerReleaseManifest(runtime,{sourceSha,nodePath,nodeVersion:process.versions.node,pnpmVersion,lockSha256,deployedLockSha256:sha256(join(runtime,'pnpm-lock.yaml')),platform:process.platform,architecture:process.arch,schemaVersion:result.schemaVersion,writerProtocol:result.writerProtocol});
+  const manifest=createControllerReleaseManifest(runtime,{sourceSha,nodePath,nodeVersion:process.versions.node,pnpmVersion,lockSha256,deployedLockSha256:sha256(join(runtime,'pnpm-lock.yaml')),platform:process.platform,architecture:process.arch,schemaVersion:result.schemaVersion,writerProtocol:result.writerProtocol,releaseAdmissionVersion:result.releaseAdmissionVersion});
   writeFileSync(join(release,'release.json'),JSON.stringify(manifest,null,2)+'\n',{flag:'wx',mode:0o600});rmSync(join(release,'release-preparing.json'));
   const verified=verifyControllerRelease(release);console.log(JSON.stringify({phase:'verified',releaseDirectory:release,cliPath:verified.cliPath,nodePath:verified.nodePath,sourceSha,files:manifest.runtime.files.length,totalBytes:manifest.runtime.totalBytes,sourceDependencyStateUnchanged:true,smoke:result}));
  }catch(error){

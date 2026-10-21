@@ -20,6 +20,7 @@ import {acquireInstanceLock} from "@dispatcher/persistence";
 import {inspectLocalController} from "./doctor.js";
 import {createControllerLogDestination,readControllerLogTail} from "./controller-logs.js";
 import {createLocalDatabaseBackup,restoreLocalDatabase} from "./local-backups.js";
+import {assertControllerReleaseBinding,bindControllerRelease,SERVICE_RELEASE_ADMISSION_VERSION} from "./release-manifest.js";
 let controllerLog:{write(message:string):void}|undefined;
 function serviceFailure(code:string):void {
   if(controllerLog)controllerLog.write(JSON.stringify({level:50,time:Date.now(),msg:code})+"\n");else console.error(code);
@@ -44,6 +45,8 @@ function servicePaths(args: string[]) {
 }
 
 async function serve(args: string[]): Promise<void> {
+  const releaseDirectory=process.env.DISPATCHER_RELEASE_DIRECTORY,releaseSha=process.env.DISPATCHER_RELEASE_SHA;
+  if(releaseDirectory!==undefined||releaseSha!==undefined){if(!releaseDirectory||!releaseSha)throw Error("RELEASE_BINDING_INVALID");assertControllerReleaseBinding({directory:releaseDirectory,sourceSha:releaseSha},realpathSync(fileURLToPath(import.meta.url)),realpathSync(process.execPath));}
   const ownership=acquireInstanceLock(dataDirectory(args));
   let service:ControllerService;
   try{
@@ -123,7 +126,8 @@ async function serviceCommand(command: string, args: string[]): Promise<void> {
   if (command === "install") {
     const cliPath = realpathSync(resolve(flag(args,"--cli-path",fileURLToPath(import.meta.url))!)),nodePath=realpathSync(process.execPath);
     accessSync(cliPath,constants.R_OK);accessSync(nodePath,constants.X_OK);
-    await installLaunchAgent({ plistPath: paths.plist, nodePath, cliPath, dataDirectory: paths.root, logDirectory: paths.logs });
+    const release=bindControllerRelease(cliPath,nodePath);
+    await installLaunchAgent({ plistPath: paths.plist, nodePath, cliPath, dataDirectory: paths.root, logDirectory: paths.logs,release });
     console.log(`Installed ${LAUNCHD_LABEL}`);
     return;
   }
@@ -132,7 +136,11 @@ async function serviceCommand(command: string, args: string[]): Promise<void> {
   if(command==="start")await startLaunchAgent(input);
   else if(command==="stop")await stopLaunchAgent(input);
   else if(command==="restart")await restartLaunchAgent(input);
-  else if(command==="status")console.log(JSON.stringify({label:LAUNCHD_LABEL,...definition,...await statusLaunchAgent(input)},null,2));
+  else if(command==="status"){
+    let releaseIntegrity:{state:"verified"|"unverified"|"legacy";reasonCode?:string}={state:"legacy"};
+    if(definition.release)try{assertControllerReleaseBinding(definition.release,definition.cliPath,definition.nodePath);releaseIntegrity={state:"verified"};}catch(error){releaseIntegrity={state:"unverified",reasonCode:error instanceof Error&&/^RELEASE_[A-Z_]+$/.test(error.message)?error.message:"RELEASE_INTEGRITY_UNVERIFIED"};}
+    console.log(JSON.stringify({label:LAUNCHD_LABEL,...definition,...await statusLaunchAgent(input),releaseIntegrity},null,2));
+  }
   else if(command==="uninstall")await uninstallLaunchAgent(input);
   else if(command==="logs"){
     const path=join(definition.logDirectory,"runtime","controller.log"),lines=Number(flag(args,"--lines","100"));
@@ -150,6 +158,7 @@ async function main(): Promise<void> {
   const args = normalizeCliArguments(process.argv.slice(2));
   const command = args[0] ?? "serve";
   if (command === "serve") await serve(args);
+  else if(command==="runtime-contract")console.log(JSON.stringify({releaseAdmissionVersion:SERVICE_RELEASE_ADMISSION_VERSION,scope:"controller-release-startup"}));
   else if(command==="doctor")await doctor(args);
   else if(command==="backup"){
     const out=flag(args,"--out");if(!out)throw Error("Use backup --data-dir <directory> --out <new-bundle-directory>");
@@ -165,7 +174,7 @@ async function main(): Promise<void> {
   }
   else if (command === "auth") await authCommand(args);
   else if (["install", "start", "stop", "restart", "status", "logs", "uninstall"].includes(command)) await serviceCommand(command, args);
-  else throw new Error("Usage: dispatcher serve|config|auth|install|start|stop|restart|status|doctor|logs|backup|restore|uninstall");
+  else throw new Error("Usage: dispatcher serve|config|auth|install|start|stop|restart|status|doctor|logs|backup|restore|runtime-contract|uninstall");
 }
 
 main().catch((error: unknown) => {

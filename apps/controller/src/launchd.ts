@@ -6,9 +6,10 @@ import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import {acquireInstanceLock} from "@dispatcher/persistence";
 import {readControllerLogTail} from "./controller-logs.js";
+import {assertControllerReleaseBinding,type ControllerReleaseBinding} from "./release-manifest.js";
 
 export const LAUNCHD_LABEL = "dev.dispatcher.controller";
-export interface LaunchAgentDefinition {nodePath:string;cliPath:string;dataDirectory:string;logDirectory:string}
+export interface LaunchAgentDefinition {nodePath:string;cliPath:string;dataDirectory:string;logDirectory:string;release?:ControllerReleaseBinding}
 export type LaunchctlExecutor = (args: string[]) => Promise<{ stdout: string; stderr: string }>;
 interface LaunchAgentOptions extends LaunchAgentDefinition {plistPath:string;executor?:LaunchctlExecutor;uid?:number;waitForExit?:(pid:number)=>Promise<void>}
 export interface LaunchAgentStatus {loaded:boolean;state?:string;pid?:number;lastExitCode?:number}
@@ -20,12 +21,14 @@ function absolutePath(value:string):void {
   if(typeof value!=="string"||!isAbsolute(value)||Array.from(value).some(character=>character.charCodeAt(0)<32||character.charCodeAt(0)===127))throw Error("SERVICE_PATH_INVALID");
 }
 function stablePaths(input:LaunchAgentDefinition):void {
-  for(const value of Object.values(input))absolutePath(value);
+  for(const value of [input.nodePath,input.cliPath,input.dataDirectory,input.logDirectory])absolutePath(value);
+  if(input.release){absolutePath(input.release.directory);if(!/^[a-f0-9]{40}$/.test(input.release.sourceSha))throw Error("SERVICE_RELEASE_INVALID");}
   for(const value of [input.nodePath,input.cliPath,input.dataDirectory,input.logDirectory])if(normalize(value).includes("/.codex/worktrees/"))throw Error("SERVICE_PATH_INVALID: select an absolute persistent deployment outside managed worktrees");
   for(const value of [input.nodePath,input.cliPath])if(["/tmp/","/private/tmp/","/var/folders/","/private/var/folders/"].some(prefix=>normalize(value).startsWith(prefix)))throw Error("SERVICE_PATH_INVALID: temporary runtime paths cannot survive login or cleanup");
 }
 export function launchdPlist(input: LaunchAgentDefinition): string {
   stablePaths(input);
+  const releaseEnvironment=input.release?`<key>DISPATCHER_RELEASE_DIRECTORY</key><string>${xml(input.release.directory)}</string><key>DISPATCHER_RELEASE_SHA</key><string>${input.release.sourceSha}</string>`:"";
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -41,7 +44,7 @@ export function launchdPlist(input: LaunchAgentDefinition): string {
     <string>--log-dir</string><string>${xml(join(input.logDirectory,"runtime"))}</string>
   </array>
   <key>WorkingDirectory</key><string>${xml(input.dataDirectory)}</string>
-  <key>EnvironmentVariables</key><dict><key>PATH</key><string>${xml(`${dirname(input.nodePath)}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin`)}</string></dict>
+  <key>EnvironmentVariables</key><dict><key>PATH</key><string>${xml(`${dirname(input.nodePath)}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin`)}</string>${releaseEnvironment}</dict>
   <key>Umask</key><integer>63</integer>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
@@ -76,6 +79,7 @@ export async function statusLaunchAgent(input:LaunchAgentOptions):Promise<Launch
   return {loaded:true,...(state?{state}:{}),...(pid&&Number.isSafeInteger(Number(pid))?{pid:Number(pid)}:{}),...(exit&&Number.isSafeInteger(Number(exit))?{lastExitCode:Number(exit)}:{})};
 }
 export async function startLaunchAgent(input:LaunchAgentOptions):Promise<void>{
+  if(input.release)assertControllerReleaseBinding(input.release,input.cliPath,input.nodePath);
   stablePaths({nodePath:input.nodePath,cliPath:input.cliPath,dataDirectory:input.dataDirectory,logDirectory:input.logDirectory});
   const state=await statusLaunchAgent(input),execute=input.executor??launchctl;
   await execute(["enable",target(input)]);
@@ -102,10 +106,11 @@ export async function stopLaunchAgent(input:LaunchAgentOptions):Promise<void>{
   // A missing launchd label is not evidence that a manually started Controller stopped.
   const ownership=acquireInstanceLock(input.dataDirectory);ownership.release();
 }
-export async function restartLaunchAgent(input:LaunchAgentOptions):Promise<void>{await stopLaunchAgent(input);await startLaunchAgent(input);}
+export async function restartLaunchAgent(input:LaunchAgentOptions):Promise<void>{if(input.release)assertControllerReleaseBinding(input.release,input.cliPath,input.nodePath);await stopLaunchAgent(input);await startLaunchAgent(input);}
 export async function uninstallLaunchAgent(input:LaunchAgentOptions):Promise<void>{await stopLaunchAgent(input);if(existsSync(input.plistPath))unlinkSync(input.plistPath);}
 export async function installLaunchAgent(input:LaunchAgentOptions):Promise<void>{
-  absolutePath(input.plistPath);const content=launchdPlist({nodePath:input.nodePath,cliPath:input.cliPath,dataDirectory:input.dataDirectory,logDirectory:input.logDirectory});
+  if(input.release)assertControllerReleaseBinding(input.release,input.cliPath,input.nodePath);
+  absolutePath(input.plistPath);const content=launchdPlist(input);
   if(existsSync(input.plistPath)){
     const file=lstatSync(input.plistPath);if(!file.isFile()||file.isSymbolicLink()||file.nlink!==1)throw Error("SERVICE_DEFINITION_UNSAFE");
     if(readFileSync(input.plistPath,"utf8")!==content)throw Error("SERVICE_UPGRADE_REQUIRED: retain the existing definition and use a reviewed upgrade");
@@ -126,10 +131,15 @@ export async function readLaunchAgent(plistPath:string,read:(path:string)=>Promi
   absolutePath(plistPath);
   const value=JSON.parse(await read(plistPath)) as Record<string,unknown>,args=value.ProgramArguments;
   if(value.Label!==LAUNCHD_LABEL||!Array.isArray(args)||![6,8].includes(args.length)||!args.every(arg=>typeof arg==="string")||args[2]!=="serve"||args[3]!=="--with-runner"||args[4]!=="--data-dir"||typeof value.StandardOutPath!=="string"||typeof value.StandardErrorPath!=="string")throw Error("SERVICE_DEFINITION_INVALID");
-  const definition={nodePath:args[0] as string,cliPath:args[1] as string,dataDirectory:args[5] as string,logDirectory:dirname(value.StandardOutPath)};
-  for(const path of Object.values(definition))absolutePath(path);
+  const definition:LaunchAgentDefinition={nodePath:args[0] as string,cliPath:args[1] as string,dataDirectory:args[5] as string,logDirectory:dirname(value.StandardOutPath)};
+  for(const path of [definition.nodePath,definition.cliPath,definition.dataDirectory,definition.logDirectory])absolutePath(path);
   if(value.StandardOutPath!==join(definition.logDirectory,"controller.log")||value.StandardErrorPath!==join(definition.logDirectory,"controller.error.log"))throw Error("SERVICE_DEFINITION_INVALID");
   if(args.length===8&&(args[6]!=="--log-dir"||args[7]!==join(definition.logDirectory,"runtime")))throw Error("SERVICE_DEFINITION_INVALID");
+  if(value.EnvironmentVariables!==undefined){
+    if(!value.EnvironmentVariables||typeof value.EnvironmentVariables!=="object"||Array.isArray(value.EnvironmentVariables))throw Error("SERVICE_DEFINITION_INVALID");
+    const env=value.EnvironmentVariables as Record<string,unknown>,directory=env.DISPATCHER_RELEASE_DIRECTORY,sourceSha=env.DISPATCHER_RELEASE_SHA;
+    if(directory!==undefined||sourceSha!==undefined){if(typeof directory!=="string"||typeof sourceSha!=="string"||!/^[a-f0-9]{40}$/.test(sourceSha))throw Error("SERVICE_DEFINITION_INVALID");absolutePath(directory);definition.release={directory,sourceSha};}
+  }
   return definition;
   }catch(error){throw Error("SERVICE_DEFINITION_INVALID",{cause:error});}
 }
