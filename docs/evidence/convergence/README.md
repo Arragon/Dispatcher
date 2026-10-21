@@ -2582,3 +2582,98 @@ development,10000-development}.log and /tmp/dispatcher-benchmark-smoke-history.l
 Unpackaged/short windows cannot qualify a fixed candidate or complete P4.
 Rollback source5eda9d0; no persisted format or actual user data/service change.
 Official quota checked after unit; no reset used.
+
+## Whole-branch review and single Important-fix pass
+
+One fresh independent reviewer inspected the production range19db456..4e76656
+(77 commits/211 files; review package retained privately at
+/tmp/dispatcher-convergence-review-19db456-4e76656.diff). This was a broad static
+risk review with implementation/test inspection, not an exhaustive runtime Gate.
+No Critical or Minor findings were reported. The verdict was partial candidate
+"with fixes", explicitly not A/B acceptance or service activation. No second
+review is requested; remaining implementation and external Gates stay open.
+
+Ruling: accept Important automatic-verification replay finding — the mounted
+advance path lacked per-command durable send identity, so revision loss or a
+crash could invoke a registered command twice — effects may overlap unless held.
+Each command now persists SENDING before Registry.run and SETTLED with its result
+only under the captured Task/control/lease fence; uncertainty persists UNKNOWN.
+Local VERIFYING startup is held for reconciliation, including old records with
+no receipts. This intentionally sacrifices automatic recovery availability;
+phase alone cannot prove an invocation did not happen. No schema downgrade,
+receipt deletion or automatic retry/reconciliation endpoint is introduced.
+
+Ruling: accept Important snapshot Git-queue finding — snapshot add bypassed the
+physical common-directory queue used by Manager create/remove — incomplete Git
+administration could break unrelated task preparation. Snapshot add now uses
+that same mutation owner and rechecks authority after queue admission. Ownership
+remains process-local; external Git processes are not serialized by this queue.
+
+RED reproduced revision-change second advance200 and crash-copy command count2;
+the initial blocked second-call fixture was corrected to resolve its duplicate
+immediately, giving a concrete replay assertion instead of a test timeout.
+SQLite online backup captures the actual SENDING/VERIFYING crash window into a
+separate fixture; restart retains UNKNOWN, command count1 and zero native starts.
+Controlled real-Git overlap tests failed snapshot-vs-create and snapshot-vs-remove,
+then passed with the shared queue; queued authority revocation creates no snapshot.
+Related target5 files26 tests pass. Red logs /tmp/dispatcher-final-review-red.log
+and /tmp/dispatcher-final-review-replay-red.log; green target/build logs
+/tmp/dispatcher-final-review-{build,target,broad-target}.log. Full default gate
+is recorded below after completion. No tests were skipped or weakened.
+
+Reviewer declined-to-judge rulings:
+
+- Final: Ruling: keep actual GUI/account/takeover/cross-device Gates open in R-002/003/018
+  — no such operations were qualified — an incorrect promotion risks real writes.
+- Final: Ruling: keep real Pi protocol/default composition open in R-019 — the port is
+  internal and unregistered — advertising it would imply unsupported capability.
+- Final: Ruling: keep legacy usage origins/quota/price admission open in R-010/014 — pure
+  engine tests cannot establish provenance — false precision would mislead costs.
+- Final: Ruling: keep changed-data restore, credentials/native-store and real launchd
+  lifecycle open in R-006/013 — local barriers do not prove activation/recovery —
+  a mistaken release could strand user data or an owned process.
+- Final: Ruling: keep browser/slow-reader/soak performance open in R-004 — synthetic API
+  and controlled SSE evidence has narrower scope — real load could exceed budget.
+- Final: Ruling: retain source restore checks from CV-01 and the latest11-file hash
+  recheck as implementer evidence, not independent reviewer verification; keep
+  third-party license qualification open in R-017 — reviewer did not inspect
+  originals/licenses — omission could lose provenance or violate obligations.
+- Final: Ruling: keep unexecuted paths and formal Gates open — whole-range review is
+  static, with separate default-suite evidence — review cannot prove real runtime
+  semantics for every provider/account/system condition.
+
+Rollback uses source4e76656 with a compatible schema8 backup. New send receipts
+must be retained; rolling an old binary onto a data directory with uncertain
+verification is not an authorized recovery method. Original workspaces, frozen
+WIP, private provider evidence and real service installation remain untouched.
+
+Final: Ruling: append schema9/writer5 for the new automatic verification contract
+— protocol4 binaries can ignore UNKNOWN receipts and replay commands, so rejecting
+their startup and already-open writes is required — rollback now needs the
+pre-upgrade schema8 backup plus its compatible binary, rather than reusing schema9.
+Migration1–8 source text is byte-identical to4e76656 (migrations block prefix SHA256
+e2ce5dcfb4b6c08c443a50d7b2ee3226f966d2f22f770c02413e3e003e9af2a9).
+New writer regressions4 first failed, then passed: protocol4 live/raw/new-open
+rejection; failed migration/outer rollback restore trigger SQL and writer4; schema8
+archive uses writer4, only its restored copy upgrades to9 behind the barrier.
+Upgrade quiescence separately rejects SENDING/UNKNOWN verification receipts even
+without an active Run (two RED→GREEN cases). The protocol change intentionally
+updates latest-schema expectations, current release fixtures and the future-schema
+sentinel to10; old migration recovery/data assertions remain. No skips/suppression.
+Target15 files121 tests pass after fixing two stale fixtures (future9 collision;
+the deliberately non-cooperating writer now registers current5, preserving its
+barrier-bypass simulation). Logs /tmp/dispatcher-final-review-{writer-red,
+writer-target,upgrade-red,upgrade-target,persistence-build,persistence-target,
+persistence-final-target,compat-target}.log. Initial pre-protocol default passed
+154 files1597 tests72.51s; it is superseded by the final writer-check gate below.
+
+Final: fixed automatic verification uncertain replay — Task revision-change and
+SQLite crash-copy restart tests RED→GREEN, writer/upgrade regressions RED→GREEN,
+suite1604/1604 (155 files); default pnpm check includes build/type/lint/boundaries
+and passes73.03s. Final log /tmp/dispatcher-final-review-writer-check.log.
+Final: fixed verification snapshot bypassing common-directory queue — snapshot
+vs Manager create/remove tests RED→GREEN plus queued-authority rejection, same
+green suite1604/1604. No re-review; no deferred Minor findings were reported.
+All three original source SHAs and11 tracked/untracked content hashes rechecked
+unchanged after the fix pass. Official quota last observed11%; check again after
+the completed unit. A/B formal Gates remain open and the worktree is retained.

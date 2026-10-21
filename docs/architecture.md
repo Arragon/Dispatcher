@@ -187,7 +187,15 @@ automatically reopen terminal tasks.
 
 Background advancement scans ACTIVE, VERIFYING and DELIVERING. RESOURCE_BLOCKED
 is resumed through resource recovery or explicit resume, and WAITING_USER
-through user input. Run advancement/dispatch exclusivity and messaging inbox
+through user input. Automatic local verification journals each registered command
+as SENDING before process creation and SETTLED only after the captured Task,
+control and lease fences still hold. An uncertain result remains UNKNOWN; a
+Controller restart holds local VERIFYING Runs for explicit reconciliation,
+including legacy records without invocation receipts. It never repeats a command
+from the stored phase alone. Verification snapshot creation shares the physical
+Git common-directory mutation queue with managed worktree creation/removal and
+rechecks authority after queue admission.
+Run advancement/dispatch exclusivity and messaging inbox
 claiming are within one Controller process; they are not multi-process locks
 or database CAS. Delivery evidence revision CAS does not change that deployment
 boundary.
@@ -286,7 +294,11 @@ copy upgrades; rollback restores both SQLite and connection writer state.
 Migration 8 (`guarded_controller_start_writer_protocol`) raises the protocol to 4
 for ordinary guarded local startup, rejecting already-open protocol-3
 intermediate writers. Migration entries 1–7 remain unchanged. Schema-7 backups
-use writer 3; only a restored copy upgrades to schema 8 behind the restore barrier.
+use writer 3; only a restored copy upgrades behind the restore barrier.
+Migration 9 (`automatic_verification_receipt_writer_protocol`) raises the protocol
+to 5 for non-replayable automatic verification. Entries 1–8 remain unchanged;
+already-open protocol-4 connections fail writes, and old catalogs reject schema9.
+Schema-8 archives retain writer4; restored copies upgrade to schema9 separately.
 Connections register `dispatcher_writer_protocol()` before writes; upgraded
 triggers reject older writers. Nested repository operations use savepoints so
 a caught inner failure cannot partially commit native identity changes.
@@ -380,7 +392,8 @@ reconciliation rather than accepting stale startup. Basic execution-context and
 native model-catalog fingerprints have distinct meanings; final admission pins
 the former while the existing selection preflight validates the latter. Remote
 startup retains its separate owning-Runner contract pending CV-12 composition.
-Guarded local startup requires the schema-8 minimum writer protocol; native
+Guarded local startup was introduced with schema8; current automatic verification
+requires schema9/writer5. Native
 control remains unavailable until its remaining runtime composition is qualified.
 Failure revokes and aborts its original owned verification command before
 waiting for the Session lane, then requires both adapter stop and owned command

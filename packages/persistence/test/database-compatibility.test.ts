@@ -61,7 +61,7 @@ it("rolls back the convergence writer upgrade and keeps the previous connection 
     expect(db.getEntity("receipt","temporary")).toBeUndefined();
     expect(()=>db.saveEntity("receipt","old-writer",{id:"old-writer"})).not.toThrow();
     db.migrate();
-    expect(db.schemaVersion()).toBe(8);
+    expect(db.schemaVersion()).toBe(9);
     expect(db.getEntity("receipt","old-writer")).toEqual({id:"old-writer"});
   } finally {db.close();}
 });
@@ -73,6 +73,6 @@ it("restores connection writer state when an outer transaction rolls back a succ
     expect(db.schemaVersion()).toBe(5);
     expect(()=>db.saveEntity("receipt","after-rollback",{id:"after-rollback"})).not.toThrow();
     db.migrate();
-    expect(db.schemaVersion()).toBe(8);
+    expect(db.schemaVersion()).toBe(9);
   } finally {db.close();}
 });

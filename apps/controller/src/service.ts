@@ -245,6 +245,7 @@ const ADVANCEABLE_RUN_STATES = new Set<Run["state"]>(["ACTIVE", "VERIFYING", "DE
 
 interface SessionStopIntent {version:1;actorId:string;operation:"cancel"|"fail"|"cleanup-start";fence:MutationFence;requestedAt:string}
 interface LocalStartAdmission {fence:MutationFence;adapter:AgentAdapter;beforeSend():void;settled(outcome:AdapterStartOutcome):void;assertProjection():void}
+interface AutomaticVerificationCommand {version:1;id:string;runId:string;generation:number;commandId:string;fence:MutationFence;semanticsHash:string;state:"SENDING"|"SETTLED"|"UNKNOWN";result?:Awaited<ReturnType<VerificationRegistry["run"]>>}
 interface SessionAuthority {version:1;fingerprint:string;repositoryId?:string;stopState:NativeSessionConsoleView["stopState"];stopIntent?:SessionStopIntent}
 type BoundSession=AdapterSession&{authority?:SessionAuthority};
 class DatabaseSessionStore implements SessionStore {
@@ -712,6 +713,17 @@ export class ControllerService {
   private reconcileLocalStartJournals():void {
     for(const value of this.database.listEntities<JsonValue>("run")){
       const run=value as unknown as Run;
+      if(run.state==="VERIFYING"&&!this.configuration.current().config.runners.some(runner=>runner.id===run.runnerId&&runner.mode==="remote")){
+        this.database.transaction(()=>{
+          for(const value of this.database.listEntities<JsonValue>("run-verification-command")){
+            const receipt=value as unknown as AutomaticVerificationCommand;
+            if(receipt.runId===run.id&&receipt.state==="SENDING")this.database.saveEntity("run-verification-command",receipt.id,json({...receipt,state:"UNKNOWN"}));
+          }
+          // Old VERIFYING records without receipts cannot prove no command was sent.
+          this.markRemoteUnavailable(run.id,"Automatic verification requires reconciliation after Controller restart","VERIFICATION_OUTCOME_UNKNOWN",run);
+        });
+        continue;
+      }
       if(!["STARTING","ACTIVE","FAILED"].includes(run.state)||!isGuardedControllerStart(this.database,run))continue;
       this.database.transaction(()=>{
         const current=this.database.getEntity<JsonValue>("run",run.id) as unknown as Run,command=this.nativeInteractions.startForRun(run.id),task=this.database.getCanonicalTask<JsonValue>(run.taskId);
@@ -2045,17 +2057,35 @@ export class ControllerService {
         for (const command of frozen ?? repository!.verificationCommands) verification.register(command);
         const controller = new AbortController();
         const settled = (async () => {
-          for (const commandId of contract.verification) {
+          for (const [index,commandId] of contract.verification.entries()) {
             this.fenceDelivery(run, "verify");
-            let result;
-            try { result = await verification.run(commandId, run.worktree!, controller.signal); }
-            catch (error) {
-              if (controller.signal.aborted) throw error;
-              if (verification.list().some(command => command.id === commandId)) {
-                this.markRemoteUnavailable(run.id, "Verification process cleanup is unconfirmed", "NATIVE_OUTCOME_UNKNOWN", run);
-                throw error;
+            const command=verification.list().find(command=>command.id===commandId);
+            if(!command){summaries.push(`${commandId}:unregistered`);blocked=true;continue;}
+            const id=contentHash(["automatic-verification",run.id,run.generation,index]);
+            const fence=this.nativeInteractions.fenceFor(run,`verify:${id}`),semanticsHash=contentHash({contract,command});
+            const prior=this.database.getEntity<JsonValue>("run-verification-command",id) as unknown as AutomaticVerificationCommand|undefined;
+            const receipt:AutomaticVerificationCommand=prior??{version:1,id,runId:run.id,generation:run.generation,commandId,fence,semanticsHash,state:"SENDING"};
+            let result:Awaited<ReturnType<VerificationRegistry["run"]>>;
+            try {
+              if(prior){
+                if(prior.state!=="SETTLED"||!prior.result||prior.semanticsHash!==semanticsHash||!isDeepStrictEqual(prior.fence,fence))throw new AdapterContractError("VERIFICATION_OUTCOME_UNKNOWN","Original verification must be reconciled before another invocation");
+                result=prior.result;
+              }else{
+                // Commit the send identity before spawning; missing acknowledgement never permits replay.
+                this.database.transaction(()=>{this.fenceDelivery(run,"verify");this.database.saveEntity("run-verification-command",id,json(receipt));});
+                result=await verification.run(commandId,run.worktree!,controller.signal);
+                if(controller.signal.aborted)throw new AdapterContractError("RUN_CANCELLED","Verification stopped after cancellation");
+                this.database.transaction(()=>{
+                  this.fenceDelivery(run,"verify");
+                  this.nativeInteractions.assertInteraction({id:"run-worker",roles:["operator"],profileId:run.profileId},"verify",receipt.fence);
+                  this.database.saveEntity("run-verification-command",id,json({...receipt,state:"SETTLED",result:redactValue(result)}));
+                });
               }
-              summaries.push(`${commandId}:unregistered`); blocked = true; continue;
+            }
+            catch (error) {
+              this.database.saveEntity("run-verification-command",id,json({...receipt,state:"UNKNOWN"}));
+              this.markRemoteUnavailable(run.id,"Automatic verification outcome or authority is unconfirmed; inspect the original invocation","VERIFICATION_OUTCOME_UNKNOWN",run);
+              throw error;
             }
             if (controller.signal.aborted) throw new AdapterContractError("RUN_CANCELLED", "Verification stopped after cancellation");
             this.fenceDelivery(run,"verify");

@@ -5,7 +5,7 @@ import { lstat, mkdir, open, readdir, readlink, realpath, rm, writeFile } from "
 import { constants } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
-import { assertRepositoryIdentity, type WorkspaceManager, WorkspacePolicyError, type WorkspaceCandidate } from "./workspace.js";
+import { assertRepositoryIdentity, mutateWorktrees, type WorkspaceManager, WorkspacePolicyError, type WorkspaceCandidate } from "./workspace.js";
 const execute=promisify(execFile);
 export interface CandidateSource {repositoryId:string;worktree:string;branch:string;scopePaths:string[];repositoryScopePaths:string[]}
 export interface DeliveryCandidate {version:1;id:string;source:CandidateSource;candidate:WorkspaceCandidate;commit:string;tree:string;path:string;rootIdentity:{device:number;inode:number};commonDirectory:string;contentFingerprint:string;pushRemoteFingerprint:string;pushUrl?:string}
@@ -64,7 +64,7 @@ export class VerificationSnapshots {
     if((await this.git(source.worktree,["ls-tree","-r",tree])).split("\n").some(line=>line.startsWith("160000 ")))throw new WorkspacePolicyError("VERIFICATION_ENVIRONMENT_UNAVAILABLE","Submodule verification environment is not registered");
     const commit=await this.git(source.worktree,["commit-tree",tree,"-p",candidate.headRevision,"-m","Dispatcher verified candidate"]);assertAuthority();
     const id=randomUUID();const path=join(await realpath(this.root),id);
-    await this.git(source.worktree,["worktree","add","--detach",path,commit]);
+    await mutateWorktrees(source.worktree,async()=>{assertAuthority();await this.git(source.worktree,["worktree","add","--detach",path,commit]);});
     const info=await lstat(path);const commonDirectory=await realpath(await this.git(source.worktree,["rev-parse","--path-format=absolute","--git-common-dir"]));
     const result:DeliveryCandidate={version:1,id,source,candidate,commit,tree,path,rootIdentity:{device:info.dev,inode:info.ino},commonDirectory,contentFingerprint:await this.content(path),...remote};
     await writeFile(join(this.root,`${id}.json`),JSON.stringify(result),{flag:"wx",mode:0o600});

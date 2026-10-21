@@ -13,7 +13,7 @@ const execute = (file:string,args:string[],options:ExecFileOptions={}) => execut
 // Git scans shared worktree administration while adding/removing entries. Keep
 // these mutations ordered across aliases/managers in this owning Runner process.
 const worktreeMutations=new Map<string,Promise<void>>();
-async function mutateWorktrees<T>(repositoryRoot:string,operation:()=>Promise<T>):Promise<T>{
+export async function mutateWorktrees<T>(repositoryRoot:string,operation:()=>Promise<T>):Promise<T>{
   const reported=(await execute("git",["-C",repositoryRoot,"rev-parse","--git-common-dir"])).stdout.trim(),common=await realpath(resolve(repositoryRoot,reported));
   const previous=worktreeMutations.get(common)??Promise.resolve();let complete!:()=>void;const completion=new Promise<void>(resolve=>{complete=resolve;}),tail=previous.then(()=>completion);worktreeMutations.set(common,tail);
   await previous;

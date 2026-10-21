@@ -3,6 +3,26 @@
 Local implementation/evidence backlog; none of these rows claims a passed
 Gate. Continue independent units without bypassing data/control safeguards.
 
+Whole-range review19db456..4e76656 completed once. Two Important mounted-path
+findings are addressed in the single fix pass: automatic verification now has
+durable per-command SENDING/SETTLED/UNKNOWN receipts and conservative VERIFYING
+startup hold; snapshot add shares Manager's physical-common-directory queue.
+Target5 files26 tests pass; default gate evidence follows in the execution ledger.
+This supersedes older "whole-branch review pending" wording for the inspected
+range only. All listed formal Gates and declined runtime/license judgments stay
+open. Unknown automatic verification requires explicit reconciliation; no recovery
+endpoint, command replay or cleanup of surviving unknown children is authorized.
+The fix adds schema9/writer5 to reject protocol4 binaries that cannot honor those
+receipts; migrations1–8 are unchanged. Schema8 archives remain writer4 and only
+their restored copies upgrade. Upgrade preflight also rejects pending verification
+receipts independently of Run state. Targeted persistence/service regression15
+files121 tests pass. Actual service/data activation is still unqualified.
+Offline upgrade preflight intentionally requires a separately qualified current
+schema. Existing schema8 real-data switch evidence remains historical; this
+schema9 change does not qualify an in-place8→9 service/data activation. Preserve
+the old backup/artifacts and fail closed until that migration/activation workflow
+has its own review and real-data recovery evidence (R-006/R-013).
+
 | ID | Linear | State | Evidence / impact / next action |
 | --- | --- | --- | --- |
 | R-001 | INH-1920 / CV-03 | local remediation verified; whole-branch review pending | Reproduced 3 failures at the original all-CPU test pool. Atomic draft replacement/generation checks pass 16 UI cases. Test-worker budget now min(4, CPUs), preserving parallelism and native 3s/5s deadlines; all slow/invalid probe assertions remain. Two complete default pnpm check runs pass 90 files/802 tests. Source and resource evidence: docs/evidence/convergence/README.md. Real CLI/provider qualification remains separate. Latest MAC-01o default gate145/1456: one concurrent profile/worktree add failed while reading another incomplete commondir;1455 passed. Preserve failed log; CV-03c corrects production add/remove ordering by physical Git common directory across aliases/managers, with failed-operation release;146/1459 default passes, no test weakening. Cross-process external Git remains outside this in-process ownership boundary. |

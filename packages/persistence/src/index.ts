@@ -4,6 +4,7 @@ import { DatabaseSync } from "node:sqlite";
 import { isDeepStrictEqual } from "node:util";
 import { InteractionStoreError, migrateNativeInteractions } from "./interaction-store.js";
 import { assertDatabaseLocationOperational, assertDatabaseOperational, assertDatabaseSchema, CONVERGENCE_SCHEMA_NAME, CONTROL_RUNTIME_SCHEMA_NAME, GUARDED_START_SCHEMA_NAME, databaseWriterProtocol, installWriterGate, upgradeConvergenceWriterGate, upgradeControlRuntimeWriterGate, upgradeGuardedStartWriterGate } from "./database-compatibility.js";
+import { AUTOMATIC_VERIFICATION_SCHEMA_NAME, upgradeAutomaticVerificationWriterGate } from "./database-compatibility.js";
 
 export * from "./interaction-store.js";
 export * from "./database-compatibility.js";
@@ -287,6 +288,12 @@ export const migrations: readonly Migration[] = [
     sql: "",
     afterApply: database => upgradeGuardedStartWriterGate(database.handle),
   },
+  {
+    version: 9,
+    name: AUTOMATIC_VERIFICATION_SCHEMA_NAME,
+    sql: "",
+    afterApply: database => upgradeAutomaticVerificationWriterGate(database.handle),
+  },
 ] as const;
 
 export class MigrationError extends Error {
@@ -436,6 +443,7 @@ export class DispatcherDatabase {
           if(migration.version===6&&migration.name===CONVERGENCE_SCHEMA_NAME)this.writerProtocol=2;
           if(migration.version===7&&migration.name===CONTROL_RUNTIME_SCHEMA_NAME)this.writerProtocol=3;
           if(migration.version===8&&migration.name===GUARDED_START_SCHEMA_NAME)this.writerProtocol=4;
+          if(migration.version===9&&migration.name===AUTOMATIC_VERIFICATION_SCHEMA_NAME)this.writerProtocol=5;
           this.handle.exec(migration.sql);
           migration.afterApply?.(this);
           this.handle

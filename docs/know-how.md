@@ -144,6 +144,11 @@
   final startup admission. Reject their open connections as well as new opens.
   Preserve migrations 1–7; snapshot schema 7 still needs writer 3 for archive and
   restore bookkeeping. Rollback uses a compatible binary and matching backup.
+- Automatic verification schema9 requires writer5: protocol4 cannot interpret
+  per-command UNKNOWN and could replay a registered check after restart. Preserve
+  migrations1–8 and reject already-open old writers too. Schema8 backup bookkeeping
+  still uses writer4; rollback requires its matching backup and binary, never
+  trigger removal or schema downgrade.
 - A caught failure inside an outer SQLite transaction needs a savepoint to
   undo partial native binding/projection writes. Merely detecting an existing
   transaction and running the inner callback is not atomic.
@@ -352,9 +357,12 @@
   installations lose the executable bit on the packaged Unix `spawn-helper`,
   so Runner repairs that one known helper path before spawning. Platform code
   stays in `runner`; scheduler/domain see only capability strings.
-- Run advancement is phase-idempotent. Persist `VERIFYING` before executing
-  registered checks and `DELIVERING` before calling an SCM provider; retry from
-  the stored phase after a temporary provider failure.
+- A stored `VERIFYING` phase is not an invocation receipt. Registered checks can
+  have side effects: journal each send before spawning, retain UNKNOWN after a
+  crash or post-await authority loss, and never retry it from phase alone. Local
+  VERIFYING recovery without a receipt is also unknown. SETTLED results require
+  the original command semantics and Task/control/lease fence before reuse.
+  Persist `DELIVERING` before an SCM call and obey its separate durable receipts.
 - Codex profiles isolate `CODEX_HOME`; Web/API surfaces expose alias and
   normalized status only. A CLI probe and a real business invocation are
   separate pieces of evidence.
