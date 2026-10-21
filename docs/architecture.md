@@ -1340,3 +1340,14 @@ response for read-only status. Observation freshness and control-epoch matching
 do not grant mutation authority; native writes remain disabled until the full
 runtime/client qualification. Requested selection and last reported native model
 remain separate. Native storage references/credential-like text are not projected.
+
+
+Canonical local-result approval applies only to a completed guarded local
+delivery.none Run. It compares the retired generation/lease as immutable identity
+and requires current Task/control/context/candidate proof; it never renews that
+lease or sends native input. Registered verification runs in the existing managed
+source environment with matching before/after content and a retained snapshot.
+The proof labels this basis separately from hermetic/native qualification.
+Verification SENDING/UNKNOWN receipts do not replay; acceptance and its Task DONE
+transition share one database transaction. Historical verification remains
+readable; missing/newly changed proof cannot authorize acceptance.

@@ -1892,3 +1892,45 @@ No new dependency/schema or source-candidate mutation. API/Run result proof,
 manual acceptance/receipts and v3 UI are next; these primitives alone do not
 complete LP/CV-12/A. Rollback ccb0fb7 with matching schema8 backup. No actual
 provider or original data involved in fixture tests. Official quota checked.
+
+
+## CV-12b canonical local verification and acceptance service
+
+Adapt a499d84 local-results.ts behavior to one canonical Run/Task service; no
+legacy /api/local creation/result entrypoint is mounted. Shared pure DTOs name
+Task revision, generation/retired lease identity, control epoch/revision, candidate
+and verification receipt. Ordinary guarded local delivery.none only: exact
+ACKNOWLEDGED start certificate, COMPLETED adapter, AUTOMATED unchanged control,
+no pending native commands, frozen contract/registered required commands, current
+profile/repository context and currentRun must match. Legacy/advanced native or
+remote control stays unqualified, never adopted from current configuration.
+
+Explicit verification preserves a retained content snapshot and uses the existing
+registered commands in the managed source environment; before/after source and
+snapshot fingerprints must match. Evidence basis is matching-managed-source,
+not hermetic snapshot execution or native quiescence. This preserves existing
+verification environment/dependency behavior. Failed commands/candidate/context
+changes produce no accepting proof. Historical Run verification is retained.
+
+Verification receipt/current pointer reserve before async work, identical active
+requests join once, lost SENDING/UNKNOWN never replay with either old or new key.
+Known failures permit another explicit verification. Acceptance compares retired
+lease identity without lease renewal/native input, requires confirmed current
+proof/Task/control/candidate and transacts DONE+acceptance+idempotency receipt
+atomically. Exact replay returns the original acceptance fact; changed replay
+conflicts. Close aborts owned verification and refuses confirmed cleanup on an
+unknown process outcome. All request fields are captured before awaits.
+
+Seven new cases: successful verification/one acceptance/replay/one native start,
+changed candidate, authority/confirmation/control fences, coalescing/lost-SENDING,
+failed required command then explicit correction, Task change while verifying,
+and transactional acceptance rollback. Initial missing module RED; a fixture
+used an unsupported handoff for exclusion.none, corrected to the supported
+conflict event without weakening control transitions. Default full check133
+files1382 tests (47.41s), diff check passes; target7 tests11.61s. Logs
+/tmp/dispatcher-cv12b-red.log, -target.log, -check.log.
+
+This service is not yet mounted in production API/UI; next unit wires canonical
+result/reverify/accept/cancel and lifecycle. No new schema/dependency, public
+secret payload, real acceptance or native account call. Rollback c0a0a1f with
+matching schema8 backup. Formal LP/CV/A/B remain open; quota checked after unit.
