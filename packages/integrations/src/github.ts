@@ -1,3 +1,4 @@
+import { childExecutionEnvironment } from "@dispatcher/shared";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { ConnectorDefinition, ConnectorInstance } from "@dispatcher/domain";
@@ -18,24 +19,24 @@ export class LocalGitTransport implements GitTransport {
     const cwd = this.cwd(repository);
     this.ref(branch);
     this.ref(baseBranch);
-    const current = (await execFileAsync("git", ["branch", "--show-current"], { cwd, timeout: 10_000 })).stdout.trim();
+    const current = (await execFileAsync("git", ["branch", "--show-current"], { cwd, env: childExecutionEnvironment(process.env), timeout: 10_000 })).stdout.trim();
     if (current === branch) return;
     let exists = true;
-    try { await execFileAsync("git", ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`], { cwd, timeout: 10_000 }); }
+    try { await execFileAsync("git", ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`], { cwd, env: childExecutionEnvironment(process.env), timeout: 10_000 }); }
     catch { exists = false; }
-    await execFileAsync("git", exists ? ["switch", branch] : ["switch", "-c", branch, baseBranch], { cwd, timeout: 30_000 });
+    await execFileAsync("git", exists ? ["switch", branch] : ["switch", "-c", branch, baseBranch], { cwd, env: childExecutionEnvironment(process.env), timeout: 30_000 });
   }
 
   async push(repository: RepositoryRef, branch: string): Promise<{ commit: string }> {
     const cwd = this.cwd(repository);
     this.ref(branch);
-    const status = (await execFileAsync("git", ["status", "--porcelain"], { cwd, timeout: 10_000 })).stdout.trim();
+    const status = (await execFileAsync("git", ["status", "--porcelain"], { cwd, env: childExecutionEnvironment(process.env), timeout: 10_000 })).stdout.trim();
     if (status) {
-      await execFileAsync("git", ["add", "--all"], { cwd, timeout: 30_000 });
-      await execFileAsync("git", ["commit", "-m", "Dispatcher task delivery"], { cwd, timeout: 30_000 });
+      await execFileAsync("git", ["add", "--all"], { cwd, env: childExecutionEnvironment(process.env), timeout: 30_000 });
+      await execFileAsync("git", ["commit", "-m", "Dispatcher task delivery"], { cwd, env: childExecutionEnvironment(process.env), timeout: 30_000 });
     }
-    const commit = (await execFileAsync("git", ["rev-parse", "HEAD"], { cwd, timeout: 10_000 })).stdout.trim();
-    await execFileAsync("git", ["push", "origin", `HEAD:refs/heads/${branch}`], { cwd, timeout: 120_000 });
+    const commit = (await execFileAsync("git", ["rev-parse", "HEAD"], { cwd, env: childExecutionEnvironment(process.env), timeout: 10_000 })).stdout.trim();
+    await execFileAsync("git", ["push", "origin", `HEAD:refs/heads/${branch}`], { cwd, env: childExecutionEnvironment(process.env), timeout: 120_000 });
     return { commit };
   }
 

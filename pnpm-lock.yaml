@@ -74,6 +74,9 @@ importers:
       '@dispatcher/semantic':
         specifier: workspace:*
         version: link:../../packages/semantic
+      '@dispatcher/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
       '@dispatcher/web':
         specifier: workspace:*
         version: link:../web
@@ -147,6 +150,9 @@ importers:
       '@dispatcher/domain':
         specifier: workspace:*
         version: link:../domain
+      '@dispatcher/shared':
+        specifier: workspace:*
+        version: link:../shared
 
   packages/config:
     dependencies:
@@ -179,6 +185,9 @@ importers:
       '@dispatcher/persistence':
         specifier: workspace:*
         version: link:../persistence
+      '@dispatcher/shared':
+        specifier: workspace:*
+        version: link:../shared
 
   packages/llm-runtime:
     dependencies:
@@ -224,6 +233,9 @@ importers:
       '@dispatcher/protocol':
         specifier: workspace:*
         version: link:../protocol
+      '@dispatcher/shared':
+        specifier: workspace:*
+        version: link:../shared
       '@dispatcher/workspace':
         specifier: workspace:*
         version: link:../workspace
@@ -263,6 +275,9 @@ importers:
       '@dispatcher/domain':
         specifier: workspace:*
         version: link:../domain
+      '@dispatcher/shared':
+        specifier: workspace:*
+        version: link:../shared
 
 packages:
 

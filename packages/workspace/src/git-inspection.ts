@@ -1,7 +1,8 @@
+import { childExecutionEnvironment } from "@dispatcher/shared";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 const execute=promisify(execFile);
-export function gitInspectionEnvironment():NodeJS.ProcessEnv {const env={...process.env};for(const key of Object.keys(env))if(key.startsWith("GIT_"))delete env[key];return {...env,GIT_OPTIONAL_LOCKS:"0",GIT_NO_LAZY_FETCH:"1",GIT_TERMINAL_PROMPT:"0"};}
+export function gitInspectionEnvironment():NodeJS.ProcessEnv {const env=childExecutionEnvironment(process.env);for(const key of Object.keys(env))if(key.startsWith("GIT_"))delete env[key];return {...env,GIT_OPTIONAL_LOCKS:"0",GIT_NO_LAZY_FETCH:"1",GIT_TERMINAL_PROMPT:"0"};}
 
 export async function readWorkspaceStatus(path:string,timeoutMs=10_000):Promise<string> {
  const deadline=Date.now()+timeoutMs,options={maxBuffer:256*1024,env:gitInspectionEnvironment()};

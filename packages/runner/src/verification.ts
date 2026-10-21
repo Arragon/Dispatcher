@@ -1,3 +1,4 @@
+import { childExecutionEnvironment } from "@dispatcher/shared";
 import { spawn } from "node:child_process";
 import { OwnedProcessGroup } from "@dispatcher/adapters";
 
@@ -33,7 +34,7 @@ export class VerificationRegistry {
     if (!command) throw new Error(`Verification command is not registered: ${commandId}`);
     const started = Date.now();
     if(signal?.aborted)return this.result(command,"failed",null,"",started);
-    const child=spawn(command.file,command.args,{cwd,shell:false,stdio:["ignore","pipe","pipe"],detached:process.platform!=="win32",env:{...process.env,PWD:cwd}});
+    const child=spawn(command.file,command.args,{cwd,shell:false,stdio:["ignore","pipe","pipe"],detached:process.platform!=="win32",env:childExecutionEnvironment(process.env,{PWD:cwd})});
     const ownership=new OwnedProcessGroup(child);
     return new Promise<VerificationResult>((resolve,reject)=>{
       let output=Buffer.alloc(0),timedOut=false,limited=false,aborted=false;

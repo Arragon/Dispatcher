@@ -4,6 +4,13 @@ This file is the concise implementation map for the frozen design in
 `agent-dispatcher-architecture-roadmap-v2026-09-15.md`. If the two disagree,
 the frozen design is authoritative.
 
+Task, provider, catalog, probe, verification and Git subprocesses use the shared
+child execution environment boundary. It removes Controller owner-token and
+SecretStore encryption-key variables after provider overrides (case-insensitive
+key match), while retaining native provider credentials, PATH, account directories
+and PWD required by their existing contracts. This prevents child execution from
+inheriting Controller authority; it is not a general environment sandbox.
+
 ## Delivered boundary (M0–M14 implementation)
 
 The current system is a single Node.js Controller with an optional in-process

@@ -1,3 +1,4 @@
+import { childExecutionEnvironment } from "@dispatcher/shared";
 import {assertSessionModelBinding,freezeExecutionSelection,sessionModel} from "./execution-selection.js";
 import {turnExecutionResource} from "./execution-resource.js";
 import { OwnedProcessGroup } from "./owned-process.js";
@@ -89,7 +90,7 @@ export class SpawnCliAgentBackend implements CliAgentBackend {
       cwd: input.workspacePath,
       shell: false,
       stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, ...input.environment, PWD: input.workspacePath },
+      env: childExecutionEnvironment(process.env, { ...input.environment, PWD: input.workspacePath }),
       detached: process.platform !== "win32",
     }), input.normalizeLine ?? normalizeCliLine, input.requireExecutionEvidence === true);
   }
@@ -474,7 +475,7 @@ export async function probeKiroProfile(profile: CliAgentProfile, resolveCredenti
   return probeCliProfile(kiroDefinition, profile, resolveCredential,context);
 }
 async function probeCliProfile(definition: CliProviderDefinition, profile: CliAgentProfile, resolveCredential:CredentialResolver|undefined,context:NativeProbeContext): Promise<CliDiscoveryResult> {
-  const executable = profile.executable ?? definition.defaultExecutable,environment:NodeJS.ProcessEnv={...process.env,...(context.workspacePath?{PWD:context.workspacePath}:{})},cwd=context.workspacePath;
+  const executable = profile.executable ?? definition.defaultExecutable,environment:NodeJS.ProcessEnv=childExecutionEnvironment(process.env,context.workspacePath?{PWD:context.workspacePath}:{}),cwd=context.workspacePath;
   let version: string;
   try { version = (await execFileAsync(executable, definition.versionArgs, { timeout: 3_000,maxBuffer:32768,env:environment,...(cwd?{cwd}:{}) })).stdout.trim(); }
   catch { return { executable, installed: false, authenticated: false, authentication:"unknown",diagnostic:"Native executable version check failed" }; }

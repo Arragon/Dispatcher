@@ -1,3 +1,4 @@
+import { childExecutionEnvironment } from "@dispatcher/shared";
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { access } from "node:fs/promises";
@@ -145,7 +146,7 @@ function probeFailure(stage:NonNullable<NativeCliDiscoveryResult["failure"]>["st
 export async function probeNativeCliProfile(provider: NativeCliProvider, profile: CliAgentProfile,context:NativeProbeContext={}): Promise<NativeCliDiscoveryResult> {
   const file = await executable(provider, profile);
   const prefix=provider==="qoder-cn"?["--config-dir",profile.configDir??join(homedir(),".qoder-cn")]:[];
-  const options={...(context.workspacePath?{cwd:context.workspacePath,env:{...process.env,PWD:context.workspacePath}}:{})};
+  const options={env:childExecutionEnvironment(process.env,context.workspacePath?{PWD:context.workspacePath}:{}),...(context.workspacePath?{cwd:context.workspacePath}:{})};
   const base: NativeCliDiscoveryResult = { executable: file, installed: false, compatible: false, authenticated: false, authentication: "unknown" };
   try {
     const version = await execFileAsync(file, [...prefix,"--version"], { ...options,timeout: 3_000, maxBuffer: 32_768 });

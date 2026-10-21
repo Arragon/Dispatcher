@@ -13,6 +13,5 @@
     { "path": "../../packages/runner" },
     { "path": "../../packages/scheduler" },
     { "path": "../../packages/semantic" },
-    { "path": "../../packages/workspace" }
-  ]
+    { "path": "../../packages/workspace" }, { "path": "../../packages/shared" }]
 }

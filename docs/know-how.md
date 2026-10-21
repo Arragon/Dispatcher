@@ -2,6 +2,12 @@
 
 ## M0–M10 invariants
 
+- Do not pass `process.env` directly to task/provider/probe/verification/Git
+  children. The CLI may hold DISPATCHER_OWNER_TOKEN and
+  DISPATCHER_SECRET_STORE_KEY. Use childExecutionEnvironment after overlays;
+  keep actual provider context and normalize PWD separately. Redacting output
+  cannot revoke an authority credential already inherited by a process.
+
 - Fastify hijacked dashboard SSE responses must be ended before awaiting
   `app.close()`. Waiting for server close first leaves an open browser holding
   graceful shutdown. Own each response cleanup once, including its timer and

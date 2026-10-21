@@ -1,3 +1,4 @@
+import { childExecutionEnvironment } from "@dispatcher/shared";
 import {OwnedProcessGroup} from "./owned-process.js";
 import {drainCatalogProcess} from "./catalog-process.js";
 import { spawn } from "node:child_process";
@@ -49,7 +50,7 @@ export async function readOpenCodeCatalog(input: { profile: CliAgentProfile; exe
   const executableStamp = async () => { const s = await stat(executable); return digest({ path: executable, size: s.size, mtime: s.mtimeMs, ino: s.ino }); };
   const originalExecutable = await executableStamp();
   if(input.signal?.aborted)throw new AdapterContractError("MODEL_CATALOG_CANCELLED","Native catalog read was cancelled");
-  const password = randomBytes(32).toString("base64url"), env: NodeJS.ProcessEnv = { ...process.env, PWD: input.workspacePath, OPENCODE_PASSWORD: password };
+  const password = randomBytes(32).toString("base64url"), env: NodeJS.ProcessEnv = childExecutionEnvironment(process.env, { PWD: input.workspacePath, OPENCODE_PASSWORD: password });
   delete env.OPENCODE_SERVER_PASSWORD; delete env.OPENCODE_PTY_HANDOFF;
   const child = spawn(input.executable, ["serve", "--stdio", "--hostname", "127.0.0.1", "--port", "0"], { cwd: input.workspacePath, shell: false, detached: process.platform !== "win32", env, stdio: ["pipe", "pipe", "pipe"] });
   const group=new OwnedProcessGroup(child),closed = new Promise<void>(resolve => child.once("close", () => resolve()));

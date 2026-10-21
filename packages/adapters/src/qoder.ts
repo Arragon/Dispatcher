@@ -1,3 +1,4 @@
+import { childExecutionEnvironment } from "@dispatcher/shared";
 import {assertSessionModelBinding,freezeExecutionSelection,sessionModel} from "./execution-selection.js";
 import {readReadyTurnResult,rememberTurnResult,usageSnapshotUnavailable,type PassiveTurnResult} from "./usage-snapshot.js";
 import {turnExecutionResource} from "./execution-resource.js";
@@ -100,7 +101,7 @@ export class QoderCliBackend implements QoderBackend {
     if (input.configDir) args.push("--config-dir", input.configDir);
     if (input.model) args.push("--model", input.model);
     args.push("--", input.prompt);
-    return new SpawnedQoderTurn(spawn(input.executable, args, { cwd: input.workspacePath, shell: false, detached: process.platform !== "win32", env: { ...process.env, PWD: input.workspacePath }, stdio: ["ignore", "pipe", "pipe"] }));
+    return new SpawnedQoderTurn(spawn(input.executable, args, { cwd: input.workspacePath, shell: false, detached: process.platform !== "win32", env: childExecutionEnvironment(process.env, { PWD: input.workspacePath }), stdio: ["ignore", "pipe", "pipe"] }));
   }
 }
 
@@ -246,9 +247,9 @@ export async function probeQoderProfile(profile: QoderProfileConfig,context:{wor
   for (const executable of executables) {
     if (executable.includes("/")) { try { await access(executable); } catch { continue; } }
     let version: string;
-    try { version = (await execFileAsync(executable, ["--version"], { timeout: 3_000,...(context.workspacePath?{cwd:context.workspacePath,env:{...process.env,PWD:context.workspacePath}}:{}) })).stdout.trim(); } catch { continue; }
+    try { version = (await execFileAsync(executable, ["--version"], { timeout: 3_000,env:childExecutionEnvironment(process.env,context.workspacePath?{PWD:context.workspacePath}:{}),...(context.workspacePath?{cwd:context.workspacePath}:{}) })).stdout.trim(); } catch { continue; }
     try {
-      const result = await execFileAsync(executable, ["--list-models", ...(profile.configDir ? ["--config-dir", profile.configDir] : [])], { timeout: 8_000, maxBuffer: 256 * 1024,...(context.workspacePath?{cwd:context.workspacePath,env:{...process.env,PWD:context.workspacePath}}:{}) });
+      const result = await execFileAsync(executable, ["--list-models", ...(profile.configDir ? ["--config-dir", profile.configDir] : [])], { timeout: 8_000, maxBuffer: 256 * 1024,env:childExecutionEnvironment(process.env,context.workspacePath?{PWD:context.workspacePath}:{}),...(context.workspacePath?{cwd:context.workspacePath}:{}) });
       const diagnostic = qoderAuthenticationDiagnostic(`${result.stdout}\n${result.stderr}`);
       candidates.push({ executable, version, authenticated: !diagnostic, backends: ["qoder-cli-json"], ...(diagnostic ? { diagnostic } : {}) });
     } catch (error) {

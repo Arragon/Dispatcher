@@ -1,3 +1,4 @@
+import { childExecutionEnvironment } from "@dispatcher/shared";
 import {OwnedProcessGroup} from "@dispatcher/adapters";
 import {execFile,spawn,type ChildProcess} from "node:child_process";
 import {randomUUID} from "node:crypto";
@@ -12,7 +13,7 @@ export type DirectoryPicker=(signal:AbortSignal)=>Promise<string|undefined>;
 /** Fixed OS dialog only: no browser-controlled scripts, prompt, starting path or argv. */
 export const nativeDirectoryPicker:DirectoryPicker=async signal=>{
   if(process.platform!=="darwin"||process.env.SSH_CONNECTION||!process.getuid)throw new Error("Interactive macOS desktop required");
-  const owner=(await execute("/usr/bin/stat",["-f","%u","/dev/console"],{signal,timeout:3_000,maxBuffer:1024})).stdout.trim();
+  const owner=(await execute("/usr/bin/stat",["-f","%u","/dev/console"],{signal,timeout:3_000,maxBuffer:1024,env:childExecutionEnvironment(process.env)})).stdout.trim();
   if(owner!==String(process.getuid()))throw new Error("Controller does not own the desktop session");
   const path=await readNativeDirectoryDialog(signal);if(path===undefined)return;
   if(!isAbsolute(path)||path.length>4_000)throw new Error("Invalid native selection");
@@ -22,7 +23,7 @@ export const nativeDirectoryPicker:DirectoryPicker=async signal=>{
 /** Only the fixed OS dialog is used in production; factory injection is for owned-process tests. */
 export async function readNativeDirectoryDialog(signal:AbortSignal,options:{spawn?:()=>ChildProcess}={}):Promise<string|undefined> {
  if(signal.aborted)throw Error("NATIVE_PICKER_CANCELLED");
- const child=options.spawn?options.spawn():spawn("/usr/bin/osascript",["-e",'POSIX path of (choose folder with prompt "选择需要登记的 Git 仓库目录")'],{detached:process.platform!=="win32",stdio:["ignore","pipe","pipe"]});
+ const child=options.spawn?options.spawn():spawn("/usr/bin/osascript",["-e",'POSIX path of (choose folder with prompt "选择需要登记的 Git 仓库目录")'],{detached:process.platform!=="win32",stdio:["ignore","pipe","pipe"],env:childExecutionEnvironment(process.env)});
  const group=new OwnedProcessGroup(child),outDecoder=new StringDecoder("utf8"),errDecoder=new StringDecoder("utf8");let bytes=0,stdout="",stderr="",failed=false,cancelled=false,cleanup:Promise<void>|undefined;
  let onClose!:(code:number|null)=>void,onAbortWork!:()=>void;
  const closed=new Promise<number|null>(r=>{onClose=r;}),aborted=new Promise<void>(r=>{onAbortWork=r;});

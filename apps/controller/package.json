@@ -13,6 +13,7 @@
     "dispatcher": "node dist/cli.js"
   },
   "dependencies": {
+    "@dispatcher/shared": "workspace:*",
     "@dispatcher/adapters": "workspace:*",
     "@dispatcher/config": "workspace:*",
     "@dispatcher/domain": "workspace:*",

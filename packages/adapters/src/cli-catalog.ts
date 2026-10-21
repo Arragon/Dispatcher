@@ -1,3 +1,4 @@
+import { childExecutionEnvironment } from "@dispatcher/shared";
 import {OwnedProcessGroup} from "./owned-process.js";
 import {drainCatalogProcess} from "./catalog-process.js";
 import { spawn } from "node:child_process";
@@ -27,7 +28,7 @@ export function cursorLoginIdentity(stdout:string,stderr=""):{status:"ready"|"mi
 export function readNativeCli(input: NativeCliReadRequest): Promise<NativeCliReadResult> {
   if(input.signal?.aborted)return Promise.reject(new AdapterContractError("MODEL_CATALOG_CANCELLED","Native catalog read was cancelled"));
   return new Promise((resolve, reject) => {
-    const child = spawn(input.executable, input.args, { cwd: input.workspacePath, shell: false, detached: process.platform !== "win32", stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, ...input.environment, PWD: input.workspacePath, NO_COLOR: "1" } });
+    const child = spawn(input.executable, input.args, { cwd: input.workspacePath, shell: false, detached: process.platform !== "win32", stdio: ["ignore", "pipe", "pipe"], env: childExecutionEnvironment(process.env, { ...input.environment, PWD: input.workspacePath, NO_COLOR: "1" }) });
     const group=new OwnedProcessGroup(child),closed=new Promise<void>(resolve=>child.once("close",()=>resolve()));
     let stdout = "", stderr = "", bytes = 0, failed = false;
     const stop=()=>{failed=true;void group.stop().catch(()=>reject(new AdapterContractError("MODEL_CATALOG_CLEANUP_UNKNOWN","Native catalog process cleanup could not be confirmed")));};

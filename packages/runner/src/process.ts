@@ -1,3 +1,4 @@
+import { childExecutionEnvironment } from "@dispatcher/shared";
 import { spawn as spawnProcess } from "node:child_process";
 import { OwnedProcessGroup } from "@dispatcher/adapters";
 import { chmodSync,closeSync,constants,existsSync,fstatSync,lstatSync,mkdirSync,openSync,readdirSync,renameSync,rmSync,statSync,writeSync } from "node:fs";
@@ -127,7 +128,7 @@ export class ProcessManager {
     const listeners = new Set<(event: ActivityEvent) => void>();
     let classification: ExitClassification | undefined;
     let settled = false;
-    const child = spawnProcess(input.file, input.args, { cwd: input.cwd, env: { ...process.env, PWD: input.cwd }, shell: false, detached: platform() !== "win32", stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawnProcess(input.file, input.args, { cwd: input.cwd, env: childExecutionEnvironment(process.env, { PWD: input.cwd }), shell: false, detached: platform() !== "win32", stdio: ["pipe", "pipe", "pipe"] });
     const ownership = new OwnedProcessGroup(child);
     let rejectResult: (error: unknown) => void = () => undefined;
     const spawned = new Promise<void>((resolve, reject) => {
@@ -195,7 +196,7 @@ export class ProcessManager {
     let classification: ExitClassification | undefined;
     const terminal = spawnPty(input.file, input.args, {
       cwd: input.cwd,
-      env: { ...Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)), PWD: input.cwd },
+      env: childExecutionEnvironment(process.env, { PWD: input.cwd }),
       name: process.env.TERM ?? "xterm-256color",
       cols: 120,
       rows: 40,

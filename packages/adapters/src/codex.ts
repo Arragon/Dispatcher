@@ -1,3 +1,4 @@
+import { childExecutionEnvironment } from "@dispatcher/shared";
 import {readReadyTurnResult,rememberTurnResult,usageSnapshotUnavailable,type PassiveTurnResult} from "./usage-snapshot.js";
 import {turnExecutionResource} from "./execution-resource.js";
 import {assertSessionModelBinding,freezeExecutionSelection,sessionModel} from "./execution-selection.js";
@@ -109,7 +110,7 @@ export class CodexCliBackend implements CodexBackend {
       shell: false,
       detached: process.platform !== "win32",
       stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, PWD: input.workspacePath, CODEX_HOME: input.codexHome },
+      env: childExecutionEnvironment(process.env, { PWD: input.workspacePath, CODEX_HOME: input.codexHome }),
     }));
   }
 }
@@ -355,7 +356,7 @@ export class CodexAdapter implements AgentAdapter {
 
 export async function probeCodexProfile(profile: CodexProfileConfig,context:{workspacePath?:string}={}): Promise<CodexDiscoveryResult> {
   const executable = profile.executable ?? "codex";
-  const environment = { ...process.env, CODEX_HOME: profile.codexHome,...(context.workspacePath?{PWD:context.workspacePath}:{}) };
+  const environment = childExecutionEnvironment(process.env, { CODEX_HOME: profile.codexHome,...(context.workspacePath?{PWD:context.workspacePath}:{}) });
   let version: string | undefined;
   try { version = (await execFileAsync(executable, ["--version"], { env: environment,...(context.workspacePath?{cwd:context.workspacePath}:{}), timeout: 3_000 })).stdout.trim(); }
   catch (error) { return { executable, authenticated: false, profile: { id: profile.id, alias: profile.alias }, diagnostic: error instanceof Error ? error.message.slice(0, 240) : "Codex executable unavailable" }; }

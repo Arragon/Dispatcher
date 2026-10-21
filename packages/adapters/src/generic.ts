@@ -1,3 +1,4 @@
+import { childExecutionEnvironment } from "@dispatcher/shared";
 import {freezeExecutionSelection} from "./execution-selection.js";
 import { randomUUID } from "node:crypto";
 import { OwnedProcessGroup } from "./owned-process.js";
@@ -96,7 +97,7 @@ export interface ProcessExecutor {
 export class SpawnProcessExecutor implements ProcessExecutor {
   async start(input: { file: string; args: string[]; cwd: string; runId: string; mode?: "headless" | "pty" }): Promise<ProcessExecution> {
     if (input.mode === "pty") throw new AdapterContractError("PTY_EXECUTOR_REQUIRED", "PTY mode must be provided by the Runner ProcessManager");
-    return new SpawnProcessExecution(input.runId, spawn(input.file, input.args, { cwd: input.cwd, shell: false, detached: process.platform !== "win32", env: { ...process.env, PWD: input.cwd }, stdio: ["pipe", "pipe", "pipe"] }));
+    return new SpawnProcessExecution(input.runId, spawn(input.file, input.args, { cwd: input.cwd, shell: false, detached: process.platform !== "win32", env: childExecutionEnvironment(process.env, { PWD: input.cwd }), stdio: ["pipe", "pipe", "pipe"] }));
   }
 }
 
@@ -255,7 +256,7 @@ export function renderCommand(template: GenericCliTemplate, values: { prompt: st
 export async function probeGenericCli(template: GenericCliTemplate): Promise<{ installed: boolean; executable: string; version?: string; diagnostic?: string }> {
   if (!template.file || template.file.includes("{{") || template.file.includes("\0")) return { installed: false, executable: template.file, diagnostic: "Executable must be a fixed non-empty value" };
   try {
-    const result = await execFileAsync(template.file, ["--version"], { timeout: 3_000, maxBuffer: 128 * 1024 });
+    const result = await execFileAsync(template.file, ["--version"], { timeout: 3_000, maxBuffer: 128 * 1024, env: childExecutionEnvironment(process.env) });
     return { installed: true, executable: template.file, version: `${result.stdout}\n${result.stderr}`.trim().slice(0, 240) || "version command succeeded" };
   } catch (error) {
     return { installed: false, executable: template.file, diagnostic: error instanceof Error ? error.message.slice(0, 240) : "Version probe failed" };

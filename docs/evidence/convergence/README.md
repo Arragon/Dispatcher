@@ -2045,3 +2045,27 @@ exit0; informational. Actual dashboard5s kept one SSE client and also confirmed
 exit0, informational. Reports under .dispatcher/benchmarks and logs
 /tmp/dispatcher-benchmark-{red,target,lint,check,smoke,dashboard}.log. No performance
 or A/B Gate closed. Rollback26a9ab6 with schema8 backup; quota checked per unit.
+
+## CV-13b prevent Controller authority inheritance by execution children
+
+A fake-canary real child reproduced inherited DISPATCHER_OWNER_TOKEN and
+DISPATCHER_SECRET_STORE_KEY in ProcessManager (exit71). Shared execution-child
+boundary now removes exactly those two Controller authority keys after overlays,
+case-insensitively; provider credentials/account homes/PATH/PWD and other existing
+variables remain supported. Apply at Codex/Qoder/Generic/structured CLI starts,
+all native catalogs and version/auth probes including no-workspace probes,
+Runner process/PTY/verification, workspace Git and legacy integration Git, plus
+native directory helper processes. Controller's own configuration/SecretStore
+access is unchanged. No credential value was printed or sent to a provider.
+
+Reuse existing shared workspace package; internal dependency edges only, offline
+install downloaded zero packages. No external dependency or license change, no
+schema/API/auth relaxation. Three regressions cover immutable environment/
+override filtering and real process/PTY/verification/Codex/CLI/catalog/probe
+children with provider context preserved. RED /tmp/dispatcher-child-env-red.log;
+target3 cases pass; default check140 files1398 tests49.39s and diff pass. Logs
+/tmp/dispatcher-child-env-{install,target,check}.log. Prior actual Codex trial used
+a constructor fixture token, not an inherited Controller token; no observed
+actual credential exposure is asserted. Rollback1de0c41 with matching schema8
+backup. This is not a general environment sandbox or formal security Gate.
+Official quota checked after unit; no reset used.
