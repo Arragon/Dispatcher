@@ -523,6 +523,7 @@ export class ControllerService {
   private listening = false;
   private stopping?: Promise<void>;
   private dashboardClients = 0;
+  private readonly dashboardStreamClosers = new Set<() => void>();
   private readonly secretTestStates = new Map<string, SecretTestState>();
   private readonly agentProcesses: ProcessManager;
   private readonly localGitDelivery:LocalGitDelivery;
@@ -785,8 +786,9 @@ export class ControllerService {
       await Promise.allSettled([...this.remoteLifecycleJobs.values()]);
       await this.profileProbes.drain();
       await this.drainCatalogReads();
-      if (this.listening) await this.app.close();
-      else await this.app.close();
+      // Hijacked SSE responses otherwise keep Fastify close waiting for the browser.
+      for (const close of this.dashboardStreamClosers) close();
+      await this.app.close();
       this.events.close();
       if(localReviewStopError)throw localReviewStopError;
       this.database.checkpoint();
@@ -4463,6 +4465,7 @@ export class ControllerService {
     });
 
     this.app.get<{ Querystring: { cursor?: string } }>("/api/events", async (request, reply) => {
+      if (this.stopping) return reply.code(503).send({ code: "CONTROLLER_STOPPING" });
       reply.hijack();
       const response = reply.raw;
       response.writeHead(200, {
@@ -4481,11 +4484,19 @@ export class ControllerService {
       });
       const keepAlive = setInterval(() => response.write(": keep-alive\n\n"), 30_000);
       keepAlive.unref();
-      request.raw.on("close", () => {
+      let closed = false;
+      const close = () => {
+        if (closed) return;
+        closed = true;
         clearInterval(keepAlive);
         unsubscribe();
+        this.dashboardStreamClosers.delete(close);
         this.dashboardClients = Math.max(0, this.dashboardClients - 1);
-      });
+        response.end();
+      };
+      this.dashboardStreamClosers.add(close);
+      response.once("close", close);
+      response.once("error", close);
     });
 
     this.app.get<{Querystring:{view?:string}}>("/api/config", async (request,reply) => {if(request.query.view!==undefined&&request.query.view!=="console")return reply.code(400).send({code:"CONFIG_VIEW_INVALID"});const current=this.configuration.current();return request.query.view==="console"?{...current,...consoleConfig(current.config)}:current;});

@@ -2,6 +2,11 @@
 
 ## M0–M10 invariants
 
+- Fastify hijacked dashboard SSE responses must be ended before awaiting
+  `app.close()`. Waiting for server close first leaves an open browser holding
+  graceful shutdown. Own each response cleanup once, including its timer and
+  subscription, and reject new streams once Controller stopping begins.
+
 - Verification candidate materialization must clear inherited GIT_DIR/GIT_WORK_TREE
   overrides and disable checkout hooks/fsmonitor. A detached worktree add can
   invoke post-checkout; index isolation alone does not make it side-effect free.

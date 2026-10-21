@@ -2001,3 +2001,19 @@ after the browser closed; waiting on an open event stream exposed a shutdown
 ordering defect to fix next. Private review-qa-28cfd4c/report.json records
 controllerStopped:true, nativeStartAttempts:0, humanAcceptance:false. Source
 workspaces and dirty trial candidate are retained. Official quota: 34% remains.
+
+## MAC-01j browser-independent graceful shutdown
+
+Actual retained-candidate browser QA exposed Controller.stop waiting indefinitely
+on Fastify's hijacked SSE response until the browser closed. A real authenticated
+HTTP event stream regression reproduces the failure with the client left open.
+Controller now owns idempotent stream closers, rejects new streams after stopping
+starts, removes subscriptions/timers and ends responses before app.close. Client
+EOF is explicitly awaited in the regression, independently of server-close timing.
+No provider process or database ownership checks are bypassed.
+
+RED /tmp/dispatcher-dashboard-stop-red.log; target one real HTTP case passes;
+default pnpm check136 files1390 tests (49.39s), diff check passes. Logs
+/tmp/dispatcher-dashboard-stop-target.log and -check.log. Rollback c50c881 with
+matching schema8 backup. Host launchd stop/login/sleep and slow-client performance
+remain separate Gates. Official quota checked after this unit; no reset used.
