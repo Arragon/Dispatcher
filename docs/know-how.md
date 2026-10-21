@@ -873,3 +873,9 @@
   specification and receipt atomically and check the post-save revision at dispatch.
   Keep composer drafts per Task and revision. Newer canonical data must not silently
   replace unsaved browser edits; explicit reload/discard restores the saved version.
+
+- Concurrent Git worktree add/remove can scan another partially written
+  .git/worktrees entry even for distinct branches. Order owned administration by
+  the physical Git common directory across aliases/managers, and recheck write
+  authority after waiting. Keep native execution in separate worktrees concurrent;
+  this in-process ordering does not lock external Git applications.

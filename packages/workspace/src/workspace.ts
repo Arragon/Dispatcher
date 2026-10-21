@@ -8,6 +8,15 @@ import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 
 const execute = promisify(execFile);
+// Git scans shared worktree administration while adding/removing entries. Keep
+// these mutations ordered across aliases/managers in this owning Runner process.
+const worktreeMutations=new Map<string,Promise<void>>();
+async function mutateWorktrees<T>(repositoryRoot:string,operation:()=>Promise<T>):Promise<T>{
+  const reported=(await execute("git",["-C",repositoryRoot,"rev-parse","--git-common-dir"])).stdout.trim(),common=await realpath(resolve(repositoryRoot,reported));
+  const previous=worktreeMutations.get(common)??Promise.resolve();let complete!:()=>void;const completion=new Promise<void>(resolve=>{complete=resolve;}),tail=previous.then(()=>completion);worktreeMutations.set(common,tail);
+  await previous;
+  try{return await operation();}finally{complete();if(worktreeMutations.get(common)===tail)worktreeMutations.delete(common);}
+}
 
 export interface RepositoryRecord {
   id: string;
@@ -255,6 +264,7 @@ export class WorkspaceManager {
 
   async create(plan: WorkspacePlan, options: { beforeCreate?: () => void } = {}): Promise<WorkspaceHandle> {
     const handle=await this.plan(plan);
+    return mutateWorktrees(handle.repositoryRoot!,async()=>{
     options.beforeCreate?.();
     await mkdir(this.worktreeRoot,{recursive:true});
     const root=await realpath(this.worktreeRoot);
@@ -264,6 +274,7 @@ export class WorkspaceManager {
     try{await execute("git",["-C",handle.repositoryRoot!,"worktree","add","-b",handle.branch,handle.path,handle.baseRevision]);}
     catch(error){throw new WorkspacePolicyError("WORKTREE_CREATE_FAILED",error instanceof Error?error.message:"Worktree creation failed");}
     this.managed.set(handle.path,structuredClone(handle));return handle;
+    });
   }
 
   async restore(handle: WorkspaceHandle): Promise<void> {
@@ -343,10 +354,12 @@ export class WorkspaceManager {
   async cleanup(plan: CleanupPlan): Promise<void> {
     if (!plan.safe) throw new WorkspacePolicyError("UNSAFE_CLEANUP", plan.reasons.join("; "));
     const repositoryRoot = plan.workspace.repositoryRoot ?? this.registry.get(plan.workspace.repositoryId).root;
+    return mutateWorktrees(repositoryRoot,async()=>{
     try {
       await execute("git", ["-C", repositoryRoot, "worktree", "remove", plan.workspace.path]);
       this.managed.delete(resolve(plan.workspace.path));
     }
     catch (error) { throw new WorkspacePolicyError("WORKTREE_REMOVE_FAILED", error instanceof Error ? error.message : "Worktree removal failed"); }
+    });
   }
 }

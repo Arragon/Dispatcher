@@ -2315,3 +2315,24 @@ target,check}.log. Do not call this a passing full gate. Track the concurrency
 failure in R-001; continue an independent scoped correction rather than weaken
 the assertion or serialize the test. Rollback source283c018, compatible schema8
 backup; changed-data recovery and real host service Gates remain open.
+
+
+## CV-03c order same-repository worktree administration
+
+The MAC-01o default gate reproduced Git reading another concurrent add's partially
+written commondir. Keep existing concurrent assertions. WorkspaceManager now
+serializes add/remove by physical Git common directory across repository aliases
+and manager instances within the owning Runner process. It rechecks beforeCreate
+inside the queue, leaves distinct repository mutations independent and releases a
+failed operation without retrying Git or deleting unknown artifacts. This is not
+an OS lock against other applications/Runner processes.
+
+A controlled delay around real Git reproduced overlap and poisoned-queue failures
+before correction (2 RED cases); target2 files5 cases passed, then an additional
+real remove/add regression passed in the full gate. Initial build caught the
+package ES target rejecting Promise.withResolvers; used its existing Promise
+constructor without changing targets. Initial lint caught import-type annotation;
+fixed the test import without weakening lint. Default146 files1459 tests and all
+build/type/lint/boundary checks now pass51.93s. Log /tmp/dispatcher-worktree-
+concurrency-{red,target,check}.log. MAC-01o rollback is now included in a passing
+full gate. Rollback sourcee240e6e; no persisted schema or external side effect.
