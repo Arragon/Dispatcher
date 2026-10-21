@@ -413,3 +413,13 @@ Clients reconnect through the existing event cursor/replay/reset contract. This
 bounds connection drain during service stop and prevents accumulating future
 frames for a slow client. Controlled HTTP tests do not replace real burst/slow-
 reader memory measurement or soak evidence.
+
+
+Task detail uses GET /api/tasks/:id?runsOffset=0&runsLimit=20 for Run history.
+The optional page mode returns runPage (offset/limit/total/nextOffset/hasActiveRun)
+and the separately scoped currentRun. Values must be nonnegative safe integer
+offsets and page sizes1..100; absent nextOffset means the counted history ended.
+Rows follow saved-time descending order with an ID tie breaker. Offset pages are
+live reads and can move as Runs update; they are not immutable snapshots or write
+permission. The default unpaged resource remains its existing contract. This mode
+bounds Run decoding, not Task delivery evidence or global Fleet queries.

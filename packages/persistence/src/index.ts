@@ -531,6 +531,15 @@ export class DispatcherDatabase {
     return rows.map((value) => decode(String(rowObject(value)?.document_json)) as T);
   }
 
+  listTaskRunsPage<T extends JsonValue>(taskId:string,offset=0,limit=20):{runs:T[];offset:number;limit:number;total:number;hasActiveRun:boolean;nextOffset?:number} {
+    if(!Number.isSafeInteger(offset)||offset<0||!Number.isSafeInteger(limit)||limit<1||limit>100||!Number.isSafeInteger(offset+limit))throw new Error("INVALID_RUN_PAGE");
+    const scope="kind='run' AND json_extract(document_json,'$.taskId')=?";
+    const counts=rowObject(this.handle.prepare(`SELECT COUNT(*) AS total, SUM(CASE WHEN COALESCE(json_extract(document_json,'$.state'),'UNKNOWN') NOT IN ('COMPLETE','FAILED','CANCELLED','SUPERSEDED') THEN 1 ELSE 0 END) AS active FROM entities WHERE ${scope}`).get(taskId))!;
+    const rows=this.handle.prepare(`SELECT document_json FROM entities WHERE ${scope} ORDER BY updated_at DESC,id ASC LIMIT ? OFFSET ?`).all(taskId,limit,offset);
+    const runs=rows.map(value=>decode(String(rowObject(value)?.document_json)) as T),total=Number(counts.total);
+    return {runs,offset,limit,total,hasActiveRun:Number(counts.active??0)>0,...(offset+runs.length<total?{nextOffset:offset+runs.length}:{})};
+  }
+
   appendRunEvent(event: {
     eventId: string;
     runId: string;

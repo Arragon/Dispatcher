@@ -4345,14 +4345,20 @@ export class ControllerService {
       if (outcome.status === 200) this.fleetEvents.publish("task.changed", request.params.id, { id: request.params.id });
       return reply.code(outcome.status).send(outcome);
     });
-    this.app.get<{ Params: { id: string } }>("/api/tasks/:id", async (request, reply) => {
+    this.app.get<{ Params: { id: string }; Querystring:{runsOffset?:string;runsLimit?:string} }>("/api/tasks/:id", async (request, reply) => {
+      const paged=request.query.runsOffset!==undefined||request.query.runsLimit!==undefined,offset=Number(request.query.runsOffset??"0"),limit=Number(request.query.runsLimit??"20");
+      if(paged&&(!/^\d+$/.test(request.query.runsOffset??"0")||!/^\d+$/.test(request.query.runsLimit??"20")||!Number.isSafeInteger(offset)||offset<0||!Number.isSafeInteger(limit)||limit<1||limit>100||!Number.isSafeInteger(offset+limit)))return reply.code(400).send({code:"INVALID_RUN_PAGE"});
       const task = this.database.getCanonicalTask<JsonValue>(request.params.id);
       if (!task) return reply.code(404).send({ code: "TASK_NOT_FOUND" });
+      const history=paged?this.database.listTaskRunsPage<JsonValue>(request.params.id,offset,limit):undefined;
+      const document=task.document as unknown as Task,current=document.currentRunId?this.database.getEntity<JsonValue>("run",document.currentRunId) as unknown as Run|undefined:undefined;
+      const runPage=history?{offset:history.offset,limit:history.limit,total:history.total,hasActiveRun:history.hasActiveRun,...(history.nextOffset!==undefined?{nextOffset:history.nextOffset}:{})}:undefined;
       return { ...task, contract: this.database.getTaskContract<JsonValue>(request.params.id), deliveries: this.database.listDeliveryEvidence<JsonValue>(request.params.id),
         executionIntent:this.database.getEntity<JsonValue>("task-execution-intent",request.params.id),
         publicationDraft:this.publications.draftForTask(this.principalFor(request).id,request.params.id),
         archive: this.database.getEntity<JsonValue>("task-archive", request.params.id),
-        runs: this.database.listEntities<JsonValue>("run").filter(value => (value as unknown as Run).taskId === request.params.id) };
+        runs: history?.runs??this.database.listEntities<JsonValue>("run").filter(value => (value as unknown as Run).taskId === request.params.id),
+        ...(history?{runPage,...(current?.taskId===request.params.id&&current.id===document.currentRunId?{currentRun:current}:{})}:{}) };
     });
     this.app.post<{Params:{id:string};Body:{expectedRevision:number;execution:PublishDraftV1["execution"];draft?:PublishDraftV1}}>("/api/tasks/:id/publications/preview",{schema:{body:{type:"object",additionalProperties:false,required:["expectedRevision","execution"],properties:{expectedRevision:{type:"integer",minimum:1},execution:publishDraftSchema.properties.execution,draft:publishDraftSchema}}}},async request=>{
       const principal=this.principalFor(request);if(!principal.roles.includes("operator"))throw new PublicationError("FORBIDDEN",403,"Operator role required");

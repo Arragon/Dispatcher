@@ -2513,3 +2513,35 @@ This strengthens the prior HEAD/status observation without modifying any origina
 Code unchanged since default150/1583 pass; doc-only diff check passes. Changed-data
 recovery, actual login/sleep/Keychain/native stop and service activation Gates remain
 open. Official quota checked after evidence unit; no reset used.
+
+
+## CV-11b / CV-13c bounded canonical task Run history
+
+The frozen M10/P4 design requires historical Run pagination (1000 queryable;
+10k history acceptance). Add opt-in runsOffset/runsLimit to the existing canonical
+Task resource, using SQLite count/LIMIT/OFFSET before JSON decoding, ordered by
+saved updated_at DESC/id ASC. Page size1..100 and nonnegative safe integer offsets
+are validated. Current Run is read independently and checked against owning Task;
+all-task hasActiveRun is counted separately so older/out-of-page active evidence
+cannot disappear from archive or action decisions. This is a read projection,
+never write authority or native evidence.
+
+V3 TaskDetail requests20 rows, pages history independently of current Task/Run,
+retains selected/current options outside the visible page, handles loading/errors
+and refreshes the viewed history on existing events. The owning TasksPage already
+keys TaskDetail by Task ID; a task switch resets its page/selection through that
+existing mount boundary. Archive uses all-task active metadata. Default unpaged
+GET remains for actual existing public/PublishPage consumers; no second UI/write
+entry is introduced. Task deliveries, Fleet/global scans and legacy default reads
+remain outside this bounded-Run scope; do not claim whole-history memory Gates.
+
+Two HTTP regressions first failed (unbounded-read guard and invalid bounds200),
+then passed:45 owned Runs plus foreign active Run,20/20/5 disjoint pages,
+out-of-page current/active facts and invalid bounds. UI first failed the missing
+paged request; now covers paging, current selection/archive and keyed task switch.
+Target3 files19 cases includes existing PR delivery assertions. Default152 files
+1586 tests and build/type/lint/boundaries pass80.23s; diff clean. Logs
+/tmp/dispatcher-task-run-pages-{red,ui-red,build,target,check}.log. Persistence
+built before cross-package targets. No schema/index/migration/config/native write.
+Actual1000/10k workload, browser performance and other P4 metrics remain R-004.
+Rollback sourcea4962cc with schema8 backup. Official quota checked after unit.

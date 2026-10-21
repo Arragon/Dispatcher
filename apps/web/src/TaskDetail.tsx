@@ -11,14 +11,17 @@ import { TaskActions } from "./TaskActions.js";
 import { Notice } from "./ui.js";
 import {UsagePanel} from "./UsagePanel.js";
 import { safeLink, stateLabel, terminalStates } from "./task-view.js";
-interface TaskView { executionIntent?:{publicationId:string}; revision:number; document:Task; contract?:TaskContract; deliveries:DeliveryEvidence[]; runs:Run[]; archive?:{revision:number;archivedAt?:string} }
+interface TaskView { executionIntent?:{publicationId:string}; revision:number; document:Task; contract?:TaskContract; deliveries:DeliveryEvidence[]; runs:Run[]; currentRun?:Run; runPage?:{offset:number;limit:number;total:number;hasActiveRun:boolean;nextOffset?:number}; archive?:{revision:number;archivedAt?:string} }
 interface RunResult { worktree:string; branch:string; files:string[]; verification:Run["verification"]; summary?:string;deliveryType?:"none"|"commit"|"pull-request";deliveryState?:"pushed"|"complete";generation?:number;commit?:LocalCommitResult;push?:GitPushResult }
 function Lines({items,empty="未登记"}:{items?:string[];empty?:string}):React.JSX.Element {return items?.length ? <ul className="detail-list">{items.map((item,index)=><li key={index}>{item}</li>)}</ul> : <p className="muted">{empty}</p>;}
 export function TaskDetail({id,fallback,profiles,onClose,refresh}:{id:string;fallback?:FleetTaskInput;profiles:FleetProfileInput[];onClose:()=>void;refresh:()=>Promise<unknown>}):React.JSX.Element {
-  const query=useQuery({queryKey:["task-detail",id],queryFn:()=>api<TaskView>(`/api/tasks/${encodeURIComponent(id)}`),retry:false,refetchInterval:query=>query.state.data?.runs?.some(run=>run.id===query.state.data?.document?.currentRunId&&run.state==="DELIVERING")?1500:false});
+  const query=useQuery({queryKey:["task-detail",id],queryFn:()=>api<TaskView>(`/api/tasks/${encodeURIComponent(id)}?runsOffset=0&runsLimit=20`),retry:false,refetchInterval:query=>query.state.data?.currentRun?.state==="DELIVERING"||query.state.data?.runs?.some(run=>run.id===query.state.data?.document?.currentRunId&&run.state==="DELIVERING")?1500:false});
+  const [historyOffset,setHistoryOffset]=useState(0);
+  const historyQuery=useQuery({queryKey:["task-run-history",id,historyOffset],queryFn:()=>api<TaskView>(`/api/tasks/${encodeURIComponent(id)}?runsOffset=${historyOffset}&runsLimit=20`),enabled:historyOffset>0,retry:false});
   const [attempt,setAttempt]=useState("");
   const [busy,setBusy]=useState(false),[message,setMessage]=useState("");
   const data=query.data?.document ? query.data : undefined;
+  const history=historyOffset===0?data:historyQuery.data,historyRuns=history?.runs??[],historyPage=history?.runPage;
   const task=data ? {...data.document,revision:data.revision,archiveRevision:data.archive?.revision??0,...(data.archive?.archivedAt?{archivedAt:data.archive.archivedAt}:{})} : fallback;
   const currentId=task?.currentRunId;
   const runId=attempt||currentId;
@@ -27,15 +30,15 @@ export function TaskDetail({id,fallback,profiles,onClose,refresh}:{id:string;fal
   const canReadResult=Boolean(run&&(terminalStates.has(run.state)||["DELIVERING","RESOURCE_BLOCKED","RUNNER_UNAVAILABLE"].includes(run.state)));
   const result=useQuery({queryKey:["run-result",runId,run?.state],queryFn:()=>api<{result:RunResult;review?:LocalReview}>(`/api/runs/${encodeURIComponent(runId!)}/result`),enabled:canReadResult,retry:false,refetchInterval:run?.state==="DELIVERING"?1500:false});
   const savedResult=result.data?.result;
-  useEffect(()=>subscribeToEvents(()=>{void query.refetch();if(runId){void runQuery.refetch();if(canReadResult)void result.refetch();}}),[query.refetch,runQuery.refetch,result.refetch,runId,canReadResult]);
-  async function reload():Promise<void>{await Promise.all([query.refetch(),...(runId?[runQuery.refetch()]:[]),...(canReadResult?[result.refetch()]:[]),refresh()]);}
+  useEffect(()=>subscribeToEvents(()=>{void query.refetch();if(historyOffset>0)void historyQuery.refetch();if(runId){void runQuery.refetch();if(canReadResult)void result.refetch();}}),[query.refetch,historyQuery.refetch,historyOffset,runQuery.refetch,result.refetch,runId,canReadResult]);
+  async function reload():Promise<void>{await Promise.all([query.refetch(),...(historyOffset>0?[historyQuery.refetch()]:[]),...(runId?[runQuery.refetch()]:[]),...(canReadResult?[result.refetch()]:[]),refresh()]);}
   async function archive():Promise<void>{
     if(!task||!data||busy)return;setBusy(true);setMessage("");
     try{await api(`/api/tasks/${encodeURIComponent(id)}/archive`,{method:"POST",body:JSON.stringify({archived:!task.archivedAt,revision:data.revision,archiveRevision:data.archive?.revision??0})});await reload();setMessage(task.archivedAt?"任务已恢复到当前项目":"任务已归档，执行记录保留");}
     catch(error){setMessage(error instanceof Error?error.message:"归档失败");if(error instanceof ApiError&&error.status===409)await reload();}
     finally{setBusy(false);}
   }
-  const activeRun=data?.runs?.find(entry=>entry.id===currentId);
+  const activeRun=data?.currentRun??data?.runs?.find(entry=>entry.id===currentId);
   const actionsRun=activeRun ? {...activeRun,createdAt:activeRun.startedAt??"",updatedAt:activeRun.lastActivityAt??""} as FleetRunInput : undefined;
   const frozenContract=runQuery.data?.contract;
   const contract=attempt&&attempt!==currentId?frozenContract:frozenContract??data?.contract;
@@ -47,7 +50,9 @@ export function TaskDetail({id,fallback,profiles,onClose,refresh}:{id:string;fal
     {data&&task&&<>
       <dl className="details-grid"><div><dt>任务状态</dt><dd><span className={`status status-${task.state.toLowerCase()}`}>{stateLabel(task.state)}</span></dd></div><div><dt>任务 / 契约版本</dt><dd>{data.revision} / {data.contract?.revision??"未登记"}</dd></div><div><dt>项目</dt><dd>{task.projectId}</dd></div><div><dt>归档版本</dt><dd>{data.archive?.revision??0}{task.archivedAt?" · 已归档":" · 当前项目"}</dd></div></dl>
       <section className="detail-section"><h3>完整任务说明</h3><pre className="task-instructions">{data.document.description??data.contract?.instructions??"历史任务未保存正文"}</pre></section>
-      <section className="detail-section"><h3>执行记录</h3><label>查看运行<select value={runId??""} onChange={event=>setAttempt(event.target.value)}><option value="">{currentId?"选择运行":"尚无当前运行"}</option>{data.runs?.map(entry=><option key={entry.id} value={entry.id}>{entry.id===currentId?"当前运行":"历史尝试"} · {entry.id} · {stateLabel(entry.state)}</option>)}</select></label>
+      <section className="detail-section"><h3>执行记录</h3><label>查看运行<select value={runId??""} onChange={event=>setAttempt(event.target.value)}><option value="">{currentId?"选择运行":"尚无当前运行"}</option>{runId&&!historyRuns.some(entry=>entry.id===runId)&&<option value={runId}>{runId===currentId?"当前运行":"已选运行"} · {runId}</option>}{historyRuns.map(entry=><option key={entry.id} value={entry.id}>{entry.id===currentId?"当前运行":"历史尝试"} · {entry.id} · {stateLabel(entry.state)}</option>)}</select></label>
+      {(Boolean(historyPage&&historyPage.total>20)||historyOffset>0)&&<div className="detail-toolbar" aria-label="执行记录分页"><button disabled={historyOffset===0||historyQuery.isFetching} onClick={()=>setHistoryOffset(Math.max(0,historyOffset-20))}>较新记录</button><span>第 {Math.floor(historyOffset/20)+1} 页 · 共 {historyPage?.total??data.runPage?.total??"未知"} 次</span><button disabled={historyPage?.nextOffset===undefined||historyQuery.isFetching} onClick={()=>{if(historyPage?.nextOffset!==undefined)setHistoryOffset(historyPage.nextOffset);}}>较早记录</button></div>}
+      {historyOffset>0&&historyQuery.isFetching&&<p role="status">正在读取历史记录…</p>}{historyOffset>0&&historyQuery.error&&<Notice tone="error">历史记录读取失败。<button onClick={()=>void historyQuery.refetch()}>重试历史记录</button></Notice>}
       {runQuery.isLoading&&runId&&<p role="status">正在读取运行快照…</p>}{runQuery.error&&<Notice tone="error">运行快照读取失败。<button onClick={()=>void runQuery.refetch()}>重试</button></Notice>}
       {run&&<><dl className="details-grid"><div><dt>Run 状态</dt><dd>{stateLabel(run.state)}</dd></div><div><dt>执行账号 / 提供方</dt><dd>{run.profileId} / {run.providerId??"未提供"}</dd></div><div><dt>本次请求模型</dt><dd>{selection?.requestedModel??(selection?"沿用原生配置":"历史记录未保存")}</dd></div><div><dt>运行模型证据</dt><dd>{run.model?.id??"未上报"} · {run.model?.source??"未知"}</dd></div><div><dt>参数与选择来源</dt><dd>{selection?`${JSON.stringify(selection.nativeParameters)} · ${selection.source}`:"未保存"}</dd></div><div><dt>配置 / 契约版本</dt><dd>{selection?.configRevision??"未知"} / {run.contractRevision??"未知"}</dd></div><div><dt>原生会话</dt><dd>{run.providerSessionId??"未上报"}</dd></div><div><dt>执行设备</dt><dd>{run.runnerId??"未提供"}</dd></div><div><dt>工作目录</dt><dd>{run.worktree??"未提供"}</dd></div><div><dt>分支</dt><dd>{run.branch??"未提供"}</dd></div><div><dt>输入 / 输出 token</dt><dd>{run.tokens?`${run.tokens.input} / ${run.tokens.output}`:"未提供"}</dd></div><div><dt>缓存输入 token（包含于输入）</dt><dd>{run.tokens?.cachedInput??"未提供"}</dd></div></dl><p className="muted">{run.tokenScope==="latest-turn"?"用量为最新完成回合，非运行累计。":"用量统计范围未提供。"}</p><p>{run.activitySummary??"尚无运行说明"}</p>{(run.failureReason||run.resourceBlockReason||run.recoveryReason)&&<Notice tone="warning">{[run.failureReason,run.resourceBlockReason,run.recoveryReason].filter(Boolean).join(" · ")}{run.recoveryReason==="NATIVE_OUTCOME_UNKNOWN"&&<p>先核查原生进程和会话；服务端禁止盲目恢复或重复派发。</p>}</Notice>}
       {selection?.routingDecision?<RoutingDecision decision={selection.routingDecision}/>:<p className="muted">历史运行未记录自动路由依据。</p>}
@@ -65,7 +70,7 @@ export function TaskDetail({id,fallback,profiles,onClose,refresh}:{id:string;fal
       {run&&<><NativeSessionSummary view={runQuery.data?.nativeSession}/><UsagePanel key={run.id} runId={run.id}/></>}
       <TaskActions key={`${id}:${data.revision}:${currentId}:${activeRun?.state}:${activeRun?.lastActivityAt}`} task={task} {...(actionsRun?{run:actionsRun}:{})} profiles={profiles} refresh={reload} publicationTask={Boolean(data.executionIntent)}/>
     </>}
-    {task&&<><button disabled={busy||!data||(!task.archivedAt&&Boolean(data.runs?.some(entry=>!terminalStates.has(entry.state))))} onClick={()=>void archive()}>{busy?"处理中…":task.archivedAt?"恢复到当前项目":"归档任务"}</button><p className="muted">归档保留全部执行记录；存在未结束运行时不能归档。</p></>}
+    {task&&<><button disabled={busy||!data||(!task.archivedAt&&(data.runPage?.hasActiveRun??Boolean(data.runs?.some(entry=>!terminalStates.has(entry.state)))))} onClick={()=>void archive()}>{busy?"处理中…":task.archivedAt?"恢复到当前项目":"归档任务"}</button><p className="muted">归档保留全部执行记录；存在未结束运行时不能归档。</p></>}
     {message&&<p role="status">{message}</p>}
   </Drawer>;
 }
