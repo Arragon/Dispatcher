@@ -1796,3 +1796,36 @@ compile failure was corrected to existing project-compatible promises, without
 changing tsconfig or weakening checks. No data/schema/dependency or host service
 change. Rollback028c7db with matching schema8 backup. R-002 stays open for unlocked
 real GUI evidence. Official quota checked after unit.
+
+
+## CV-11a A-stage read-only native Session summary
+
+Port a499d84 native-session-view.ts read semantics to canonical ExecutionSelection,
+existing Run runtime-model facts and InteractionStore. Share RunNativeSessionView
+as a pure domain DTO and append nativeSession to the existing authenticated Run
+response; no extra route/selection/control authority. It reads stored metadata,
+checks exact Session/Run/binding/control epoch, marks stale/future/mismatched
+observations unknown and never queries an Adapter/native service or writes SQL.
+MutationAvailable stays false; no native write operation or actual entry enabled.
+
+TaskDetail reuses that response for a scoped read-only section: requested model/
+effort and last native reported model are distinct, identity/control/observation
+state and diagnostic versions remain visible, missing facts stay unknown. New
+component has no fetch, native URL, launcher or command button. Stored native
+credential/domain metadata stays private. Directly required redactNativeText
+helpers are ported from a499d84, preserving safe opaque IDs/workspace paths while
+withholding short credentials and native auth directories. Existing global log/
+redactValue semantics are unchanged in this unit.
+
+New missing modules/helper RED, then 3 files10 tests GREEN: zero SQL/native side
+effects, auth, separate requested/reported, stale/future/epoch/ownership conflict,
+unknown/deleted UI and native credential filtering. Default full check131 files/
+1367 tests (42.96s), diff check passes. Initial exact-optional fixture/type errors
+were fixed without suppression. Logs /tmp/dispatcher-cv11a-red.log,
+-redaction-red.log, -ui-red.log, -target.log and -check.log. No dependency/schema,
+real provider/account or GUI acceptance. Source test file has broader native
+history/control routes not yet composed; retained in a499d84, not silently skipped.
+
+This is the A-allowed CV-11 subset. Full CV-09/10/11 and R-003/R-015 remain open
+for qualified drivers/history, handoff/reclaim and real client evidence. Rollback
+903a1d7 with matching schema8 backup. Official post-unit quota checked.

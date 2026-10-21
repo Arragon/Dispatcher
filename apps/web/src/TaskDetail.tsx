@@ -1,7 +1,8 @@
+import {NativeSessionSummary} from "./NativeSessionSummary.js";
 import { RoutingDecision } from "./RoutingDecision.js";
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import type { Task, TaskContract, Run, DeliveryEvidence,GitPushResult,LocalCommitResult } from "@dispatcher/domain";
+import type { Task, TaskContract, Run, DeliveryEvidence,GitPushResult,LocalCommitResult,RunNativeSessionView } from "@dispatcher/domain";
 import type { FleetTaskInput, FleetProfileInput, FleetRunInput } from "@dispatcher/fleet";
 import { api, ApiError, subscribeToEvents } from "./api.js";
 import { Drawer } from "./Drawer.js";
@@ -20,7 +21,7 @@ export function TaskDetail({id,fallback,profiles,onClose,refresh}:{id:string;fal
   const task=data ? {...data.document,revision:data.revision,archiveRevision:data.archive?.revision??0,...(data.archive?.archivedAt?{archivedAt:data.archive.archivedAt}:{})} : fallback;
   const currentId=task?.currentRunId;
   const runId=attempt||currentId;
-  const runQuery=useQuery({queryKey:["run-detail",runId],queryFn:()=>api<{run:Run;contract?:TaskContract}>(`/api/runs/${encodeURIComponent(runId!)}`),enabled:Boolean(runId),retry:false,refetchInterval:query=>query.state.data?.run?.state==="DELIVERING"?1500:false});
+  const runQuery=useQuery({queryKey:["run-detail",runId],queryFn:()=>api<{run:Run;contract?:TaskContract;nativeSession?:RunNativeSessionView}>(`/api/runs/${encodeURIComponent(runId!)}`),enabled:Boolean(runId),retry:false,refetchInterval:query=>query.state.data?.run?.state==="DELIVERING"?1500:false});
   const run=runQuery.data?.run;
   const canReadResult=Boolean(run&&(terminalStates.has(run.state)||["DELIVERING","RESOURCE_BLOCKED","RUNNER_UNAVAILABLE"].includes(run.state)));
   const result=useQuery({queryKey:["run-result",runId,run?.state],queryFn:()=>api<{result:RunResult}>(`/api/runs/${encodeURIComponent(runId!)}/result`),enabled:canReadResult,retry:false,refetchInterval:run?.state==="DELIVERING"?1500:false});
@@ -59,7 +60,7 @@ export function TaskDetail({id,fallback,profiles,onClose,refresh}:{id:string;fal
         {savedResult.deliveryType==="pull-request"&&(confirmedPr?<p><span>{confirmedPr.state==="MERGED"?"PR 已合并":confirmedPr.state==="FAILED"?"PR 已关闭":"PR 已创建"}</span> · <a href={safeLink(confirmedPr.url)} target="_blank" rel="noreferrer">查看已确认 PR</a></p>:<p>PR 回执未确认</p>)}
         <Lines items={savedResult.files} empty="没有文件变更"/>
       </>:result.error instanceof ApiError&&result.error.code==="RUN_RESULT_UNAVAILABLE"?<p>尚无本地结果回执。</p>:result.error?<Notice tone="error">结果读取失败。<button onClick={()=>void result.refetch()}>重试读取结果</button></Notice>:<p>运行结束后读取本地结果。</p>}{data.deliveries?.filter(delivery=>(!runId||delivery.runId===runId)&&!(savedResult?.deliveryType==="pull-request"&&delivery.id===confirmedPr?.id)).map(delivery=><p key={delivery.id}>{delivery.kind} · {delivery.state}{safeLink(delivery.url)&&<> · <a href={safeLink(delivery.url)} target="_blank" rel="noreferrer">查看交付</a></>}</p>)}<Notice>Run 完成、验证通过与任务验收分别记录；任务为 REVIEW 时仍需人工验收。</Notice></section>
-      {run&&<UsagePanel key={run.id} runId={run.id}/>}
+      {run&&<><NativeSessionSummary view={runQuery.data?.nativeSession}/><UsagePanel key={run.id} runId={run.id}/></>}
       <TaskActions key={`${id}:${data.revision}:${currentId}:${activeRun?.state}:${activeRun?.lastActivityAt}`} task={task} {...(actionsRun?{run:actionsRun}:{})} profiles={profiles} refresh={reload} publicationTask={Boolean(data.executionIntent)}/>
     </>}
     {task&&<><button disabled={busy||!data||(!task.archivedAt&&Boolean(data.runs?.some(entry=>!terminalStates.has(entry.state))))} onClick={()=>void archive()}>{busy?"处理中…":task.archivedAt?"恢复到当前项目":"归档任务"}</button><p className="muted">归档保留全部执行记录；存在未结束运行时不能归档。</p></>}

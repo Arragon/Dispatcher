@@ -1332,3 +1332,11 @@ codes remain for semantic failures; schema field errors use INVALID_DRAFT. The
 composer maps these pointers to labelled controls, preserves text, identifies
 invalid fields with descriptions and focuses the first issue, opening its
 containing details element. Unknown/non-field failures retain the general error.
+
+
+The existing authenticated Run response includes a RunNativeSessionView derived
+only from persisted binding/control/observation facts. TaskDetail shares this
+response for read-only status. Observation freshness and control-epoch matching
+do not grant mutation authority; native writes remain disabled until the full
+runtime/client qualification. Requested selection and last reported native model
+remain separate. Native storage references/credential-like text are not projected.

@@ -1,3 +1,4 @@
+import {nativeSessionView} from "./native-session-view.js";
 import {isGuardedControllerStart} from "./start-recovery.js";
 import {parseNativeModelDefaultReview,qualifyNativeModelDefault,readNativeModelDefaultEvidence} from "./model-defaults.js";
 import type {RunGitDelivery,ScmDeliverySelection,MutationFence} from "@dispatcher/domain";
@@ -4356,7 +4357,7 @@ export class ControllerService {
     this.app.get<{ Params: { id: string } }>("/api/runs/:id", async (request, reply) => {
       const run = this.database.getEntity<JsonValue>("run", request.params.id);
       if (!run) return reply.code(404).send({ code: "RUN_NOT_FOUND" });
-      return { run, contract: this.database.getEntity<JsonValue>("run-contract", request.params.id) };
+      return { run, contract: this.database.getEntity<JsonValue>("run-contract", request.params.id),nativeSession:nativeSessionView(this.database,run as unknown as Run,undefined,this.now()) };
     });
     this.app.get<{Params:{id:string}}>("/api/runs/:id/result",async(request,reply)=>{
       const result=this.database.getEntity<JsonValue>("run-result",request.params.id);
