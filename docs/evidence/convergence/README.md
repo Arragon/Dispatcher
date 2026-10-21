@@ -2483,3 +2483,33 @@ from frozen observed HEAD/status. No content cleanup/edit of these workspaces.
 Default Adapter integration, observer/source lifecycle and real qualification
 remain R-019. Rollback sourcea217d40 with compatible schema8 backup; official quota
 checked after unit. No native provider/account call or host service activation.
+
+
+## MAC-01q retained real database definition roundtrip
+
+Run the implementation at02e70192d4f29bdd742487133a39ab414a6a145c against the
+retained successful Codex trial database, with a new private fixture plist and
+simulated supervisor (only print/disable accepted). Both previously qualified
+fixed releases3dc0e008979b7f769f401ab101c9f6981b5a3514 and253a792041e6ac564022988076c15863b1b4deb9
+were reverified. No actual launchd label or native provider was invoked.
+
+Private evidence: provider-probes/2026-10-21T01-20-30.588Z/
+upgrade-rollback-02e7019-2026-10-21T04-55-40.422Z/report.json; corresponding
+backup-upgrade-rollback-02e7019-2026-10-21T04-55-40.422Z retains the sealed archive,
+reviewed plan and both transaction directories. Plan
+c7c937a724abf2456afe6cbf2c423b21659c7af0269441e2edd77d17dafc45f9.
+Preparation validated restored data, forward reached SWITCHED with exact candidate
+hash, reverse reached ROLLED_BACK, repeated reverse returned replayed:true.
+Both displaced files remain, original definition restored and owned barrier absent.
+MainSHA b73fc55032ae699b02f1632a102165e887baf08a704d66ac2052fab03a4f663a stayed exact;
+WAL absent before/after. One Task/Run/Session retained. Actual helper source and
+fixed binary identities are recorded separately; this is not activation proof for
+an02e7019 staged CLI. Log /tmp/dispatcher-service-rollback-real-data.log and probe
+/tmp/dispatcher-service-rollback-real-data.mjs. No human acceptance or data restore.
+
+Also rehash all frozen source/WIP files from source-manifest: v3's3 and
+continuation's8 match exactly; personal-local has no WIP and remains clean.
+This strengthens the prior HEAD/status observation without modifying any original.
+Code unchanged since default150/1583 pass; doc-only diff check passes. Changed-data
+recovery, actual login/sleep/Keychain/native stop and service activation Gates remain
+open. Official quota checked after evidence unit; no reset used.
