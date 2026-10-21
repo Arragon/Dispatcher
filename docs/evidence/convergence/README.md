@@ -2382,3 +2382,33 @@ only fake-canary presence and a fake provider-context string were recorded in th
 owned fixture. Logs /tmp/dispatcher-workspace-authority-{red,target,check}.log.
 Rollback source9244e40; no schema/config/provider or host service mutation. This
 closes this observed environment gap, not general child isolation/security review.
+
+
+## CV-10a preserve the committed Pi RPC transport
+
+Port a499d84 packages/adapters/src/pi-rpc.ts's PiRpcClient/Scope/protocol and all
+34 transport assertions into the internal pi-rpc-client module/test. Original
+source blob b32344138bf69f6756393c76ba822960f38107a9 remains preserved. Reuse the
+source native version-probe behavior (blob b136f4e94af023cb78bfa27ce5dd70ed02464ac8),
+adapting its newly owned probe to the target OwnedProcessGroup and drained catalog
+boundary. Both version/RPC children strip Controller authority and retain native
+account/PWD context. RPC close preserves its original owned-root-only contract;
+background-tool/native writer release is not inferred or cancelled by PID adoption.
+
+This retains exact UUID/new/resume argv, source protocol pin1.2.0, directory identity,
+UTF8/CRLF framing, correlated ACKs, bounded input/events, synchronous final Guard,
+uncertain-turn non-replay, prompt/settled distinction and diagnostic redaction.
+Import absence first failed; migrated34 assertions then passed. Added a real
+fake-canary environment test; it initially read evidence at spawn before RPC code
+ran, then awaited get_state (no timeout change). Target35 cases and default148
+files1498 tests/build/type/lint/boundaries pass59.85s. Preserve /tmp/dispatcher-pi-
+rpc-client-{red,target,environment,environment-race,check}.log; previous34-case
+full gate148/1497 also passed60.16s before the additional test.
+
+The module is not exported/registered in the default adapter or Controller. Existing
+Pi print/JSON execution remains unchanged. Read-only identity/history port,
+ExecutionSelection/managed binding producer, Controller lifecycle/source registry
+and real installed/account qualification remain pending. Devin ACP and committed
+Copilot modules still need adaptation; Copilot WIP remains separately frozen.
+CV-10 moves to In Progress, never Done. Rollback sourced13bae9; no installed Pi,
+provider/account, schema, host service or external write. Official quota checked.

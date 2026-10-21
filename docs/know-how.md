@@ -879,3 +879,9 @@
   the physical Git common directory across aliases/managers, and recheck write
   authority after waiting. Keep native execution in separate worktrees concurrent;
   this in-process ordering does not lock external Git applications.
+
+- Pi RPC agent_end can precede follow-up work; only the pinned protocol's settled
+  fact ends the turn wait. A timed-out/uncertain prompt cannot be retried under a
+  new nonce. Closing its owned RPC root does not prove background tools stopped
+  or native writer ownership was released. Version-probe group ownership is a
+  separate, freshly created process boundary.

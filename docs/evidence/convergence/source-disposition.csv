@@ -343,7 +343,7 @@ packages/adapters/src/opencode-execution.ts,continuation-only,production-or-buil
 packages/adapters/src/opencode-owned-server.ts,continuation-only,production-or-build,,f18060a3912ba46463de405dd76c33786146a1b8,port-legacy-with-v3-contract-adaptation,CV-09,retained-source; target acceptance pending
 packages/adapters/src/opencode-server.ts,continuation-only,production-or-build,,ac9aa145b5d64909d11a0569cbd886817415bc23,port-legacy-with-v3-contract-adaptation,CV-09,retained-source; target acceptance pending
 packages/adapters/src/owned-process.ts,v3-only,production-or-build,6facb7cbfac5bf3cf19a10e49c6add4b7ef6f4bd,,retain-v3,CV-13,retained-source; target acceptance pending
-packages/adapters/src/pi-rpc.ts,continuation-only,production-or-build,,b32344138bf69f6756393c76ba822960f38107a9,port-legacy-with-v3-contract-adaptation,CV-10,retained-source; target acceptance pending
+packages/adapters/src/pi-rpc.ts,continuation-only,production-or-build,,b32344138bf69f6756393c76ba822960f38107a9,port-legacy-with-v3-contract-adaptation,CV-10,retained-source; raw transport ported CV-10a; execution and read ports pending
 packages/adapters/src/process-cancellation.ts,continuation-only,production-or-build,,d2954d23f3244973a4213edb7e36372758c1c696,port-legacy-with-v3-contract-adaptation,CV-08,retained-source; target acceptance pending
 packages/adapters/src/qoder.ts,both,production-or-build,0c207486b697cbff959e0d2b79f662463da0fdf0,e86de47fbec24b190ab55304c5067e541fa3be06,retain-v3-and-adapt-legacy-in-owning-boundary,CV-13,retained-source; target acceptance pending
 packages/adapters/test/adapters.test.ts,continuation-only,test,64bd428307122e89445a3307deecfda530997652,7983d57e265126fecc06a2538083cbdb575db8d0,port-legacy-with-v3-contract-adaptation,CV-13,retained-source; target acceptance pending
@@ -380,7 +380,7 @@ packages/adapters/test/opencode-server-lifecycle.test.ts,continuation-only,test,
 packages/adapters/test/opencode-server.test.ts,continuation-only,test,,3d5a8b21b47409d557c52b8bc12d32e43696c68c,port-legacy-with-v3-contract-adaptation,CV-09,retained-source; target acceptance pending
 packages/adapters/test/opencode-turn-result.test.ts,continuation-only,test,,7d061596d345ff7e488ef761d355996c9907068d,port-legacy-with-v3-contract-adaptation,CV-13,retained-source; target acceptance pending
 packages/adapters/test/owned-native-process.test.ts,v3-only,test,1cc6e89f8052689f7af52895bdccfad0a0d63b7a,,retain-v3,CV-13,retained-source; target acceptance pending
-packages/adapters/test/pi-rpc.test.ts,continuation-only,test,,7bbfb45c6f95cafc1bd7d699e2d0013421607aca,port-legacy-with-v3-contract-adaptation,CV-10,retained-source; target acceptance pending
+packages/adapters/test/pi-rpc.test.ts,continuation-only,test,,7bbfb45c6f95cafc1bd7d699e2d0013421607aca,port-legacy-with-v3-contract-adaptation,CV-10,retained-source; raw transport ported CV-10a; execution and read ports pending
 packages/adapters/test/process-cancellation.test.ts,continuation-only,test,,0a6f2d5d6a4177b3113377b99ae154006b98780c,port-legacy-with-v3-contract-adaptation,CV-08,retained-source; target acceptance pending
 packages/adapters/test/qoder.test.ts,continuation-only,test,6842d53af13a487bb939082d876da4664f233bd3,e5156028730f87be00d5183edcabb20467504f57,port-legacy-with-v3-contract-adaptation,CV-13,retained-source; target acceptance pending
 packages/adapters/test/start-intent-contract.test.ts,continuation-only,test,,5137f667ecabb9cf3b4bd466384c885009eb2a0c,port-legacy-with-v3-contract-adaptation,CV-13,retained-source; target acceptance pending
