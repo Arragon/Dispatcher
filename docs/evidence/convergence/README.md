@@ -1766,3 +1766,33 @@ CPU average 10.02%, RSS max116408320B. This includes cold startup, is marked
 informational and does not pass idle CPU/soak Gate. Report remains ignored under
 .dispatcher/benchmarks/2026-10-21T01-03-00.190Z-smoke.json and command output
 /tmp/dispatcher-cv13-smoke.log. No real provider/browser/launchd evidence implied.
+
+
+## LP directory-picker process drain and blocked native GUI probe
+
+Actual Controller/native picker probe at 028c7db created only its own temporary
+data/repository and two osascript children. CUA explicitly reported HOST_LOCKED
+and automatic unlock unavailable. Both test selection requests were cancelled
+through the real API, not by native UI; both ended cancelled with unchanged
+configuration revision and Task count. Owned Controller/osascript children exited
+and the owned temporary directory was removed. Native dialog selection/cancel and
+Chinese/space-path GUI acceptance remain UNVERIFIED. No prompt to unlock blocks
+independent development. Evidence /tmp/dispatcher-native-picker-result.json and
+/tmp/dispatcher-native-picker-probe.log; never count this as GUI/A acceptance.
+
+Native dialog execution now uses the existing OwnedProcessGroup. Cancel/timeout/
+oversized output wait for owned group absence and callback close before completion;
+late paths are discarded. Failed drain reports NATIVE_PICKER_CLEANUP_UNKNOWN and
+blocks another dialog. Output stays bounded16KiB and failures never expose raw
+stderr. StringDecoder preserves multibyte UTF-8 across pipe chunks; a new real
+child fixture first reproduced corrupt Chinese path before that correction.
+
+Five added cases RED→GREEN: delayed TERM/cancel/physical absence, pre-abort and
+output bound, native cancel vs valid path, split UTF-8, cleanup-unknown latch.
+Target2 files8 tests; default full check128 files1357 tests (43.33s), diff check
+passes. Logs /tmp/dispatcher-lp-picker-red.log, -utf8-red.log, -unknown-red.log,
+-final-target.log and -check.log (same prefix). The initial Promise.withResolvers
+compile failure was corrected to existing project-compatible promises, without
+changing tsconfig or weakening checks. No data/schema/dependency or host service
+change. Rollback028c7db with matching schema8 backup. R-002 stays open for unlocked
+real GUI evidence. Official quota checked after unit.

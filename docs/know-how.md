@@ -2,6 +2,11 @@
 
 ## M0–M10 invariants
 
+- Native directory cancellation completes only after owned process-group absence
+  and callback close; uncertainty blocks another dialog. Use StringDecoder for
+  native UTF-8 pipe chunks. A locked-host API cancellation is cleanup evidence,
+  never a successful native dialog or Chinese/space-path GUI acceptance.
+
 - Cost estimates retain decimal strings and reduced BigInt fractions through all
   segments, with one final scale-18 half-up rounding. Observed/collected times
   cannot allocate billing intervals; missing cache inclusion is not exclusion.

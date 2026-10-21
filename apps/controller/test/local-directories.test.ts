@@ -31,3 +31,6 @@ it("requires local admin/auth/CSRF, rejects remote or injected picker scope, and
   expect((await service.app.inject({headers,url:`/api/local/directory-selections/${id}`})).json()).toMatchObject({selection:{state:"cancelled"}});expect(picker).toHaveBeenCalledOnce();expect(service.configuration.current().revision).toBe(revision);expect(service.configuration.current().config.repositories).toEqual([]);
  }finally{gate.resolve();await service.stop();rmSync(directory,{recursive:true,force:true});}
 });
+it("keeps cleanup uncertainty unavailable and blocks another picker even after cancellation",async()=>{
+ const gate=Promise.withResolvers<void>(),selections=new DirectorySelections(async()=>{await gate.promise;throw Error("NATIVE_PICKER_CLEANUP_UNKNOWN");}),operation=selections.begin("local");selections.cancel(operation.id);gate.resolve();await selections.settle();expect(selections.get(operation.id)).toMatchObject({state:"unavailable",reasonCode:"NATIVE_PICKER_CLEANUP_UNKNOWN"});expect(()=>selections.begin("local")).toThrow(expect.objectContaining({code:"NATIVE_PICKER_UNAVAILABLE"}));await selections.close();
+});
