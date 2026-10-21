@@ -1829,3 +1829,39 @@ history/control routes not yet composed; retained in a499d84, not silently skipp
 This is the A-allowed CV-11 subset. Full CV-09/10/11 and R-003/R-015 remain open
 for qualified drivers/history, handoff/reclaim and real client evidence. Rollback
 903a1d7 with matching schema8 backup. Official post-unit quota checked.
+
+
+## A real Codex file/required-verification/REVIEW evidence
+
+Source 9e07caed9c492e75341abfc27d40e81693cf5a74. Installed packaged CLI
+0.163.0-alpha.10.2 login status authenticated, no credential contents printed.
+All11 frozen source WIP hashes rechecked unchanged. First two disposable probes
+were preflight-rejected (scope under CODEX_HOME), zero native starts and zero
+Task creation; artifacts retained. No policy bypass. Corrected probe uses a new
+independent .local/share/dispatcher/provider-probes directory, original Controller
+data untouched. Real CodexCliBackend, ConfigPlan, publication preview/commit,
+managed worktree and registered required command were used, no mocked provider.
+
+Report: /Users/wangdongxin/.local/share/dispatcher/provider-probes/2026-10-21T01-20-30.588Z/probe-report.json
+Run9ebd4b90-cc6b-4ca1-8854-5cd388f89b19; native Session
+01a15c0b-db14-70d2-9d3f-197541461f42. Exactly1 real start, owned cwd under the
+probe data/worktrees, model/effort both explicitly omitted as native-default.
+evidence.txt exact expected content, required probe-required PASSED, Run COMPLETE,
+Task REVIEW and run-result persisted; source repository clean. Controller stopped
+confirmed by its own cleanup. Probe database and dirty managed worktree retained;
+no acceptance, commit, push or cleanup of candidate files. Command log:
+/tmp/dispatcher-real-codex-probe-3.log.
+
+This proves only real native-default file execution -> required verification ->
+REVIEW via isolated Controller API. Browser GUI, explicit model/effort/native
+reported selection, same-session reply, actual cancellation, restart replay,
+launchd/login/sleep, recovery and human acceptance remain open. The v3 TaskActions
+currently lacks the legacy local manual-accept/candidate-binding flow; next local
+implementation must port that behavior into the canonical Task/Run entrypoint
+before A can be called usable. Never transition this real probe to DONE on behalf
+of human acceptance. A/B and formal LP/CV Gates remain open.
+
+An existing benchmark audit also found lifetime ps%CPU averaging, missing-sample
+zero fallback, and 100ms cleanup without confirmed child exit. R-004 retains this
+instrumentation work before idle/soak acceptance; prior smoke remains informational.
+Official quota checked after this real-provider unit, no quota reset consumed.
