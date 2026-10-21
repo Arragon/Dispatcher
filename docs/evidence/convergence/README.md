@@ -68,7 +68,7 @@ final convergence verification.
 | CV-06 | Controller nonblocking scoped collection/terminal retry verified at 115/1169; origin/attempt/time and account-quota qualification/UI pending |
 | CV-08 | continuation/worker/delivery/failure/cancel/pause Guard, failure priority drain, stop audit and read-only local start recovery qualification verified at 115/1204; ordinary local start composed; schema-8 writer increment verified at 116/1208; known-unsent cancellation/publication journal recovery verified at 116/1215; general guarded local recovery verified at 116/1218; captured reroute stage Guard and default Generic drain verified at 116/1224; shared guarded replacement startup and original owned-CLI cleanup verified at 116/1229; legacy/remote/qualified native recovery remain pending |
 | CV-12 | pending complete selection/control integration |
-| macOS service / LP / backup | MAC-01a CLI data-directory ownership verified at 117/1237; MAC-01b lifecycle/fixed definition verified at 117/1251; MAC-01c read-only doctor verified at 118/1264; MAC-01d structured logs/safe tail verified at 119/1273; MAC-01e offline DB backup/restore preparation verified at 121/1281; MAC-01f release closure/hash foundation + packaged asset fix verified at 122/1292; isolated stager/early stdio/upgrade/qualified restore activation and real evidence pending |
+| macOS service / LP / backup | MAC-01a CLI data-directory ownership verified at 117/1237; MAC-01b lifecycle/fixed definition verified at 117/1251; MAC-01c read-only doctor verified at 118/1264; MAC-01d structured logs/safe tail verified at 119/1273; MAC-01e offline DB backup/restore preparation verified at 121/1281; MAC-01f release closure/hash foundation + packaged asset fix verified at 122/1292; MAC-01g isolated offline staging + relocated package/PTY fixture verified at 123/1298; release binding/early stdio/upgrade/qualified restore activation and real evidence pending |
 | CV-07/09/10/11 | pending contracts/guards |
 | CV-13/14 and original Gates | pending implementation and evidence |
 
@@ -1598,3 +1598,42 @@ MAC-01/R-013 stays open for isolated stager, relocated actual package/PTY smoke,
 verified release binding, early stdio, upgrade/rollback/recovery and real service
 Gates. No original data or host service changed. Rollback: 1412af3 with matching
 schema-8 backup. Official quota checked after unit and recorded in Linear.
+
+
+## MAC-01g isolated offline staging and a fixed package candidate
+
+Add stage:controller using existing pnpm deployment. It requires committed clean
+source and a new output directory, builds normally, then copies only tracked
+package source/manifests plus compiled dist into a private workspace. Source
+node_modules/cache, .npmrc and persisted state are excluded. Deployment runs
+offline with per-command workspace injection inside that workspace, verifies
+the source dependency-state hash stayed unchanged, detaches hardlinks and moves
+the entire runtime before an isolated package smoke. Only successful completion
+creates/verifies release.json; preparing/failed markers remain closed.
+
+Five copy/source tests verify tracked+compiled copying, cache/data exclusion, no
+shared inode, existing-target preservation, build-state rejection, traversal and
+dirty-checkout preservation. Add a failed-marker qualification regression. Target
+2 files/17 tests, default `mise exec -- pnpm check` 123 files/1298 tests
+(42.25s test phase); diff check passes. Logs: /tmp/dispatcher-mac01g-target.log,
+/tmp/dispatcher-mac01g-final-target.log, /tmp/dispatcher-mac01g-final-check.log.
+
+Freeze code at 82a4f26184e802e35287baf62a5a2731f7d6f243, then run the real stage
+command in /tmp/dispatcher-mac01g-stage.log. Verified local candidate:
+/Users/wangdongxin/.local/share/dispatcher/releases/82a4f26184e802e35287baf62a5a2731f7d6f243
+(entry runtime/dist/cli.js, manifest release.json). It contains 5983 inventory
+entries / 116905523 bytes, no escaping links/shared hardlinks, exact Node
+/Users/wangdongxin/.local/share/mise/installs/node/24.21.0/bin/node. Moved-runtime
+HTML, referenced JS asset, authenticated diagnostics and a real PTY subprocess
+pass on darwin/arm64; schema 8/protocol 4. The source dependency-state file hash
+is unchanged across isolated deploy. Independent verify also passes in
+/tmp/dispatcher-mac01g-release-verify.log. All 11 source WIP hashes rechecked
+unchanged. No original database opened or host service installed.
+
+Evidence scope stays isolated-package-fixture, nativeProviderVerified=false.
+This is one actual fixed runtime candidate, not A acceptance or real Codex/
+launchd/login/Keychain/restore proof. Install/start must still bind its verified
+manifest; early stdio, upgrade/rollback and qualified restore activation remain.
+Code/rollback source: daf6750 with matching schema-8 backup. Keep the qualified
+82a4f26 directory immutable; this evidence-only update does not change its code.
+Official quota checked after unit and recorded in Linear.

@@ -117,6 +117,26 @@ master key before starting:
 export DISPATCHER_SECRET_STORE_KEY='<at-least-16-characters>'
 ```
 
+## Prepare a fixed Controller release
+
+Use a committed clean integration checkout. Staging preserves dirty work by
+refusing to proceed; it does not stash/reset it or overwrite an existing target.
+
+```bash
+pnpm stage:controller --out /absolute/persistent/releases/unique-candidate
+pnpm stage:controller verify /absolute/persistent/releases/unique-candidate
+```
+
+The tool builds, copies tracked source and compiled output into a private
+workspace, then uses the existing pnpm offline deployment with injected workspace
+dependencies. Source data, registry credential files and node_modules caches are
+excluded. It detaches hardlinks and checks a moved runtime through HTML/assets,
+an authenticated API and a real PTY fixture, then writes release.json with source
+SHA, exact Node/platform, schema/writer metadata and content hashes. This is an
+isolated package smoke; no real provider, browser, service or recovery Gate is
+implied. A failed target retains its preparing/failure marker for inspection.
+Runtime dependency scripts/licenses remain in the pnpm package boundary.
+
 ## macOS Controller background service
 
 Build and stage the complete workspace and dependencies at a persistent release

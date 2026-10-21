@@ -68,7 +68,12 @@ records a complete relative file/link inventory, hashes/modes, Source SHA,
 Node/platform/schema/writer metadata and an explicitly isolated smoke scope.
 Escaping/absolute links, shared hardlinks, persisted state and changed content
 cannot qualify; hardlinks may be detached only within a newly owned inactive
-staging tree. This foundation does not itself publish or install a release.
+staging tree. The stage:controller build tool requires committed clean source,
+copies only tracked package source and compiled output into a private workspace,
+and deploys offline there. It verifies that the source dependency-state cache
+did not change, detaches artifact hardlinks, moves the complete runtime for an
+isolated HTTP/asset/API/PTY smoke, then records and re-verifies its manifest.
+Existing or failed targets cannot be silently overwritten or activated.
 
 The personal MVP adds one Controller-owned `dispatchTask` path shared by HTTP
 and the confirmed operator-only `task.dispatch` semantic tool. Slack task and
