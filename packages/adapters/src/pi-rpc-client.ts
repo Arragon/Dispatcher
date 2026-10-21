@@ -16,6 +16,9 @@ export type PiRpcCommand="get_state"|"get_messages"|"get_entries"|"prompt"|"stee
 export interface PiRpcOptions {signal?:AbortSignal;timeoutMs?:number;beforeSend?:()=>void}
 export interface PiRpcResult {disposition:"started"|"queued"|"handled";state:"settled"|"handled";aborted?:boolean}
 interface Directory {path:string;dev:bigint;ino:bigint}
+// Shared by this transport and its internal read-only projection. These helpers
+// are not part of the package entrypoint or native capability registration.
+export type {Directory};
 interface Turn {written:boolean;acked:boolean;settled:boolean;handled:boolean}
 interface Pending {command:PiRpcCommand;turn:Turn|undefined;resolve:(value:Record<string,unknown>)=>void;reject:(error:AdapterContractError)=>void;cleanup:()=>void}
 const failure=(code:string)=>new AdapterContractError(code,"Pi RPC operation could not be confirmed");
@@ -25,6 +28,7 @@ function directory(path:string):Directory {
   try{if(!text(path,4096)||!isAbsolute(path))throw Error();const physical=realpathSync(path),stat=statSync(physical,{bigint:true});if(!stat.isDirectory())throw Error();return {path:physical,dev:stat.dev,ino:stat.ino};}
   catch{throw failure("PI_RPC_SCOPE_CHANGED");}
 }
+export {directory,text,object,failure};
 function synchronous(guard:(()=>void)|undefined):void {
   try{const admitted:unknown=guard?.();if(admitted!==undefined){void Promise.resolve(admitted).catch(()=>undefined);throw failure("PI_RPC_AUTHORITY_CHANGED");}}
   catch{throw failure("PI_RPC_AUTHORITY_CHANGED");}

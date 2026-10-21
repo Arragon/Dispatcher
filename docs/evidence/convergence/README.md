@@ -2412,3 +2412,34 @@ and real installed/account qualification remain pending. Devin ACP and committed
 Copilot modules still need adaptation; Copilot WIP remains separately frozen.
 CV-10 moves to In Progress, never Done. Rollback sourced13bae9; no installed Pi,
 provider/account, schema, host service or external write. Official quota checked.
+
+
+## CV-10b preserve the Pi read-only identity/history port
+
+Port a499d84 PiRpcInteractionPort and all44 read/identity assertions into the
+internal pi-rpc-read module. Reuse the client's exact directory/text validators;
+share the original owned-child fixture across transport/read tests, retaining all
+35 transport/environment cases. No package entrypoint, default Pi print adapter,
+Controller runtime registration or surface/write capability is added.
+
+The port requires supplied scope-matching runtime evidence for durable identity
+and history only. It fences UUID/profile/backend/Runner/native storage/execution
+identity, captures read cancellation, rechecks guards before queued native reads
+and pins materialized session files against replacement/deletion/alias retarget.
+Inspect requires stable repeated state; history requires repeated stable native
+entries/state, validates IDs/times/cursors and bounds entry/page bytes. It labels
+append-order/tree/incomplete pagination gaps and never turns idle/root close into
+background-tool, approval, external-change continuity or writer-release proof.
+
+Missing port import first failed. Target79 cases initially had78 pass and one
+missing PiAdapter test import; corrected the import, retained the assertion and
+verified that case independently. Initial lint caught a type-only import; fixed
+without suppression. Default149 files1542 cases and build/type/lint/boundaries
+pass93.06s. Logs /tmp/dispatcher-pi-rpc-read-{red,target-missing-import,import,
+check}.log. No actual installed native application/account or provider call.
+
+Readonly port qualification/composition, canonical ExecutionSelection producer,
+Controller lifecycle/source registry and real same-session handoff remain open.
+Supplied fixture evidence is not production qualification; native write methods
+and surfaces stay absent/unknown. Source backup unchanged; rollback source9b8bf00
+and schema8 backup. Official quota checked after this unit; no reset used.
