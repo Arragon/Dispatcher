@@ -8,7 +8,7 @@ import { assertLaunchAgentDefinition, launchdPlist, statusLaunchAgent, type Laun
 import { assertControllerReleaseBinding, bindControllerRelease, verifyControllerRelease } from "./release-manifest.js";
 
 interface Input { current: LaunchAgentDefinition; plistPath: string; targetReleaseDirectory: string; backupDirectory: string; executor?: LaunchctlExecutor; execute?: boolean; confirmed?: boolean; expectedPlanId?: string }
-interface DatabaseFacts { schemaVersion: number; writerProtocol: number; mainSha256: string; walSha256: string | null; tasks: number; runs: number; sessions: number }
+export interface DatabaseFacts { schemaVersion: number; writerProtocol: number; mainSha256: string; walSha256: string | null; tasks: number; runs: number; sessions: number }
 export interface ServiceUpgradePlan { version: 1; id: string; scope: "offline-service-upgrade-preparation"; plistPath: string; previous: LaunchAgentDefinition; candidate: LaunchAgentDefinition; backupDirectory: string; database: DatabaseFacts; installedDefinitionChanged: false; activationRequired: true; restoreReconciliationRequired: true }
 const hash = (value: string | Buffer) => createHash("sha256").update(value).digest("hex");
 function fileHash(path: string): string {
@@ -17,7 +17,7 @@ function fileHash(path: string): string {
 }
 function inside(root: string, path: string): boolean { const part = relative(root, path); return part === "" || part !== ".." && !part.startsWith(`..${sep}`) && !isAbsolute(part); }
 function durableFile(path: string, content: string): void { const fd = openSync(path, "wx", 0o600); try { writeFileSync(fd, content); fsyncSync(fd); } finally { closeSync(fd); } }
-function inspectSnapshot(path: string): DatabaseFacts {
+export function inspectUpgradeSnapshot(path: string): DatabaseFacts {
   const mainSha256 = fileHash(path), walSha256 = existsSync(`${path}-wal`) ? fileHash(`${path}-wal`) : null, db = new DatabaseSync(path, { readOnly: true });
   try {
     assertDatabaseSchema(db, migrations); assertDatabaseOperational(db);
@@ -61,7 +61,7 @@ export async function prepareServiceUpgrade(input: Input): Promise<{ phase: "pre
     const source = join(dataDirectory, "dispatcher.sqlite"); assertDatabaseLocationOperational(source);
     const snapshot = copyStableDatabaseSnapshot(source, 2 * 1024 * 1024 * 1024);
     try {
-      const database = inspectSnapshot(snapshot.path);
+      const database = inspectUpgradeSnapshot(snapshot.path);
       const previous = verifyControllerRelease(current.release.directory);
       if ([previous.manifest.schemaVersion, next.manifest.schemaVersion].some(value => value !== database.schemaVersion) || [previous.manifest.writerProtocol, next.manifest.writerProtocol].some(value => value !== database.writerProtocol)) throw Error("SERVICE_UPGRADE_MIGRATION_NOT_QUALIFIED");
       const fields = { version: 1 as const, scope: "offline-service-upgrade-preparation" as const, plistPath, previous: current, candidate, backupDirectory, database, installedDefinitionChanged: false as const, activationRequired: true as const, restoreReconciliationRequired: true as const };
@@ -78,7 +78,7 @@ export async function prepareServiceUpgrade(input: Input): Promise<{ phase: "pre
       assertControllerReleaseBinding(current.release, current.cliPath, current.nodePath); assertControllerReleaseBinding(release, candidate.cliPath, candidate.nodePath); assertLaunchAgentDefinition({ ...current, plistPath });
       // A non-cooperating old writer may ignore the directory lock; detect its changes.
       const recheck = copyStableDatabaseSnapshot(source, 2 * 1024 * 1024 * 1024);
-      try { if (JSON.stringify(inspectSnapshot(recheck.path)) !== JSON.stringify(database)) throw Error("SERVICE_UPGRADE_DATA_CHANGED"); } finally { recheck.close(); }
+      try { if (JSON.stringify(inspectUpgradeSnapshot(recheck.path)) !== JSON.stringify(database)) throw Error("SERVICE_UPGRADE_DATA_CHANGED"); } finally { recheck.close(); }
       durableFile(join(backupDirectory, "previous.plist"), previousText); durableFile(join(backupDirectory, "candidate.plist"), candidateText);
       durableFile(join(backupDirectory, "service-upgrade.json"), JSON.stringify({ version: 1, state: "PREPARED", plan, manifest, capturedAt: new Date().toISOString(), installedDefinitionChanged: false, activationRequired: true, restoreValidated: true, restoreReconciliationRequired: true, secretStoreIncluded: false, nativeStorageIncluded: false }, null, 2));
       unlinkSync(join(backupDirectory, "service-upgrade-preparing.json"));

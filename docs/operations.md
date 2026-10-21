@@ -175,7 +175,8 @@ enabling/start; stop uncertainty prevents restart/uninstall. `uninstall` retains
 all user data and removes the plist only after confirmed Controller stop.
 Changing installed runtime/data paths returns `SERVICE_UPGRADE_REQUIRED` and
 preserves the existing definition. Offline preparation is available below;
-definition switching, rollback activation and qualified restore are still pending.
+offline definition switching/reconciliation are available; rollback after database
+changes, data restore activation and real host qualification are still pending.
 Failed bootstrap keeps the definition and error for inspection.
 Parsed definitions carry their captured byte hash. A symlink, shared/writable
 unsafe file or observed change before bootstrap/kickstart fails closed with
@@ -203,8 +204,25 @@ service-upgrade.json. It preserves the installed definition and data bytes, and
 starts nothing. Do not copy archive databases or remove barriers to activate a
 rollback. Credentials/native homes remain outside this backup. An incomplete
 service-upgrade-preparing.json retains the failed attempt for inspection; do not
-reuse/overwrite that directory. Prepared artifacts are inputs to later reviewed
-switch/recovery work, and do not complete the upgrade/rollback Gate.
+reuse/overwrite that directory. Prepared artifacts are inputs to the following
+reviewed offline switch and do not complete the upgrade/rollback Gate.
+
+```bash
+pnpm dispatcher -- apply-upgrade --record /absolute/new-backup/service-upgrade.json --plan-id <reviewed-id> --confirm
+pnpm dispatcher -- reconcile-upgrade --record /absolute/new-backup/service-upgrade.json --plan-id <reviewed-id> --confirm
+```
+
+Apply disables the unloaded service, holds data ownership, installs a deployment
+marker through the existing database startup barrier, journals the operation and
+switches only the exact candidate definition. It leaves service activation
+explicit. An unconfirmed switch preserves its displaced file and barrier; only
+reconcile-upgrade may finish that known local install or restore the exact captured
+old definition after verifying unchanged data, artifacts and unloaded supervision.
+It will not overwrite a foreign definition or erase an unrelated restore marker.
+These commands never restore user data, start/replay a native session, or clear an
+unknown external effect. CLI service mutations share a separate OS operation lock;
+status/log reads remain available. After database changes, rollback requires a
+matching backup and separately qualified recovery. Do not remove barriers manually.
 
 New service definitions bind `--log-dir <logs>/runtime`. Controller structured
 logs retain at most four 256 KiB files within a 1 MiB owned-stream budget. Unknown

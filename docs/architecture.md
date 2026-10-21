@@ -79,7 +79,16 @@ active/uncertain work or native bindings. Its reviewed plan binds definition,
 release and database fingerprints. Preparation retains a database-only archive,
 validates restore into a new barrier-protected copy, and records previous/candidate
 definitions in that archive. Installed definition switching and restored-data
-activation remain separate unavailable operations; this phase grants no writer.
+activation remain separate operations; this phase grants no writer.
+Offline definition switching serializes CLI service mutations, holds data ownership
+and uses the existing operational file barrier before displacing any installed
+definition. It journals exact source/target bytes and retains the displaced file.
+Unconfirmed local writes keep the barrier; explicit reconciliation accepts only
+known definition hashes, unchanged quiescent data, sealed backup/release facts and
+unloaded supervision. It may finish a known install or restore its captured old
+definition, and removes only its own nonce-bound deployment marker. Unrelated
+restore barriers, changed data and foreign definitions remain blocked. No schema,
+trigger, native effect, data restore or automatic service activation is performed.
 
 Controller locates its default static root through the owning Web package's
 exported index.html, so deployed packages retain the same UI. Release preflight

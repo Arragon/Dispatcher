@@ -2200,3 +2200,53 @@ frozen P0 CPU/RSS numeric budgets for this empty configured Controller+Runner
 window only. Event-loop/handles/network/history/native descendants, real host
 service and8h soak are not qualified. One authenticated SSE-client600s window
 is now running separately; it is not a complete browser workload.
+
+## MAC-01m offline definition switch and explicit local reconciliation
+
+Add apply-upgrade/reconcile-upgrade to the existing CLI. Service mutations share
+an operation OS lock; unsupported platforms reject before creating it. Source
+instance ownership, same reviewed plan/data/release/definition, sealed archive
+and unloaded supervisor precede disabling the job. Before moving any installed
+file, journal APPLYING and create a nonce-bound service-definition-switch marker
+through the existing dispatcher.sqlite.restore-pending operational barrier.
+Compatible binaries already refuse that barrier; schema/SQL/triggers are unchanged.
+
+Known source file moves into a private transaction directory; candidate links
+use no-overwrite installation, own extra links are settled by exact inode/hash,
+then source/runtime/supervision recheck precedes SWITCHED receipt and removal of
+only the owned marker. File/parent fsyncs order the journal, marker and namespace
+changes. File mutation failure/lost response preserves displaced file and barrier.
+Explicit reconciliation reads exact candidate/old bytes and unchanged quiescent
+data, completing a known install or restoring captured old bytes when the path
+is missing. Foreign definitions, source changes, unrelated restore markers and
+unconfirmed effects stay blocked. No directory force cleanup, schema downgrade,
+trigger removal, native query/replay, user-data restore or automatic start.
+
+Seven cases cover successful switch/replay/no bootstrap, failed install with
+legacy startup barrier, lost write response, unrelated restore/foreign definition,
+confirmation/data/artifact drift, non-cooperating writer and start rejection
+before launchctl. Existing prep fixtures refactored only into one test helper.
+RED missing module; target4 files37 cases; first full lint caught missing cause
+on two mapped errors, fixed without suppression. Default145 files1445 tests
+50.69s and diff pass. Logs /tmp/dispatcher-service-switch-{red,target,check}.log.
+
+Actual retained real-Codex DB + qualified3dc/253 releases with fictional service
+supervision exercised a failed install. Barrier was observed; real older3dc CLI
+config import (deliberately absent input) exited1 at RESTORE_RECONCILIATION_REQUIRED,
+without reaching file/config work. Explicit reconciliation restored the fixture
+old definition, unchanged source-main bytes, removed only its marker and left
+activation explicit. No host supervisor/provider/human acceptance. Private report
+upgrade-switch-0c69c87/report.json under the retained provider-probes root; log
+/tmp/dispatcher-service-switch-real-data.log. Prepared backup and displaced file
+remain. Rollback0c69c87 with matching schema8 backup. Normal post-switch rollback
+and changed-data recovery remain separate work/Gates. Official quota checked.
+
+## CV-13 fixed253a792 authenticated SSE window
+
+Separate fixed-artifact600.010963s/596-sample window measured CPU0.0699987%, max
+RSS169771008B, DB growth317240B and structured log growth446B; one authenticated
+SSE client remained, full runtime/manifest reverified, process close exit0. Report
+.dispatcher/benchmarks/2026-10-21T02-42-50.531Z-dashboard-open.json and log
+/tmp/dispatcher-benchmark-release-dashboard-253a792.log. Numeric CPU/RSS budgets
+met for this SSE workload. The script does not drive browser rendering/polling,
+slow consumers, event bursts, native Run load or8h soak; formal P1/P2–P7 stay open.

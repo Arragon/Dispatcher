@@ -4,7 +4,7 @@ import { execFile, spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { childExecutionEnvironment } from "@dispatcher/shared";
 import { setTimeout as delay } from "node:timers/promises";
-import {acquireInstanceLock} from "@dispatcher/persistence";
+import {acquireInstanceLock,assertDatabaseLocationOperational} from "@dispatcher/persistence";
 import {readControllerLogTail} from "./controller-logs.js";
 import {assertControllerReleaseBinding,type ControllerReleaseBinding} from "./release-manifest.js";
 
@@ -103,6 +103,7 @@ export async function statusLaunchAgent(input:LaunchAgentOptions):Promise<Launch
 export async function startLaunchAgent(input:LaunchAgentOptions):Promise<void>{
   if(input.release)assertControllerReleaseBinding(input.release,input.cliPath,input.nodePath);
   stablePaths({nodePath:input.nodePath,cliPath:input.cliPath,dataDirectory:input.dataDirectory,logDirectory:input.logDirectory});
+  assertDatabaseLocationOperational(join(input.dataDirectory,"dispatcher.sqlite"));
   const revision=assertLaunchAgentDefinition(input);
   const state=await statusLaunchAgent(input),execute=input.executor??launchctl;
   assertDefinitionRevision(input,revision);
