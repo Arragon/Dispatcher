@@ -176,6 +176,11 @@ all user data and removes the plist only after confirmed Controller stop.
 Changing installed runtime/data paths returns `SERVICE_UPGRADE_REQUIRED` and
 preserves the existing definition; the reviewed upgrade/backup/rollback command
 is still pending. Failed bootstrap keeps the definition and error for inspection.
+Parsed definitions carry their captured byte hash. A symlink, shared/writable
+unsafe file or observed change before bootstrap/kickstart fails closed with
+SERVICE_DEFINITION_INVALID/CHANGED. Inspect and re-read the installed definition;
+do not overwrite it to bypass review. Native XML/binary parsing uses the captured
+bounded bytes, not a second open of an asynchronously changed pathname.
 These local lifecycle tests do not establish real login, sleep, Keychain, native
 Agent stop or A acceptance. No system daemon is installed.
 

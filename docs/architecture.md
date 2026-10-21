@@ -50,6 +50,10 @@ label persistently, boots it out and checks Controller exit/data ownership.
 Start uses kickstart without killing an existing process; restart waits for stop.
 Installed plist paths own CLI status/log selection. Definition changes require a
 separate reviewed upgrade; failed bootstrap never triggers blind bootout.
+Installed definitions are bounded, user-owned regular single-link snapshots;
+native plutil decodes captured bytes through stdin. Start captures/checks their
+SHA before and after async supervisor reads and enable, immediately before
+activation. Observed drift blocks launch rather than using stale parsed paths.
 New definitions also bind --log-dir to a private runtime subdirectory. Controller
 structured logs reuse Runner's bounded writer through the existing redacting
 logger; service failures record metadata, oversized entries retain an explicit

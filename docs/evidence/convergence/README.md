@@ -2121,3 +2121,34 @@ release source and verified runtime. Logs /tmp/dispatcher-benchmark-runtime-*.lo
 and /tmp/dispatcher-benchmark-release-smoke.log. No host service or provider call.
 Rollbackac0b8f5 with schema8 backup. Next: stage current clean candidate and rerun
 fixed-artifact idle while independent source work continues. Quota checked.
+
+## MAC-01k captured service definition revision
+
+A three-case RED reproduces stale parsed definitions being bootstrapped after an
+async supervisor/enable change, missing captured revision, and decoder access
+through a linked definition. Bound service reads now open bounded user-owned
+single-link non-group/world-writable regular files with no-follow/nonblocking,
+verify descriptor/path identity/size/timestamps, and hash captured bytes. Native
+plutil receives these bytes on stdin (including binary plist), not another path
+open. Existing injected decoders remain test dependencies; real existing files
+still require capture. Parsed definition hashes flow through CLI start/restart.
+
+Start checks revision before supervisor access, after status and after enable,
+then rechecks bound runtime and definition before bootstrap/kickstart. Detected
+drift preserves the changed file and rejects activation. This is an observed
+revision fence, not an OS-atomic defense against a same-user concurrent filesystem
+attacker. Stop/status/inspection remain separate; no unknown process kill added.
+
+Target2 files27 cases incl all old launchd tests pass; full check143 files1435
+tests47.78s and diff pass. Actual /usr/bin/plutil XML and binary fixtures both
+roundtrip captured hashes/paths/pins; no host service mutation. Logs
+/tmp/dispatcher-launchd-definition-{red,target,check}.log and
+/tmp/dispatcher-plist-read-probe.log. Rollback253a792 with matching schema8 backup.
+Upgrade/rollback/qualified restore and login/sleep/Keychain/provider Gates remain
+open. Official quota checked after unit; no reset used.
+
+A clean253a792 staging also completed independently:6046 files117245795B, unchanged
+source dependency state, relocated HTTP/assets/API/real PTY smoke, schema8/writer4,
+admission1, nativeProviderVerified:false. Runtime retained privately at
+~/.local/share/dispatcher/releases/253a792. Fixed-artifact600s idle is in progress;
+source development cannot alter this runtime tree.

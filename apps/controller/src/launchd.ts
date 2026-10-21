@@ -1,15 +1,15 @@
-import { existsSync, linkSync, lstatSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { closeSync, constants, existsSync, fstatSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, normalize } from "node:path";
 import { execFile, spawn } from "node:child_process";
-import { promisify } from "node:util";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { childExecutionEnvironment } from "@dispatcher/shared";
 import { setTimeout as delay } from "node:timers/promises";
 import {acquireInstanceLock} from "@dispatcher/persistence";
 import {readControllerLogTail} from "./controller-logs.js";
 import {assertControllerReleaseBinding,type ControllerReleaseBinding} from "./release-manifest.js";
 
 export const LAUNCHD_LABEL = "dev.dispatcher.controller";
-export interface LaunchAgentDefinition {nodePath:string;cliPath:string;dataDirectory:string;logDirectory:string;rawStdio?:"discard";release?:ControllerReleaseBinding}
+export interface LaunchAgentDefinition {nodePath:string;cliPath:string;dataDirectory:string;logDirectory:string;rawStdio?:"discard";release?:ControllerReleaseBinding;definitionSha256?:string}
 export type LaunchctlExecutor = (args: string[]) => Promise<{ stdout: string; stderr: string }>;
 interface LaunchAgentOptions extends LaunchAgentDefinition {plistPath:string;executor?:LaunchctlExecutor;uid?:number;waitForExit?:(pid:number)=>Promise<void>}
 export interface LaunchAgentStatus {loaded:boolean;state?:string;pid?:number;lastExitCode?:number}
@@ -68,6 +68,24 @@ export const launchctl: LaunchctlExecutor = async (args) => await new Promise((r
 });
 const domain=(input:LaunchAgentOptions)=>`gui/${input.uid??process.getuid?.()??0}`;
 const target=(input:LaunchAgentOptions)=>`${domain(input)}/${LAUNCHD_LABEL}`;
+function definitionSnapshot(path:string):{bytes:Buffer;sha256:string}{
+  const original=lstatSync(path);
+  if(!original.isFile()||original.nlink!==1||original.size>64*1024||(original.mode&0o022)!==0||process.getuid&&original.uid!==process.getuid())throw Error("SERVICE_DEFINITION_UNSAFE");
+  const fd=openSync(path,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);
+  try{
+    const before=fstatSync(fd);
+    if(!before.isFile()||before.dev!==original.dev||before.ino!==original.ino||before.size!==original.size||before.mtimeMs!==original.mtimeMs||before.ctimeMs!==original.ctimeMs)throw Error("SERVICE_DEFINITION_CHANGED");
+    const buffer=Buffer.alloc(before.size+1);let length=0;
+    while(length<buffer.length){const count=readSync(fd,buffer,length,buffer.length-length,null);if(!count)break;length+=count;}
+    const after=fstatSync(fd),current=lstatSync(path);
+    if(length!==before.size||after.size!==before.size||after.mtimeMs!==before.mtimeMs||after.ctimeMs!==before.ctimeMs||current.dev!==after.dev||current.ino!==after.ino||current.isSymbolicLink()||current.mtimeMs!==after.mtimeMs||current.ctimeMs!==after.ctimeMs)throw Error("SERVICE_DEFINITION_CHANGED");
+    const bytes=buffer.subarray(0,length);return {bytes,sha256:createHash("sha256").update(bytes).digest("hex")};
+  }finally{closeSync(fd);}
+}
+function assertDefinitionRevision(input:LaunchAgentOptions,expected:string):void {
+  try{if(!/^[a-f0-9]{64}$/.test(expected)||definitionSnapshot(input.plistPath).sha256!==expected)throw Error();}
+  catch(error){throw Error("SERVICE_DEFINITION_CHANGED",{cause:error});}
+}
 export async function statusLaunchAgent(input:LaunchAgentOptions):Promise<LaunchAgentStatus>{
   absolutePath(input.plistPath);
   let stdout:string;
@@ -81,8 +99,13 @@ export async function statusLaunchAgent(input:LaunchAgentOptions):Promise<Launch
 export async function startLaunchAgent(input:LaunchAgentOptions):Promise<void>{
   if(input.release)assertControllerReleaseBinding(input.release,input.cliPath,input.nodePath);
   stablePaths({nodePath:input.nodePath,cliPath:input.cliPath,dataDirectory:input.dataDirectory,logDirectory:input.logDirectory});
+  const revision=input.definitionSha256??createHash("sha256").update(launchdPlist(input)).digest("hex");
+  assertDefinitionRevision(input,revision);
   const state=await statusLaunchAgent(input),execute=input.executor??launchctl;
+  assertDefinitionRevision(input,revision);
   await execute(["enable",target(input)]);
+  if(input.release)assertControllerReleaseBinding(input.release,input.cliPath,input.nodePath);
+  assertDefinitionRevision(input,revision);
   if(!state.loaded)await execute(["bootstrap",domain(input),input.plistPath]);
   else await execute(["kickstart",target(input)]);
 }
@@ -126,10 +149,15 @@ export async function installLaunchAgent(input:LaunchAgentOptions):Promise<void>
   await startLaunchAgent(input);
 }
 
-export async function readLaunchAgent(plistPath:string,read:(path:string)=>Promise<string>=async path=>(await promisify(execFile)("/usr/bin/plutil",["-convert","json","-o","-",path],{timeout:5_000,maxBuffer:64*1024})).stdout):Promise<LaunchAgentDefinition>{
+function decodeDefinition(bytes:Buffer):Promise<string>{return new Promise((resolve,reject)=>{
+  const child=execFile("/usr/bin/plutil",["-convert","json","-o","-","-"],{timeout:5_000,maxBuffer:64*1024,env:childExecutionEnvironment(process.env)},(error,stdout)=>error?reject(error):resolve(stdout));
+  child.stdin?.on("error",()=>undefined);child.stdin?.end(bytes);
+});}
+export async function readLaunchAgent(plistPath:string,read?:(path:string)=>Promise<string>):Promise<LaunchAgentDefinition>{
   try{
   absolutePath(plistPath);
-  const value=JSON.parse(await read(plistPath)) as Record<string,unknown>,args=value.ProgramArguments;
+  const snapshot=!read||existsSync(plistPath)?definitionSnapshot(plistPath):undefined;
+  const value=JSON.parse(read?await read(plistPath):await decodeDefinition(snapshot!.bytes)) as Record<string,unknown>,args=value.ProgramArguments;
   if(value.Label!==LAUNCHD_LABEL||!Array.isArray(args)||![6,8].includes(args.length)||!args.every(arg=>typeof arg==="string")||args[2]!=="serve"||args[3]!=="--with-runner"||args[4]!=="--data-dir"||typeof value.StandardOutPath!=="string"||typeof value.StandardErrorPath!=="string")throw Error("SERVICE_DEFINITION_INVALID");
   const discard=value.StandardOutPath==="/dev/null"&&value.StandardErrorPath==="/dev/null";
   if(discard&&args.length!==8)throw Error("SERVICE_DEFINITION_INVALID");
@@ -142,7 +170,7 @@ export async function readLaunchAgent(plistPath:string,read:(path:string)=>Promi
     const env=value.EnvironmentVariables as Record<string,unknown>,directory=env.DISPATCHER_RELEASE_DIRECTORY,sourceSha=env.DISPATCHER_RELEASE_SHA;
     if(directory!==undefined||sourceSha!==undefined){if(typeof directory!=="string"||typeof sourceSha!=="string"||!/^[a-f0-9]{40}$/.test(sourceSha))throw Error("SERVICE_DEFINITION_INVALID");absolutePath(directory);definition.release={directory,sourceSha};}
   }
-  return definition;
+  return {...definition,...(snapshot?{definitionSha256:snapshot.sha256}:{})};
   }catch(error){throw Error("SERVICE_DEFINITION_INVALID",{cause:error});}
 }
 export function tailLog(path: string, lines = 100): string {return readControllerLogTail(path,lines);}
