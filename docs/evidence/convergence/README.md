@@ -1696,3 +1696,25 @@ This is pure-engine/local-ledger reuse only: CV-07 stays In Progress pending
 legacy decimal/provenance bridge, authoritative price admission, Controller/UI
 wiring and real billing evidence. Existing API still correctly says unavailable
 without a baseline. Rollback e239e75, matching schema-8 backup; no live data change.
+
+
+## MAC-01i discard unstructured launchd streams
+
+New service definitions route raw stdout/stderr to /dev/null, including failures
+before app imports/logger construction. This closes the unbounded launchd file
+path without a competing lock/wrapper/rotator. Bounded redacted structured logs
+still use the fixed --log-dir. Parser derives the log owner from that argument,
+rejecting mixed discard/file definitions and invalid runtime paths. Legacy six/
+eight-argument definitions remain inspectable; no installed file is rewritten.
+CLI logs explicitly reports RAW_STDIO_NOT_RETAINED or LOG_NOT_CREATED; early
+failure diagnosis uses selected launchd status, read-only doctor and release verify.
+
+Regression RED then target 2 files/30 tests; default full check passes
+125 files/1323 tests (43.21s test phase), diff check passes. Native plutil lint
+and real parser roundtrip confirm both /dev/null paths and fixed structured
+directory. Logs: /tmp/dispatcher-mac01i-red.log, /tmp/dispatcher-mac01i-green.log,
+/tmp/dispatcher-mac01i-check.log, /tmp/dispatcher-mac01i-plutil.log. Only an owned
+temporary plist was created/removed; no host launchctl mutation or live data.
+MAC-01 remains open for upgrade/rollback/full restore/native Runner stream and
+real service Gates. Rollback 6b1eb80 with matching schema-8 backup; old service
+definitions remain preserved. Official quota checked after unit; continue above10%.

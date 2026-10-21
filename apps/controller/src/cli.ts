@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { accessSync, constants,existsSync, readFileSync, realpathSync } from "node:fs";
+import { accessSync, constants, readFileSync, realpathSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
@@ -12,13 +12,13 @@ import {
   validateConfig,
 } from "@dispatcher/config";
 import { DispatcherDatabase } from "@dispatcher/persistence";
-import { installLaunchAgent, LAUNCHD_LABEL,readLaunchAgent,startLaunchAgent,stopLaunchAgent,restartLaunchAgent,statusLaunchAgent,uninstallLaunchAgent, tailLog } from "./launchd.js";
+import { installLaunchAgent, LAUNCHD_LABEL,readLaunchAgent,startLaunchAgent,stopLaunchAgent,restartLaunchAgent,statusLaunchAgent,uninstallLaunchAgent, serviceLogTail } from "./launchd.js";
 import { normalizeCliArguments } from "./cli-args.js";
 import { OWNER_TOKEN_REFERENCE } from "./control-auth.js";
 import { ControllerService } from "./service.js";
 import {acquireInstanceLock} from "@dispatcher/persistence";
 import {inspectLocalController} from "./doctor.js";
-import {createControllerLogDestination,readControllerLogTail} from "./controller-logs.js";
+import {createControllerLogDestination} from "./controller-logs.js";
 import {createLocalDatabaseBackup,restoreLocalDatabase} from "./local-backups.js";
 import {assertControllerReleaseBinding,bindControllerRelease,SERVICE_RELEASE_ADMISSION_VERSION} from "./release-manifest.js";
 let controllerLog:{write(message:string):void}|undefined;
@@ -143,8 +143,7 @@ async function serviceCommand(command: string, args: string[]): Promise<void> {
   }
   else if(command==="uninstall")await uninstallLaunchAgent(input);
   else if(command==="logs"){
-    const path=join(definition.logDirectory,"runtime","controller.log"),lines=Number(flag(args,"--lines","100"));
-    console.log(args.includes("--stderr")?readControllerLogTail(join(definition.logDirectory,"controller.error.log"),lines):existsSync(path)?readControllerLogTail(path,lines):tailLog(join(definition.logDirectory,"controller.log"),lines));
+    console.log(serviceLogTail(definition,Number(flag(args,"--lines","100")),args.includes("--stderr")));
   }
 }
 

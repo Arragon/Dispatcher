@@ -184,11 +184,13 @@ logs retain at most four 256 KiB files within a 1 MiB owned-stream budget. Unkno
 raw entries and oversized records become metadata markers, and unrelated *.log
 files are preserved. `logs --lines 100` reads at most 64 KiB, displays complete
 structured records after redaction, and rejects symlinks/nonregular files.
-`logs --stderr` inspects the launchd error file through the same safe reader;
-unstructured raw text is withheld. Old six-argument definitions remain readable
-for stop/status, while new definitions add the fixed runtime log path. Early
-pre-import/native stdout/stderr retention is still pending; structured-log bounds
-alone do not complete MAC-01's full log Gate.
+New definitions route raw stdout/stderr, including pre-import errors, to
+`/dev/null`: only the bounded redacted structured stream is retained. `logs
+--stderr` reports RAW_STDIO_NOT_RETAINED; before structured logging starts, logs
+reports LOG_NOT_CREATED. Use status lastExitCode, doctor and release verification
+to diagnose early failure. Existing six/eight-argument file-stream definitions
+remain inspectable with bounded redacted tail; replacing them requires upgrade.
+Native Runner stream retention and real host drills retain their own Gates.
 
 ## Offline database backup and restore preparation
 

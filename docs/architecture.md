@@ -47,8 +47,9 @@ New definitions also bind --log-dir to a private runtime subdirectory. Controlle
 structured logs reuse Runner's bounded writer through the existing redacting
 logger; service failures record metadata, oversized entries retain an explicit
 marker and following records remain readable. Log-tail reads have byte/line
-limits, reject unsafe files and withhold unknown raw records. Raw pre-import
-launchd stdout/stderr still need separate lifecycle/retention qualification.
+limits, reject unsafe files and withhold unknown raw records. New launchd definitions send raw pre-import/native stdout/stderr to /dev/null,
+retaining only the bounded redacted structured stream. Legacy raw file definitions
+remain readable for diagnosis/stop; early failures use status/doctor/release checks.
 
 Doctor runs separately from the Controller and copies bounded main/WAL files to
 a private temporary directory under source identity/size/timestamp checks. Only

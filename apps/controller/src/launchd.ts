@@ -9,7 +9,7 @@ import {readControllerLogTail} from "./controller-logs.js";
 import {assertControllerReleaseBinding,type ControllerReleaseBinding} from "./release-manifest.js";
 
 export const LAUNCHD_LABEL = "dev.dispatcher.controller";
-export interface LaunchAgentDefinition {nodePath:string;cliPath:string;dataDirectory:string;logDirectory:string;release?:ControllerReleaseBinding}
+export interface LaunchAgentDefinition {nodePath:string;cliPath:string;dataDirectory:string;logDirectory:string;rawStdio?:"discard";release?:ControllerReleaseBinding}
 export type LaunchctlExecutor = (args: string[]) => Promise<{ stdout: string; stderr: string }>;
 interface LaunchAgentOptions extends LaunchAgentDefinition {plistPath:string;executor?:LaunchctlExecutor;uid?:number;waitForExit?:(pid:number)=>Promise<void>}
 export interface LaunchAgentStatus {loaded:boolean;state?:string;pid?:number;lastExitCode?:number}
@@ -51,8 +51,8 @@ export function launchdPlist(input: LaunchAgentDefinition): string {
   <key>ProcessType</key><string>Background</string>
   <key>ThrottleInterval</key><integer>30</integer>
   <key>ExitTimeOut</key><integer>60</integer>
-  <key>StandardOutPath</key><string>${xml(join(input.logDirectory, "controller.log"))}</string>
-  <key>StandardErrorPath</key><string>${xml(join(input.logDirectory, "controller.error.log"))}</string>
+  <key>StandardOutPath</key><string>/dev/null</string>
+  <key>StandardErrorPath</key><string>/dev/null</string>
 </dict>
 </plist>
 `;
@@ -131,9 +131,11 @@ export async function readLaunchAgent(plistPath:string,read:(path:string)=>Promi
   absolutePath(plistPath);
   const value=JSON.parse(await read(plistPath)) as Record<string,unknown>,args=value.ProgramArguments;
   if(value.Label!==LAUNCHD_LABEL||!Array.isArray(args)||![6,8].includes(args.length)||!args.every(arg=>typeof arg==="string")||args[2]!=="serve"||args[3]!=="--with-runner"||args[4]!=="--data-dir"||typeof value.StandardOutPath!=="string"||typeof value.StandardErrorPath!=="string")throw Error("SERVICE_DEFINITION_INVALID");
-  const definition:LaunchAgentDefinition={nodePath:args[0] as string,cliPath:args[1] as string,dataDirectory:args[5] as string,logDirectory:dirname(value.StandardOutPath)};
+  const discard=value.StandardOutPath==="/dev/null"&&value.StandardErrorPath==="/dev/null";
+  if(discard&&args.length!==8)throw Error("SERVICE_DEFINITION_INVALID");
+  const definition:LaunchAgentDefinition={nodePath:args[0] as string,cliPath:args[1] as string,dataDirectory:args[5] as string,logDirectory:discard?dirname(args[7] as string):dirname(value.StandardOutPath),...(discard?{rawStdio:"discard" as const}:{})};
   for(const path of [definition.nodePath,definition.cliPath,definition.dataDirectory,definition.logDirectory])absolutePath(path);
-  if(value.StandardOutPath!==join(definition.logDirectory,"controller.log")||value.StandardErrorPath!==join(definition.logDirectory,"controller.error.log"))throw Error("SERVICE_DEFINITION_INVALID");
+  if(!discard&&(value.StandardOutPath!==join(definition.logDirectory,"controller.log")||value.StandardErrorPath!==join(definition.logDirectory,"controller.error.log")))throw Error("SERVICE_DEFINITION_INVALID");
   if(args.length===8&&(args[6]!=="--log-dir"||args[7]!==join(definition.logDirectory,"runtime")))throw Error("SERVICE_DEFINITION_INVALID");
   if(value.EnvironmentVariables!==undefined){
     if(!value.EnvironmentVariables||typeof value.EnvironmentVariables!=="object"||Array.isArray(value.EnvironmentVariables))throw Error("SERVICE_DEFINITION_INVALID");
@@ -144,3 +146,13 @@ export async function readLaunchAgent(plistPath:string,read:(path:string)=>Promi
   }catch(error){throw Error("SERVICE_DEFINITION_INVALID",{cause:error});}
 }
 export function tailLog(path: string, lines = 100): string {return readControllerLogTail(path,lines);}
+
+/** New services retain only the bounded redacted stream; legacy files remain inspectable. */
+export function serviceLogTail(definition:LaunchAgentDefinition,lines=100,stderr=false):string {
+ if(!Number.isSafeInteger(lines)||lines<1||lines>1000)throw Error("LOG_READ_LIMIT_INVALID");
+ if(stderr&&definition.rawStdio==="discard")return JSON.stringify({msg:"RAW_STDIO_NOT_RETAINED"});
+ const structured=join(definition.logDirectory,"runtime","controller.log");
+ if(!stderr&&existsSync(structured))return readControllerLogTail(structured,lines);
+ if(definition.rawStdio==="discard")return JSON.stringify({msg:"LOG_NOT_CREATED"});
+ return readControllerLogTail(join(definition.logDirectory,stderr?"controller.error.log":"controller.log"),lines);
+}

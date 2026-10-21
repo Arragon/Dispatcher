@@ -2,7 +2,7 @@ import { existsSync,mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { installLaunchAgent, launchdPlist,readLaunchAgent,statusLaunchAgent, startLaunchAgent,stopLaunchAgent,restartLaunchAgent,uninstallLaunchAgent,LaunchctlError,type LaunchctlExecutor } from "../src/launchd.js";
+import { installLaunchAgent, launchdPlist,serviceLogTail,readLaunchAgent,statusLaunchAgent, startLaunchAgent,stopLaunchAgent,restartLaunchAgent,uninstallLaunchAgent,LaunchctlError,type LaunchctlExecutor } from "../src/launchd.js";
 import {acquireInstanceLock} from "@dispatcher/persistence";
 import * as release from "../src/release-manifest.js";
 
@@ -112,4 +112,19 @@ describe("launchd prototype", () => {
     const input={...fixture(),cliPath:"/opt/dispatcher/runtime/dist/cli.js",release:{directory:"/opt/dispatcher",sourceSha:"a".repeat(40)}},s=supervisor(input.plistPath),proof=vi.spyOn(release,"assertControllerReleaseBinding").mockImplementation(()=>{throw Error("RELEASE_CONTENT_CHANGED");});
     try{await stopLaunchAgent({...input,executor:s.executor,waitForExit:async()=>{}});expect(proof).not.toHaveBeenCalled();expect(s.calls.map(args=>args[0])).toEqual(["print","disable","bootout","print"]);}finally{proof.mockRestore();}
   });
+});
+
+it("discards launchd raw streams while preserving the fixed structured log directory",async()=>{
+ const input={nodePath:"/usr/local/bin/node",cliPath:"/opt/dispatcher/runtime/dist/cli.js",dataDirectory:"/tmp/data",logDirectory:"/tmp/logs"};
+ const plist=launchdPlist(input);expect(plist).toContain('<key>StandardOutPath</key><string>/dev/null</string>');expect(plist).toContain('<key>StandardErrorPath</key><string>/dev/null</string>');
+ const value={Label:"dev.dispatcher.controller",ProgramArguments:[input.nodePath,input.cliPath,"serve","--with-runner","--data-dir",input.dataDirectory,"--log-dir",join(input.logDirectory,"runtime")],StandardOutPath:"/dev/null",StandardErrorPath:"/dev/null"};
+ expect(await readLaunchAgent("/tmp/service.plist",async()=>JSON.stringify(value))).toEqual({...input,rawStdio:"discard"});
+ for(const invalid of [{...value,StandardErrorPath:"/tmp/raw-error.log"},{...value,ProgramArguments:value.ProgramArguments.slice(0,6)},{...value,ProgramArguments:[...value.ProgramArguments.slice(0,7),"/tmp/logs/not-runtime"]}])await expect(readLaunchAgent("/tmp/service.plist",async()=>JSON.stringify(invalid))).rejects.toThrow("SERVICE_DEFINITION_INVALID");
+});
+
+it("reports discarded or not-yet-created logs without opening a raw stream",()=>{
+ const definition={nodePath:"/usr/local/bin/node",cliPath:"/opt/dispatcher/runtime/dist/cli.js",dataDirectory:"/uncreated/data",logDirectory:"/uncreated/logs",rawStdio:"discard" as const};
+ expect(serviceLogTail(definition,100,true)).toBe(JSON.stringify({msg:"RAW_STDIO_NOT_RETAINED"}));
+ expect(serviceLogTail(definition)).toBe(JSON.stringify({msg:"LOG_NOT_CREATED"}));
+ expect(()=>serviceLogTail(definition,1001)).toThrow("LOG_READ_LIMIT_INVALID");
 });
