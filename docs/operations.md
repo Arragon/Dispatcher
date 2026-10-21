@@ -318,3 +318,25 @@ as a fresh execution. Stop verification acts only on the Controller's captured
 owned process. Unconfirmed cleanup retains ownership/data for reconciliation.
 Old results without new proof remain readable and need explicit revalidation;
 advanced native/remote Runs retain their separate qualification Gates.
+
+## Validate retained native roundtrip evidence
+
+After building observability, run the read-only consistency checker against a
+saved record, separately captured current tuple and the local artifact directory:
+
+```bash
+node scripts/validate-native-evidence.mjs --record /absolute/record.json --current-tuple /absolute/current-tuple.json --artifact-root /absolute/artifacts
+```
+
+The version1 schema is `docs/evidence/native-sessions/roundtrip.schema.json`.
+Checks include exact Task/Run/generation/session/thread/execution/model identity,
+AUTOMATED→HUMAN→AUTOMATED epochs, scoped account/client/version, mandatory GUI
+scenarios, owned-writer release/readback traces, returned verification commit,
+bounded regular artifact bytes/hash, and private metadata redaction. A tuple
+drift requires re-verification; fixture provenance cannot become runtime/UI proof.
+
+CLI exit0 means consistency and supplied-file checks passed. It cannot supply
+trusted review or enable a capability: `releaseEligible` remains false without
+out-of-record reviewed-record authority, and no CLI option grants that authority.
+Historical records and synthetic validator tests are not current provider/account
+qualification. This tool changes no Controller state, configuration or credentials.

@@ -46,6 +46,15 @@ export function redactNativeText(value:string):string {
   });
 }
 
+/** Scoped native diagnostics/evidence sanitizer; does not alter ordinary logger semantics. */
+export function redactNativePayload(value:unknown,seen=new WeakSet<object>()):unknown {
+  if(typeof value==="string")return redactNativeText(value);
+  if(value===null||typeof value!=="object")return value;
+  if(seen.has(value))return "[CIRCULAR]";seen.add(value);
+  if(Array.isArray(value))return value.map(entry=>redactNativePayload(entry,seen));
+  return Object.fromEntries(Object.entries(value).map(([key,entry])=>[key,key==="credentialRef"?typeof entry==="string"&&isOpaqueSecretReference(entry)?entry:REDACTED:sensitiveKey.test(key)||/cookie/i.test(key)||nativeAuthKey.test(key)?REDACTED:redactNativePayload(entry,seen)]));
+}
+
 
 function redactString(value: string): string {
   return sensitiveStringPatterns.reduce((result, pattern) => result.replace(pattern, REDACTED), value);

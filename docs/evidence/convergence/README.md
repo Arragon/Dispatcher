@@ -2069,3 +2069,28 @@ a constructor fixture token, not an inherited Controller token; no observed
 actual credential exposure is asserted. Rollback1de0c41 with matching schema8
 backup. This is not a general environment sandbox or formal security Gate.
 Official quota checked after unit; no reset used.
+
+## CV-13c preserve native evidence validator assertions in default discovery
+
+Port source a499d84 scripts/validate-native-evidence.mjs and native roundtrip
+version1 schema byte-for-byte. Rehome all31 cases from scripts/test into the
+existing apps/controller/test discovery, changing only relative module/CLI paths.
+No Vitest include expansion or skipped source assertion. Recursive native payload
+sanitizer reuses the already ported native-text rules, adds scoped cookie-key
+handling and leaves generic logger behavior unchanged. One extra scoped sanitizer
+case preserves opaque hashes/secret references while rejecting private metadata.
+
+Validator separates consistency from qualification: strict current tuple,
+identity/control-epoch/stage account/model/thread, GUI scenarios, writer release/
+reclaim, return snapshot verification, bounded no-follow regular artifacts/hash,
+reviewed-record digest from a trusted out-of-record source. CLI has no review
+argument and cannot register/enable a capability; exit0 is consistency only.
+No historical qualification JSON, account data or artifacts copied into target.
+No native account/UI launch, new dependency or schema migration.
+
+RED missing module; target31 source cases pass. Default check141 files1430 tests
+(50.45s), diff passes; logs /tmp/dispatcher-native-evidence-{red,target,check}.log.
+Source-disposition rows and operations command updated. Rollback8182c29 with
+matching schema8 backup. Formal provider roundtrips and native capability admission
+remain open; synthetic valid records do not establish real-provider qualification.
+Official quota checked after unit; no reset used.
