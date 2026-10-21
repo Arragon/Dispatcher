@@ -299,3 +299,22 @@ and `three-runs` use the M4 execution harness and managed worktree boundary.
 
 Accepted milestone baselines are copied into `benchmarks/baselines/` so they
 remain reviewable after local runtime data is cleaned.
+
+
+## Local result review
+
+For a completed guarded local delivery.none Run, Task details shows the saved
+result and current review separately. Run the registered required verification
+against the current candidate, inspect the retained content and verification
+record, then explicitly confirm and accept. The Task transitions REVIEW to DONE
+only with matching current candidate/Task/generation/retired lease/control proof.
+Native input is never sent by this action. Verification runs in the existing
+managed source environment and records matching before/after content plus a
+retained snapshot; this is not a hermetic build claim.
+
+Browser refresh restores an uncertain action with its original key. Read status
+first; retrying uses the same body/key. A lost SENDING/UNKNOWN is never replayed
+as a fresh execution. Stop verification acts only on the Controller's captured
+owned process. Unconfirmed cleanup retains ownership/data for reconciliation.
+Old results without new proof remain readable and need explicit revalidation;
+advanced native/remote Runs retain their separate qualification Gates.

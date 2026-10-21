@@ -4,7 +4,7 @@ import type {Run,Task,TaskContract,LocalReviewAuthority,LocalVerificationRequest
 import type {CanonicalTaskService} from "@dispatcher/integrations";
 import {InteractionStore,type DispatcherDatabase,type JsonValue} from "@dispatcher/persistence";
 import {VerificationRegistry,type VerificationCommand,type VerificationResult} from "@dispatcher/runner";
-import {VerificationSnapshots,type WorkspaceManager,type WorkspaceCandidate,type DeliveryCandidate} from "@dispatcher/workspace";
+import {VerificationSnapshots,WorkspacePolicyError,type WorkspaceManager,type WorkspaceCandidate,type DeliveryCandidate} from "@dispatcher/workspace";
 import {redactNativeText,redactValue} from "@dispatcher/observability";
 import {isGuardedControllerStart} from "./start-recovery.js";
 import {contentHash,PublicationError} from "./task-publications.js";
@@ -49,18 +49,23 @@ export class CanonicalLocalResults {
   if(!isDeepStrictEqual(this.authority(state.context),{taskRevision:body.taskRevision,generation:body.generation,leaseId:body.leaseId,controlEpoch:body.controlEpoch,controlRevision:body.controlRevision}))fail("LOCAL_REVIEW_AUTHORITY_CHANGED");
  }
  private current(runId:string):VerificationReceipt|undefined {const pointer=this.db.getEntity<JsonValue>("local-review-current",runId) as {id?:string}|undefined;const receipt=pointer?.id?this.db.getEntity<JsonValue>("local-review-verification",pointer.id) as unknown as VerificationReceipt|undefined:undefined;return receipt?.format==="canonical-local-verification-v1"?receipt:undefined;}
+ private async assertSnapshot(snapshot:DeliveryCandidate,context:ReviewContext):Promise<void> {
+  try{await this.snapshots.assertCandidateAuthority(snapshot,()=>this.assertContext(context));}
+  catch(error){if(error instanceof PublicationError)throw error;if(error instanceof WorkspacePolicyError)fail(error.code);fail("LOCAL_RESULT_INSPECTION_UNAVAILABLE");}
+ }
  private async candidate(state:ReviewState):Promise<WorkspaceCandidate>{const candidate=await this.workspaces.captureCandidate({repositoryId:state.repositoryId,worktree:state.run.worktree!,branch:state.run.branch!,scopePaths:state.scopePaths});this.assertContext(state.context);return candidate;}
  async read(runId:string):Promise<LocalResultReview> {
   const run=this.db.getEntity<JsonValue>("run",runId) as unknown as Run|undefined;if(!run)throw new PublicationError("RUN_NOT_FOUND",404,"运行不存在。");
   const base:LocalResultReview={version:1,runId,taskId:run.taskId,sessionId:run.sessionId,state:"unavailable"};
   const accepted=this.db.getEntity<JsonValue>("local-review-acceptance",key(run)) as unknown as LocalAcceptance|undefined;if(accepted){base.state="accepted";base.acceptance=accepted;return base;}
+  const pending=this.current(runId);if(pending&&(pending.state==="SENDING"||pending.state==="UNKNOWN")){const owned=pending.state==="SENDING"&&this.active.get(runId)?.id===pending.id;base.state=owned?"running":"unknown";base.pendingVerification={id:pending.id,owned};base.reasonCode="VERIFICATION_OUTCOME_UNKNOWN";return base;}
   try{const state=this.context(runId),candidate=await this.candidate(state);base.authority=this.authority(state.context);base.candidate={id:candidate.id,headRevision:candidate.headRevision,files:candidate.changedFiles,worktree:state.run.worktree!};const receipt=this.current(runId);
    if(!receipt){base.state="unverified";return base;}
    if(receipt.state==="SENDING"||receipt.state==="UNKNOWN"){base.state=this.active.has(runId)?"running":"unknown";base.reasonCode="VERIFICATION_OUTCOME_UNKNOWN";return base;}
    if(receipt.state!=="COMPLETED"||!receipt.proof){base.state="failed";base.reasonCode=receipt.reasonCode??"REQUIRED_VERIFICATION_FAILED";return base;}
    base.verification={id:receipt.id,verifiedAt:receipt.proof.verifiedAt,commandIds:receipt.proof.commandIds,basis:"matching-managed-source",snapshotCommit:receipt.proof.snapshot.commit};
    if(!isDeepStrictEqual(stableContext(receipt.context),stableContext(state.context))||receipt.proof.snapshot.candidate.id!==candidate.id){base.state="changed";base.reasonCode="CANDIDATE_CHANGED";return base;}
-   await this.snapshots.assertCandidateAuthority(receipt.proof.snapshot,()=>this.assertContext(state.context));base.state="verified";return base;
+   await this.assertSnapshot(receipt.proof.snapshot,state.context);base.state="verified";return base;
   }catch(error){base.state="unavailable";base.reasonCode=error instanceof PublicationError?error.code:"LOCAL_RESULT_INSPECTION_UNAVAILABLE";return base;}
  }
  verify(runId:string,body:LocalVerificationRequest,actor:string):Promise<LocalResultReview> {
@@ -80,7 +85,7 @@ export class CanonicalLocalResults {
    const snapshot=await this.snapshots.createDeliveryCandidate({repositoryId:state.repositoryId,worktree:state.run.worktree!,branch:state.run.branch!,scopePaths:state.scopePaths,repositoryScopePaths:state.repositoryScopePaths},()=>this.assertContext(state.context));if(snapshot.candidate.id!==candidate.id)fail("CANDIDATE_CHANGED");
    const registry=new VerificationRegistry();for(const command of state.commands)registry.register(command);const checks:VerificationResult[]=[];
    for(const command of state.commands){this.assertContext(state.context);if(signal.aborted)fail("LOCAL_VERIFICATION_CANCELLED");executing=true;const result=await registry.run(command.id,state.run.worktree!,signal);executing=false;this.assertContext(state.context);checks.push({...result,output:redactNativeText(String(redactValue(result.output)))});if(signal.aborted)fail("LOCAL_VERIFICATION_CANCELLED");}
-   await this.snapshots.assertCandidateAuthority(snapshot,()=>this.assertContext(state.context));
+   await this.assertSnapshot(snapshot,state.context);
    if(checks.some(c=>c.required&&c.status!=="passed")){receipt.state="FAILED";receipt.reasonCode="REQUIRED_VERIFICATION_FAILED";}
    else {receipt.state="COMPLETED";receipt.proof={snapshot,verifiedAt:this.now().toISOString(),commandIds:state.commands.map(c=>c.id),checks};}
    this.db.transaction(()=>{this.assertContext(state.context);this.db.saveEntity("local-review-verification",receipt.id,json(receipt));});
@@ -94,11 +99,19 @@ export class CanonicalLocalResults {
   const state=this.context(runId);if(state.task.state!=="REVIEW")fail("TASK_REVIEW_REQUIRED");this.request(state,body,actor);const receipt=this.current(runId);
   if(!receipt||receipt.state!=="COMPLETED"||!receipt.proof||receipt.id!==body.verificationId)fail("VERIFIED_CANDIDATE_REQUIRED");
   if(receipt.proof.snapshot.candidate.id!==body.candidateId||!isDeepStrictEqual(stableContext(receipt.context),stableContext(state.context)))fail("CANDIDATE_CHANGED");
-  const candidate=await this.candidate(state);if(candidate.id!==body.candidateId)fail("CANDIDATE_CHANGED");await this.snapshots.assertCandidateAuthority(receipt.proof.snapshot,()=>this.assertContext(state.context));
+  const candidate=await this.candidate(state);if(candidate.id!==body.candidateId)fail("CANDIDATE_CHANGED");await this.assertSnapshot(receipt.proof.snapshot,state.context);
   return this.db.transaction(()=>{const prior=this.db.getEntity<JsonValue>("local-review-receipt",receiptId) as unknown as {request:LocalAcceptanceRequest;acceptance:LocalAcceptance;revision:number}|undefined;if(prior){if(!isDeepStrictEqual(prior.request,json(body)))fail("IDEMPOTENCY_CONFLICT");return {acceptance:prior.acceptance,revision:prior.revision,repeated:true};}
    this.assertContext(state.context);if(this.current(runId)?.id!==receipt.id)fail("VERIFIED_CANDIDATE_REQUIRED");
    const acceptance:LocalAcceptance={version:1,taskId:state.run.taskId,runId,generation:state.run.generation,candidateId:body.candidateId,verificationId:receipt.id,snapshotCommit:receipt.proof!.snapshot.commit,actor,acceptedAt:this.now().toISOString()};
    const result=this.tasks.execute({id:`local-review:${receiptId}`,taskId:state.run.taskId,baseRevision:body.taskRevision,actor,command:{type:"task.transition",state:"DONE"}});this.db.saveEntity("local-review-acceptance",key(state.run),json(acceptance));this.db.saveEntity("local-review-receipt",receiptId,json({request:body,acceptance,revision:result.revision}));return {acceptance,revision:result.revision,repeated:false};});
+ }
+ async cancel(runId:string,verificationId:string,actor:string):Promise<LocalResultReview> {
+  const receipt=this.current(runId);if(!receipt||receipt.id!==verificationId)fail("VERIFICATION_NOT_OWNED");
+  if(receipt.actor!==actor)throw new PublicationError("FORBIDDEN",403,"只能停止本人提交的验证。");
+  if(receipt.state==="UNKNOWN")fail("VERIFICATION_OUTCOME_UNKNOWN");
+  const active=this.active.get(runId);if(active?.id!==verificationId){if(receipt.state==="SENDING")fail("VERIFICATION_OUTCOME_UNKNOWN");return this.read(runId);}
+  // Cleanup is limited to the captured verifier, even if Task/control authority changed.
+  active.controller.abort();await active.promise;return this.read(runId);
  }
  async close():Promise<void>{this.closed=true;const work=[...this.active.values()];for(const item of work)item.controller.abort();await Promise.allSettled(work.map(item=>item.promise));if(this.cleanupUnknown)fail("LOCAL_VERIFICATION_CLEANUP_UNKNOWN");}
 }

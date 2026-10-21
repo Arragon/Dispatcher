@@ -1,3 +1,4 @@
+import {CanonicalLocalResults} from "./local-results.js";
 import {nativeSessionView} from "./native-session-view.js";
 import {isGuardedControllerStart} from "./start-recovery.js";
 import {parseNativeModelDefaultReview,qualifyNativeModelDefault,readNativeModelDefaultEvidence} from "./model-defaults.js";
@@ -11,7 +12,7 @@ import {DirectorySelections,type DirectoryPicker} from "./local-directories.js";
 import {RunInputReceipts,InputReceiptError,type RunInputIdentity} from "./run-inputs.js";
 import {UsageObservations,UsageObservationError,type UsageContext} from "./usage-observations.js";
 import {buildDiagnostics,diagnosticChecks} from "./diagnostics.js";
-import type { ProfileConsoleView,NativeSessionConsoleView,RepositoryConsoleContext,RepositoryRefs,DeliveryEvidence } from "@dispatcher/domain";
+import type { ProfileConsoleView,NativeSessionConsoleView,RepositoryConsoleContext,RepositoryRefs,DeliveryEvidence,LocalVerificationRequest,LocalAcceptanceRequest } from "@dispatcher/domain";
 import { applyConfigEdits, consoleConfig,exportConsoleConfig, consoleConfigPlan } from "./config-edits.js";
 import {qualifyRoutingPolicy,type PolicyConfigEvidence} from "./policy-config.js";
 import {TaskClassifier} from "./task-classifier.js";
@@ -475,6 +476,7 @@ export class ControllerService {
   readonly llm: LlmRuntime;
   readonly repositories = new RepositoryRegistry();
   readonly workspaces: WorkspaceManager;
+  readonly localResults:CanonicalLocalResults;
   readonly connectors = new ConnectorRegistry();
   readonly tasks: CanonicalTaskService;
   private readonly nativeInteractions:NativeInteractions;
@@ -596,6 +598,7 @@ export class ControllerService {
     this.secureLinks = new SecureDashboardLinkIssuer(`http://${options.host ?? "127.0.0.1"}:${options.port ?? 8347}`, randomUUID());
     this.llm = new LlmRuntime(this.database, (reference) => this.secrets.resolve(reference, { principal: "controller", purpose: "llm" }), options.llmFetch);
     this.configuration = new ConfigurationEngine(this.database, { apply: (config) => this.applyRuntimeConfiguration(config) });
+    this.localResults=new CanonicalLocalResults(this.database,this.configuration,this.tasks,this.workspaces,join(options.dataDirectory,"verification-snapshots"),()=>this.now());
     this.applyRuntimeConfiguration(this.configuration.current().config);
     this.semanticTools = new SemanticToolRegistry({ highRiskRequiresConfirmation: this.configuration.current().config.policies.highRiskRequiresConfirmation });
     this.semanticWorkflows = new SemanticWorkflowEngine(this.semanticTools, new DatabaseSemanticWorkflowStore(this.database));
@@ -776,6 +779,7 @@ export class ControllerService {
         if(state&&typeof state==="object"&&!Array.isArray(state))this.database.saveEntity("usage-read-state",read.runId,json({...state,state:"unknown",reasonCode:"USAGE_SHUTDOWN_PENDING",closedAt:this.now().toISOString()}));
       }catch(error){this.app.log.warn({error:redactValue(error),runId:read.runId},"Usage shutdown evidence could not be persisted");}
       this.catalogShutdown.abort();
+      let localReviewStopError:unknown;try{await this.localResults.close();}catch(error){localReviewStopError=error;}
       await this.directorySelections.close();
       await this.lifecycle.stop();
       await Promise.allSettled([...this.remoteLifecycleJobs.values()]);
@@ -784,6 +788,7 @@ export class ControllerService {
       if (this.listening) await this.app.close();
       else await this.app.close();
       this.events.close();
+      if(localReviewStopError)throw localReviewStopError;
       this.database.checkpoint();
       this.database.close();
       this.listening = false;
@@ -4361,7 +4366,21 @@ export class ControllerService {
     });
     this.app.get<{Params:{id:string}}>("/api/runs/:id/result",async(request,reply)=>{
       const result=this.database.getEntity<JsonValue>("run-result",request.params.id);
-      return result?{result}:reply.code(404).send({code:"RUN_RESULT_UNAVAILABLE"});
+      return result?{result,...((result as {deliveryType?:string}).deliveryType==="none"?{review:await this.localResults.read(request.params.id)}:{})}:reply.code(404).send({code:"RUN_RESULT_UNAVAILABLE"});
+    });
+    const localAuthorityProperties={taskRevision:{type:"integer",minimum:1},generation:{type:"integer",minimum:1},leaseId:{type:"string",minLength:1,maxLength:200},controlEpoch:{type:"integer",minimum:0},controlRevision:{type:"integer",minimum:1},candidateId:{type:"string",pattern:"^[a-f0-9]{64}$"},idempotencyKey:{type:"string",minLength:1,maxLength:200},confirmed:{const:true}} as const;
+    const localBody={type:"object",additionalProperties:false,required:Object.keys(localAuthorityProperties),properties:localAuthorityProperties};
+    this.app.post<{Params:{id:string};Body:LocalVerificationRequest}>("/api/runs/:id/local-verification",{schema:{body:localBody}},async request=>{
+      const principal=this.principalFor(request);if(!principal.roles.includes("operator"))throw new PublicationError("FORBIDDEN",403,"Operator role required");
+      return {review:await this.localResults.verify(request.params.id,request.body,principal.id)};
+    });
+    this.app.post<{Params:{id:string};Body:{verificationId:string}}>("/api/runs/:id/local-verification/cancel",{schema:{body:{type:"object",additionalProperties:false,required:["verificationId"],properties:{verificationId:{type:"string",pattern:"^[a-f0-9]{64}$"}}}}},async request=>{
+      const principal=this.principalFor(request);if(!principal.roles.includes("operator"))throw new PublicationError("FORBIDDEN",403,"Operator role required");
+      return {review:await this.localResults.cancel(request.params.id,request.body.verificationId,principal.id)};
+    });
+    this.app.post<{Params:{id:string};Body:LocalAcceptanceRequest}>("/api/runs/:id/accept-local-result",{schema:{body:{...localBody,required:[...localBody.required,"verificationId"],properties:{...localAuthorityProperties,verificationId:{type:"string",pattern:"^[a-f0-9]{64}$"}}}}},async request=>{
+      const principal=this.principalFor(request);if(!principal.roles.includes("operator"))throw new PublicationError("FORBIDDEN",403,"Operator role required");
+      return this.localResults.accept(request.params.id,request.body,principal.id);
     });
     this.app.post<{ Params: { id: string } }>("/api/runs/:id/advance", async (request, reply) => {
       const run = this.database.getEntity<JsonValue>("run", request.params.id);

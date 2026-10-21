@@ -1934,3 +1934,41 @@ This service is not yet mounted in production API/UI; next unit wires canonical
 result/reverify/accept/cancel and lifecycle. No new schema/dependency, public
 secret payload, real acceptance or native account call. Rollback c0a0a1f with
 matching schema8 backup. Formal LP/CV/A/B remain open; quota checked after unit.
+
+
+## CV-12c canonical routes, owned cancel, lifecycle and v3 review UI
+
+Controller now owns exactly one CanonicalLocalResults after ConfigurationEngine
+initialization. Existing authenticated GET Run result adds review for delivery.none.
+Strict operator/CSRF/schema routes provide local-verification, captured verifier
+cancel, and accept-local-result; no /api/local duplicate entrypoint. Lost SENDING/
+UNKNOWN reads require no filesystem/native query and never claim an owned cancel
+handle. Cleanup stops only the captured verifier, including after Task authority
+changes. Unknown shutdown preserves database ownership rather than claiming stop.
+
+TaskDetail reuses its existing result query. LocalResultReview shows current
+candidate/registered verification and separates historical Run verification.
+Explicit content-bound checkbox precedes accepting a candidate. Candidate/Task/
+generation/lease/control changes invalidate that consent. Pending verification/
+acceptance body and idempotency key survive browser refresh; no automatic POST.
+Only the same original request may be retried. HTTP receipt must match Run,
+generation, candidate and verification; unknown outcomes stay closed. Active
+verification polls saved status and exposes only its exact owned stop. Known
+acceptance and a later failed detail refresh are reported separately.
+
+Three API regressions: auth/origin/strict payload/acceptance replay, real owned
+registered-process cancellation with role check, and lost-SENDING restart with
+zero native replay. Four UI cases: explicit fenced accept, uncertain request
+restore/same-key retry, invalidated consent and owned-vs-unknown stop. Core7 cases
+continue passing. Target3 files14 tests11.66s; default full check135 files1389
+tests49.22s, diff check passes. Logs /tmp/dispatcher-cv12c-api-red.log,
+-ui-red.log, -api-green.log, -final-target.log, -check.log. Initial integration
+constructed the service before ConfigurationEngine; fixed owner initialization
+order, without weakening assertions. No dependency/schema or native account call.
+
+Verification basis stays matching-managed-source with a retained content snapshot,
+not hermetic/native qualification. Real provider trial is still REVIEW; automated
+fixture DONE assertions are not human acceptance. Next: offline backup and real
+retained-candidate read/reverification with no native restart, browser checks if
+available; LP-07/A/B remain open. Rollback d1f95e7 with matching schema8 backup.
+Official quota checked after unit; no reset used.
