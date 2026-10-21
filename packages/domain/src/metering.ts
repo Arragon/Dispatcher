@@ -61,6 +61,8 @@ function validPrice(p:PricingSnapshotV1):void {
  if(!p||p.version!==1||![p.id,p.source,p.unit].every(text)||!time(p.collectedAt)||p.currency!==undefined&&!text(p.currency)||p.validFrom!==undefined&&!time(p.validFrom)||p.validUntil!==undefined&&!time(p.validUntil)||p.validFrom&&p.validUntil&&Date.parse(p.validFrom)>=Date.parse(p.validUntil)||p.free!==undefined&&typeof p.free!=="boolean"||p.conditions!==undefined&&(!Array.isArray(p.conditions)||p.conditions.length>64||!p.conditions.every(text)))fail("INVALID_PRICE");
  try{if(p.multiplier!==undefined)decimalAmount(p.multiplier);if(p.rates){if(typeof p.rates.includesMultiplier!=="boolean"||decimalAmount(p.rates.per)===0n)fail("INVALID_PRICE");for(const k of dimensions)if(p.rates[k]!==undefined)decimalAmount(p.rates[k]!);}}catch{fail("INVALID_PRICE");}
 }
+/** Valid shape only; callers still need authoritative account/model/rate evidence. */
+export function isPricingSnapshotV1(value:unknown):value is PricingSnapshotV1 {try{validPrice(value as PricingSnapshotV1);return true;}catch{return false;}}
 function billingTime(input:CostEstimateInput,v:UsageObservationV1):number|undefined {
  const matches=(input.billingTimes??[]).filter(t=>identity(t)===identity(v));if(!matches.length)return;
  if(matches.some(t=>!text(t.source)||!time(t.occurredAt))||new Set(matches.map(t=>Date.parse(t.occurredAt))).size!==1)fail("PRICE_TIME_UNPROVEN");return Date.parse(matches[0]!.occurredAt);

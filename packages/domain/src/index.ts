@@ -1,3 +1,4 @@
+export * from "./legacy-pricing.js";
 export * from "./decimal.js";
 export * from "./metering.js";
 export * from "./native-drift.js";

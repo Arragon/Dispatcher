@@ -1,3 +1,4 @@
+import {storedNumberDecimal as storedDecimal} from "./decimal.js";
 /** Historical compatibility only. These facts require reconciliation before ledger admission. */
 export interface LegacyUsageEvidence {
   profileId:string;runId:string;sessionId:string;nativeSessionId?:string;
@@ -20,15 +21,6 @@ const text=(value:unknown):value is string=>typeof value==="string"&&value.lengt
 const time=(value:unknown):value is string=>text(value)&&/^\d{4}-\d{2}-\d{2}T/.test(value)&&/(?:Z|[+-]\d{2}:\d{2})$/u.test(value)&&Number.isFinite(Date.parse(value));
 const ordinal=(value:unknown):value is number=>Number.isSafeInteger(value)&&Number(value)>0;
 
-/** Expand the stored JS/JSON representation; it cannot recover upstream precision. */
-function storedDecimal(value:unknown):string|undefined{
-  if(typeof value!=="number"||!Number.isFinite(value)||value<0||Number.isInteger(value)&&!Number.isSafeInteger(value))return;
-  const [coefficient,exponent="0"]=String(value).toLowerCase().split("e");
-  const [whole,fraction=""]=coefficient!.split("."),digits=whole!+fraction,position=whole!.length+Number(exponent);
-  if(position>30||Math.max(0,digits.length-position)>18)return;
-  const expanded=position<=0?`0.${"0".repeat(-position)}${digits}`:position>=digits.length?digits+"0".repeat(position-digits.length):`${digits.slice(0,position)}.${digits.slice(position)}`;
-  return /^\d{1,30}(?:\.\d{1,18})?$/u.test(expanded)?expanded:undefined;
-}
 
 export function readLegacyUsageMeasurement(input:{format:"legacy-usage-measurement-v1";recordId:string;record:unknown}):LegacyUsageRead{
   const reference={format:input.format,recordId:input.recordId};let raw:unknown;

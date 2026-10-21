@@ -1718,3 +1718,26 @@ temporary plist was created/removed; no host launchctl mutation or live data.
 MAC-01 remains open for upgrade/rollback/full restore/native Runner stream and
 real service Gates. Rollback 6b1eb80 with matching schema-8 backup; old service
 definitions remain preserved. Official quota checked after unit; continue above10%.
+
+
+## CV-07b historical pricing and lossless legacy numeric projection
+
+Add an explicitly named legacy-pricing-snapshot-v1 reader for source a499d84
+PricingSnapshot. Preserve raw private source and record identity, keep omitted
+fields absent, expand only safe stored numeric representations to decimal strings,
+and retain LEGACY_PRICE_ADMISSION_UNPROVEN/STORED_NUMERIC_PRECISION_ONLY. No
+current account/model/price provenance is inferred and no historical event is
+written into the canonical ledger. Reuse the existing legacy usage numeric reader
+through the directly related domain decimal helper.
+
+The compatibility number projection exists only when exact decimal -> stored JS
+number representation -> decimal roundtrips unchanged. Large unsafe integers,
+extra fractional precision, negative/nonfinite rates and malformed validity are
+refused. Five new RED→GREEN cases include old formula 0.135 equivalence using
+explicit fixture units, exponent expansion, immutable source and missing facts.
+Target 3 files/22 tests. Default full check passes 126 files/1328 tests (39.73s);
+final whitespace-only cleanup and diff check pass. Logs:
+/tmp/dispatcher-cv07b-red.log, /tmp/dispatcher-cv07b-green.log,
+/tmp/dispatcher-cv07b-check.log. No dependency/schema, API display or data migration.
+CV-07 still pending authoritative billing admission/Controller/UI and real account
+evidence. Rollback 2f47f70 with matching schema-8 backup. Official quota checked.
