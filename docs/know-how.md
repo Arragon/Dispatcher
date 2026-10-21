@@ -2,6 +2,13 @@
 
 ## M0–M10 invariants
 
+- A pnpm deploy directory can still depend on a worktree: verify actual symlink
+  targets, hardlinks and relocation. On pnpm 11.19, deploy flags also rewrote the
+  source dependency-state cache and made later checks attempt a production-only
+  install. Build deployment from an isolated workspace snapshot; restore source
+  development state with the ordinary frozen offline install, not a permanent
+  check bypass. Hash a detached artifact after native smoke can fix helper modes.
+
 - A new restore directory must win the same ownership primitive as Controller
   before copying records or writing its barrier. If another owner wins the
   mkdir-to-lock interval, leave its files intact. On macOS, canonicalize /var and

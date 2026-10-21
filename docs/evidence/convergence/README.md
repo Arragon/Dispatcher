@@ -68,7 +68,7 @@ final convergence verification.
 | CV-06 | Controller nonblocking scoped collection/terminal retry verified at 115/1169; origin/attempt/time and account-quota qualification/UI pending |
 | CV-08 | continuation/worker/delivery/failure/cancel/pause Guard, failure priority drain, stop audit and read-only local start recovery qualification verified at 115/1204; ordinary local start composed; schema-8 writer increment verified at 116/1208; known-unsent cancellation/publication journal recovery verified at 116/1215; general guarded local recovery verified at 116/1218; captured reroute stage Guard and default Generic drain verified at 116/1224; shared guarded replacement startup and original owned-CLI cleanup verified at 116/1229; legacy/remote/qualified native recovery remain pending |
 | CV-12 | pending complete selection/control integration |
-| macOS service / LP / backup | MAC-01a CLI data-directory ownership verified at 117/1237; MAC-01b lifecycle/fixed definition verified at 117/1251; MAC-01c read-only doctor verified at 118/1264; MAC-01d structured logs/safe tail verified at 119/1273; MAC-01e offline DB backup/restore preparation verified at 121/1281; early stdio/staging/upgrade/qualified restore activation and real evidence pending |
+| macOS service / LP / backup | MAC-01a CLI data-directory ownership verified at 117/1237; MAC-01b lifecycle/fixed definition verified at 117/1251; MAC-01c read-only doctor verified at 118/1264; MAC-01d structured logs/safe tail verified at 119/1273; MAC-01e offline DB backup/restore preparation verified at 121/1281; MAC-01f release closure/hash foundation + packaged asset fix verified at 122/1292; isolated stager/early stdio/upgrade/qualified restore activation and real evidence pending |
 | CV-07/09/10/11 | pending contracts/guards |
 | CV-13/14 and original Gates | pending implementation and evidence |
 
@@ -1549,3 +1549,52 @@ full native/credential recovery, early raw stdio, stable staging/upgrade/rollbac
 and real macOS drill. A prepared blocked copy is not A acceptance. Rollback:
 6c37615 with its matching schema-8 backup; retain all source archives and barriers.
 Official quota checked after unit and recorded in Linear.
+
+
+## MAC-01f release closure preflight and packaged Web ownership
+
+Controller now resolves its default HTML through the existing Web package's
+index.html export, keeping one owner in development and deployment. A disposable
+injected package reproduced READY=200 but home=404 with the old relative path;
+updating only the consumer/provider in that owned probe yields HTML=200 and
+READY=200. This is controlled package evidence, not real browser/native A Gate.
+
+Release foundation records complete relative files/links, SHA256/modes, source
+commit, exact Node/host and schema/writer metadata, explicitly labeling isolated
+package-fixture smoke. Verification rejects escaping/absolute/broken symlinks,
+shared hardlinks, substituted runtime roots, persisted/credential files, changed
+content or unfinished preparation. Owned inactive hardlinks can be detached
+without changing their source bytes. No release command/activation is claimed yet.
+
+Reuse evaluation: [pnpm deploy](https://pnpm.io/cli/deploy) is the existing mature
+workspace deployment boundary; no new dependency. Local pnpm 11.19 help confirms
+legacy and injection options, rather than assuming newer documentation defaults.
+Real --legacy --prod --offline probe still escaped to this worktree. Per-command
+injection removes symlink escapes but left 647 hardlinks; detachment then validates
+6133 entries / 119062331 bytes, zero escaped symlinks/shared hardlinks. Both are
+unqualified disposable probes (not frozen releases), never installed.
+
+Deploy also changed this candidate's ignored pnpm dependency-state cache so a
+subsequent ordinary command tried production-only auto-install. One RED diagnostic
+bypassed that auto-repair only; it is not Gate evidence. Ordinary `pnpm install
+--frozen-lockfile --offline --prod=false` restored development state without
+changing tracked files. Plain default checks run again successfully. Future
+staging must perform deploy inside its own workspace snapshot, not this source
+node_modules. Original three candidates were not involved in either probe.
+
+New foundation target: 2 files/16 tests; eleven file/ownership cases include
+relocation, later source-hardlink mutation, external/absolute links, foreign root,
+state material, added/tampered files, pending marker and mismatched host. Default
+`mise exec -- pnpm check` passes 122 files/1292 tests (44.27s test phase), diff
+check passes. Initial cleanup failed no-unsafe-finally lint; use owned temporary
+rm(force), no suppression. Logs: /tmp/dispatcher-mac01f-deploy-probe.log,
+/tmp/dispatcher-mac01f-deploy-injected.log,
+/tmp/dispatcher-mac01f-dev-deps-restore.log,
+/tmp/dispatcher-mac01f-manifest-red.log,
+/tmp/dispatcher-mac01f-helper-target.log,
+/tmp/dispatcher-mac01f-helper-final-check.log.
+
+MAC-01/R-013 stays open for isolated stager, relocated actual package/PTY smoke,
+verified release binding, early stdio, upgrade/rollback/recovery and real service
+Gates. No original data or host service changed. Rollback: 1412af3 with matching
+schema-8 backup. Official quota checked after unit and recorded in Linear.

@@ -62,6 +62,14 @@ preview creates no target, execution prepares only a new directory behind both
 restore barriers. Credentials and native provider storage stay outside this
 database-only artifact; no reconciliation or runtime activation is implied.
 
+Controller locates its default static root through the owning Web package's
+exported index.html, so deployed packages retain the same UI. Release preflight
+records a complete relative file/link inventory, hashes/modes, Source SHA,
+Node/platform/schema/writer metadata and an explicitly isolated smoke scope.
+Escaping/absolute links, shared hardlinks, persisted state and changed content
+cannot qualify; hardlinks may be detached only within a newly owned inactive
+staging tree. This foundation does not itself publish or install a release.
+
 The personal MVP adds one Controller-owned `dispatchTask` path shared by HTTP
 and the confirmed operator-only `task.dispatch` semantic tool. Slack task and
 profile aliases resolve before approval. A durable workflow origin and dispatch

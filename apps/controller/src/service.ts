@@ -26,7 +26,7 @@ import { existsSync, realpathSync, statSync } from "node:fs";
 import { PassThrough } from "node:stream";
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { arch, platform } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import fastify, { type FastifyBaseLogger, type FastifyInstance } from "fastify";
@@ -4608,7 +4608,7 @@ export class ControllerService {
       void reply.code(status).send({code:schemaFields.length?"INVALID_DRAFT":code,message:status===500?"Internal error":schemaFields.length?"Task draft contains invalid fields":message,...(fieldErrors?.length?{fieldErrors}:{})});
     });
 
-    const webRoot = this.options.webRoot ?? resolve(fileURLToPath(new URL("../../web/dist", import.meta.url)));
+    const webRoot = this.options.webRoot ?? dirname(fileURLToPath(import.meta.resolve("@dispatcher/web/index.html")));
     if (existsSync(webRoot)) {
       void this.app.register(fastifyStatic, { root: webRoot, wildcard: false, maxAge: "1h", immutable: true, setHeaders: (response, path) => { if (path.endsWith("index.html")) response.header("Cache-Control", "no-cache"); } });
       this.app.setNotFoundHandler((request, reply) => {
