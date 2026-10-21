@@ -1972,3 +1972,32 @@ fixture DONE assertions are not human acceptance. Next: offline backup and real
 retained-candidate read/reverification with no native restart, browser checks if
 available; LP-07/A/B remain open. Rollback d1f95e7 with matching schema8 backup.
 Official quota checked after unit; no reset used.
+
+## LP-07 real retained candidate revalidation at 28cfd4c
+
+Backed up the isolated real-Codex trial database before opening it with the new
+review service. Qualified 3dc0e00 CLI database-only backup reports schema8, one
+Task/Run/Session, zero unresolved commands and unchanged source-main bytes;
+archive SHA256 5283f71b9576678b679ed0c0feed8473b55f7b983c846e964ff8526666cd7533.
+Backup excludes native storage and SecretStore; it is not a complete recovery
+drill. All artifacts remain under the private local provider-probes directory
+2026-10-21T01-20-30.588Z; no credential or one-time browser login was published.
+
+Restarted Controller at source 28cfd4c against that retained trial database with
+native starts explicitly rejected and counted. Real registered probe-required
+command passed, creating retained snapshot 720bfc9a25aaa3cb8c14def81d3b4bb506602677.
+Review transitioned unverified -> verified -> changed after a temporary owned
+file edit -> verified after exact byte restoration. Native start attempts stayed
+zero. Original file SHA256 7ee38f252e54e9e537c1acdd0c0004db5de5c454fd167bd5963b27826c8e6d6a
+was restored. Task remains REVIEW; no acceptance call, commit or push occurred.
+
+In-app browser opened the actual Controller, navigated overview -> actual Task,
+and displayed native-default, managed worktree, original native session,
+historical verification, current matching candidate, explicit unchecked human
+confirmation and disabled accept. Missing native binding/model/usage remain
+unknown. This verifies rendering and preserved REVIEW, not human acceptance,
+same-session reply/cancel or native GUI directory selection. Controller stopped
+after the browser closed; waiting on an open event stream exposed a shutdown
+ordering defect to fix next. Private review-qa-28cfd4c/report.json records
+controllerStopped:true, nativeStartAttempts:0, humanAcceptance:false. Source
+workspaces and dirty trial candidate are retained. Official quota: 34% remains.
