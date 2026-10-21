@@ -2712,3 +2712,18 @@ SHA256 fde3f55a55e8ad1762a87f463482d4305437650445635ec249473fdb0d6e42fe.
 Rollback/preservation uses retained releases and matching backups; no original
 schema8 evidence/data was opened by this new candidate. Official quota checked
 after staging:11%; check again after this evidence unit.
+
+## Quota stop checkpoint
+
+Official usage after e90b3d7 is used90%/remaining10%, ordinary usage still allowed.
+The user's <=10% stop condition is met: no further implementation, test workload,
+provider/native account operation or service activation is started. Only this
+handoff/status synchronization is recorded. Code/fixed candidate0d2cd42 remains
+verified; docs checkpoint follows e90b3d7. All benchmark children have confirmed
+exit0, and no host launchd install/start occurred. Keep the worktree/releases and
+source backups; the goal is paused at the user's conditional stop, not complete.
+Next work: re-audit quota/state, investigate R-004 10k active RSS274251776B,
+complete guarded runtime/observer/Harness composition R-019, qualify account/model
+R-018 and real A/B/Gate flows, and separately qualify schema8→9 data activation.
+Do not reopen Done prototypes, replay UNKNOWN verification or treat local tests
+as formal acceptance. Linear09/INH-1917/CV-13/MAC-01 receive this exact boundary.

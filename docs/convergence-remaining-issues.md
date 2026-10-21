@@ -3,6 +3,13 @@
 Local implementation/evidence backlog; none of these rows claims a passed
 Gate. Continue independent units without bypassing data/control safeguards.
 
+Execution checkpoint2026-10-20 macOS: official used90%/remaining10% after
+e90b3d7 evidence unit; development stopped per the user's threshold. Production
+source/fixed release0d2cd42, final default155 files1604 tests green. Preserve this
+worktree, all frozen sources/WIP/backups and release; no push/merge/service
+activation. A/B remain incomplete. Resume only on the user's later instruction;
+re-audit quota, dirty/ownership state, Linear and current provider/host evidence.
+
 Whole-range review19db456..4e76656 completed once. Two Important mounted-path
 findings are addressed in the single fix pass: automatic verification now has
 durable per-command SENDING/SETTLED/UNKNOWN receipts and conservative VERIFYING
