@@ -2545,3 +2545,40 @@ Target3 files19 cases includes existing PR delivery assertions. Default152 files
 built before cross-package targets. No schema/index/migration/config/native write.
 Actual1000/10k workload, browser performance and other P4 metrics remain R-004.
 Rollback sourcea4962cc with schema8 backup. Official quota checked after unit.
+
+
+## CV-13d runnable synthetic history API benchmark
+
+The existing benchmark entry now supports --scenario history --history-runs
+1000|10000 (bounded1..100000). It refuses an existing data directory, imports the
+selected runtime's own persistence package and seeds only new synthetic terminal
+Run metadata in one transaction. No adapter sessions, native commands or real
+Agent workload are configured. API traversal verifies every unique owning Run,
+page count/progression and separately scoped current Run, rejecting legacy
+unpaged, duplicate, foreign or non-progressing replies. It records page timings,
+response bytes and samples Controller CPU/RSS during the workload. Source capture
+includes the new history helper hash before spawn. Controller LLM counters retain
+their actual generate-attempts scope, never all-provider billing claims.
+
+History assessment stays informational, including a qualified artifact: full
+browser rendering, native/provider workload, event-loop/open-handle/network and
+soak Gates remain unmeasured. Existing-directory rejection creates no replacement;
+a pre-spawn failure records not-created rather than unconfirmed process exit.
+Owned generated fixtures are removed only after physical close exit0.
+
+Missing helper first failed; target3 files13 tests passed (new6 ownership/page
+validation cases). Default153 files1592 tests/build/type/lint/boundaries pass71.78s.
+Actual development entry runs (harness5eda9d0 dirty=true; helper hash captured)
+verified1000 Runs/50 pages: p95 1.826417ms, max3.099042ms, RSS135839744B,
+CPU2.99760087% over5.004s; report2026-10-21T05-23-54.852Z-history.json.
+10000 Runs/500 pages: p95 16.327541ms, p99 18.900333ms, max100.133584ms;
+report2026-10-21T05-30-11.324Z-history.json. Both had DB-growth0, scoped Controller
+LLM generate attempts0 and confirmed child exit0. Exact CPU/RSS/window for10k
+are in that raw report; these are active-query workloads, not an idle CPU Gate.
+Prescribed smoke5s returned informational: CPU0.19962042%, RSS117129216B,
+report2026-10-21T05-25-29.102Z-smoke.json; exit0. All reports remain under
+.dispatcher/benchmarks. Logs /tmp/dispatcher-benchmark-history-{red,target,check,
+development,10000-development}.log and /tmp/dispatcher-benchmark-smoke-history.log.
+Unpackaged/short windows cannot qualify a fixed candidate or complete P4.
+Rollback source5eda9d0; no persisted format or actual user data/service change.
+Official quota checked after unit; no reset used.

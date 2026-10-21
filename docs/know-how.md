@@ -885,3 +885,9 @@
   new nonce. Closing its owned RPC root does not prove background tools stopped
   or native writer ownership was released. Version-probe group ownership is a
   separate, freshly created process boundary.
+
+- Seed benchmark fixtures through the selected runtime's persistence package,
+  before spawning that Controller and only into a new owned directory. Using the
+  current checkout's migration catalog can silently prepare data an older pinned
+  artifact cannot read. Capture workload helper hashes before execution; native
+  API query timing does not prove browser or provider acceptance.

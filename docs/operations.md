@@ -423,3 +423,19 @@ Rows follow saved-time descending order with an ID tie breaker. Offset pages are
 live reads and can move as Runs update; they are not immutable snapshots or write
 permission. The default unpaged resource remains its existing contract. This mode
 bounds Run decoding, not Task delivery evidence or global Fleet queries.
+
+
+Synthetic history API measurements use the standard entry:
+
+```bash
+pnpm benchmark -- --scenario history --history-runs 1000 --duration 5
+pnpm benchmark -- --scenario history --history-runs 10000 --duration 5 --release-dir /absolute/qualified-release
+```
+
+The harness imports the selected runtime's persistence to create only a new owned
+fixture, and verifies every paginated identity before recording page timing/bytes.
+Old artifacts without paged Task reads fail evidence validation. history remains
+informational: the workload covers Controller API metadata, not browser rendering,
+native/provider execution or all P4 metrics. CPU sampling includes active queries;
+it is not an idle-budget assertion. Reports capture loaded runtime/harness/helper
+identity and cleanup disposition. Existing user directories are never seeded.

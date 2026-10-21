@@ -7,6 +7,7 @@ import { get } from "node:http";
 import { performance } from "node:perf_hooks";
 import { assessBenchmark, measureStorage, sampleProcess, summarizeSamples, trackOwnedProcess } from "./measurement.mjs";
 import { captureBenchmarkRuntime, captureHarnessIdentity } from "./runtime.mjs";
+import {seedHistoricalRuns,collectHistoryPages} from "./history.mjs";
 import Ajv2020Module from "ajv/dist/2020.js";
 
 const Ajv2020 = Ajv2020Module.default ?? Ajv2020Module.Ajv2020 ?? Ajv2020Module;
@@ -20,7 +21,7 @@ const option = (name, fallback) => {
 };
 const scenario = option("--scenario", "idle");
 const durationSeconds = Number(option("--duration", scenario === "idle" ? "600" : "5"));
-const supported = new Set(["smoke", "idle", "dashboard-open", "one-run", "three-runs", "log-growth", "db-growth"]);
+const supported = new Set(["smoke", "idle", "dashboard-open", "one-run", "three-runs", "log-growth", "db-growth", "history"]);
 if (!supported.has(scenario)) throw new Error(`Unknown benchmark scenario: ${scenario}`);
 if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) throw new Error("Duration must be a positive number");
 const runtime = captureBenchmarkRuntime({ releaseDirectory: option("--release-dir"), controllerPath: resolve("apps/controller/dist/cli.js"), harness: captureHarnessIdentity() });
@@ -42,6 +43,7 @@ let startupFailed = false;
 let report;
 let failure;
 let cleanup;
+let historySeed,historyMeasurements;const workloadSamples=[];
 
 const delay = (milliseconds) => new Promise((resolveDelay) => setTimeout(resolveDelay, milliseconds));
 async function waitForHealth() {
@@ -78,6 +80,7 @@ async function openDashboardEventStream() {
 }
 
 try {
+  if(scenario==="history")historySeed=await seedHistoricalRuns(controller,dataDirectory,Number(option("--history-runs","1000")));
   const environment = { ...process.env, DISPATCHER_OWNER_TOKEN: ownerToken };
   delete environment.DISPATCHER_RELEASE_DIRECTORY; delete environment.DISPATCHER_RELEASE_SHA;
   Object.assign(environment, runtime.childEnvironment);
@@ -111,7 +114,13 @@ try {
     limitations.push("Database-growth currently issues metadata reads only; no representative historical Run fixture or write workload is generated.");
   }
 
-  const samples = [sampleProcess(child.pid)];
+  if(scenario==="history"){
+    workloadSamples.push(sampleProcess(child.pid));let sampledAt=performance.now();
+    historyMeasurements=await collectHistoryPages({origin:`http://127.0.0.1:${port}`,authorization,taskId:historySeed.taskId,expectedRuns:historySeed.runCount,onPage:()=>{if(performance.now()-sampledAt>=100){workloadSamples.push(sampleProcess(child.pid));sampledAt=performance.now();}}});
+    limitations.push("Synthetic terminal Run metadata and Controller API pagination only; no browser rendering, native/provider workload or formal P4 acceptance. Page latency and response bytes include scoped Task metadata.");
+  }
+
+  const samples = [...workloadSamples,sampleProcess(child.pid)];
   const deadline = samples[0].observedAtMs + durationSeconds * 1_000;
   while (samples.length < 2 || performance.now() < deadline) {
     await delay(Math.min(1_000, Math.max(1, deadline - performance.now())));
@@ -128,7 +137,7 @@ try {
   }
   if (["idle", "dashboard-open"].includes(scenario) && measured.measuredSeconds < 600) limitations.push("Less than the frozen 10-minute baseline; CPU/RSS remain informational.");
   if (!runtimeIntegrity.qualified) limitations.push("Unpackaged or changed runtime: measurements do not qualify a fixed release candidate. Use --release-dir with a qualified staged artifact.");
-  limitations.push("Controller process CPU/RSS only; native descendants, event-loop lag, open handles, network, history, synthetic SSE burst and 8-hour soak Gates are not measured here.");
+  limitations.push("Controller process CPU/RSS only; native descendants, event-loop lag, open handles, network, full browser history, synthetic SSE burst and 8-hour soak Gates are not measured here.");
   const storageAfter = measureStorage(dataDirectory, logDirectory);
   report = {
     schemaVersion: 1,
@@ -156,6 +165,9 @@ try {
       databaseGrowthBytes: storageAfter.databaseBytes - storageBefore.databaseBytes,
       logGrowthBytes: storageAfter.logBytes - storageBefore.logBytes,
       dashboardClients: impact.dashboardClients,
+      ...(historyMeasurements?{history:{...historySeed,...historyMeasurements}}:{}),
+      controllerLlmCallsSinceStart:typeof impact.llmCallsSinceStart==="number"?impact.llmCallsSinceStart:null,
+      controllerLlmCallScope:impact.llmCallScope??null,
     },
     targets: { idleCpuPercentBelow: 1, rssBytesBelow: 250 * 1024 * 1024 },
     assessment,
@@ -167,7 +179,8 @@ try {
   cleanup = owned ? await owned.stop() : { confirmed: !child, exitCode: null };
   eventResponse?.destroy();
   eventRequest?.destroy();
-  if (cleanup.confirmed && cleanup.exitCode === 0) rmSync(temporary, { recursive: true, force: true });
+  if(!child){cleanup.notCreated=true;cleanup.retainedDirectory=temporary;console.error(JSON.stringify({code:"BENCHMARK_NOT_STARTED",...cleanup}));}
+  else if (cleanup.confirmed && cleanup.exitCode === 0) rmSync(temporary, { recursive: true, force: true });
   else {
     cleanup.retainedDirectory = temporary;
     child?.unref(); child?.stderr?.destroy();
