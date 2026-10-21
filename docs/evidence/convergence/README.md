@@ -2677,3 +2677,38 @@ green suite1604/1604. No re-review; no deferred Minor findings were reported.
 All three original source SHAs and11 tracked/untracked content hashes rechecked
 unchanged after the fix pass. Official quota last observed11%; check again after
 the completed unit. A/B formal Gates remain open and the worktree is retained.
+
+## Fixed partial candidate0d2cd42 staging and history measurements
+
+Clean-source staging produced /Users/wangdongxin/.local/share/dispatcher/releases/
+0d2cd42:6076 files117543898B, source0d2cd42dcca1696dd43ac6c9503b80e00ee00655,
+Node24.21.0 fixed absolute path, schema9/writer5/admission1. Isolated offline
+deployment, detached dependency closure, relocated HTTP/assets/API/PTY smoke and
+release inventory passed; source dependency state unchanged. No host launchd or
+real-user data activation. Log /tmp/dispatcher-final-candidate-stage.log.
+
+The same fixed artifact was verified before/after three sequential benchmarks;
+harness/source0d2cd42 clean captured at startup. Reports below are private in
+.dispatcher/benchmarks; every child physically exited0 and cleanup confirmed.
+Controller scoped generate attempts0; DBgrowth0 throughout. All remain
+informational, not full P4/browser/provider/soak acceptance.
+
+- 2026-10-21T05-49-23.598Z-history.json:1000 unique owning Runs/50 pages,
+  5.004039542s, CPU3.397255329%, RSS176603136B, p95 3.57375ms,
+  p99/max3.945708ms, response<=5906B, logs+15784B.
+- 2026-10-21T05-49-30.540Z-history.json:10000 unique owning Runs/500 pages,
+  7.353168042s, CPU93.429117365% (active query workload), RSS274251776B,
+  p95 19.509417ms, p99 23.411334ms, max87.610084ms, response<=5952B,
+  logs+155567B. This peak exceeds250MB and250MiB; it does not meet a claim of
+  remaining below the planned memory budget. Preserve as R-004 investigation.
+- 2026-10-21T05-49-40.142Z-smoke.json:5.005722958s, CPU counter delta0 at
+  observed precision (not proof of zero CPU), RSS181174272B, logs+309B.
+
+No benchmark code/threshold was changed to improve the result. These replace
+neither prior fixed253a792 P0 numeric evidence nor missing current-candidate
+idle/browser/slow-reader/long-running measurements. Logs
+/tmp/dispatcher-final-{history1000,history10000,smoke}.log. Fixed release manifest
+SHA256 fde3f55a55e8ad1762a87f463482d4305437650445635ec249473fdb0d6e42fe.
+Rollback/preservation uses retained releases and matching backups; no original
+schema8 evidence/data was opened by this new candidate. Official quota checked
+after staging:11%; check again after this evidence unit.

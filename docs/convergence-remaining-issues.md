@@ -22,6 +22,12 @@ schema. Existing schema8 real-data switch evidence remains historical; this
 schema9 change does not qualify an in-place8→9 service/data activation. Preserve
 the old backup/artifacts and fail closed until that migration/activation workflow
 has its own review and real-data recovery evidence (R-006/R-013).
+R-004 latest fixed-candidate evidence: staged0d2cd42 schema9/writer5 passed
+relocated fixture checks and all10000/500 API history pages, but active-workload
+RSS peaked274251776B (above250MB/250MiB), p95 19.509417ms. The retained report
+2026-10-21T05-49-30.540Z-history.json is informational and a memory-budget concern,
+not an accepted Gate. Do not weaken the budget or infer idle CPU from its93.43%
+active-query measurement. Root cause/current idle/slow-client/soak remain open.
 
 | ID | Linear | State | Evidence / impact / next action |
 | --- | --- | --- | --- |
