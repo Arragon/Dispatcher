@@ -2269,3 +2269,26 @@ as execution uncertainty. Target2 files16 cases; default145 files1451 tests
 No native query or source database migration. Rollback8410002 with schema8 backup.
 Full native/account quiescence and changed-data recovery remain unqualified.
 Official quota checked after unit; no reset used.
+
+## LP-07 explicit native model probe blocked at account/read
+
+Run the qualified fixed253a792 package with installed Codex0.163.0-alpha.10.2,
+new private repository/data and existing authorized native home. ConfigPlan
+applied. GET models returned200/unverified/native-default-only/zero entries after
+15.079s. No Task/publication/native execute start occurred (invocations[]). Closed
+Controller and reverified release; all failed-probe data retained privately under
+provider-probes/2026-10-21T03-19-25.237Z. No default-model fallback or human accept.
+
+Two bounded read-only diagnostics used the existing production reader and a
+private metadata-only instrumented copy of its exact compiled transport, preserving
+method whitelist/cleanup. Generated installed CLI schemas confirm request/client
+fields and --stdio support. Initialize responded successfully in37ms; a status
+notification followed. account/read then returned RPC error-32603 after~15s with
+a timeout classification. Process closed0; production reader reports
+NATIVE_QUERY_FAILED. No model/list response, account values, raw stderr, credentials
+or session creation were exposed. Root cause beyond that SDK RPC timeout is
+unproven; do not label login/network failure or raise deadlines to claim success.
+Private catalog-diagnostic reports/schema and /tmp/dispatcher-codex-{schema-0163,
+read-diagnostic,transport-diagnostic}.log retain metadata only. Earlier real
+native-default execution evidence remains scoped to its earlier trial; this does
+not qualify explicit model/effort or native handoff. Continue independent work.
