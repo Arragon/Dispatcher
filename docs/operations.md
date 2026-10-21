@@ -136,6 +136,13 @@ SHA, exact Node/platform, schema/writer metadata and content hashes. This is an
 isolated package smoke; no real provider, browser, service or recovery Gate is
 implied. A failed target retains its preparing/failure marker for inspection.
 Runtime dependency scripts/licenses remain in the pnpm package boundary.
+New manifests use version 2 with runtime admission version 1, measured by the
+packaged CLI runtime-contract command. Version-1 artifacts remain inspectable
+but cannot qualify for a new service binding. Installation pins source SHA,
+release directory and exact Node/CLI; start/restart recheck the inventory. The
+service checks its environment pin before data-directory ownership or database
+initialization. Status reports verified/unverified/legacy metadata; stop and
+log inspection remain available when artifact integrity fails.
 
 ## macOS Controller background service
 
@@ -145,7 +152,7 @@ rejects managed worktree or temporary Node/CLI paths. Select its absolute CLI
 path explicitly when invoking installation from a development checkout:
 
 ```bash
-pnpm dispatcher -- install --cli-path /absolute/persistent/release/apps/controller/dist/cli.js --data-dir /absolute/persistent/data
+pnpm dispatcher -- install --cli-path /absolute/persistent/release/runtime/dist/cli.js --data-dir /absolute/persistent/data
 pnpm dispatcher -- status
 pnpm dispatcher -- restart
 pnpm dispatcher -- logs

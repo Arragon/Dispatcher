@@ -1637,3 +1637,33 @@ manifest; early stdio, upgrade/rollback and qualified restore activation remain.
 Code/rollback source: daf6750 with matching schema-8 backup. Keep the qualified
 82a4f26 directory immutable; this evidence-only update does not change its code.
 Official quota checked after unit and recorded in Linear.
+
+
+## MAC-01h release identity and pre-database startup admission
+
+Code frozen at 3dc0e008979b7f769f401ab101c9f6981b5a3514. Manifest v2
+records packaged runtime-contract admission v1. New service install requires a
+verified source/release/exact Node/CLI binding; start/restart reverify it before
+launchctl mutation. Serve rejects partial/stale pins before ownership or database
+construction. Stop/status/logs remain available for a damaged artifact. V1 remains
+inspectable, never silently promoted. Plist pin decoding is strict and roundtrips
+through native plutil. No extra compatibility layer, secret, schema or dependency.
+
+New cases RED before implementation (including legacy admission mistakenly
+accepted), target 4 files/45 tests. Default `mise exec -- pnpm check` passes
+124 files/1309 tests (43.03s test phase); diff check passes. Logs:
+/tmp/dispatcher-mac01h-red.log, /tmp/dispatcher-mac01h-legacy-red.log,
+/tmp/dispatcher-mac01h-final-target.log, /tmp/dispatcher-mac01h-check.log.
+
+Actual stage at /Users/wangdongxin/.local/share/dispatcher/releases/3dc0e008979b7f769f401ab101c9f6981b5a3514
+contains 5983 inventory entries/116918623 bytes, source cache unchanged,
+relocated HTTP/assets/API/real PTY and CLI admission smoke passed. Separate
+actual staged serve probe: home=200, ready=200, SIGTERM exit=0, ownership released;
+native plutil release pin roundtrip passed. Evidence: /tmp/dispatcher-mac01h-stage.log
+and /tmp/dispatcher-mac01h-bound-probe.log. Probe used an owned temporary database
+and fixture owner token; cleaned only its child/directory. Host launchctl
+mutations=0, nativeProviderVerified=false. All source candidate data untouched.
+
+MAC-01/A remain open: early raw stdio, upgrade/rollback, qualified full restore
+and real host/login/sleep/native Gates. Rollback code 9180f92 with matching schema-8
+backup; retain source artifacts. Official post-unit quota: 41% remaining; continue.

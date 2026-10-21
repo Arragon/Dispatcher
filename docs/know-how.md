@@ -2,6 +2,11 @@
 
 ## M0–M10 invariants
 
+- A release hash alone does not prove its CLI implements startup admission.
+  Measure the packaged runtime-contract and record it in manifest v2 before
+  service binding; never infer that fact for older v1 artifacts. Keep stop and
+  read-only diagnostics available even when inventory verification fails.
+
 - A pnpm deploy directory can still depend on a worktree: verify actual symlink
   targets, hardlinks and relocation. On pnpm 11.19, deploy flags also rewrote the
   source dependency-state cache and made later checks attempt a production-only

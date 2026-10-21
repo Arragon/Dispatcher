@@ -74,6 +74,11 @@ and deploys offline there. It verifies that the source dependency-state cache
 did not change, detaches artifact hardlinks, moves the complete runtime for an
 isolated HTTP/asset/API/PTY smoke, then records and re-verifies its manifest.
 Existing or failed targets cannot be silently overwritten or activated.
+Manifest v2 records measured service admission v1. Installation binds its exact
+source/release/Node/CLI, and start/restart recheck the inventory before mutation.
+Serve validates the environment binding before data-directory ownership or
+database construction. Legacy v1 manifests remain inspection-only; failed
+integrity must not block stop/status/log diagnostics.
 
 The personal MVP adds one Controller-owned `dispatchTask` path shared by HTTP
 and the confirmed operator-only `task.dispatch` semantic tool. Slack task and
