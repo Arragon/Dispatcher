@@ -2250,3 +2250,22 @@ SSE client remained, full runtime/manifest reverified, process close exit0. Repo
 /tmp/dispatcher-benchmark-release-dashboard-253a792.log. Numeric CPU/RSS budgets
 met for this SSE workload. The script does not drive browser rendering/polling,
 slow consumers, event bursts, native Run load or8h soak; formal P1/P2–P7 stay open.
+
+## MAC-01n distinguish unsettled execution evidence from telemetry
+
+Re-read RunInputReceipts, publication reconciliation and native-cancel storage.
+Offline upgrade eligibility now also rejects reserved/unknown run-input receipts,
+STARTING/OUTCOME_UNKNOWN publication receipts, cancellation without explicit
+nativeMayBeRunning:false, and retained adapter-session nativeBinding (including
+legacy metadata outside the canonical binding table). These are real existing
+control facts, not inferred from an absent active Run. No repair/adoption or
+state deletion is performed to make them eligible.
+
+Five negative cases reproduced acceptance before the fix; all now reject with
+no archive creation. One positive case retains unknown usage-read/error facts
+and known rejected input/stopped cancellation without treating telemetry failure
+as execution uncertainty. Target2 files16 cases; default145 files1451 tests
+50.90s and diff pass. Logs /tmp/dispatcher-upgrade-pending-{red,target,check}.log.
+No native query or source database migration. Rollback8410002 with schema8 backup.
+Full native/account quiescence and changed-data recovery remain unqualified.
+Official quota checked after unit; no reset used.

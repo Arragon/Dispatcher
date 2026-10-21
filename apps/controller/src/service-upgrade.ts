@@ -32,6 +32,10 @@ export function inspectUpgradeSnapshot(path: string): DatabaseFacts {
       count("SELECT COUNT(*) AS n FROM session_controls WHERE state!='AUTOMATED'"),
       count("SELECT COUNT(*) AS n FROM native_bindings"),
       count("SELECT COUNT(*) AS n FROM entities WHERE kind IN ('native-runtime','runner-process') OR kind='local-review-verification' AND COALESCE(json_extract(document_json,'$.state'),'UNKNOWN') IN ('SENDING','UNKNOWN')"),
+      count("SELECT COUNT(*) AS n FROM entities WHERE kind='run-input' AND COALESCE(json_extract(document_json,'$.state'),'UNKNOWN') NOT IN ('ACCEPTED','REJECTED')"),
+      count("SELECT COUNT(*) AS n FROM entities WHERE kind='task-publication' AND json_extract(document_json,'$.receipt.state') IN ('STARTING','OUTCOME_UNKNOWN')"),
+      count("SELECT COUNT(*) AS n FROM entities WHERE kind='native-cancel' AND COALESCE(json_type(document_json,'$.resolution.nativeMayBeRunning'),'unknown')!='false'"),
+      count("SELECT COUNT(*) AS n FROM entities WHERE kind='adapter-session' AND json_extract(document_json,'$.nativeBinding') IS NOT NULL"),
       state.inventory.unresolvedCommands, state.inventory.pendingOutbox,
     ];
     if (unsafe.some(value => !Number.isSafeInteger(value) || value !== 0)) throw Error("SERVICE_UPGRADE_NOT_QUIESCENT");

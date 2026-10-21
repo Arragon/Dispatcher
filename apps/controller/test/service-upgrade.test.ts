@@ -37,3 +37,17 @@ it("rejects loaded supervision, schema mismatch and unknown/custom definitions b
   writeFileSync(f.input.plistPath, launchdPlist(f.input.current).replace("<dict>", "<dict><!-- custom -->"));
   await expect(prepareServiceUpgrade(f.input)).rejects.toThrow("SERVICE_DEFINITION_CHANGED"); expect(existsSync(f.input.backupDirectory)).toBe(false);
 });
+it.each([
+  ["run-input",{state:"RESERVED"}],
+  ["run-input",{state:"OUTCOME_UNKNOWN"}],
+  ["task-publication",{receipt:{state:"OUTCOME_UNKNOWN"}}],
+  ["native-cancel",{resolution:{nativeMayBeRunning:true}}],
+  ["adapter-session",{state:"COMPLETED",nativeBinding:{identityState:"legacy"}}],
+] as const)("rejects unresolved %s execution evidence even without an active Run",async(kind,value)=>{
+  const f=fixture(),db=new DispatcherDatabase(f.path);db.saveEntity(kind,"pending",value);db.checkpoint();db.close();
+  await expect(prepareServiceUpgrade(f.input)).rejects.toThrow("SERVICE_UPGRADE_NOT_QUIESCENT");expect(existsSync(f.input.backupDirectory)).toBe(false);
+});
+it("keeps failed or unknown telemetry separate from execution quiescence",async()=>{
+  const f=fixture(),db=new DispatcherDatabase(f.path);db.saveEntity("usage-read-state","run",{state:"unknown"});db.saveEntity("usage-error","run",{status:"unknown"});db.saveEntity("run-input","known",{state:"REJECTED"});db.saveEntity("native-cancel","known",{resolution:{nativeMayBeRunning:false}});db.checkpoint();db.close();
+  expect(await prepareServiceUpgrade(f.input)).toMatchObject({phase:"preview"});
+});
