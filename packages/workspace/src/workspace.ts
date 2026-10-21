@@ -1,7 +1,9 @@
+import {constants} from "node:fs";
+import {gitInspectionEnvironment,readWorkspaceStatus} from "./git-inspection.js";
 import {createHash} from "node:crypto";
 import {isGitDeliveryTarget,type GitDeliveryTarget} from "@dispatcher/domain";
 import { execFile } from "node:child_process";
-import { mkdir, realpath, stat } from "node:fs/promises";
+import { mkdir, realpath, stat, lstat, readlink, open } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 
@@ -38,6 +40,15 @@ export interface CleanupPlan {
   reasons: string[];
 }
 
+export interface WorkspaceCandidate {
+  version: 1;
+  id: string;
+  headRevision: string;
+  rootIdentity: { device: number; inode: number };
+  changedFiles: string[];
+}
+
+
 export class WorkspacePolicyError extends Error {
   constructor(readonly code: string, message: string) { super(message); this.name = "WorkspacePolicyError"; }
 }
@@ -66,6 +77,15 @@ export class RepositoryRegistry {
   }
   clear(): void { this.repositories.clear(); }
 }
+
+export async function assertRepositoryIdentity(preview: {root:string;rootIdentity:{device:number;inode:number}}): Promise<void> {
+  try {
+    const canonical = await realpath(preview.root);
+    const identity = await stat(canonical);
+    if (canonical !== preview.root || !identity.isDirectory() || identity.dev !== preview.rootIdentity.device || identity.ino !== preview.rootIdentity.inode) throw Error("changed");
+  } catch { throw new WorkspacePolicyError("REPOSITORY_CHANGED", "所选仓库目录已改变，请重新选择。"); }
+}
+
 
 export class WorkspaceManager {
   private readonly managed = new Map<string, WorkspaceHandle>();
@@ -172,6 +192,66 @@ export class WorkspaceManager {
     if(!within(ancestor,path))throw new WorkspacePolicyError("WORKSPACE_PATH_ESCAPE","Worktree path escapes managed root");
     return {...structuredClone(plan),repositoryRoot:inspected.root,path,branch,baseRevision:inspected.baseCommit,createdAt:new Date().toISOString()};
   }
+
+  async captureCandidate(input: { repositoryId: string; worktree: string; branch: string; scopePaths: string[] }): Promise<WorkspaceCandidate> {
+    const repository = this.registry.get(input.repositoryId);
+    await this.assertPublicScope(repository,input.scopePaths);
+    const options = { timeout: 10_000, maxBuffer: 16 * 1024 * 1024,env:gitInspectionEnvironment() };
+    let path: string;
+    let identity: Awaited<ReturnType<typeof stat>>;
+    try {
+      const root = await realpath(this.worktreeRoot);
+      path = await realpath(input.worktree);
+      identity = await stat(path);
+      const source = await realpath(repository.root);
+      const git = async (directory: string, args: string[]) => (await execute("git", ["-C", directory,"-c","core.fsmonitor=false","-c","core.hooksPath=/dev/null", ...args], options)).stdout.replace(/\r?\n$/, "");
+      if (!within(root, path) || path === root || path === source || !identity.isDirectory() || await realpath(await git(path, ["rev-parse", "--show-toplevel"])) !== path || await git(path, ["branch", "--show-current"]) !== input.branch || await realpath(await git(path, ["rev-parse", "--path-format=absolute", "--git-common-dir"])) !== await realpath(await git(source, ["rev-parse", "--path-format=absolute", "--git-common-dir"]))) throw Error("mismatch");
+    } catch { throw new WorkspacePolicyError("CANDIDATE_WORKSPACE_MISMATCH", "Result must belong to its recorded managed Git worktree and branch"); }
+    try {
+      await readWorkspaceStatus(path);
+      const git = async (args: string[]) => (await execute("git", ["-C", path,"-c","core.fsmonitor=false","-c","core.hooksPath=/dev/null", ...args], options)).stdout;
+      const headRevision = (await git(["rev-parse", "--verify", "HEAD"])).trim();
+      const patch = await git(["diff", "--no-ext-diff", "--no-textconv", "--binary", "HEAD", "--"]);
+      const tracked = (await git(["diff", "--no-ext-diff", "--no-textconv", "--name-only", "-z", "HEAD", "--"])).split("\0").filter(Boolean);
+      const untracked = (await git(["ls-files", "--others", "--exclude-standard", "-z"])).split("\0").filter(Boolean).sort();
+      if (untracked.length > 10_000) throw Error("candidate limit");
+      const changedFiles = [...new Set([...tracked, ...untracked])].sort();
+      for (const file of changedFiles) {
+        const absolute = resolve(path, file);
+        if (!within(path, absolute) || input.scopePaths.length && !input.scopePaths.some(scope => within(resolve(path, scope), absolute))) throw new WorkspacePolicyError("PATH_OUT_OF_SCOPE", "Result contains changes outside the registered scope");
+      }
+      const rootIdentity = { device: identity.dev, inode: identity.ino };
+      const hash = createHash("sha256").update(JSON.stringify({ headRevision, rootIdentity, branch: input.branch, patch }));
+      let bytes = 0;
+      for (const file of untracked) {
+        const absolute = resolve(path, file);
+        if (!within(path, await realpath(dirname(absolute)))) throw Error("symlink parent");
+        const info = await lstat(absolute);
+        if (!info.isFile() && !info.isSymbolicLink()) throw Error("unsupported file");
+        bytes += info.size;
+        if (bytes > 64 * 1024 * 1024) throw Error("candidate limit");
+        let contents: string | Buffer;
+        if (info.isSymbolicLink()) contents = await readlink(absolute);
+        else {
+          const file = await open(absolute, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+          try {
+            const opened = await file.stat();
+            if (!opened.isFile() || opened.dev !== info.dev || opened.ino !== info.ino || opened.size !== info.size) throw Error("file changed");
+            contents = await file.readFile();
+            if (contents.length !== info.size) throw Error("file changed");
+          } finally { await file.close(); }
+        }
+        hash.update(JSON.stringify({ file, mode: info.mode & 0o777, contentHash: createHash("sha256").update(contents).digest("hex") }));
+      }
+      await assertRepositoryIdentity({ root: path, rootIdentity });
+      if ((await git(["rev-parse", "--verify", "HEAD"])).trim() !== headRevision) throw new WorkspacePolicyError("CANDIDATE_CHANGED", "Result changed while it was being inspected");
+      return { version: 1, id: hash.digest("hex"), headRevision, rootIdentity, changedFiles };
+    } catch (error) {
+      if (error instanceof WorkspacePolicyError) throw error;
+      throw new WorkspacePolicyError("CANDIDATE_UNAVAILABLE", "Result contents could not be safely inspected within the configured limits");
+    }
+  }
+
 
   async create(plan: WorkspacePlan, options: { beforeCreate?: () => void } = {}): Promise<WorkspaceHandle> {
     const handle=await this.plan(plan);

@@ -1865,3 +1865,30 @@ An existing benchmark audit also found lifetime ps%CPU averaging, missing-sample
 zero fallback, and 100ms cleanup without confirmed child exit. R-004 retains this
 instrumentation work before idle/soak acceptance; prior smoke remains informational.
 Official quota checked after this real-provider unit, no quota reset consumed.
+
+
+## CV-12a result candidate and verification snapshot primitives
+
+Port a499d84 WorkspaceCandidate capture/identity checks, git-inspection and
+VerificationSnapshots into the existing WorkspaceManager. Candidate capture
+binds managed root inode/path, source Git common directory, branch/HEAD, scope,
+tracked diff and bounded no-follow untracked contents. A restarted manager can
+inspect the same retained worktree. Existing private-path policy runs first.
+Unknown filters/partial clones/submodules fail closed before status/diff.
+
+Snapshots retain a separate Git tree/commit and detached directory; original
+execution index stays unchanged. Content/root/common-directory/HEAD/remote/source
+authority are rechecked, failed/mutated or over-capacity snapshots are retained.
+Eight new RED→GREEN cases include changed candidates, source/branch/scope denial,
+filter no-execution, immutable retained content, index preservation, mutation/
+capacity and revoked authority. Two additional REDs reproduced inherited GIT_DIR/
+GIT_WORK_TREE identity interference and post-checkout hook execution. New
+inspection environment clears inherited Git overrides; all snapshot Git calls
+disable checkout hooks/fsmonitor and preserve optional-lock avoidance.
+
+Target2 files11 tests; default full check132 files1375 tests (43.54s), diff check
+passes. Logs /tmp/dispatcher-cv12a-red.log, -git-red.log, -target.log, -check.log.
+No new dependency/schema or source-candidate mutation. API/Run result proof,
+manual acceptance/receipts and v3 UI are next; these primitives alone do not
+complete LP/CV-12/A. Rollback ccb0fb7 with matching schema8 backup. No actual
+provider or original data involved in fixture tests. Official quota checked.

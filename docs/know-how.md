@@ -2,6 +2,12 @@
 
 ## M0–M10 invariants
 
+- Verification candidate materialization must clear inherited GIT_DIR/GIT_WORK_TREE
+  overrides and disable checkout hooks/fsmonitor. A detached worktree add can
+  invoke post-checkout; index isolation alone does not make it side-effect free.
+  Unknown Git filters/partial clones/submodules require a separate qualified
+  materialization contract. Retain uncertain snapshots rather than force-clean.
+
 - Native directory cancellation completes only after owned process-group absence
   and callback close; uncertainty blocks another dialog. Use StringDecoder for
   native UTF-8 pipe chunks. A locked-host API cancellation is cleanup evidence,
