@@ -2362,3 +2362,23 @@ This is a controlled transport-bound regression, not measured real slow-reader,
 burst-memory or long-soak acceptance. R-004 remains open for those workloads.
 Rollback source999d911; no data/schema or service activation. Official quota
 checked after unit; no reset used.
+
+
+## CV-13b remove Controller authority from all Workspace Git commands
+
+Inspection found CV-13a/R-017 covered workspace inspection Git but had not covered
+WorkspaceManager's ordinary promisified execFile calls. Correct the earlier broad
+wording: mutating/ordinary workspace Git remained inherited until this unit.
+A real post-checkout hook with fake canaries reproduced Controller authority
+presence (RED true!=false) while retaining provider context. The existing internal
+execute boundary now filters the effective child environment for every command,
+including worktree administration, refs, restore, fetch, cleanup and result reads;
+explicit inspection environments retain their original restrictions. UTF-8 output,
+argv, native Git hooks/credentials, signals and timeouts retain their contracts.
+
+The hook regression is GREEN; target2 files7 cases and default147 files1463 tests
+plus build/type/lint/boundaries pass53.35s. No real secret value was read/printed;
+only fake-canary presence and a fake provider-context string were recorded in the
+owned fixture. Logs /tmp/dispatcher-workspace-authority-{red,target,check}.log.
+Rollback source9244e40; no schema/config/provider or host service mutation. This
+closes this observed environment gap, not general child isolation/security review.

@@ -1,8 +1,8 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, mkdirSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { RepositoryRegistry, WorkspaceManager } from "../src/index.js";
 
 const directories: string[] = [];
@@ -66,5 +66,11 @@ describe("WorkspaceManager", () => {
     expect(await manager.cleanupPlan(forged)).toMatchObject({ safe: false, reasons: expect.arrayContaining(["workspace is not registered by this manager"]) });
     await manager.cleanup(plan);
     expect(() => execFileSync("git", ["-C", fixture.root, "worktree", "list", "--porcelain"])).not.toThrow();
+  });
+  it("keeps native Git hooks and provider context without passing Controller authority",async()=>{
+    const fixture=repository(),registry=new RepositoryRegistry();registry.register({id:"repo",root:fixture.root});const manager=new WorkspaceManager(registry,fixture.worktrees),report=join(fixture.root,"hook-report.json"),hook=join(fixture.root,".git","hooks","post-checkout");
+    writeFileSync(hook,`#!${process.execPath}\nrequire('node:fs').writeFileSync(${JSON.stringify(report)},JSON.stringify({authority:Object.keys(process.env).some(key=>['DISPATCHER_OWNER_TOKEN','DISPATCHER_SECRET_STORE_KEY'].includes(key.toUpperCase())),provider:process.env.DISPATCHER_TEST_PROVIDER_CONTEXT}));\n`);chmodSync(hook,0o755);
+    vi.stubEnv("DISPATCHER_OWNER_TOKEN","fake-controller-canary");vi.stubEnv("DISPATCHER_SECRET_STORE_KEY","fake-encryption-canary");vi.stubEnv("dispatcher_owner_token","fake-lowercase-canary");vi.stubEnv("DISPATCHER_TEST_PROVIDER_CONTEXT","native-provider-context");
+    try{await manager.create({repositoryId:"repo",taskId:"env",runId:"env",attempt:1,baseRef:"main",scopePaths:[]});expect(JSON.parse(readFileSync(report,"utf8"))).toEqual({authority:false,provider:"native-provider-context"});}finally{vi.unstubAllEnvs();}
   });
 });

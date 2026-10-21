@@ -1,13 +1,15 @@
 import {constants} from "node:fs";
+import {childExecutionEnvironment} from "@dispatcher/shared";
 import {gitInspectionEnvironment,readWorkspaceStatus} from "./git-inspection.js";
 import {createHash} from "node:crypto";
 import {isGitDeliveryTarget,type GitDeliveryTarget} from "@dispatcher/domain";
-import { execFile } from "node:child_process";
+import { execFile, type ExecFileOptions } from "node:child_process";
 import { mkdir, realpath, stat, lstat, readlink, open } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 
-const execute = promisify(execFile);
+const executeFile = promisify(execFile);
+const execute = (file:string,args:string[],options:ExecFileOptions={}) => executeFile(file,args,{...options,encoding:"utf8",env:childExecutionEnvironment(options.env??process.env)});
 // Git scans shared worktree administration while adding/removing entries. Keep
 // these mutations ordered across aliases/managers in this owning Runner process.
 const worktreeMutations=new Map<string,Promise<void>>();
