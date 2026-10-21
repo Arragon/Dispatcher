@@ -22,9 +22,10 @@ it("uses CPU counter deltas over the measured monotonic window and rejects incom
 });
 
 it("keeps short idle and metadata-only workloads informational and real Run load unqualified", () => {
-  const healthy = { measuredSeconds: 600, cpuAveragePercent: 0.1, rssMaximumBytes: 100_000_000, dashboardClients: 1 };
+  const healthy = { measuredSeconds: 600, cpuAveragePercent: 0.1, rssMaximumBytes: 100_000_000, dashboardClients: 1, runtimeQualified: true };
   expect(assessBenchmark("idle", healthy)).toBe("pass");
   expect(assessBenchmark("idle", { ...healthy, measuredSeconds: 5 })).toBe("informational");
+  expect(assessBenchmark("idle", { ...healthy, runtimeQualified: false })).toBe("informational");
   expect(assessBenchmark("idle", { ...healthy, cpuAveragePercent: 1 })).toBe("fail");
   expect(assessBenchmark("dashboard-open", { ...healthy, dashboardClients: 0 })).toBe("fail");
   expect(assessBenchmark("smoke", healthy)).toBe("informational");

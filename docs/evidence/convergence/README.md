@@ -2094,3 +2094,30 @@ Source-disposition rows and operations command updated. Rollback8182c29 with
 matching schema8 backup. Formal provider roundtrips and native capability admission
 remain open; synthetic valid records do not establish real-provider qualification.
 Official quota checked after unit; no reset used.
+
+## CV-13d freeze benchmark runtime identity before spawn
+
+The first 600s development measurement completed with597 samples, CPU0.049999%,
+RSS118374400B, DB growth313120B, log growth309B and confirmed exit0. However,
+concurrent source/build work exposed that identity was sampled at report time:
+the report labels ac0b8f5 although startup occurred at1de0c41. Preserve original
+samples/report unchanged, and attach an assessment-correction.json sidecar with
+its hash: diagnostic/informational, loaded runtime source unproven. No Gate pass.
+
+Harness now captures source/script/entrypoint facts before spawn. Optional
+--release-dir binds an already qualified v2 release, launches its exact CLI with
+pinned release environment and verifies its complete runtime/manifest again
+after measurement. Harness source is recorded separately from runtime source.
+Development always stays informational, including600s; changed release fails.
+No inherited release environment can silently select another runtime. Native
+qualification and all other performance Gates remain separate.
+
+Two regressions exercise independent immutable release vs mutable harness source,
+post-capture artifact tampering and unqualified development. Assessment tests
+now require qualified runtime for a600s pass. RED missing module; target2 files7
+cases; full check142 files1432 tests49.91s, diff passes. Actual5s development and
+fixed3dc0e00 release smokes both exit0/informational; the latter records the
+release source and verified runtime. Logs /tmp/dispatcher-benchmark-runtime-*.log
+and /tmp/dispatcher-benchmark-release-smoke.log. No host service or provider call.
+Rollbackac0b8f5 with schema8 backup. Next: stage current clean candidate and rerun
+fixed-artifact idle while independent source work continues. Quota checked.

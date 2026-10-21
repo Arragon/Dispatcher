@@ -289,13 +289,21 @@ missing host/account evidence.
 The M1 acceptance scenarios are:
 
 ```bash
-pnpm benchmark -- --scenario idle --duration 600
-pnpm benchmark -- --scenario dashboard-open --duration 600
+pnpm benchmark -- --scenario idle --duration 600 --release-dir /absolute/staged-release
+pnpm benchmark -- --scenario dashboard-open --duration 600 --release-dir /absolute/staged-release
 ```
 
 Reports are written beneath `.dispatcher/benchmarks/` and include environment,
 sample count, raw measurements, targets, assessment, and limitations. `one-run`
-and `three-runs` use the M4 execution harness and managed worktree boundary.
+and `three-runs` remain not-runnable until this harness configures real Agent load.
+Metadata/log-only workloads remain informational.
+
+The harness binds the release manifest/source/Node/CLI before spawning, verifies
+the full runtime after measurement and records its own source/script hashes
+separately. Unpackaged development remains informational even after 600 seconds;
+other build output may change while it runs. CPU/RSS assessment covers only the
+named process/window and leaves history, native-process, safety and soak Gates
+open.
 
 Accepted milestone baselines are copied into `benchmarks/baselines/` so they
 remain reviewable after local runtime data is cleaned.

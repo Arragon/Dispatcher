@@ -1,11 +1,12 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { availableParallelism, cpus, release, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { spawn, spawnSync } from "node:child_process";
-import { createHash, randomBytes } from "node:crypto";
+import { spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { get } from "node:http";
 import { performance } from "node:perf_hooks";
 import { assessBenchmark, measureStorage, sampleProcess, summarizeSamples, trackOwnedProcess } from "./measurement.mjs";
+import { captureBenchmarkRuntime, captureHarnessIdentity } from "./runtime.mjs";
 import Ajv2020Module from "ajv/dist/2020.js";
 
 const Ajv2020 = Ajv2020Module.default ?? Ajv2020Module.Ajv2020 ?? Ajv2020Module;
@@ -22,12 +23,13 @@ const durationSeconds = Number(option("--duration", scenario === "idle" ? "600" 
 const supported = new Set(["smoke", "idle", "dashboard-open", "one-run", "three-runs", "log-growth", "db-growth"]);
 if (!supported.has(scenario)) throw new Error(`Unknown benchmark scenario: ${scenario}`);
 if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) throw new Error("Duration must be a positive number");
+const runtime = captureBenchmarkRuntime({ releaseDirectory: option("--release-dir"), controllerPath: resolve("apps/controller/dist/cli.js"), harness: captureHarnessIdentity() });
 
 const port = 18_000 + Math.floor(Math.random() * 1_000);
 const temporary = mkdtempSync(join(tmpdir(), "dispatcher-benchmark-"));
 const dataDirectory = join(temporary, "data");
 const logDirectory = join(dataDirectory, "logs");
-const controller = resolve("apps/controller/dist/cli.js");
+const controller = runtime.cliPath;
 const ownerToken = randomBytes(32).toString("base64url");
 const authorization = { authorization: `Bearer ${ownerToken}` };
 const startedAt = new Date().toISOString();
@@ -76,8 +78,11 @@ async function openDashboardEventStream() {
 }
 
 try {
+  const environment = { ...process.env, DISPATCHER_OWNER_TOKEN: ownerToken };
+  delete environment.DISPATCHER_RELEASE_DIRECTORY; delete environment.DISPATCHER_RELEASE_SHA;
+  Object.assign(environment, runtime.childEnvironment);
   child = spawn(process.execPath, [controller, "serve", "--with-runner", "--port", String(port), "--data-dir", dataDirectory, "--log-dir", logDirectory], {
-    env: { ...process.env, DISPATCHER_OWNER_TOKEN: ownerToken },
+    env: environment,
     stdio: ["ignore", "ignore", "pipe"],
   });
   owned = trackOwnedProcess(child);
@@ -116,15 +121,15 @@ try {
   const impactResponse = await fetch(`http://127.0.0.1:${port}/api/system-impact`, { headers: authorization, signal: AbortSignal.timeout(2000) });
   if (!impactResponse.ok) throw new Error(`System impact endpoint returned ${impactResponse.status}`);
   const impact = await impactResponse.json();
-  const assessment = assessBenchmark(scenario, { ...measured, dashboardClients: impact.dashboardClients });
+  const runtimeIntegrity = runtime.recheck();
+  const assessment = runtimeIntegrity.state === "changed" ? "fail" : assessBenchmark(scenario, { ...measured, dashboardClients: impact.dashboardClients, runtimeQualified: runtimeIntegrity.qualified });
   if (scenario === "dashboard-open" && impact.dashboardClients !== 1) {
     limitations.push(`Dashboard event stream was not held open: expected 1 client, measured ${impact.dashboardClients}.`);
   }
   if (["idle", "dashboard-open"].includes(scenario) && measured.measuredSeconds < 600) limitations.push("Less than the frozen 10-minute baseline; CPU/RSS remain informational.");
+  if (!runtimeIntegrity.qualified) limitations.push("Unpackaged or changed runtime: measurements do not qualify a fixed release candidate. Use --release-dir with a qualified staged artifact.");
   limitations.push("Controller process CPU/RSS only; native descendants, event-loop lag, open handles, network, history, synthetic SSE burst and 8-hour soak Gates are not measured here.");
   const storageAfter = measureStorage(dataDirectory, logDirectory);
-  const revision = spawnSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" });
-  const status = spawnSync("git", ["status", "--porcelain", "--untracked-files=normal"], { encoding: "utf8" });
   report = {
     schemaVersion: 1,
     scenario,
@@ -138,9 +143,8 @@ try {
       availableCpus: availableParallelism(),
       node: process.version,
       pid: child.pid,
-      sourceSha: revision.status === 0 ? revision.stdout.trim() : null,
-      sourceDirty: status.status === 0 ? status.stdout.length > 0 : null,
-      controllerEntrypointSha256: createHash("sha256").update(readFileSync(controller)).digest("hex"),
+      ...runtime.environment,
+      runtimeIntegrity,
     },
     measurements: {
       ...measured,

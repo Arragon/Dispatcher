@@ -34,6 +34,7 @@ export function assessBenchmark(scenario, measurements) {
   if (["one-run", "three-runs"].includes(scenario)) return "not-runnable";
   if (scenario === "dashboard-open" && measurements.dashboardClients !== 1) return "fail";
   if (!["idle", "dashboard-open"].includes(scenario) || measurements.measuredSeconds < 600) return "informational";
+  if (!measurements.runtimeQualified) return "informational";
   return measurements.cpuAveragePercent < 1 && measurements.rssMaximumBytes < 250 * 1024 * 1024 ? "pass" : "fail";
 }
 
