@@ -33,8 +33,8 @@ function synchronous(guard:(()=>void)|undefined):void {
   try{const admitted:unknown=guard?.();if(admitted!==undefined){void Promise.resolve(admitted).catch(()=>undefined);throw failure("PI_RPC_AUTHORITY_CHANGED");}}
   catch{throw failure("PI_RPC_AUTHORITY_CHANGED");}
 }
-async function readVersion(scope:PiRpcScope,agentDirectory:string):Promise<string>{
-  return readOwnedNativeVersion({executable:scope.executable,workspacePath:scope.workspacePath,environment:{...process.env,PI_CODING_AGENT_DIR:agentDirectory},failure:code=>failure(code==="exit-unconfirmed"?"PI_RPC_PROBE_EXIT_UNCONFIRMED":"PI_RPC_RUNTIME_UNAVAILABLE")});
+async function readVersion(scope:PiRpcScope,agentDirectory:string,signal?:AbortSignal):Promise<string>{
+  return readOwnedNativeVersion({executable:scope.executable,workspacePath:scope.workspacePath,environment:{...process.env,PI_CODING_AGENT_DIR:agentDirectory},...(signal?{signal}:{}),failure:code=>failure(code==="exit-unconfirmed"?"PI_RPC_PROBE_EXIT_UNCONFIRMED":"PI_RPC_RUNTIME_UNAVAILABLE")});
 }
 /** One pinned owned child. Settled is a run fact, never background-tool/writer release proof. */
 export class PiRpcClient {
@@ -58,18 +58,22 @@ export class PiRpcClient {
     child.stderr.on("data",()=>undefined);
     child.stdin.on("error",()=>this.fail("PI_RPC_UNREACHABLE"));child.once("error",()=>this.fail("PI_RPC_UNREACHABLE"));
   }
-  static async open(input:PiRpcScope):Promise<PiRpcClient>{
-    const scope=structuredClone(input);
+  static async open(input:PiRpcScope,options:{signal?:AbortSignal;beforeCreate?:()=>void}={}):Promise<PiRpcClient>{
+    const scope=structuredClone(input),signal=options.signal,beforeCreate=options.beforeCreate;
+    const cancelled=()=>{if(signal?.aborted)throw new AdapterStartError("not-created","PI_RPC_LOCAL_CONNECTION_CLOSED","Pi RPC acquisition was cancelled");};
+    const admission=()=>{cancelled();try{synchronous(beforeCreate);}catch{throw new AdapterStartError("not-created","PI_RPC_AUTHORITY_CHANGED","Pi RPC creation authority changed");}cancelled();};
+    admission();
     if(!text(scope.executable,4096)||!isAbsolute(scope.executable)||!/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/i.test(scope.sessionId)||scope.sessionId.length!==36||!["new","resume"].includes(scope.mode)||[scope.provider,scope.model].some(value=>value!==undefined&&!text(value)))throw new AdapterStartError("not-created","PI_RPC_SCOPE_INVALID","Pi RPC scope is invalid");
     let paths:Directory[];
     try{paths=[scope.workspacePath,scope.agentDirectory,scope.sessionDirectory].map(directory);}catch{throw new AdapterStartError("not-created","PI_RPC_SCOPE_CHANGED","Pi RPC directories are unavailable");}
     const assertScope=()=>{if(!isDeepStrictEqual([scope.workspacePath,scope.agentDirectory,scope.sessionDirectory].map(directory),paths))throw failure("PI_RPC_SCOPE_CHANGED");};
     let version:string;
-    try{version=await readVersion(scope,paths[1]!.path);}
-    catch(error){throw new AdapterStartError("not-created",error instanceof AdapterContractError&&error.code==="PI_RPC_PROBE_EXIT_UNCONFIRMED"?error.code:"PI_RPC_RUNTIME_UNAVAILABLE","Pi version probe did not finish safely");}
+    try{version=await readVersion(scope,paths[1]!.path,signal);}
+    catch(error){throw new AdapterStartError("not-created",error instanceof AdapterContractError&&error.code==="PI_RPC_PROBE_EXIT_UNCONFIRMED"?error.code:signal?.aborted?"PI_RPC_LOCAL_CONNECTION_CLOSED":"PI_RPC_RUNTIME_UNAVAILABLE","Pi version probe did not finish safely");}
     if(version!==piRpcProtocolVersion)throw new AdapterStartError("not-created","PI_RPC_VERSION_UNQUALIFIED","Installed Pi differs from the pinned protocol");
     try{assertScope();}catch{throw new AdapterStartError("not-created","PI_RPC_SCOPE_CHANGED","Pi RPC directories changed");}
     const argv=["--mode","rpc","--session-dir",paths[2]!.path,scope.mode==="new"?"--session-id":"--session",scope.sessionId,...(scope.provider?["--provider",scope.provider]:[]),...(scope.model?["--model",scope.model]:[])];
+    admission();try{assertScope();}catch{throw new AdapterStartError("not-created","PI_RPC_SCOPE_CHANGED","Pi RPC directories changed before creation");}
     const child=spawn(scope.executable,argv,{cwd:paths[0]!.path,env:childExecutionEnvironment(process.env,{PWD:paths[0]!.path,PI_CODING_AGENT_DIR:paths[1]!.path}),shell:false,stdio:["pipe","pipe","pipe"]});
     const client=new PiRpcClient(child,assertScope,{...scope,workspacePath:paths[0]!.path,agentDirectory:paths[1]!.path,sessionDirectory:paths[2]!.path});
     try{await new Promise<void>((resolve,reject)=>{child.once("spawn",resolve);child.once("error",reject);});return client;}

@@ -28,6 +28,14 @@ Cursor, Devin, Kiro, WorkBuddy/CodeBuddy, and hardened Generic CLI adapter
 boundaries plus a capability matrix used by scheduling and operator reroute.
 The local harness expansion adds OpenCode v2, Grok Build and pi through that
 same adapter contract and native JSON CLI streams.
+The committed Pi RPC transport, readonly identity/history and guarded execution
+producer now exist as internal modules. New producer invocations bind one frozen
+ExecutionSelection to the managed execution reference, persist native binding
+before prompt and recheck synchronous authority after version acquisition before
+creating RPC. Readiness/callback settlement and local-root cleanup remain distinct
+from native tool/writer release. The default Pi print profile is unchanged; these
+modules grant no registered Controller source, surface or takeover capability.
+
 Controller retains unchanged profile adapters of every provider across ConfigPlan applies,
 bound to the profile and owning Runner execution identity. Replacement/removal
 rejects pending starts/inputs, active native operations, nonterminal canonical

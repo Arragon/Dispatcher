@@ -15,7 +15,7 @@ interface PiState {
  model?:{provider:string;id:string};sessionFile?:string;sessionName?:string;
 }
 interface PiFile {reportedPath:string;path:string;parent:Directory;materialized:boolean;dev?:bigint;ino?:bigint}
-function record(value:unknown):Record<string,unknown>{if(!object(value))throw failure("PI_RPC_PROTOCOL_INVALID");return value;}
+export function record(value:unknown):Record<string,unknown>{if(!object(value))throw failure("PI_RPC_PROTOCOL_INVALID");return value;}
 const entryId=(value:unknown):value is string=>text(value)&&/^[A-Za-z0-9_-]+$/.test(value);
 /** One owned UUID, read-only projections. No print execution or writer authority is inferred. */
 export class PiRpcInteractionPort implements NativeInteractionPort {

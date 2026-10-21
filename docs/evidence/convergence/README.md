@@ -2443,3 +2443,43 @@ Controller lifecycle/source registry and real same-session handoff remain open.
 Supplied fixture evidence is not production qualification; native write methods
 and surfaces stay absent/unknown. Source backup unchanged; rollback source9b8bf00
 and schema8 backup. Official quota checked after this unit; no reset used.
+
+
+## CV-10c guarded canonical Pi execution producer
+
+Port a499d84 PiRpcExecutionBackend into the internal pi-rpc-execution module,
+retaining31 source producer assertions. One original Adapter-injection/manifest
+assertion stays in the frozen source pending actual default Adapter integration;
+no existing target assertion is removed or skipped. Keep the producer's readiness,
+binding-before-prompt, bounded native callbacks/events, exact UUID/model state
+reads and local-shutdown uncertainty contracts. New invocations require canonical
+ExecutionSelection and managed execution reference; reject parallel legacy model
+fields, unsupported parameters and different profile/provider/backend/Runner.
+There is no newly registered/default backend, native writer or Controller source.
+
+Add8 canonical-selection regressions (ownership, second authority, parameters,
+malformed model type and capture-before-await). Target39 cases initially passed.
+Inspection found a source gap: version-await completed before RPC spawn, but final
+creation Guard happened only after open. A new revoke-during-probe case reproduced
+unknown creation instead of not-created (RED). PiRpcClient now captures scope/options,
+threads cancellation into its owned version probe and invokes the captured
+synchronous admission immediately before RPC spawn, with no intervening await.
+Recheck signal after the callback too: a separate direct acquisition-cancel case
+first fulfilled incorrectly (RED), then rejected before RPC creation. Failed probe
+drain remains unconfirmed; it is never normalized by cancellation.
+
+All3 Pi targets119 cases passed before the extra acquisition-cancel assertion;
+that new case independently passed. Final default150 files1583 cases plus
+build/type/lint/boundaries pass87.60s. Logs /tmp/dispatcher-pi-rpc-execution-{red,
+target,create-guard-red,check}.log and /tmp/dispatcher-pi-rpc-acquisition-cancel-
+{red,target}.log. Initial lint found one unused import; removed it, no suppression.
+Readonly port shares its internal record validator; default CLI contracts and
+Controller/API configuration remain unchanged. This proves controlled fixtures,
+not real Pi/account/native writer release or human handoff.
+
+Re-read all original workspaces: v3 HEAD19db456 with1 tracked/2 untracked, personal
+HEAD297c32c clean, continuation HEADa499d84 with6 tracked/2 untracked, unchanged
+from frozen observed HEAD/status. No content cleanup/edit of these workspaces.
+Default Adapter integration, observer/source lifecycle and real qualification
+remain R-019. Rollback sourcea217d40 with compatible schema8 backup; official quota
+checked after unit. No native provider/account call or host service activation.

@@ -8,6 +8,11 @@ const roots:string[]=[],clients:PiRpcClient[]=[];
 afterEach(async()=>{for(const client of clients.splice(0))await client.close();for(const root of roots.splice(0))rmSync(root,{recursive:true,force:true});});
 
 const fixture=(model="normal",version="1.2.0")=>piRpcFixture(roots,model,version);
+it("does not create RPC when its final synchronous admission cancels acquisition",async()=>{
+ const f=fixture(),abort=new AbortController();let guards=0;
+ const pending=PiRpcClient.open(f.scope,{signal:abort.signal,beforeCreate:()=>{if(++guards===2)abort.abort();}}).then(client=>{clients.push(client);return client;});
+ await expect(pending).rejects.toMatchObject({code:"PI_RPC_LOCAL_CONNECTION_CLOSED",creationOutcome:"not-created"});expect(existsSync(join(f.root,"rpc-started"))).toBe(false);
+});
 async function open(model="normal"){const f=fixture(model),client=await PiRpcClient.open(f.scope);clients.push(client);return {...f,client};}
 it.each(["new","resume"] as const)("uses a persistent exact session and literal argv in %s mode",async mode=>{
  const f=fixture();f.scope.mode=mode;const client=await PiRpcClient.open(f.scope);clients.push(client);const state=await client.request("get_state");expect(state).toMatchObject({sessionId,cwd:f.scope.workspacePath});expect(state.argv).toEqual(["--mode","rpc","--session-dir",f.scope.sessionDirectory,mode==="new"?"--session-id":"--session",sessionId,"--model","normal"]);expect(state.argv).not.toContain("--no-session");
