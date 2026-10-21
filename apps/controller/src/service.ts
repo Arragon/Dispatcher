@@ -4476,27 +4476,34 @@ export class ControllerService {
       this.dashboardClients += 1;
       const headerCursor = Number(request.headers["last-event-id"] ?? request.query.cursor ?? 0);
       const replay = this.fleetEvents.since(Number.isFinite(headerCursor) ? headerCursor : 0);
-      response.write(`event: ready\ndata: ${JSON.stringify({ connected: true, cursor: replay.cursor, reset: replay.reset })}\n\n`);
-      if (replay.reset) response.write(`event: fleet.reset\ndata: ${JSON.stringify({ snapshot: this.fleetSnapshot() })}\n\n`);
-      for (const event of replay.events) response.write(`id: ${event.cursor}\nevent: ${event.type}\ndata: ${JSON.stringify(redactValue(event.payload))}\n\n`);
-      const unsubscribe = this.fleetEvents.subscribe((event) => {
-        response.write(`id: ${event.cursor}\nevent: ${event.type}\ndata: ${JSON.stringify(redactValue(event.payload))}\n\n`);
-      });
-      const keepAlive = setInterval(() => response.write(": keep-alive\n\n"), 30_000);
-      keepAlive.unref();
-      let closed = false;
+      let closed = false; let unsubscribe: () => void = () => undefined;
+      let keepAlive: ReturnType<typeof setInterval> | undefined = undefined, deadline: ReturnType<typeof setTimeout> | undefined;
       const close = () => {
         if (closed) return;
         closed = true;
         clearInterval(keepAlive);
         unsubscribe();
-        this.dashboardStreamClosers.delete(close);
         this.dashboardClients = Math.max(0, this.dashboardClients - 1);
+        // Flush the already accepted buffer, never enqueue another frame. A slow
+        // peer cannot retain this response indefinitely or hold service shutdown.
         response.end();
+        if (!response.destroyed) { deadline = setTimeout(() => response.destroy(), 2_000); deadline.unref(); }
       };
+      const released = () => { close(); clearTimeout(deadline); this.dashboardStreamClosers.delete(close); };
       this.dashboardStreamClosers.add(close);
-      response.once("close", close);
-      response.once("error", close);
+      response.once("close", released);
+      response.once("error", () => { close(); response.destroy(); });
+      const send = (frame: string): boolean => {
+        if (closed) return false;
+        try { if (!response.destroyed && !response.writableEnded && response.write(frame)) return true; }
+        catch { /* Transport failure does not escape into the event publisher. */ }
+        close(); return false;
+      };
+      if (!send(`event: ready\ndata: ${JSON.stringify({ connected: true, cursor: replay.cursor, reset: replay.reset })}\n\n`)) return;
+      if (replay.reset && !send(`event: fleet.reset\ndata: ${JSON.stringify({ snapshot: this.fleetSnapshot() })}\n\n`)) return;
+      for (const event of replay.events) if (!send(`id: ${event.cursor}\nevent: ${event.type}\ndata: ${JSON.stringify(redactValue(event.payload))}\n\n`)) return;
+      unsubscribe = this.fleetEvents.subscribe((event) => { send(`id: ${event.cursor}\nevent: ${event.type}\ndata: ${JSON.stringify(redactValue(event.payload))}\n\n`); });
+      keepAlive = setInterval(() => { send(": keep-alive\n\n"); }, 30_000); keepAlive.unref();
     });
 
     this.app.get<{Querystring:{view?:string}}>("/api/config", async (request,reply) => {if(request.query.view!==undefined&&request.query.view!=="console")return reply.code(400).send({code:"CONFIG_VIEW_INVALID"});const current=this.configuration.current();return request.query.view==="console"?{...current,...consoleConfig(current.config)}:current;});

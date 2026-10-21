@@ -2336,3 +2336,29 @@ fixed the test import without weakening lint. Default146 files1459 tests and all
 build/type/lint/boundary checks now pass51.93s. Log /tmp/dispatcher-worktree-
 concurrency-{red,target,check}.log. MAC-01o rollback is now included in a passing
 full gate. Rollback sourcee240e6e; no persisted schema or external side effect.
+
+
+## MAC-01p stop SSE output at transport backpressure
+
+CV-03c's second independent default gate passed146/1459 in52.31s at999d911
+(/tmp/dispatcher-worktree-concurrency-stability.log); both default runs retain
+normal workers and concurrent assertions. No serial-only qualification.
+
+Dashboard SSE now stops initial ready/reset/replay and live/keep-alive writes on
+write(false), closed transport or write exception. It removes its subscriber and
+keep-alive immediately, never queues later frames, ends the accepted buffer and
+forces owned response destruction after2s if a peer does not drain. The shutdown
+closer remains owned until physical close. Existing cursor replay/reset supplies
+subsequent state; no native execution/control semantics change.
+
+Three real HTTP connection tests inject Node's backpressure signal at ready,
+replay and live output; each first failed client count1!=0, then passed alongside
+the existing open-stream graceful-shutdown regression (2 files4 cases). The
+initial test detector used getHeader after writeHead and timed out; corrected to
+observe actual SSE ready bytes, then reran RED before implementation. No timeout
+was raised to hide a failure. Default147 files1462 tests/build/type/lint/boundaries
+pass54.06s. Logs /tmp/dispatcher-dashboard-backpressure-{red,target,check}.log.
+This is a controlled transport-bound regression, not measured real slow-reader,
+burst-memory or long-soak acceptance. R-004 remains open for those workloads.
+Rollback source999d911; no data/schema or service activation. Official quota
+checked after unit; no reset used.

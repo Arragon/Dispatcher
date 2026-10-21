@@ -405,3 +405,11 @@ trusted review or enable a capability: `releaseEligible` remains false without
 out-of-record reviewed-record authority, and no CLI option grants that authority.
 Historical records and synthetic validator tests are not current provider/account
 qualification. This tool changes no Controller state, configuration or credentials.
+
+
+Dashboard event streams stop at HTTP write backpressure, unsubscribe and end the
+accepted buffer; an undrained owned connection is destroyed after at most2s.
+Clients reconnect through the existing event cursor/replay/reset contract. This
+bounds connection drain during service stop and prevents accumulating future
+frames for a slow client. Controlled HTTP tests do not replace real burst/slow-
+reader memory measurement or soak evidence.
