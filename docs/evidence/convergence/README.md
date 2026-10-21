@@ -2152,3 +2152,51 @@ source dependency state, relocated HTTP/assets/API/real PTY smoke, schema8/write
 admission1, nativeProviderVerified:false. Runtime retained privately at
 ~/.local/share/dispatcher/releases/253a792. Fixed-artifact600s idle is in progress;
 source development cannot alter this runtime tree.
+
+## MAC-01l offline compatible upgrade preparation
+
+Add prepare-upgrade CLI preview/explicit-confirmed reviewed-plan execution.
+Capture request fields before awaits; bind existing normalized pinned plist,
+qualified source/target releases, canonical data and raw main/WAL fingerprints.
+Require unloaded service plus data ownership, exact schema/writer agreement,
+operational source and no active/uncertain work, pending effects or native
+bindings. Legacy/custom definitions and migrations require separate review.
+Streaming file hashes avoid loading multi-GB snapshots into memory.
+
+Preparation creates only a new DB-only archive, validates actual restore into a
+private new target while preserving both barriers, removes only that owned test
+copy, rechecks release/definition/source and retains previous/candidate plist plus
+PREPARED receipt. Installed plist and source DB are untouched; no launchctl
+mutation, restored-data activation or native action. Incomplete archive/preparing
+marker stays for inspection. This is the preparation phase, not an implementation
+of switching or qualified rollback; those remain open.
+
+Three regressions cover backup/restore proof and source/definition preservation,
+review/confirmation/data drift/active Run/barrier, and loaded service/schema/
+definition rejection. RED missing module, target3 files13 tests; first full build
+caught two exact-optional parameter errors, corrected without changing contracts.
+Final default check144 files1438 tests50.30s, diff passes. Logs
+/tmp/dispatcher-service-upgrade-{red,target,check}.log.
+
+An isolated fictional service definition used real qualified3dc0e00->253a792
+releases and the preserved real-Codex trial DB. Preparation succeeded schema8/
+writer4, one Task/Run/Session, source-main and fixture-plist bytes unchanged,
+only two simulated supervisor print reads, no real supervisor/provider/human
+acceptance. Report and archive stay in the private provider-probes root under
+upgrade-preparation-4ead780 / backup-upgrade-preparation-4ead780. Native homes and
+SecretStore excluded. Log /tmp/dispatcher-service-upgrade-real-data.log.
+Rollback4ead780 with matching schema8 backup. Official quota checked; no reset.
+
+## CV-13 fixed253a792 P0 CPU/RSS window
+
+Isolated fixed release253a792041e6ac564022988076c15863b1b4deb9 completed596 samples
+across600.010853s: average CPU0.0599989%, maximum RSS170000384B, DB growth321360B
+(main4096+WAL832272+SHM32768=869136B), structured log growth309B/total755B.
+Complete release/manifest verified before and after, no dashboard clients or
+Agent load, process close confirmed exit0. Report
+.dispatcher/benchmarks/2026-10-21T02-30-58.598Z-idle.json; source/harness captured
+at start; log /tmp/dispatcher-benchmark-release-idle-253a792.log. This meets the
+frozen P0 CPU/RSS numeric budgets for this empty configured Controller+Runner
+window only. Event-loop/handles/network/history/native descendants, real host
+service and8h soak are not qualified. One authenticated SSE-client600s window
+is now running separately; it is not a complete browser workload.

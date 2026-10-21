@@ -86,6 +86,10 @@ function assertDefinitionRevision(input:LaunchAgentOptions,expected:string):void
   try{if(!/^[a-f0-9]{64}$/.test(expected)||definitionSnapshot(input.plistPath).sha256!==expected)throw Error();}
   catch(error){throw Error("SERVICE_DEFINITION_CHANGED",{cause:error});}
 }
+export function assertLaunchAgentDefinition(input:LaunchAgentDefinition&{plistPath:string}):string {
+  const revision=input.definitionSha256??createHash("sha256").update(launchdPlist(input)).digest("hex");
+  assertDefinitionRevision(input,revision);return revision;
+}
 export async function statusLaunchAgent(input:LaunchAgentOptions):Promise<LaunchAgentStatus>{
   absolutePath(input.plistPath);
   let stdout:string;
@@ -99,8 +103,7 @@ export async function statusLaunchAgent(input:LaunchAgentOptions):Promise<Launch
 export async function startLaunchAgent(input:LaunchAgentOptions):Promise<void>{
   if(input.release)assertControllerReleaseBinding(input.release,input.cliPath,input.nodePath);
   stablePaths({nodePath:input.nodePath,cliPath:input.cliPath,dataDirectory:input.dataDirectory,logDirectory:input.logDirectory});
-  const revision=input.definitionSha256??createHash("sha256").update(launchdPlist(input)).digest("hex");
-  assertDefinitionRevision(input,revision);
+  const revision=assertLaunchAgentDefinition(input);
   const state=await statusLaunchAgent(input),execute=input.executor??launchctl;
   assertDefinitionRevision(input,revision);
   await execute(["enable",target(input)]);

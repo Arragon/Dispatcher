@@ -174,8 +174,9 @@ PID and checks data-directory ownership. `restart` must finish that stop before
 enabling/start; stop uncertainty prevents restart/uninstall. `uninstall` retains
 all user data and removes the plist only after confirmed Controller stop.
 Changing installed runtime/data paths returns `SERVICE_UPGRADE_REQUIRED` and
-preserves the existing definition; the reviewed upgrade/backup/rollback command
-is still pending. Failed bootstrap keeps the definition and error for inspection.
+preserves the existing definition. Offline preparation is available below;
+definition switching, rollback activation and qualified restore are still pending.
+Failed bootstrap keeps the definition and error for inspection.
 Parsed definitions carry their captured byte hash. A symlink, shared/writable
 unsafe file or observed change before bootstrap/kickstart fails closed with
 SERVICE_DEFINITION_INVALID/CHANGED. Inspect and re-read the installed definition;
@@ -183,6 +184,27 @@ do not overwrite it to bypass review. Native XML/binary parsing uses the capture
 bounded bytes, not a second open of an asynchronously changed pathname.
 These local lifecycle tests do not establish real login, sleep, Keychain, native
 Agent stop or A acceptance. No system daemon is installed.
+
+After stopping the installed service, review an offline preparation plan:
+
+```bash
+pnpm dispatcher -- prepare-upgrade --release-dir /absolute/next-release --backup-out /absolute/new-backup
+pnpm dispatcher -- prepare-upgrade --release-dir /absolute/next-release --backup-out /absolute/new-backup --execute --confirm --plan-id <reviewed-id>
+```
+
+Both releases must already be qualified with the same schema/writer protocol as
+the current database. The parent backup directory must exist; the new backup
+must be outside data/release trees. Changed data/definitions invalidate the plan.
+Loaded services, active/uncertain Runs, pending effects, native bindings and
+unqualified legacy/custom definitions require resolution first. No migration is
+attempted. Preparation validates the DB archive by restoring only a new private
+copy with both startup barriers, then stores previous.plist, candidate.plist and
+service-upgrade.json. It preserves the installed definition and data bytes, and
+starts nothing. Do not copy archive databases or remove barriers to activate a
+rollback. Credentials/native homes remain outside this backup. An incomplete
+service-upgrade-preparing.json retains the failed attempt for inspection; do not
+reuse/overwrite that directory. Prepared artifacts are inputs to later reviewed
+switch/recovery work, and do not complete the upgrade/rollback Gate.
 
 New service definitions bind `--log-dir <logs>/runtime`. Controller structured
 logs retain at most four 256 KiB files within a 1 MiB owned-stream budget. Unknown

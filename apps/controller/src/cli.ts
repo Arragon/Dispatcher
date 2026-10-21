@@ -21,6 +21,7 @@ import {inspectLocalController} from "./doctor.js";
 import {createControllerLogDestination} from "./controller-logs.js";
 import {createLocalDatabaseBackup,restoreLocalDatabase} from "./local-backups.js";
 import {assertControllerReleaseBinding,bindControllerRelease,SERVICE_RELEASE_ADMISSION_VERSION} from "./release-manifest.js";
+import {prepareServiceUpgrade} from "./service-upgrade.js";
 let controllerLog:{write(message:string):void}|undefined;
 function serviceFailure(code:string):void {
   if(controllerLog)controllerLog.write(JSON.stringify({level:50,time:Date.now(),msg:code})+"\n");else console.error(code);
@@ -133,7 +134,13 @@ async function serviceCommand(command: string, args: string[]): Promise<void> {
   }
   const definition=await readLaunchAgent(paths.plist),input={...definition,plistPath:paths.plist};
   if((args.includes("--data-dir")||process.env.DISPATCHER_DATA_DIR)&&realpathSync(paths.root)!==realpathSync(definition.dataDirectory))throw Error("SERVICE_DATA_DIRECTORY_MISMATCH: use the installed service data directory");
-  if(command==="start")await startLaunchAgent(input);
+  if(command==="prepare-upgrade"){
+    const targetReleaseDirectory=flag(args,"--release-dir"),backupDirectory=flag(args,"--backup-out");
+    if(!targetReleaseDirectory||!backupDirectory)throw Error("Use prepare-upgrade --release-dir <qualified-release> --backup-out <new-directory> [--execute --confirm --plan-id <reviewed-id>]");
+    const expectedPlanId=flag(args,"--plan-id");
+    console.log(JSON.stringify(await prepareServiceUpgrade({current:definition,plistPath:paths.plist,targetReleaseDirectory,backupDirectory,execute:args.includes("--execute"),confirmed:args.includes("--confirm"),...(expectedPlanId?{expectedPlanId}:{})}),null,2));
+  }
+  else if(command==="start")await startLaunchAgent(input);
   else if(command==="stop")await stopLaunchAgent(input);
   else if(command==="restart")await restartLaunchAgent(input);
   else if(command==="status"){
@@ -172,8 +179,8 @@ async function main(): Promise<void> {
     try{await configCommand(args);}finally{ownership.release();}
   }
   else if (command === "auth") await authCommand(args);
-  else if (["install", "start", "stop", "restart", "status", "logs", "uninstall"].includes(command)) await serviceCommand(command, args);
-  else throw new Error("Usage: dispatcher serve|config|auth|install|start|stop|restart|status|doctor|logs|backup|restore|runtime-contract|uninstall");
+  else if (["install", "start", "stop", "restart", "status", "logs", "uninstall", "prepare-upgrade"].includes(command)) await serviceCommand(command, args);
+  else throw new Error("Usage: dispatcher serve|config|auth|install|start|stop|restart|status|doctor|logs|backup|restore|prepare-upgrade|runtime-contract|uninstall");
 }
 
 main().catch((error: unknown) => {

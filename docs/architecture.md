@@ -73,6 +73,13 @@ directory ownership. It reuses the existing archive/checksum/restore functions:
 preview creates no target, execution prepares only a new directory behind both
 restore barriers. Credentials and native provider storage stay outside this
 database-only artifact; no reconciliation or runtime activation is implied.
+Offline service-upgrade preparation requires unloaded supervision, exclusive data
+ownership, normalized pinned definitions, equal schema/writer contracts and no
+active/uncertain work or native bindings. Its reviewed plan binds definition,
+release and database fingerprints. Preparation retains a database-only archive,
+validates restore into a new barrier-protected copy, and records previous/candidate
+definitions in that archive. Installed definition switching and restored-data
+activation remain separate unavailable operations; this phase grants no writer.
 
 Controller locates its default static root through the owning Web package's
 exported index.html, so deployed packages retain the same UI. Release preflight
