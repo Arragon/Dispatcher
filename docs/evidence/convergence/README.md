@@ -2017,3 +2017,31 @@ default pnpm check136 files1390 tests (49.39s), diff check passes. Logs
 /tmp/dispatcher-dashboard-stop-target.log and -check.log. Rollback c50c881 with
 matching schema8 backup. Host launchd stop/login/sleep and slow-client performance
 remain separate Gates. Official quota checked after this unit; no reset used.
+
+## CV-13a measured CPU windows and confirmed benchmark cleanup
+
+Correct the existing harness: strict ps RSS/cumulative-time parsing and monotonic
+counter deltas replace lifetime %CPU averages and zero-on-failure coercion.
+At least two samples are required; raw samples, elapsed time, source SHA/dirty
+state, built CLI hash, host/kernel/CPU facts and measurement basis are retained.
+SQLite main+WAL+SHM and structured log bytes/growth are separate. A missing main
+database or invalid process clock fails the run. Real Agent load remains
+not-runnable; metadata/log reads and short idle remain informational. P0/P1
+CPU/RSS can pass only after the frozen 600-second window. Soak, event-loop,
+handles, network, historical load and native descendants remain unmeasured Gates.
+
+The spawned Controller is owned from creation; TERM must reach child close with
+exit0 before removing its temporary data. Unknown/non-graceful exit retains data
+and PID diagnostics and fails. Dashboard stream stays open until Controller
+stops, exercising MAC-01j. No guessed PID/group kill or destructive uncertainty
+cleanup. HTTP readiness/reads are bounded and response bodies consumed.
+
+Five cases cover platform clocks/invalid samples, weighted counters, assessment
+boundaries, WAL/SHM and actual delayed/ignored TERM children. RED missing module;
+GREEN target5 cases. Default check137 files1395 tests (49.22s), diff passes;
+subsequent console-only output change checked with lint. Actual smoke5s measured
+0.1997%/116457472B RSS (6 samples), 543656B database including WAL/SHM, confirmed
+exit0; informational. Actual dashboard5s kept one SSE client and also confirmed
+exit0, informational. Reports under .dispatcher/benchmarks and logs
+/tmp/dispatcher-benchmark-{red,target,lint,check,smoke,dashboard}.log. No performance
+or A/B Gate closed. Rollback26a9ab6 with schema8 backup; quota checked per unit.

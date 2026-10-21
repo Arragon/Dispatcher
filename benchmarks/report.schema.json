@@ -11,6 +11,7 @@
     "environment": { "type": "object" },
     "measurements": { "type": "object" },
     "targets": { "type": "object" },
+    "cleanup": { "type": "object" },
     "assessment": { "enum": ["pass", "fail", "informational", "not-runnable"] },
     "limitations": { "type": "array", "items": { "type": "string" } }
   },
