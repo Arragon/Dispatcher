@@ -1,4 +1,4 @@
-import type {UsageObservationV1} from "@dispatcher/domain";
+import {decimalAmount as amount,decimalString as decimal,type UsageObservationV1} from "@dispatcher/domain";
 import type {DispatcherDatabase,JsonValue} from "@dispatcher/persistence";
 import {contentHash} from "./task-publications.js";
 export type UsageContext={profileId:string;runId:string;sessionId:string}&({generation:number;standalone?:false}|{standalone:true;generation?:never});
@@ -6,8 +6,6 @@ export class UsageObservationError extends Error{constructor(readonly code:strin
 const object=(value:unknown):value is Record<string,unknown>=>Boolean(value&&typeof value==="object"&&!Array.isArray(value));
 const scalar=(value:unknown):value is string=>typeof value==="string"&&value.length>0&&value.length<=200;
 const date=(value:unknown):value is string=>typeof value==="string"&&/^\d{4}-\d{2}-\d{2}T/.test(value)&&/(?:Z|[+-]\d{2}:\d{2})$/u.test(value)&&Number.isFinite(Date.parse(value));
-const amount=(value:string)=>{const [whole,fraction=""]=value.split(".");return BigInt(whole!)*10n**18n+BigInt(fraction.padEnd(18,"0"));};
-const decimal=(value:bigint)=>{const whole=value/10n**18n,fraction=(value%10n**18n).toString().padStart(18,"0").replace(/0+$/u,"");return `${whole}${fraction?`.${fraction}`:""}`;};
 function fail(message:string):never{throw new UsageObservationError("USAGE_INVALID",message);}
 function normalize(value:unknown,context:UsageContext,collectedAt:string):UsageObservationV1{
  if(!object(value)||value.version!==1||!scalar(value.eventId)||value.profileId!==context.profileId||!date(value.observedAt)||!["turn","run","session","account-period"].includes(String(value.scope))||!["delta","snapshot"].includes(String(value.mode))||!["native-event","native-query","native-result"].includes(String(value.source))||!["complete","partial","unknown"].includes(String(value.completeness)))return fail("Usage observation identity is invalid");

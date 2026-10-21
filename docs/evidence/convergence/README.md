@@ -1667,3 +1667,32 @@ mutations=0, nativeProviderVerified=false. All source candidate data untouched.
 MAC-01/A remain open: early raw stdio, upgrade/rollback, qualified full restore
 and real host/login/sleep/native Gates. Rollback code 9180f92 with matching schema-8
 backup; retain source artifacts. Official post-unit quota: 41% remaining; continue.
+
+
+## CV-07a exact decimal cost engine
+
+Reuse source a499d84 packages/domain/src/metering.ts and its cost assertions;
+adapt directly to canonical UsageObservationV1 instead of installing legacy
+UsageMeasurement/RunModelSelection as a second authority. Share domain decimal
+parsing/formatting with the existing Controller ledger. Amount/rate/multiplier
+math uses reduced BigInt fractions, final scale 18 half-up once; record formula,
+inputs, price snapshot, completeness, missing dimensions and rounding. No provider
+SDK, static rate, new dependency or schema.
+
+Twelve mathematical/provenance tests preserve old per-1k/per-1M, multiplier/final
+rate, separate cached-input, conditional free/base-consumption and partial/missing
+semantics; add cache writes/inclusion, conflicting replay, replaced snapshots,
+later deltas, overlapping scopes, mixed sources/generations, >JS-safe amounts,
+final-only rounding, mixed currency/overlap/actual billing-time segmentation,
+validity and invalid decimals. Explicit excluded cache requires separate scoped
+source evidence; absent includedIn is not false. Session/account facts are not
+billed as Run usage. Collection/observation time is never promoted to billing time.
+
+Initial missing module RED, then 2-file/17-test target. Default full check passes
+125 files/1321 tests (44.09s test phase), diff check passes. Logs:
+/tmp/dispatcher-cv07a-red.log, /tmp/dispatcher-cv07a-target.log,
+/tmp/dispatcher-cv07a-check.log. Initial lint/type errors fixed without suppression.
+This is pure-engine/local-ledger reuse only: CV-07 stays In Progress pending
+legacy decimal/provenance bridge, authoritative price admission, Controller/UI
+wiring and real billing evidence. Existing API still correctly says unavailable
+without a baseline. Rollback e239e75, matching schema-8 backup; no live data change.

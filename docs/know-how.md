@@ -2,6 +2,11 @@
 
 ## M0–M10 invariants
 
+- Cost estimates retain decimal strings and reduced BigInt fractions through all
+  segments, with one final scale-18 half-up rounding. Observed/collected times
+  cannot allocate billing intervals; missing cache inclusion is not exclusion.
+  Pure calculation with supplied evidence is separate from price admission.
+
 - A release hash alone does not prove its CLI implements startup admission.
   Measure the packaged runtime-contract and record it in manifest v2 before
   service binding; never infer that fact for older v1 artifacts. Keep stop and
