@@ -915,3 +915,9 @@
   receipt write fails. Preserve errors after closing HTTP and retain the DB for
   reconciliation. A drained local root is not proof of native background-tool
   quiescence, and `agent_settled` cannot supply missing approval/tool facts.
+- Account quota refresh must preserve native decimal credit balances as strings.
+  Keep collection time, last success and account fingerprint separate: a failed
+  read must not make the old value fresh or expose another account's balance.
+  Expire observed windows at their native reset without assuming a renewed limit.
+  HTTP timeout/cancellation is not native reader termination; retain the pending
+  handle and configuration barrier until owned cleanup actually settles.

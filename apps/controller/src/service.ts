@@ -12,6 +12,7 @@ import { CredentialContext } from "./credential-context.js";
 import {DirectorySelections,type DirectoryPicker} from "./local-directories.js";
 import {RunInputReceipts,InputReceiptError,type RunInputIdentity} from "./run-inputs.js";
 import {UsageObservations,UsageObservationError,type UsageContext} from "./usage-observations.js";
+import {AccountQuotas} from "./account-quotas.js";
 import {buildDiagnostics,diagnosticChecks} from "./diagnostics.js";
 import type { ProfileConsoleView,NativeSessionConsoleView,RepositoryConsoleContext,RepositoryRefs,DeliveryEvidence,LocalVerificationRequest,LocalAcceptanceRequest } from "@dispatcher/domain";
 import { applyConfigEdits, consoleConfig,exportConsoleConfig, consoleConfigPlan } from "./config-edits.js";
@@ -502,6 +503,7 @@ export class ControllerService {
   private readonly directorySelections:DirectorySelections;
   private readonly runInputs:RunInputReceipts;
   private readonly usageObservations:UsageObservations;
+  private readonly accountQuotas:AccountQuotas;
   private readonly usageReads=new Map<string,{runId:string;profileId:string;promise:Promise<void>}>();
   private usageReadClosed=false;
   private readonly usageShutdown=new AbortController();
@@ -567,6 +569,7 @@ export class ControllerService {
     this.directorySelections=new DirectorySelections(options.directoryPicker);
     this.runInputs=new RunInputReceipts(this.database,()=>this.now());
     this.usageObservations=new UsageObservations(this.database,()=>this.now());
+    this.accountQuotas=new AccountQuotas(this.database,this.agentAdapters,id=>{try{const context=this.resolveProfileExecutionContext(id,undefined,"probe");this.credentialContext.assertAvailable(context.profile);return context.fingerprint;}catch{return;}},(type,id,data)=>{this.fleetEvents.publish(type,id,data);},()=>this.now(),error=>this.app.log.warn({error:redactValue(error)},"Account quota persistence failed"));
     this.agentProcesses = new ProcessManager(join(options.dataDirectory, "agent-logs"));
     this.enrollments = new RunnerEnrollmentAuthority(
       this.database.listEntities<JsonValue>("runner-enrollment") as unknown as RunnerEnrollmentRecord[],
@@ -683,6 +686,7 @@ export class ControllerService {
       { name: "messaging-inbox", run: () => this.processMessagingInbox(worker.inboxBatchSize ?? 10) },
       { name: "standalone-usage", run: async () => {this.kickStandaloneUsage();} },
       { name: "run-usage", run: async () => {this.kickDueRunUsage();} },
+      { name: "account-quota", run: async () => {this.accountQuotas.kick(this.configuration.current().config.agentProfiles.filter(profile=>profile.enabled!==false).map(profile=>profile.id));} },
       { name: "run-advancement", run: () => this.advanceDueRuns(worker.maxConcurrentRuns ?? 2, worker.runBaseDelayMs ?? 1_000, worker.runMaxDelayMs ?? 5 * 60_000) },
       { name: "run-attention", run: () => this.notifyDueAttention() },
       { name: "delivery-reconcile", run: () => this.reconcileDeliveryRuns(worker.maxConcurrentRuns ?? 2) },
@@ -788,6 +792,7 @@ export class ControllerService {
     if (this.stopping) return this.stopping;
     this.stopping = (async () => {
       for(const runtime of this.piRuntimes.values())runtime.beginShutdown();
+      this.accountQuotas.beginShutdown();
       this.usageReadClosed=true;
       this.usageShutdown.abort();
       for(const read of this.usageReads.values())try{
@@ -803,6 +808,7 @@ export class ControllerService {
       await this.profileProbes.drain();
       await this.drainCatalogReads();
       const runtimeStopErrors:unknown[]=[];
+      try{await this.accountQuotas.close();}catch(error){runtimeStopErrors.push(error);}
       // Drain every owned runtime before persisting receipts: one failed write must
       // not strand another profile's process or prevent HTTP shutdown.
       const runtimeStops=await Promise.allSettled([...this.piRuntimes].map(async([profileId,runtime])=>({profileId,receipts:await runtime.disconnectLocal()})));
@@ -818,7 +824,7 @@ export class ControllerService {
       this.events.close();
       if(localReviewStopError)throw localReviewStopError;
       if(runtimeStopErrors.length===1)throw runtimeStopErrors[0];
-      if(runtimeStopErrors.length)throw new AggregateError(runtimeStopErrors,"Pi runtime shutdown could not be fully recorded");
+      if(runtimeStopErrors.length)throw new AggregateError(runtimeStopErrors,"Native runtime shutdown could not be fully recorded");
       if([...this.piRuntimes.values()].some(runtime=>runtime.hasUnclosedHosts()))throw new AdapterContractError("NATIVE_RUNTIME_CLEANUP_UNKNOWN","Owned Pi callbacks or processes remain unconfirmed; preserve the database for reconciliation");
       this.database.checkpoint();
       this.database.close();
@@ -1129,6 +1135,7 @@ export class ControllerService {
   private profileHasActiveOperations(id: string): boolean {
     const adapter=this.agentAdapters.get(id),owned=adapter instanceof StructuredCliAdapter||adapter instanceof CodexAdapter||adapter instanceof RemoteNativeAdapter;
     return (this.pendingProfileStarts.get(id)??0)>0
+      || this.accountQuotas.hasPending(id)
       || (this.database.listEntities<JsonValue>("run") as unknown as Run[]).some(run=>run.profileId===id&&!isTerminalRunState(run.state))
       || Boolean(owned&&adapter.hasActiveOperations())
       || (this.database.listEntities<JsonValue>("adapter-session") as unknown as AdapterSession[]).some(session=>session.profileId===id&&(this.pendingConsoleInputs.has(session.id)||this.pendingSessionCancellations.has(session.id)||this.sessionStopUncertain(session)||session.state==="PAUSED"||!owned&&["STARTING","RUNNING"].includes(session.state)));
@@ -3864,6 +3871,12 @@ export class ControllerService {
     }));
     this.app.get<{Params:{id:string}}>("/api/agents/profiles/:id",async(request,reply)=>{
       if(!this.configuration.current().config.agentProfiles.some(profile=>profile.id===request.params.id))return reply.code(404).send({code:"PROFILE_NOT_FOUND"});return {profile:this.profileConsoleView(request.params.id)};
+    });
+    this.app.get<{Params:{id:string}}>("/api/agents/profiles/:id/quota",async(request,reply)=>{
+      if(!this.configuration.current().config.agentProfiles.some(profile=>profile.id===request.params.id))return reply.code(404).send({code:"PROFILE_NOT_FOUND"});return {quota:this.accountQuotas.state(request.params.id)};
+    });
+    this.app.post<{Params:{id:string};Body:Record<string,never>}>("/api/agents/profiles/:id/quota/refresh",{schema:{body:{type:"object",additionalProperties:false}}},async(request,reply)=>{
+      if(!this.configuration.current().config.agentProfiles.some(profile=>profile.id===request.params.id))return reply.code(404).send({code:"PROFILE_NOT_FOUND"});return {quota:await this.accountQuotas.refresh(request.params.id)};
     });
     this.app.get("/api/resources", async () => ({
       resources: this.configuration.current().config.agentProfiles.map((profile) => {

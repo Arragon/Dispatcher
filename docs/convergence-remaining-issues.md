@@ -32,10 +32,16 @@ ordering; the exact cost engine deduplicates equivalent aliases. Additive
 schema10/writer6 prevents old writers from duplicating quantities. Migrations1–9
 are unchanged; old archive protocols remain bound to their own schema. Existing
 production legacy emitters keep their old immutable records and contexts. A
-qualified producer/session cutover, scoped quota TTL and billing baseline/UI
-remain required. Final default `mise exec -- pnpm check` passes163 files/1728
-tests plus build/typecheck/lint/boundaries. No actual service/data/native Gate
-is promoted by this local verification.
+qualified producer/session cutover and billing baseline/UI remain required.
+Account quota now has independent exact-decimal collection, scoped TTL/reset,
+last-success/error state, owned timeout/shutdown, account replacement Guard and
+cached API/UI. Final default `mise exec -- pnpm check` passes167 files/1743 tests
+plus build/typecheck/lint/boundaries. Real Codex quota reads were inconsistent:
+Controller returned error with no values; an isolated transport diagnostic got
+one result and confirmed owned exit, while a later bounded read failed. Raw
+metadata reports are retained; cause and real quota acceptance remain unproven.
+Remote Runner quota forwarding is still required. No actual service/data/native
+Gate is promoted by this local verification.
 
 ## Historical checkpoint 2026-10-22: stopped at remaining 0%
 

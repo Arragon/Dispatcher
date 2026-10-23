@@ -1,5 +1,5 @@
 import type { NativeInteractionPort } from "./interaction-contracts.js";
-import type { NativeBinding, NativeBindingEvent, ExecutionContextRef, TurnObservation, ExecutionSelection, AccountModelCatalog, ModelCatalogContext, UsageObservationV1,ResourceState } from "@dispatcher/domain";
+import type { NativeBinding, NativeBindingEvent, ExecutionContextRef, TurnObservation, ExecutionSelection, AccountModelCatalog, ModelCatalogContext, AccountQuotaSnapshot, UsageObservationV1,ResourceState } from "@dispatcher/domain";
 export type AdapterPlatform = "darwin" | "linux" | "win32";
 export type BackendKind = "sdk" | "api" | "daemon" | "headless-cli" | "pty";
 
@@ -118,6 +118,8 @@ export interface AgentAdapter {
   usage?(sessionId: string): Promise<Record<string, unknown>>;
   /** Reads already owned native events only; never waits for an active turn or performs a provider query. */
   usageObservations?(sessionId:string):Promise<UsageObservationV1[]>;
+  /** Independent owning-account read. Never creates a turn or infers Run cost. */
+  accountQuota?(signal?:AbortSignal):Promise<AccountQuotaSnapshot>;
   diagnostics?(sessionId: string): Promise<Record<string, unknown>>;
 }
 

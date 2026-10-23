@@ -1,0 +1,43 @@
+{
+  "scope": "metadata-only-exact-compiled-readonly-quota-transport",
+  "outcome": "READ_CONFIRMED",
+  "elapsedMs": 4115,
+  "originalSha256": "8310806bf77aa1b4bf8dfa2bdc9883832755e87ca24cd1faa3ea21e3d2793bd8",
+  "instrumentedSha256": "6c2bab83e401f9b49eacf4e7ff1406d0d99576332fb46bc50f9c906c3e698b29",
+  "frames": [
+    {
+      "event": "owned-child",
+      "pid": 54446
+    },
+    {
+      "elapsedMs": 38,
+      "responseId": 1,
+      "errorCode": null,
+      "resultPresent": true
+    },
+    {
+      "elapsedMs": 38,
+      "responseId": null,
+      "errorCode": null,
+      "resultPresent": false
+    },
+    {
+      "elapsedMs": 2989,
+      "responseId": null,
+      "errorCode": null,
+      "resultPresent": false
+    },
+    {
+      "elapsedMs": 4089,
+      "responseId": 2,
+      "errorCode": null,
+      "resultPresent": true
+    },
+    {
+      "event": "child-close",
+      "exitCode": 0,
+      "elapsedMs": 4094
+    }
+  ],
+  "ownedRootAbsent": true
+}

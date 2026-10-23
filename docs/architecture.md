@@ -1120,6 +1120,30 @@ unavailable billing baselines stay unknown. Management reads never query a
 native provider. The current normalized token emitter is Codex; providers with
 no qualified observation emitter do not acquire synthetic usage values.
 
+Account quota is a separate read-only projection, never a Run quantity or a
+resource recovery signal. The Codex reader reuses its owned app-server connection
+with only `account/rateLimits/read` added to the read allowlist; it receives the
+applied account environment and cancellation. Native integer percentages and
+credit decimal strings retain exact values, independent periods and missing
+fields. No inference is started by this read.
+
+Controller coalesces one read per profile, bounds admitted account reads to four,
+and collects from the background worker independently of dashboard connections.
+Its five-minute retry schedule and ten-minute source/last-success TTL are scoped
+to the existing account/credential/native-file fingerprint. A native period reset
+also expires cached evidence without inventing a renewed balance. Failure retains
+the matching last success; a changed account hides the former snapshot. Pending
+queries block account/credential replacement. A timeout aborts the owned read but
+retains its handle until it settles, rejecting late/stale/shutdown callbacks.
+Shutdown drains for three seconds and preserves a cleanup-unknown record and the
+database when an owning reader remains unconfirmed.
+
+Account/model screens use cached GET projections; only explicit refresh invokes
+the native reader. They display source time, failure/staleness, actual zero,
+missing dimensions and exact decimals. Legacy Run usage and quota remain separate.
+Remote Runner quota forwarding and real-account qualification require their own
+integration evidence; unsupported providers return an explicit unsupported state.
+
 ## Managed Pi RPC runtime
 
 An applied profile may explicitly select Pi's compatible `pi-rpc` backend in a

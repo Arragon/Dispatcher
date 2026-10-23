@@ -1,0 +1,61 @@
+{
+  "scope": "real-native-account-quota-read-only",
+  "root": "/Users/wangdongxin/.local/share/dispatcher/provider-probes/account-quota-20261022-7KGFrT",
+  "sourceHead": "daca730e34ecb68f382f772f7655cebfee474385",
+  "sourceBefore": {
+    "apps/controller/src/account-quotas.ts": "42bce579eacb41d80b524f04c0b3f03e2a919cb1c2be52c4479b1d243471c9df",
+    "apps/controller/src/service.ts": "a8235536473dd4e4bdf9a54efc6be6fe604fac8b2173b679f4af99cb06be9e8b",
+    "packages/adapters/src/codex-quota.ts": "07884faac041249b481966761c41ee7436fc3aa10e65be84fb791a086a057adc",
+    "packages/adapters/src/codex-catalog.ts": "245b39cdf48826153be37063a9d3196a8fb64b04f6e4b6e729b6b532945662e7"
+  },
+  "installedCodex": {
+    "version": "codex-cli 0.163.0-alpha.11.1",
+    "executableSha256": "9394a943e3fce54f998ecc150eb0b7d6e22ce0da48e5063c59b4883e80aeaecd"
+  },
+  "authMetadataBefore": {
+    "size": 4220,
+    "mtimeMs": 1792684627169.936,
+    "ino": 1709794
+  },
+  "startedAt": "2026-10-23T05:44:42.431Z",
+  "configPlanApplied": true,
+  "elapsedMs": 5072,
+  "responseStatus": 200,
+  "quota": {
+    "profileId": "codex-quota-read",
+    "status": "error",
+    "contextFingerprint": "00f077b1912c05c1a2cdd28b16faf752c20c035f45196d3f4e2f7b63dd68cddb",
+    "checkedAt": "2026-10-23T05:44:47.575Z",
+    "error": {
+      "code": "QUOTA_QUERY_FAILED"
+    }
+  },
+  "inventory": {
+    "tasks": 0,
+    "runs": 0,
+    "adapterSessions": 0
+  },
+  "savedQuota": {
+    "profileId": "codex-quota-read",
+    "status": "error",
+    "contextFingerprint": "00f077b1912c05c1a2cdd28b16faf752c20c035f45196d3f4e2f7b63dd68cddb",
+    "checkedAt": "2026-10-23T05:44:47.575Z",
+    "error": {
+      "code": "QUOTA_QUERY_FAILED"
+    }
+  },
+  "controllerStopped": true,
+  "sourceAfter": {
+    "apps/controller/src/account-quotas.ts": "42bce579eacb41d80b524f04c0b3f03e2a919cb1c2be52c4479b1d243471c9df",
+    "apps/controller/src/service.ts": "a8235536473dd4e4bdf9a54efc6be6fe604fac8b2173b679f4af99cb06be9e8b",
+    "packages/adapters/src/codex-quota.ts": "07884faac041249b481966761c41ee7436fc3aa10e65be84fb791a086a057adc",
+    "packages/adapters/src/codex-catalog.ts": "245b39cdf48826153be37063a9d3196a8fb64b04f6e4b6e729b6b532945662e7"
+  },
+  "sourceUnchanged": true,
+  "authMetadataAfter": {
+    "size": 4220,
+    "mtimeMs": 1792684627169.936,
+    "ino": 1709794
+  },
+  "completedAt": "2026-10-23T05:44:47.582Z"
+}

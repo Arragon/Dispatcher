@@ -2858,3 +2858,74 @@ typechecks, ESLint and boundary checks, then163 files/1728 tests with no failure
 repair also passed2 files/22 tests. Pi advance regression explicitly retains
 ACTIVE/NATIVE_STATE_UNKNOWN after a completed turn with no extra RPC. Full-gate
 verification does not qualify native accounts, release activation or A/B Gates.
+
+## Account quota composition (CV-06 follow-up)
+
+Source reuse: a499d84 `apps/controller/src/metering.ts`,
+`packages/adapters/src/codex-quota.ts` and their committed quota assertions.
+The account-only portion is adapted into `account-quotas.ts`; the existing v3
+UsageObservations remains the only Run usage ledger. Credit balances now preserve
+exact decimal strings instead of the source's Number conversion. No new package
+or third-party source was added. Generic entity persistence remains schema10/
+writer6; no live data or original backup was opened.
+
+New normalized account periods are separate from resource/Run/cost. Codex's
+existing owned/cancellable read-only app-server permits account/rateLimits/read.
+Controller background collection coalesces per-profile queries, admits at most4,
+uses5-minute retries/10-minute source and last-success TTL, and expires native
+period resets. It retains matching last-success evidence after failure and hides
+another context's balance. Native query timeout31s aborts but retains ownership;
+shutdown drains3s and records unknown cleanup rather than closing its database.
+Account and credential replacement remain blocked while a read is pending.
+
+New cached GET and explicit POST refresh endpoints use normal auth/CSRF. Account
+details/model pages display exact values, zero/missing distinctions, source time,
+staleness/error and last success. Cached GET polling does not invoke the provider.
+UI mutation results remain keyed to the account originally requested.
+
+Before Controller composition the two integration tests observed NOT_FOUND and
+zero worker reads; after implementation both pass. Quota/normalization/cache/
+Controller/UI plus existing native catalog/usage target6 files/22 tests pass.
+New feature-module RED initially failed import resolution, recorded separately
+from the behavioral Controller RED. Controller/web typechecks pass; an unused
+test-fixture argument caught by ESLint was corrected without suppression.
+Full default gate is running; no new full-gate claim yet. Real provider and
+remote Runner quota remain unverified.
+
+Linear synchronization of daca730 was attempted after its final gate, but both
+save_comment and readback failed with MCP HTTP transport errors. A later readback
+also failed. The earlier CV-06/Pi comments were verified before the outage; the
+commit/full-gate and this quota checkpoint remain pending remote synchronization.
+Development continues locally; the tracker is not assumed updated.
+
+The transport subsequently recovered. INH-1917 comment
+645361e7-20c6-490d-8628-18211cbc3b35 was saved and read back, synchronizing daca730,
+its163/1728 full gate, the quota implementation and its first167/1742 full gate.
+
+Additional review reproduced a settled reader promise releasing the account
+barrier despite MODEL_CATALOG_CLEANUP_UNKNOWN. The new regression first failed,
+then passed: cleanup uncertainty now remains in the account lifecycle across
+restart, refuses another query/profile replacement and preserves the database
+on shutdown. The full gate briefly caught an exact-optional undefined branch in
+this refinement; it was corrected without a suppression. Final default
+`mise exec -- pnpm check` passes167 files/1743 tests (80.92s), build/typecheck/
+ESLint/boundaries. Logs: /tmp/dispatcher-quota-full-check-latch-final-20261022.log;
+targeted quota/service/Pi shutdown3 files/15 tests also pass. The earlier
+167/1742 result predates this additional lifecycle assertion.
+
+Real read evidence uses installed Codex0.163.0-alpha.11.1 and a new independent
+private Controller directory, existing authorized CODEX_HOME and ConfigPlan.
+The first explicit quota query took5.072s and returned error/QUOTA_QUERY_FAILED;
+saved GET preserved that error, with0 Tasks/Runs/AdapterSessions. Controller
+stopped successfully; source hashes and native auth-file metadata were unchanged.
+`account-quota-native-read-20261022.json` retains the report. A metadata-only
+instrumented copy of the exact compiled read transport preserved its allowlist,
+deadlines and owned drain: initialize38ms, quota response4089ms with result,
+child close0 and owned-root absence confirmed (4115ms total). It collected no
+account response values or stderr; report `account-quota-transport-20261022.json`.
+A further bounded schema-classification read failed NATIVE_QUERY_FAILED before
+normalization, report `account-quota-read-failure-20261022.json`. These differing
+outcomes do not prove an authentication/network cause or a reliable normalized
+account result. No repeated-until-success loop, deadline extension or inferred
+balance was used. Real quota qualification remains open; continue independent
+price/usage/native integration units with this error state visible.

@@ -11,7 +11,7 @@ import { AdapterContractError } from "./contracts.js";
 import type { CodexProfileConfig } from "./codex.js";
 export interface CodexReadRequest {
   executable: string; codexHome: string; workspacePath: string;
-  method: "model/list" | "account/read"; params: Record<string,unknown>;signal?:AbortSignal;
+  method: "model/list" | "account/read" | "account/rateLimits/read"; params: Record<string,unknown>;signal?:AbortSignal;
 }
 const digest=(value:unknown)=>createHash("sha256").update(JSON.stringify(value)).digest("hex");
 const invalid=()=>new AdapterContractError("INVALID_MODEL_CATALOG","Native model catalog is malformed");
@@ -20,7 +20,7 @@ function text(value:unknown):string{if(typeof value!=="string"||!value||value.le
 
 /** Each connection is restricted to read-only RPCs and is reaped before returning. */
 export function readCodexNative(input:CodexReadRequest):Promise<unknown>{
-  if(!["model/list","account/read"].includes(input.method))return Promise.reject(new AdapterContractError("READ_ONLY_QUERY_REQUIRED","Only native read-only queries are allowed"));
+  if(!["model/list","account/read","account/rateLimits/read"].includes(input.method))return Promise.reject(new AdapterContractError("READ_ONLY_QUERY_REQUIRED","Only native read-only queries are allowed"));
   if(input.signal?.aborted)return Promise.reject(new AdapterContractError("MODEL_CATALOG_CANCELLED","Native catalog read was cancelled"));
   return new Promise((resolve,reject)=>{
     const child=spawn(input.executable,["app-server","--stdio"],{cwd:input.workspacePath,shell:false,detached:process.platform!=="win32",stdio:["pipe","pipe","pipe"],env:childExecutionEnvironment(process.env,{PWD:input.workspacePath,CODEX_HOME:input.codexHome})});

@@ -4,6 +4,7 @@ import {turnExecutionResource} from "./execution-resource.js";
 import {assertSessionModelBinding,freezeExecutionSelection,sessionModel} from "./execution-selection.js";
 import { OwnedProcessGroup } from "./owned-process.js";
 import { readCodexCatalog, type CodexReadRequest } from "./codex-catalog.js";
+import {readCodexQuota} from "./codex-quota.js";
 import type { ModelCatalogContext, AccountModelCatalog,UsageObservationV1 } from "@dispatcher/domain";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -209,6 +210,7 @@ export class CodexAdapter implements AgentAdapter {
   modelCatalog(context:ModelCatalogContext & {workspacePath:string;signal?:AbortSignal}):Promise<AccountModelCatalog> {
     return readCodexCatalog({profile:this.profile,context,workspacePath:context.workspacePath,...(context.signal?{signal:context.signal}:{}),...(this.catalogRequest?{request:this.catalogRequest}:{})});
   }
+  accountQuota(signal?:AbortSignal){return readCodexQuota({profile:this.profile,...(signal?{signal}:{}),...(this.catalogRequest?{request:this.catalogRequest}:{})});}
   async start(input: AdapterStartInput): Promise<AdapterSession> {
     const request=captureAdapterStartInput(input);
     const backendId="codex-exec-json";
