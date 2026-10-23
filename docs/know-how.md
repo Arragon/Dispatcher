@@ -684,6 +684,14 @@
   owned private service exposes enabled text candidates through `/api/model`.
   Qualify the native response/account metadata schema, bind the physical project,
   query twice for a stable snapshot, and close the owned process before returning.
+  Capture workspace/account/environment before executable resolution, execute the
+  fingerprinted physical file and recheck all captured fences after cleanup. Native
+  project IDs and optional directory/canonical strings identify native scope; freeze
+  supplied fields without equating them to canonical repository IDs or worktree paths.
+  A supplied native default must select an eligible entry; absence does not invent
+  a default, effort, entitlement or price. Relative effective account metadata paths
+  are unqualified: parent and native child have different cwd. Reject before account
+  I/O until the native environment supplies an absolute location; do not rewrite it.
 - A successful native turn with no quota number is recent availability evidence,
   not a numeric balance. Preserve explicit resource/auth failures over completion.
   Verification commands execute independently through Controller's registry;

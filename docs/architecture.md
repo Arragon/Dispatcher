@@ -610,7 +610,14 @@ read-only app-server RPCs; Cursor, Qoder CN, Grok and Antigravity use fixed,
 bounded native CLI queries. OpenCode uses an owned private v2 service with
 read-only model/location RPCs, native schema/version qualification and mandatory
 process cleanup. OpenCode account binding reads native SQLite metadata without
-credential values; changes to its native schema fail closed. Catalog revisions
+credential values; changes to its native schema fail closed. Its catalog/account
+schema stays pinned to 2.0.26 independently of execution protocol qualification.
+The owning Adapter supplies its actual standalone/server backend; both the context
+fingerprint and revision include it. OpenCode reads capture logical scope, account
+environment and physical workspace before executable resolution, spawn the captured
+physical executable, pin native project/PID and double model snapshots, then recheck
+physical/account/executable context after confirmed owned cleanup before returning.
+Catalog revisions
 hash content and account, native configuration and project fingerprints,
 excluding retrieval time. CLI reads fence native account/configuration state
 before and after the query. Antigravity lacks a non-interactive account identity
