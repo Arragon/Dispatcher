@@ -36,6 +36,18 @@ creating RPC. Readiness/callback settlement and local-root cleanup remain distin
 from native tool/writer release. The default Pi print profile is unchanged; these
 modules grant no registered Controller source, surface or takeover capability.
 
+The bounded OpenCode v2 server transport and interaction port are internal modules.
+Each connection pins one allowlisted protocol version (2.0.22 or 2.0.26), physical
+workspace/server identity and authorized project. A binding can retain an independently
+captured managed execution context; canonical attachment validates against that saved
+context and remains read-only/unqualified. Creation persists binding and awaits the
+optional waiting event before prompting, then awaits received only after an accepted
+native receipt. Persistence failure fences writes; local callback drain retains pending
+sinks without proving native writer release. The standalone OpenCode CLI keeps its
+existing execution manifest and accepts only an optional interaction-port injection.
+Server host ownership, execution/profile registration and Controller integration remain
+separate work.
+
 Controller retains unchanged profile adapters of every provider across ConfigPlan applies,
 bound to the profile and owning Runner execution identity. Replacement/removal
 rejects pending starts/inputs, active native operations, nonterminal canonical

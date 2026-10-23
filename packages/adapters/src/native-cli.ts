@@ -5,6 +5,7 @@ import { access } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import type { NativeInteractionPort } from "./interaction-contracts.js";
 import type { AdapterManifest } from "./contracts.js";
 import type { SessionStore } from "./generic.js";
 import {
@@ -111,7 +112,8 @@ const definitions: Record<NativeCliProvider, CliProviderDefinition> = {
 };
 
 export class OpenCodeAdapter extends StructuredCliAdapter {
-  constructor(profile: CliAgentProfile, backend?: CliAgentBackend, store?: SessionStore) { super(definitions.opencode, profile, backend, store); }
+  readonly interaction?: NativeInteractionPort;
+  constructor(profile: CliAgentProfile, backend?: CliAgentBackend, store?: SessionStore, interaction?: NativeInteractionPort) { super(definitions.opencode, profile, backend, store); if(interaction)this.interaction=interaction; }
 }
 export class GrokAdapter extends StructuredCliAdapter {
   constructor(profile: CliAgentProfile, backend?: CliAgentBackend, store?: SessionStore, resolveCredential?: CredentialResolver) { super(definitions.grok, profile, backend, store, resolveCredential); }

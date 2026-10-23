@@ -989,3 +989,12 @@
   writing it. If existence signals a completed receipt, write a sibling temporary
   file and rename after close. Keep exact content/callback assertions and the
   existing deadline instead of sleeps, longer timeouts or suppressed parse errors.
+
+- OpenCode server attachment must use the managed execution context captured when
+  registering the binding, including its original repository/base. An incoming attach
+  request is not authority for that context. Re-registration may repeat the same
+  context, but cannot fill in or replace an earlier missing/different context.
+- For OpenCode server creation, durable binding/waiting is not a prompt receipt.
+  Await waiting before input and received only after accepted native input; failed
+  persistence fences the port. Local callback draining must retain admitted async
+  sinks and does not establish native tool completion or writer release.
