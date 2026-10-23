@@ -9,6 +9,7 @@ const validId=(value:unknown):value is string=>typeof value==="string"&&value.le
 export type NativeTurnObserver=((fact:NativeTurnFact)=>Promise<void>)&{canProject:()=>boolean};
 /** Binds each producer to one reserved invocation and its original Controller authority. */
 export class NativeBindingEvents {
+ private readonly observers=new WeakMap<NativeTurnObserver,{sessionId:string;invocationId:string}>();
  private readonly failedInvocations=new Set<string>();
  private sink:NativeEventSink|undefined;
  private onBegin:NativeObserverBegin|undefined;
@@ -23,15 +24,17 @@ export class NativeBindingEvents {
   this.failedInvocations.add(invocationId);
   try{const current=this.store.load(sessionId);if(current?.nativeInvocationId===invocationId&&(!canProject||canProject()))this.store.save({...current,nativeIdentityIssue:current.nativeIdentityIssue??"NATIVE_EVENT_PERSISTENCE_FAILED"});}catch{/* Original invocation stays closed when persistence itself is unavailable. */}
  }
- startOptions(session:AdapterSession,emit:NativeTurnObserver,product:string,admit:()=>void,identity:"reserved"|"codex-thread"="reserved"):{beforePrompt:()=>void;onBinding:(binding:NativeBinding)=>Promise<void>} {
-  const expected=structuredClone(session),invocationId=this.store.load(session.id)!.nativeInvocationId!;let bound=structuredClone(expected.nativeBinding);
-  const codexThread=identity==="codex-thread";
-  if(!["reserved","codex-thread"].includes(identity)||codexThread&&(product!=="codex"||expected.backendId!=="codex-app-server"||(bound?expected.providerSessionId!==bound.nativeSessionId:expected.providerSessionId!==undefined||expected.state!=="STARTING")))throw new AdapterContractError("NATIVE_IDENTITY_CHANGED","Native allocation requires the original unbound Codex invocation");
+ startOptions(session:AdapterSession,emit:NativeTurnObserver,product:string,admit:()=>void,identity:"reserved"|"codex-thread"|"opencode-session"="reserved"):{beforePrompt:()=>void;onBinding:(binding:NativeBinding)=>Promise<void>} {
+  const expected=structuredClone(session),invocationId=this.store.load(session.id)?.nativeInvocationId,observer=this.observers.get(emit);
+  if(!invocationId||observer?.sessionId!==session.id||observer.invocationId!==invocationId)throw new AdapterContractError("STALE_NATIVE_OBSERVER","Native observer does not own this invocation");
+  let bound=structuredClone(expected.nativeBinding);
+  const codexThread=identity==="codex-thread",opencodeSession=identity==="opencode-session",allocated=codexThread||opencodeSession;
+  if(!["reserved","codex-thread","opencode-session"].includes(identity)||opencodeSession&&(product!=="opencode"||expected.backendId!=="opencode-server-v2"||bound&&(bound.region!=="global"||bound.nativeThreadId!==undefined||bound.parentSessionId!==undefined))||allocated&&(codexThread&&(product!=="codex"||expected.backendId!=="codex-app-server")||(bound?expected.providerSessionId!==bound.nativeSessionId:expected.providerSessionId!==undefined||expected.state!=="STARTING")))throw new AdapterContractError("NATIVE_IDENTITY_CHANGED","Native allocation requires the original qualified invocation");
   const assertCurrent=()=>{
    this.assertIdentity(expected.id);const current=this.store.load(expected.id);
    if(!current)throw new AdapterContractError("SESSION_NOT_FOUND","Native input requires the original Adapter session");
    if(current.state==="CANCELLED")throw new AdapterContractError("SESSION_CANCELLED","Cancelled sessions cannot accept native input");
-   if(codexThread&&!bound&&current.state!=="STARTING")throw new AdapterContractError("NATIVE_IDENTITY_CHANGED","Native allocation no longer owns a starting invocation");
+   if(allocated&&!bound&&current.state!=="STARTING")throw new AdapterContractError("NATIVE_IDENTITY_CHANGED","Native allocation no longer owns a starting invocation");
    if(!emit.canProject())throw new AdapterContractError("STALE_NATIVE_OBSERVER","Native observer no longer owns input authority");
    assertSessionModelBinding(current,expected);
    if(!isDeepStrictEqual(current.nativeBinding,bound)||current.providerSessionId!==expected.providerSessionId)throw new AdapterContractError("NATIVE_IDENTITY_CHANGED","Native binding differs from the reserved identity");
@@ -39,10 +42,10 @@ export class NativeBindingEvents {
   const beforePrompt=()=>{assertCurrent();assertAdapterWriteAdmission(admit);assertCurrent();};
   return {beforePrompt,onBinding:async original=>{
    const binding=structuredClone(original);beforePrompt();const current=this.store.load(expected.id)!;
-   const wrongIdentity=codexThread?binding.region!=="global"||binding.nativeThreadId!==binding.nativeSessionId||expected.providerSessionId!==undefined&&binding.nativeSessionId!==expected.providerSessionId:binding.nativeThreadId!==undefined||binding.nativeSessionId!==expected.providerSessionId;
+   const wrongIdentity=codexThread?binding.region!=="global"||binding.nativeThreadId!==binding.nativeSessionId||expected.providerSessionId!==undefined&&binding.nativeSessionId!==expected.providerSessionId:binding.nativeThreadId!==undefined||opencodeSession&&(binding.region!=="global"||expected.providerSessionId!==undefined&&binding.nativeSessionId!==expected.providerSessionId)||!allocated&&binding.nativeSessionId!==expected.providerSessionId;
    if(binding.version!==1||binding.identityState!=="bound"||![binding.product,binding.region,binding.profileId,binding.backendId,binding.runnerId,binding.nativeStoreRef,binding.nativeSessionId,binding.executionRefId].every(validId)||wrongIdentity||binding.parentSessionId!==undefined||binding.nativeSessionId.startsWith("unstarted:")||binding.product!==product||binding.profileId!==expected.profileId||binding.backendId!==expected.backendId||binding.executionRefId!==expected.executionRef?.id||expected.executionRef.kind!=="managed-worktree"||binding.runnerId!==expected.executionRef.runnerId||bound&&!isDeepStrictEqual(binding,bound))throw new AdapterContractError("NATIVE_IDENTITY_CHANGED","Native binding differs from the frozen execution scope");
    try{
-    try{this.store.save({...current,nativeBinding:binding,...(codexThread?{providerSessionId:binding.nativeSessionId}:{})});}catch(error){this.retainFailure(expected.id,invocationId);throw error;}bound=structuredClone(binding);if(codexThread)expected.providerSessionId=binding.nativeSessionId;
+    try{this.store.save({...current,nativeBinding:binding,...(allocated?{providerSessionId:binding.nativeSessionId}:{})});}catch(error){this.retainFailure(expected.id,invocationId);throw error;}bound=structuredClone(binding);if(allocated)expected.providerSessionId=binding.nativeSessionId;
     // Connection identity is durable before prompt; waiting is not a prompt ACK.
     await emit({state:"waiting",nativeSessionId:binding.nativeSessionId,observedAt:new Date().toISOString()});beforePrompt();
    }catch(error){this.retainFailure(expected.id,invocationId,emit.canProject);throw error;}
@@ -74,6 +77,6 @@ export class NativeBindingEvents {
     try{await sink(event);}catch(error){this.retainFailure(sessionId,invocationId);throw error;}
    }catch(error){this.retainFailure(sessionId,invocationId,canProject);throw error;}
   };
-  return Object.assign(emit,{canProject});
+  const observer=Object.assign(emit,{canProject});this.observers.set(observer,{sessionId,invocationId});return observer;
  }
 }

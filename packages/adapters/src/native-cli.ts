@@ -48,6 +48,7 @@ function manifest(id: NativeCliProvider, displayName: string, credential = false
 }
 
 export const opencodeManifest = manifest("opencode", "OpenCode v2");
+export const opencodeServerManifest:AdapterManifest={...opencodeManifest,backends:[{id:"opencode-server-v2",kind:"headless-cli",priority:20,capabilities:["code","git","start","status","result","structured-events","artifacts"]}],capabilities:{...opencodeManifest.capabilities,resume:false}};
 export const grokManifest = manifest("grok", "Grok Build", true);
 export const piManifest = manifest("pi", "pi coding agent");
 export const piRpcManifest:AdapterManifest={...piManifest,backends:[{id:"pi-rpc",kind:"headless-cli",priority:20,capabilities:["code","git","start","status","result","structured-events","artifacts"]}],capabilities:{...piManifest.capabilities,resume:false}};
@@ -113,7 +114,7 @@ const definitions: Record<NativeCliProvider, CliProviderDefinition> = {
 
 export class OpenCodeAdapter extends StructuredCliAdapter {
   readonly interaction?: NativeInteractionPort;
-  constructor(profile: CliAgentProfile, backend?: CliAgentBackend, store?: SessionStore, interaction?: NativeInteractionPort) { super(definitions.opencode, profile, backend, store); if(interaction)this.interaction=interaction; }
+  constructor(profile: CliAgentProfile, backend?: CliAgentBackend, store?: SessionStore, interaction?: NativeInteractionPort) { super(backend?.backendId==="opencode-server-v2"?{...definitions.opencode,manifest:opencodeServerManifest,supportsResume:false,supportsExecutionSelection:true,requiresNativeBinding:true,startArgs:()=>[]}:definitions.opencode, profile, backend, store); if(interaction)this.interaction=interaction; }
 }
 export class GrokAdapter extends StructuredCliAdapter {
   constructor(profile: CliAgentProfile, backend?: CliAgentBackend, store?: SessionStore, resolveCredential?: CredentialResolver) { super(definitions.grok, profile, backend, store, resolveCredential); }

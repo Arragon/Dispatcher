@@ -998,3 +998,13 @@
   Await waiting before input and received only after accepted native input; failed
   persistence fences the port. Local callback draining must retain admitted async
   sinks and does not establish native tool completion or writer release.
+
+- Capture the owned OpenCode probe/service environment before startup awaits. Preserve
+  native PATH/account context while filtering Controller authority; fresh service
+  password/handoff variables must not be inherited. A service child absent after an
+  exit-unconfirmed probe does not prove that probe or its callbacks stopped.
+- OpenCode root exit closes admission independently of inherited pipes. Destroying a
+  local stream cannot establish callback drain; retain admitted callbacks/acquisition
+  through public lifetime races and preserve a cached unknown cleanup receipt after
+  late settlement. Allocated identity and initial facts must persist before readiness,
+  and bounded terminal sink failure must prevent completed results.

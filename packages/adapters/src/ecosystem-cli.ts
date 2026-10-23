@@ -276,7 +276,7 @@ const kiroDefinition: CliProviderDefinition = {
 export class StructuredCliAdapter implements AgentAdapter {
   readonly manifest: AdapterManifest;
   get supportsExecutionSelection(): boolean { return this.definition.supportsExecutionSelection===true||this.definition.catalogProvider !== undefined; }
-  get supportsExecutionRef(): boolean { return this.definition.requiresNativeBinding===true&&this.backendId==="pi-rpc"; }
+  get supportsExecutionRef(): boolean { return this.definition.requiresNativeBinding===true&&["pi-rpc","opencode-server-v2"].includes(this.backendId); }
   private readonly turns = new Map<string, CliTurn>();
   private readonly backend: CliAgentBackend;
   private readonly backendId:string;
@@ -324,7 +324,7 @@ export class StructuredCliAdapter implements AgentAdapter {
         selection=freezeExecutionSelection(input.executionSelection,{profileId:this.profile.id,providerId:this.manifest.id,backendId,selection:this.supportsExecutionSelection,reasoning:false,legacyModel:true});
         if(this.definition.requiresNativeBinding){
           this.nativeEvents.assertAvailable();
-          if(!input.sessionId||!input.execution||!isExecutionContextRef(input.executionRef)||input.executionRef.kind!=="managed-worktree"||!selection||typeof input.beforeCreate!=="function"||typeof input.beforeSend!=="function")throw new AdapterContractError("PI_RPC_START_INVALID","RPC startup requires reserved execution and synchronous admission");
+          if(!input.sessionId||!input.execution||!isExecutionContextRef(input.executionRef)||input.executionRef.kind!=="managed-worktree"||!selection||typeof input.beforeCreate!=="function"||typeof input.beforeSend!=="function")throw new AdapterContractError(backendId==="opencode-server-v2"?"OPENCODE_START_INVALID":"PI_RPC_START_INVALID","RPC startup requires reserved execution and synchronous admission");
           if(Object.hasOwn(input,"modelSelection")||Object.hasOwn(input,"legacyModel"))throw new AdapterContractError("MODEL_LEGACY_REVIEW_REQUIRED","RPC startup requires one canonical execution selection");
           const checked=validateExecutionBinding({profileId:this.profile.id,providerId:this.manifest.id,backendId,runnerId:input.executionRef.runnerId,executionRef:input.executionRef},selection,{repositoryId:input.executionRef.repositoryId,baseRevision:input.executionRef.baseRevision});
           if(!checked.valid)throw new AdapterContractError(checked.code,"RPC startup context changed");
@@ -352,7 +352,7 @@ export class StructuredCliAdapter implements AgentAdapter {
       assertSessionModelBinding(this.store.load(session.id),session);
       let observer:NativeTurnObserver|undefined;
       try{observer=this.definition.requiresNativeBinding?this.nativeEvents.begin(session.id):undefined;}catch(error){throw startPreparationFailure(error);}
-      const nativeOptions=observer?this.nativeEvents.startOptions(session,observer,this.manifest.id,()=>{assertAdapterStartAdmission(input.beforeCreate);assertAdapterStartAdmission(input.beforeSend);}):undefined;
+      const nativeOptions=observer?this.nativeEvents.startOptions(session,observer,this.manifest.id,()=>{assertAdapterStartAdmission(input.beforeCreate);assertAdapterStartAdmission(input.beforeSend);},backendId==="opencode-server-v2"?"opencode-session":"reserved"):undefined;
       const nativeInput:CliStartInput={
         executable,
         args: this.definition.startArgs({ prompt: input.prompt ?? "Inspect the task and report readiness.", newSession: true, approveTools: this.profile.approveTools === true, trustWorkspace: this.profile.trustWorkspace === true, ...(this.profile.configDir ? { configDir: this.profile.configDir } : {}), ...(session.providerSessionId ? { providerSessionId: session.providerSessionId } : {}), ...this.selectionArgs(session) }),
@@ -424,7 +424,7 @@ export class StructuredCliAdapter implements AgentAdapter {
     return this.status(sessionId);
   }
   async cancel(sessionId: string, beforeSend?:()=>void): Promise<AdapterSession> {
-    if(this.definition.requiresNativeBinding)throw new AdapterContractError("PI_RPC_STOP_UNQUALIFIED","Closing the local RPC connection cannot prove native tools or writer release");
+    if(this.definition.requiresNativeBinding)throw new AdapterContractError(this.backendId==="opencode-server-v2"?"OPENCODE_STOP_UNQUALIFIED":"PI_RPC_STOP_UNQUALIFIED","Closing the local RPC connection cannot prove native tools or writer release");
     this.cancelling++;
     try {
       const session=this.require(sessionId);

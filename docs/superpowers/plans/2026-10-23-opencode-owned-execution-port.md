@@ -39,6 +39,30 @@ Convert startup errors to AdapterStartError.creationOutcome with sanitized code/
 
 **New regressions:** OpenCode observer save-before-sink, exact repeat/foreign ID/thread/parent/store/ref/backend/product/region, historical/late allocation, final guard/authority mutation/Promise return and sticky save/sink failure; producer missing callback/selection, model/native-parameter/legacy-field drift, foreign returned binding, captured caller mutations, async initial/terminal sink delay/rejection, bounded unresolved terminal, shutdown-ready/result race/raw callback retention, late host acquisition/cleanup, malformed/throwing cleanup and exact source physical drift; fake environment canaries for probe/service without revealing secrets, inherited pipes/group/probe uncertainty as feasible through owned fixtures.
 
-- [ ] Restore the40 original cases, observe missing-module RED, then implement incrementally with focused new RED/GREEN cases. Retain logs and every intentional fixture/expectation adaptation.
-- [ ] Run targeted owned/execution/observer/native-cli plus directly affected Pi/Codex lifecycle/selection regressions selected from the actual diff. Run default `mise exec -- pnpm check` once on final code before commit and `git diff --check`; diagnose any real failure rather than retry unchanged.
-- [ ] Self-review, commit scoped code/plan, and report commands, exits, counts/logs, original assertion map, adaptations and limitations at assigned SDD report path. Root owns independent review, source disposition/evidence and Linear readback. No parent completion or actual capability promotion.
+- [x] Restore the40 original cases, observe missing-module RED, then implement incrementally with focused new RED/GREEN cases. Retain logs and every intentional fixture/expectation adaptation.
+- [x] Run targeted owned/execution/observer/native-cli plus directly affected Pi/Codex lifecycle/selection regressions selected from the actual diff. Run default `mise exec -- pnpm check` once on final code before commit and `git diff --check`; diagnose any real failure rather than retry unchanged.
+- [x] Self-review, commit scoped code/plan, and report commands, exits, counts/logs, original assertion map, adaptations and limitations at assigned SDD report path. Root owns independent review, source disposition/evidence and Linear readback. No parent completion or actual capability promotion.
+
+Task 1 local implementation (2026-10-23): restored original20+20 before missing-export
+RED, then adapted canonical selection, allocated observer and durable event/lifetime
+ownership. Existing Pi/Codex assertions remain. Initial full gate passed185/2410;
+staged self-review then identified pending-create shutdown returning not-created
+before binding receipt. An exact blocked-create RED reproduced it; conservative
+lifetime bookkeeping now preserves unknown without losing a later proven
+OpenCode not-created outcome. New producer suite69 passes. The initial full log
+and source are retained; a fresh final gate follows this real code fix rather
+than an unchanged-code retry. Detailed original-case map, logs and source receipts
+remain in the ignored SDD task report. Real provider/account, GUI, native writer,
+service/release and parent acceptance remain open.
+
+Final Task 1 evidence: pending-create fix producer69 tests passed; fresh final-code
+`mise exec -- pnpm check` exit0,185 files/2411 tests, Vitest87.21s/wall99.146s.
+Build/typecheck/lint/boundaries passed. Final full log and immutable source/result
+payload: `/tmp/dispatcher-opencode-task1-logs/full-check-after-pending-create.log`
+and `full-check-after-pending-create-result.json` in the same directory. Initial
+successful185/2410 log/source remains separate. No unchanged-code retry occurred.
+Original20+20 groups remain, with owned-host23/producer69/shared-observer66 totals;
+27 prior shared Pi/Codex cases unchanged. `git diff --check` passed. Only this plan
+and the ignored private report receive completion receipts after final source hash
+capture. Independent review, runtime/profile registration and real native Gates
+remain separate; no parent CV-09 acceptance is implied.

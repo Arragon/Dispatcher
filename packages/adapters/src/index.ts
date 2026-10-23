@@ -25,3 +25,6 @@ export {PiRpcExecutionBackend,type PiRpcExecutionScope,type PiRpcExecutionOption
 export {CodexAppServerBackend,codexAppServerProtocolVersion,type CodexAppServerScope,type CodexNativeAuthority,type CodexRpcRequest, type CodexRpcTransport} from "./codex-app-server.js";
 
 export * from "./opencode-server.js";
+
+export * from "./opencode-owned-server.js";
+export * from "./opencode-execution.js";

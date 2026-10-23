@@ -43,9 +43,17 @@ captured managed execution context; canonical attachment validates against that 
 context and remains read-only/unqualified. Creation persists binding and awaits the
 optional waiting event before prompting, then awaits received only after an accepted
 native receipt. Persistence failure fences writes; local callback drain retains pending
-sinks without proving native writer release. The standalone OpenCode CLI keeps its
-existing execution manifest and accepts only an optional interaction-port injection.
-Server host ownership, execution/profile registration and Controller integration remain
+sinks without proving native writer release. The internal owned host captures one sanitized native environment, probes through the
+shared owned version reader, and owns only its newly detached stdio server group.
+Root/group absence and inherited stream/callback drain remain separate cleanup facts.
+The canonical producer accepts one frozen explicit ExecutionSelection and managed
+reference, persists allocated OpenCode session identity before prompt, awaits initial
+fact durability before readiness, and bounds terminal persistence before completion.
+Shutdown releases public waiters while retaining raw acquisition, poll and callback
+work, with cached unknown cleanup preserved. Only an explicitly injected server backend
+selects this start/read/result manifest; generic native stop, continuation and resume
+remain unqualified. The standalone CLI manifest and optional read injection remain.
+Controller/runtime/profile registration and actual capability qualification remain
 separate work.
 
 Controller retains unchanged profile adapters of every provider across ConfigPlan applies,
