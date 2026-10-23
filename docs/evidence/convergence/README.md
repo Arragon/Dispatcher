@@ -2929,3 +2929,13 @@ outcomes do not prove an authentication/network cause or a reliable normalized
 account result. No repeated-until-success loop, deadline extension or inferred
 balance was used. Real quota qualification remains open; continue independent
 price/usage/native integration units with this error state visible.
+
+Quota source was committed as1f3a87f after the167/1743 final gate. The subsequent
+INH-1923 save_comment/readback attempt hit the MCP HTTP transport failure again;
+do not assume that final commit/lifecycle correction was synchronized. The last
+confirmed umbrella comment remains645361e7-20c6-490d-8628-18211cbc3b35 (it covers
+the quota167/1742 checkpoint before the extra cleanup assertion). Retry by reading
+current comments first, then append the1f3a87f/1743 result and retained real-read
+limits. Official quota read also became unavailable at this checkpoint; its last
+successful reading during this continuation was11% used, ordinary usage allowed.
+This is an unavailable current read, not a new stop threshold or remaining0% claim.
