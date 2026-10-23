@@ -36,6 +36,7 @@ export interface AgentProfileConfig {
   runnerId: string;
   credentialRef?: string;
   settings?: Record<string, JsonValue>;
+  nativeInteraction?:{mode:"compatible";backendId:"pi-rpc";executionLocation:"managed-worktree";surface?:never};
 }
 
 export interface RepositoryConfig {
@@ -302,6 +303,10 @@ export const dispatcherConfigSchema = {
           alias: { type: "string", minLength: 1 },
           runnerId: { type: "string", minLength: 1 },
           enabled: { type: "boolean" },
+          nativeInteraction: {
+            type: "object", additionalProperties: false, required: ["mode", "backendId", "executionLocation"],
+            properties: { mode: { const: "compatible" }, backendId: { const: "pi-rpc" }, executionLocation: { const: "managed-worktree" } },
+          },
           credentialRef: integrationSchema.properties.credentialRef,
           settings: { type: "object", additionalProperties: true },
         },
@@ -438,6 +443,15 @@ export function validateConfig(input: unknown): DispatcherConfig {
     aliases.add(alias);
     if (!runnerIds.has(profile.runnerId)) {
       throw new ConfigValidationError([`/agentProfiles/${profile.id} references unknown runner ${profile.runnerId}`]);
+    }
+    if (profile.nativeInteraction) {
+      if (profile.provider !== "pi" || config.runners.find(runner => runner.id === profile.runnerId)?.mode !== "embedded") throw new ConfigValidationError([`/agentProfiles/${profile.id}/nativeInteraction requires Pi RPC on an embedded Runner`]);
+      for (const key of ["executable", "agentDirectory", "sessionDirectory"]) {
+        const path = profile.settings?.[key];
+        if (typeof path !== "string" || !isAbsolute(path) || path.length > 4096 || Array.from(path).some(character => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127)) throw new ConfigValidationError([`/agentProfiles/${profile.id}/settings/${key} must be an explicit absolute Pi RPC path`]);
+      }
+      const model = profile.settings?.model;
+      if (typeof model !== "string" || model.length > 240 || !/^[^\s/]+\/\S+$/u.test(model) || Array.from(model).some(character => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127)) throw new ConfigValidationError([`/agentProfiles/${profile.id}/settings/model must be an explicit Pi RPC provider/model`]);
     }
     if (profile.provider === "codex" && (typeof profile.settings?.codexHome !== "string" || !profile.settings.codexHome)) {
       throw new ConfigValidationError([`/agentProfiles/${profile.id}/settings/codexHome is required for Codex`]);

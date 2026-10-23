@@ -1,6 +1,10 @@
 import { expect, it } from "vitest";
-import { createNativeProfileAdapter } from "../src/native-profile.js";
+import { createNativeProfileAdapter, nativePrivatePaths } from "../src/native-profile.js";
 import type { CodexBackend } from "../src/codex.js";
+
+it("protects Pi account and native-session directories from repository execution",()=>{
+ expect(nativePrivatePaths([{id:"pi",alias:"Pi",provider:"pi",settings:{agentDirectory:"/native/pi/agent",sessionDirectory:"/native/pi/sessions"}}])).toEqual(["/native/pi/agent","/native/pi/sessions"]);
+});
 
 it("shares native profile construction without modifying the registration or default model", async () => {
   const calls: Array<Parameters<CodexBackend["start"]>[0]> = [];

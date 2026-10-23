@@ -1,0 +1,166 @@
+{
+  "time": "2026-10-22T15:51:23.515Z",
+  "root": "/private/var/folders/_t/c66q7css0195p3yktsz3h3jc0000gn/T/dispatcher-pi-rpc-okeTUc",
+  "scope": "Local temporary synthetic real-child fixture; no real provider/account",
+  "stages": [
+    {
+      "stage": "config",
+      "status": 200
+    },
+    {
+      "stage": "dispatch",
+      "status": 201,
+      "elapsedMs": 2535.283583,
+      "run": {
+        "id": "a61e637e-e02c-402e-99cd-6532b47b5a67",
+        "state": "ACTIVE",
+        "sessionId": "96669036-5637-4627-b4cd-1b9c328111df",
+        "executionRef": {
+          "version": 1,
+          "id": "execution:a61e637e-e02c-402e-99cd-6532b47b5a67",
+          "kind": "managed-worktree",
+          "runnerId": "local",
+          "repositoryId": "repo",
+          "workspaceId": "a61e637e-e02c-402e-99cd-6532b47b5a67",
+          "pathRef": "workspace:a61e637e-e02c-402e-99cd-6532b47b5a67",
+          "branch": "dispatcher/task-a61e637e-e02c-402e-99cd-6532b47b5a67-a1",
+          "baseRevision": "22d10a62c22482c0f595396dfb5aab350d6c22ed"
+        }
+      }
+    },
+    {
+      "stage": "settled",
+      "adapterState": "COMPLETED",
+      "result": {
+        "summary": "native answer"
+      },
+      "start": "ACKNOWLEDGED",
+      "binding": {
+        "version": 1,
+        "product": "pi",
+        "region": "global",
+        "profileId": "pi",
+        "backendId": "pi-rpc",
+        "runnerId": "local",
+        "nativeStoreRef": "native-store:ece721a566a5fd8acb2c6a6033252feb6657d3d5ce7fae7f6111bf3dffd5f46c",
+        "nativeSessionId": "2e194912-6ac3-4430-b582-00006cba548b",
+        "executionRefId": "execution:a61e637e-e02c-402e-99cd-6532b47b5a67",
+        "identityState": "bound"
+      },
+      "checkpoint": [],
+      "turns": [
+        {
+          "id": "observer:11c94a91-f183-4c2e-a8f1-360911841679",
+          "invocationId": "observer:11c94a91-f183-4c2e-a8f1-360911841679",
+          "source": "dispatcher",
+          "state": "completed",
+          "observedAt": "2026-10-22T15:51:26.295Z"
+        }
+      ],
+      "sourceExists": true,
+      "capabilities": {
+        "version": 1,
+        "durableIdentity": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "scope:ca2876769dd07fb90a8573c2c16a17b1cd7d68fa324147b92b5185965b8a9e56",
+          "reasonCode": "PI_RPC_RUNTIME_UNQUALIFIED"
+        },
+        "historyRead": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "scope:ca2876769dd07fb90a8573c2c16a17b1cd7d68fa324147b92b5185965b8a9e56",
+          "reasonCode": "PI_RPC_RUNTIME_UNQUALIFIED"
+        },
+        "observeExternalChanges": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "scope:ca2876769dd07fb90a8573c2c16a17b1cd7d68fa324147b92b5185965b8a9e56",
+          "reasonCode": "PI_RPC_RUNTIME_UNQUALIFIED"
+        },
+        "sameSessionContinue": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "scope:ca2876769dd07fb90a8573c2c16a17b1cd7d68fa324147b92b5185965b8a9e56",
+          "reasonCode": "PI_RPC_RUNTIME_UNQUALIFIED"
+        },
+        "liveSteer": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "scope:ca2876769dd07fb90a8573c2c16a17b1cd7d68fa324147b92b5185965b8a9e56",
+          "reasonCode": "PI_RPC_RUNTIME_UNQUALIFIED"
+        },
+        "interruptTurn": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "scope:ca2876769dd07fb90a8573c2c16a17b1cd7d68fa324147b92b5185965b8a9e56",
+          "reasonCode": "PI_RPC_RUNTIME_UNQUALIFIED"
+        },
+        "nativeApproval": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "scope:ca2876769dd07fb90a8573c2c16a17b1cd7d68fa324147b92b5185965b8a9e56",
+          "reasonCode": "PI_RPC_RUNTIME_UNQUALIFIED"
+        },
+        "releaseControl": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "scope:ca2876769dd07fb90a8573c2c16a17b1cd7d68fa324147b92b5185965b8a9e56",
+          "reasonCode": "PI_RPC_RUNTIME_UNQUALIFIED"
+        },
+        "reclaimControl": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "scope:ca2876769dd07fb90a8573c2c16a17b1cd7d68fa324147b92b5185965b8a9e56",
+          "reasonCode": "PI_RPC_RUNTIME_UNQUALIFIED"
+        },
+        "restartReattach": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "scope:ca2876769dd07fb90a8573c2c16a17b1cd7d68fa324147b92b5185965b8a9e56",
+          "reasonCode": "PI_RPC_RUNTIME_UNQUALIFIED"
+        },
+        "surfaces": {}
+      }
+    },
+    {
+      "stage": "advance",
+      "status": 409,
+      "body": {
+        "code": "NATIVE_STATE_UNKNOWN",
+        "message": "NATIVE_STATE_UNKNOWN"
+      },
+      "persistedState": "ACTIVE",
+      "wireAdded": "",
+      "checkpoint": []
+    },
+    {
+      "stage": "explicit-read-refresh",
+      "result": {
+        "accepted": false,
+        "code": "NATIVE_CAPABILITY_UNVERIFIED"
+      },
+      "wireAdded": "",
+      "checkpoint": []
+    },
+    {
+      "stage": "shutdown",
+      "completed": true
+    },
+    {
+      "stage": "child-exit",
+      "pid": 93787,
+      "live": false
+    }
+  ]
+}

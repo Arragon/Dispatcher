@@ -49,6 +49,7 @@ function manifest(id: NativeCliProvider, displayName: string, credential = false
 export const opencodeManifest = manifest("opencode", "OpenCode v2");
 export const grokManifest = manifest("grok", "Grok Build", true);
 export const piManifest = manifest("pi", "pi coding agent");
+export const piRpcManifest:AdapterManifest={...piManifest,backends:[{id:"pi-rpc",kind:"headless-cli",priority:20,capabilities:["code","git","start","status","result","structured-events","artifacts"]}],capabilities:{...piManifest.capabilities,resume:false}};
 export const antigravityManifest = manifest("antigravity", "Antigravity CLI");
 export const zcodeManifest = manifest("zcode", "ZCode CLI");
 export const workbuddyCliManifest = manifest("workbuddy-cli", "WorkBuddy bundled CLI");
@@ -116,7 +117,7 @@ export class GrokAdapter extends StructuredCliAdapter {
   constructor(profile: CliAgentProfile, backend?: CliAgentBackend, store?: SessionStore, resolveCredential?: CredentialResolver) { super(definitions.grok, profile, backend, store, resolveCredential); }
 }
 export class PiAdapter extends StructuredCliAdapter {
-  constructor(profile: CliAgentProfile, backend?: CliAgentBackend, store?: SessionStore) { super(definitions.pi, profile, backend, store); }
+  constructor(profile: CliAgentProfile, backend?: CliAgentBackend, store?: SessionStore) { super(backend?.backendId==="pi-rpc"?{...definitions.pi,manifest:piRpcManifest,supportsResume:false,supportsExecutionSelection:true,requiresNativeBinding:true}:definitions.pi, profile, backend, store); }
 }
 
 export class AntigravityAdapter extends StructuredCliAdapter {

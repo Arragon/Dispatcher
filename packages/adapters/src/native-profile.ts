@@ -16,6 +16,7 @@ export function nativePrivatePaths(profiles:readonly NativeProfileRegistration[]
   const paths=new Set<string>();
   for(const profile of profiles){
     for(const key of ["codexHome","configDir"])if(typeof profile.settings?.[key]==="string"&&profile.settings[key])paths.add(profile.settings[key]);
+    if(profile.provider==="pi")for(const key of ["agentDirectory","sessionDirectory"])if(typeof profile.settings?.[key]==="string"&&profile.settings[key])paths.add(profile.settings[key]);
     if(profile.provider==="cursor")paths.add(join(homedir(),".cursor"));
     if(profile.provider==="qoder-cn"&&!profile.settings?.configDir)paths.add(join(homedir(),".qoder-cn"));
     if(profile.provider==="grok")paths.add(join(homedir(),".grok"));

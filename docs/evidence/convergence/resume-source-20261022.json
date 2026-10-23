@@ -1,0 +1,43 @@
+{
+  "source": "/Users/wangdongxin/.codex/worktrees/dispatcher-convergence/dispatcher",
+  "head": "c027ea3eea49934d6ca8d6cc3afd7f491608b417",
+  "capturedAt": "2026-10-22T15:22:30.991871+00:00",
+  "files": [
+    {
+      "path": "docs/evidence/convergence/quota-stop-20261022.json",
+      "sha256": "ce5eea85a6cf942af3bdbd38d89db8b748ccbbd08f3f267c507547901eab0a85"
+    },
+    {
+      "path": "packages/adapters/src/native-binding-events.ts",
+      "sha256": "0408e40716036cf1518f33f2509582b085ad2d35215279f9637514713950fd4d"
+    },
+    {
+      "path": "packages/adapters/test/pi-rpc-adapter.test.ts",
+      "sha256": "88b332434e199d0f5ec5f9e1cdfe71493081061785e098be0270892947980196"
+    },
+    {
+      "path": "docs/convergence-remaining-issues.md",
+      "sha256": "04e6e0ea23857477b6a82c88e3d2a017c8459be3859a4c358abc9a0d89378eaa"
+    },
+    {
+      "path": "docs/evidence/convergence/README.md",
+      "sha256": "ad543ce534a536f8d7c098bd4965cdbb849ed141d768e4e7429c0b63183df0ac"
+    },
+    {
+      "path": "packages/adapters/src/contracts.ts",
+      "sha256": "1991f15eb79bab61dbfdd6eca958173d2c530b6fa8b9d2e0bc53dc2af854c10b"
+    },
+    {
+      "path": "packages/adapters/src/ecosystem-cli.ts",
+      "sha256": "86b26c570c33c6525a9a854331ce4aa3ecd24cd7c33c041b2dd44a1cdcf97c4d"
+    },
+    {
+      "path": "packages/adapters/src/index.ts",
+      "sha256": "879e82a18a71f936dc369c85a9d3d08bcef54fe20fba16c26d36d1b2b80b29ed"
+    },
+    {
+      "path": "packages/adapters/src/native-cli.ts",
+      "sha256": "5d92729ff5166b7469577b70d1b7d21029071b6532da2ff2eec86eed44921962"
+    }
+  ]
+}

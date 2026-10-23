@@ -19,3 +19,5 @@ export * from "./interaction-contracts.js";
 export * from "./native-requests.js";
 
 export * from "./native-access.js";
+
+export {PiRpcExecutionBackend,type PiRpcExecutionScope,type PiRpcExecutionOptions} from "./pi-rpc-execution.js";

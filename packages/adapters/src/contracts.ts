@@ -1,5 +1,5 @@
 import type { NativeInteractionPort } from "./interaction-contracts.js";
-import type { NativeBinding, ExecutionContextRef, TurnObservation, ExecutionSelection, AccountModelCatalog, ModelCatalogContext, UsageObservationV1,ResourceState } from "@dispatcher/domain";
+import type { NativeBinding, NativeBindingEvent, ExecutionContextRef, TurnObservation, ExecutionSelection, AccountModelCatalog, ModelCatalogContext, UsageObservationV1,ResourceState } from "@dispatcher/domain";
 export type AdapterPlatform = "darwin" | "linux" | "win32";
 export type BackendKind = "sdk" | "api" | "daemon" | "headless-cli" | "pty";
 
@@ -76,11 +76,14 @@ export interface NativeObserverContext {
   sessionId:string;runId:string;profileId:string;backendId:string;invocationId:string;
   generation?:number;attempt?:number;leaseId?:string;
 }
+export type NativeObserverBegin=(context:NativeObserverContext)=>(()=>boolean);
+export type NativeEventSink=(event:NativeBindingEvent)=>void|Promise<void>;
 export type AdapterStartOutcome={kind:"created";session:AdapterSession}|{kind:"not-created"|"unknown";code:string;diagnostic?:string};
 
 export interface AdapterStartInput {
   runId:string;sessionId?:string;workspacePath:string;backendId?:string;prompt?:string;
-  executionSelection?:ExecutionSelection;beforeSend?:()=>void;execution?:AdapterSession["execution"];
+  executionSelection?:ExecutionSelection;beforeSend?:()=>void;beforeCreate?:()=>void;execution?:AdapterSession["execution"];
+  executionRef?:ExecutionContextRef;
 }
 
 /** Capture request facts before async preparation; never invent invocation counters. */
@@ -92,6 +95,7 @@ export function captureAdapterStartInput(input:AdapterStartInput):AdapterStartIn
     request.execution={generation:e.generation,attempt:e.attempt,...(e.leaseId!==undefined?{leaseId:e.leaseId}:{})};
   }
   if(input.executionSelection)request.executionSelection=structuredClone(input.executionSelection);
+  if(input.executionRef)request.executionRef=structuredClone(input.executionRef);
   return request;
 }
 
@@ -99,6 +103,8 @@ export interface AgentAdapter {
   readonly interaction?:NativeInteractionPort;
   readonly manifest: AdapterManifest;
   readonly supportsExecutionSelection?: boolean;
+  readonly supportsExecutionRef?: boolean;
+  setNativeEventSink?(sink:NativeEventSink,onBegin:NativeObserverBegin):void;
   /** Existing configured invocation defaults only; this does not qualify native selection. */
   legacyInvocationDefaults?():{backendId:string;model?:string};
   modelCatalog?(context: ModelCatalogContext & {workspacePath:string;signal?:AbortSignal}): Promise<AccountModelCatalog>;

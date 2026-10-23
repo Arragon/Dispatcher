@@ -82,3 +82,26 @@ it("bills separate cache write quantities once and refuses impossible combined i
  expect(calc([u],p).value).toBe("0.1");
  expect(calc([usage({...u,metrics:[...u.metrics.slice(0,2),{name:"cacheWrite",value:"50",unit:"tokens",includedIn:"input"}]})],p)).toMatchObject({reason:"CACHE_EXCEEDS_INPUT"});
 });
+
+it("refuses cost aggregation across attempt, native session or producer provenance",()=>{
+ const first={...usage(),attempt:1,nativeSessionId:"native-1",producerOrigin:{producerId:"producer-1",eventId:"native-event-1"}};
+ for(const change of [{attempt:2},{nativeSessionId:"native-2"},{producerOrigin:{producerId:"producer-2",eventId:"native-event-2"}}]){
+  expect(calc([first,{...first,eventId:"second",turnId:"second",...change}])).toMatchObject({completeness:"unavailable",reason:"USAGE_BASIS_AMBIGUOUS"});
+ }
+ expect(calc([first]).inputs).toEqual([first]);
+});
+it("refuses malformed or unproven optional usage provenance instead of calculating from it",()=>{
+ for(const change of [{attempt:0},{attempt:1.5},{nativeSessionId:""},{producerOrigin:{producerId:"",eventId:"native-event"}},{producerOrigin:{producerId:"producer",eventId:"native-event",extra:true}},{occurredAt:at},{producerOrigin:{producerId:"producer",eventId:"native-event"},occurredAt:"invalid"}]){
+  expect(calc([{...usage(),...change}])).toMatchObject({completeness:"unavailable",reason:"USAGE_INVALID"});
+ }
+});
+it("counts proven producer aliases once and rejects conflicting same-origin quantities",()=>{
+ const first=usage({mode:"delta",attempt:1,nativeSessionId:"native-1",producerOrigin:{producerId:"producer",eventId:"native-event"}}),copy={...first,eventId:"query-copy",observedAt:"2026-10-20T12:03:00Z"};
+ for(const source of ["native-event","native-query"] as const)for(const observations of [[first,{...copy,source}],[{...copy,source},first]])expect(calc(observations).value).toBe("0.135");
+ expect(calc([first,{...copy,metrics:[{name:"input",value:"999",unit:"tokens"}]}])).toMatchObject({completeness:"unavailable",reason:"EVENT_ID_CONFLICT"});
+});
+it("uses occurrence order for proven native snapshots and refuses missing or tied occurrence",()=>{
+ const first=usage({producerOrigin:{producerId:"producer",eventId:"native-snapshot"},occurredAt:"2026-10-20T11:59:00Z"}),copy={...first,eventId:"query-copy",source:"native-query" as const,observedAt:"2026-10-20T12:03:00Z"},delta=usage({eventId:"delta",mode:"delta",producerOrigin:{producerId:"producer",eventId:"native-delta"},occurredAt:"2026-10-20T12:01:00Z",observedAt:"2026-10-20T12:02:00Z"});
+ for(const observations of [[first,copy,delta],[copy,first,delta]])expect(calc(observations).value).toBe("0.27");
+ for(const occurredAt of [undefined,first.occurredAt])expect(calc([first,{...delta,occurredAt}])).toMatchObject({completeness:"unavailable",reason:"USAGE_ORDER_UNPROVEN"});
+});

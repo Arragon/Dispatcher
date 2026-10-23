@@ -298,7 +298,11 @@ use writer 3; only a restored copy upgrades behind the restore barrier.
 Migration 9 (`automatic_verification_receipt_writer_protocol`) raises the protocol
 to 5 for non-replayable automatic verification. Entries 1–8 remain unchanged;
 already-open protocol-4 connections fail writes, and old catalogs reject schema9.
-Schema-8 archives retain writer4; restored copies upgrade to schema9 separately.
+Schema-8 archives retain writer4; only restored copies upgrade separately.
+Migration 10 (`canonical_usage_origin_writer_protocol`) raises the protocol to 6
+for immutable producer-origin observations and collector aliases. Entries 1–9
+remain unchanged; protocol-5 writers are rejected before they can turn a saved
+collector alias into a second quantity. Schema-9 archives retain writer5.
 Connections register `dispatcher_writer_protocol()` before writes; upgraded
 triggers reject older writers. Nested repository operations use savepoints so
 a caught inner failure cannot partially commit native identity changes.
@@ -393,7 +397,7 @@ native model-catalog fingerprints have distinct meanings; final admission pins
 the former while the existing selection preflight validates the latter. Remote
 startup retains its separate owning-Runner contract pending CV-12 composition.
 Guarded local startup was introduced with schema8; current automatic verification
-requires schema9/writer5. Native
+requires at least schema9/writer5; current origin-aware usage requires schema10/writer6. Native
 control remains unavailable until its remaining runtime composition is qualified.
 Failure revokes and aborts its original owned verification command before
 waiting for the Session lane, then requires both adapter stop and owned command
@@ -1102,12 +1106,45 @@ filters refer to observation timestamps, not inferred consumption intervals.
 The pure legacy measurement reader returns private read-only evidence, including
 attempt/source/native-session and optional billing occurrence. It does not
 produce canonical observations or totals. Cross-source event equivalence and
-canonical attempt/time admission still require explicit reconciliation; historical
+canonical attempt/time admission require an owning producer registration. New
+origin-aware records pin attempt/native session and a trusted producer namespace;
+collector event/query aliases refer to one immutable native event. Replays with
+changed metrics, occurrence or execution identity conflict atomically. Legacy
+records and their replay addresses remain unchanged; running legacy sessions do
+not acquire producer identity by inference. Origin-aware snapshots and deltas use
+the native `occurredAt` for ordering; missing or ambiguous occurrence keeps totals
+unavailable. Observation-time filtering retains its existing meaning. Historical
 collection time is not a substitute for missing billing occurrence.
 Run.tokens remains the compatible latest-turn projection. Missing metrics and
 unavailable billing baselines stay unknown. Management reads never query a
 native provider. The current normalized token emitter is Codex; providers with
 no qualified observation emitter do not acquire synthetic usage values.
+
+## Managed Pi RPC runtime
+
+An applied profile may explicitly select Pi's compatible `pi-rpc` backend in a
+managed worktree. Controller owns one runtime per profile and one host per frozen
+ExecutionContextRef. Ordinary dispatch and an owned legacy reroute freeze the
+same canonical workspace, selection, Run generation/attempt and Session identity.
+Scheduler requires independent final creation and prompt admission. The Adapter
+persists and ingests the native binding before sending the first prompt; a failed
+event sink durably blocks that invocation instead of accepting later input.
+
+Configured Pi agent/session directories stay outside managed repository scope.
+Directory identity is checked before native creation and prompt transmission.
+Runtime disconnect closes only its owned local connection and drains callbacks;
+it does not prove background tools stopped, delete native sessions or release a
+native writer. Shutdown attempts every runtime before saving receipts and keeps
+the database available when cleanup or receipt persistence is unconfirmed.
+A proven `not-created` failure can close a wholly unused runtime; unknown cleanup
+and other active hosts retain the profile replacement barrier.
+
+This compatible start path does not qualify native continuation, stop, history,
+handoff or quiescence. A settled Adapter turn cannot authorize automatic
+verification/delivery while native pending-tool/approval facts remain unknown.
+The exact source is available through the owning runtime, but live Controller
+source registration and real native capability qualification remain separate
+requirements before a complete Pi task loop can be enabled.
 
 ## Diagnostic reads and registered checks
 

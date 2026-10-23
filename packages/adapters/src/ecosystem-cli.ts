@@ -6,6 +6,9 @@ import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { promisify } from "node:util";
 import {
   AdapterContractError,
+  AdapterStartError,
+  type NativeEventSink,
+  type NativeObserverBegin,
   assertAdapterStartAdmission,
   assertAdapterWriteAdmission,
   captureAdapterStartInput,
@@ -20,7 +23,8 @@ import {
   type AgentAdapter,
 } from "./contracts.js";
 import { MemorySessionStore, startSessionId, type SessionStore } from "./generic.js";
-import type { AccountModelCatalog, ModelCatalogContext } from "@dispatcher/domain";
+import {isExecutionContextRef,validateExecutionBinding,type AccountModelCatalog,type ModelCatalogContext,type ExecutionContextRef,type ExecutionSelection,type NativeBinding,type NativeTurnFact} from "@dispatcher/domain";
+import {NativeBindingEvents,type NativeTurnObserver} from "./native-binding-events.js";
 import { readNativeCliCatalog, cursorLoginIdentity, type CatalogCliProvider } from "./cli-catalog.js";
 import { readOpenCodeCatalog } from "./opencode-catalog.js";
 
@@ -62,6 +66,7 @@ export interface CliTurnResult {
 }
 
 export interface CliTurn {
+  ready?():Promise<void>;
   readonly processId?: number | undefined;
   cancel(): Promise<void>;
   status(): "running" | "completed";
@@ -70,6 +75,11 @@ export interface CliTurn {
 }
 
 export interface CliStartInput {
+  executionRef?:ExecutionContextRef;
+  nativeInput?:{version:1;profileId:string;backendId:string;runId:string;sessionId:string;commandId:string;newSession:boolean;prompt:string;approveTools:boolean;providerSessionId?:string;executionSelection?:ExecutionSelection};
+  beforePrompt?:()=>void;
+  onBinding?:(binding:NativeBinding)=>void|Promise<void>;
+  onNativeEvent?:(fact:NativeTurnFact)=>void|Promise<void>;
   executable: string;
   args: string[];
   workspacePath: string;
@@ -79,6 +89,7 @@ export interface CliStartInput {
 }
 
 export interface CliAgentBackend {
+  readonly backendId?:string;
   start(input: CliStartInput): CliTurn;
 }
 
@@ -177,6 +188,8 @@ class SpawnedCliTurn implements CliTurn {
 }
 
 export interface CliProviderDefinition {
+  requiresNativeBinding?:boolean;
+  supportsExecutionSelection?:boolean;
   catalogProvider?: CatalogCliProvider | "opencode";
   manifest: AdapterManifest;
   defaultExecutable: string;
@@ -262,9 +275,13 @@ const kiroDefinition: CliProviderDefinition = {
 
 export class StructuredCliAdapter implements AgentAdapter {
   readonly manifest: AdapterManifest;
-  get supportsExecutionSelection(): boolean { return this.definition.catalogProvider !== undefined; }
+  get supportsExecutionSelection(): boolean { return this.definition.supportsExecutionSelection===true||this.definition.catalogProvider !== undefined; }
+  get supportsExecutionRef(): boolean { return this.definition.requiresNativeBinding===true&&this.backendId==="pi-rpc"; }
   private readonly turns = new Map<string, CliTurn>();
   private readonly backend: CliAgentBackend;
+  private readonly backendId:string;
+  private readonly nativeEvents:NativeBindingEvents;
+  private readonly turnObservers=new WeakMap<CliTurn,NativeTurnObserver>();
   private readonly store: SessionStore;
   private readonly sending = new Set<string>();
   private starting = 0;
@@ -280,7 +297,9 @@ export class StructuredCliAdapter implements AgentAdapter {
   ) {
     this.manifest = validateManifest(definition.manifest);
     this.backend = backend;
+    this.backendId=backend.backendId??this.manifest.backends[0]!.id;
     this.store = store;
+    this.nativeEvents=new NativeBindingEvents(store);
   }
 
   async modelCatalog(context: ModelCatalogContext & { workspacePath: string;signal?:AbortSignal }): Promise<AccountModelCatalog> {
@@ -290,24 +309,38 @@ export class StructuredCliAdapter implements AgentAdapter {
     return readNativeCliCatalog({ provider: this.definition.catalogProvider, profile: this.profile, executable: await this.executable(), context, workspacePath: context.workspacePath, ...(environment ? { environment } : {}),...(context.signal?{signal:context.signal}:{}) });
   }
 
-  legacyInvocationDefaults():{backendId:string;model?:string}{return {backendId:this.manifest.backends[0]!.id,...(this.profile.model?{model:this.profile.model}:{})};}
+  setNativeEventSink(sink:NativeEventSink,onBegin:NativeObserverBegin):void {this.nativeEvents.setSink(sink,onBegin);}
+
+  legacyInvocationDefaults():{backendId:string;model?:string}{return {backendId:this.backendId,...(this.profile.model?{model:this.profile.model}:{})};}
 
   async start(input: AdapterStartInput): Promise<AdapterSession> {
     input=captureAdapterStartInput(input);
     this.starting++;
     try {
-      const backendId=this.manifest.backends[0]!.id;
-      if(input.backendId!==undefined&&input.backendId!==backendId)throw new AdapterContractError("BACKEND_MISMATCH","Requested backend differs from the owning CLI adapter");
-      const selection=freezeExecutionSelection(input.executionSelection,{profileId:this.profile.id,providerId:this.manifest.id,backendId,selection:this.supportsExecutionSelection,reasoning:false,legacyModel:true});
+      const backendId=this.backendId;
+      let selection:ExecutionSelection|undefined;
+      try{
+        if(input.backendId!==undefined&&input.backendId!==backendId||!this.manifest.backends.some(value=>value.id===backendId))throw new AdapterContractError("BACKEND_MISMATCH","Requested backend differs from the owning CLI adapter");
+        selection=freezeExecutionSelection(input.executionSelection,{profileId:this.profile.id,providerId:this.manifest.id,backendId,selection:this.supportsExecutionSelection,reasoning:false,legacyModel:true});
+        if(this.definition.requiresNativeBinding){
+          this.nativeEvents.assertAvailable();
+          if(!input.sessionId||!input.execution||!isExecutionContextRef(input.executionRef)||input.executionRef.kind!=="managed-worktree"||!selection||typeof input.beforeCreate!=="function"||typeof input.beforeSend!=="function")throw new AdapterContractError("PI_RPC_START_INVALID","RPC startup requires reserved execution and synchronous admission");
+          if(Object.hasOwn(input,"modelSelection")||Object.hasOwn(input,"legacyModel"))throw new AdapterContractError("MODEL_LEGACY_REVIEW_REQUIRED","RPC startup requires one canonical execution selection");
+          const checked=validateExecutionBinding({profileId:this.profile.id,providerId:this.manifest.id,backendId,runnerId:input.executionRef.runnerId,executionRef:input.executionRef},selection,{repositoryId:input.executionRef.repositoryId,baseRevision:input.executionRef.baseRevision});
+          if(!checked.valid)throw new AdapterContractError(checked.code,"RPC startup context changed");
+          assertAdapterStartAdmission(input.beforeCreate);assertAdapterStartAdmission(input.beforeSend);
+        }
+      }catch(error){throw startPreparationFailure(error);}
       const now = new Date().toISOString();
       const session: AdapterSession = {
         id: startSessionId(this.store,input.sessionId),
         runId: input.runId,
       ...(input.execution?{execution:input.execution}:{}),
-        backendId: input.backendId ?? this.manifest.backends[0]!.id,
+        backendId,
         workspacePath: input.workspacePath,
         state: "STARTING",
         profileId: this.profile.id,
+        ...(input.executionRef?{executionRef:input.executionRef}:{}),
         ...(selection?{executionSelection:selection}:{legacyModel:{...(this.profile.model?{id:this.profile.model}:{})}}),
         ...(this.definition.newSessionId ? { providerSessionId: this.definition.newSessionId() } : {}),
         createdAt: now,
@@ -317,10 +350,14 @@ export class StructuredCliAdapter implements AgentAdapter {
       let environment:Record<string,string>|undefined,executable:string;
       try{environment=await this.environment();executable=await this.executable();}catch(error){throw startPreparationFailure(error);}
       assertSessionModelBinding(this.store.load(session.id),session);
+      let observer:NativeTurnObserver|undefined;
+      try{observer=this.definition.requiresNativeBinding?this.nativeEvents.begin(session.id):undefined;}catch(error){throw startPreparationFailure(error);}
+      const nativeOptions=observer?this.nativeEvents.startOptions(session,observer,this.manifest.id,()=>{assertAdapterStartAdmission(input.beforeCreate);assertAdapterStartAdmission(input.beforeSend);}):undefined;
       const nativeInput:CliStartInput={
         executable,
         args: this.definition.startArgs({ prompt: input.prompt ?? "Inspect the task and report readiness.", newSession: true, approveTools: this.profile.approveTools === true, trustWorkspace: this.profile.trustWorkspace === true, ...(this.profile.configDir ? { configDir: this.profile.configDir } : {}), ...(session.providerSessionId ? { providerSessionId: session.providerSessionId } : {}), ...this.selectionArgs(session) }),
         workspacePath: input.workspacePath,
+        ...(nativeOptions&&observer?{...nativeOptions,onNativeEvent:observer,executionRef:session.executionRef!,nativeInput:{version:1 as const,profileId:this.profile.id,backendId,runId:session.runId,sessionId:session.id,commandId:this.require(session.id).nativeInvocationId!,newSession:true,prompt:input.prompt??"Inspect the task and report readiness.",approveTools:this.profile.approveTools===true,...(session.providerSessionId?{providerSessionId:session.providerSessionId}:{}),...(selection?{executionSelection:selection}:{})}}:{}),
         ...(this.definition.normalizeLine ? { normalizeLine: this.definition.normalizeLine } : {}),
         ...(this.definition.requireExecutionEvidence ? { requireExecutionEvidence: true } : {}),
         ...(environment ? { environment } : {}),
@@ -329,6 +366,12 @@ export class StructuredCliAdapter implements AgentAdapter {
       let turn:CliTurn;
       try{turn=this.backend.start(nativeInput);}catch(error){throw localStartFailure(error);}
       this.turns.set(session.id, turn);
+      if(observer){
+        this.turnObservers.set(turn,observer);
+        if(!turn.ready)throw new AdapterStartError("unknown","NATIVE_READINESS_UNAVAILABLE","RPC readiness requires reconciliation");
+        await turn.ready();nativeOptions!.beforePrompt();
+        const current=this.require(session.id);this.store.save({...current,state:"RUNNING",updatedAt:new Date().toISOString()});return structuredClone(this.require(session.id));
+      }
       session.state = "RUNNING";
       if (turn.processId !== undefined) session.processId = turn.processId;
       try { this.store.save(session); } catch (error) { await turn.cancel(); throw error; }
@@ -381,6 +424,7 @@ export class StructuredCliAdapter implements AgentAdapter {
     return this.status(sessionId);
   }
   async cancel(sessionId: string, beforeSend?:()=>void): Promise<AdapterSession> {
+    if(this.definition.requiresNativeBinding)throw new AdapterContractError("PI_RPC_STOP_UNQUALIFIED","Closing the local RPC connection cannot prove native tools or writer release");
     this.cancelling++;
     try {
       const session=this.require(sessionId);
@@ -435,6 +479,7 @@ export class StructuredCliAdapter implements AgentAdapter {
       return structuredClone(session);
     }
     const result = await turn.result();
+    const observer=this.turnObservers.get(turn);if(observer&&!observer.canProject())throw new AdapterContractError("STALE_NATIVE_OBSERVER","Native observer authority changed before result projection");
     assertSessionModelBinding(this.store.load(sessionId),session);
     if (this.cancelled.has(sessionId)||this.require(sessionId).state === "CANCELLED") return structuredClone(this.require(sessionId));
     return this.update(sessionId, {

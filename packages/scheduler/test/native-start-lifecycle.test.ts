@@ -58,3 +58,25 @@ it("keeps native execution contexts closed until the owning backend is qualified
  const {run}=await f.scheduler.dispatch({...f.input,onRunStarting:run=>{run.executionRef={version:1,id:"execution",kind:"managed-worktree",runnerId:"local",repositoryId:"repo",workspaceId:"work",pathRef:"workspace:work",branch:"task/run",baseRevision:"sha"};}});
  expect(start).not.toHaveBeenCalled();expect(run.state).toBe("FAILED");expect(f.settled).toMatchObject([{kind:"not-created",code:"EXECUTION_CONTEXT_UNQUALIFIED"}]);
 });
+it("does not infer continuation capability from a native session identifier",async()=>{
+ const adapter=new GenericMockAdapter(),original=adapter.start.bind(adapter);
+ Object.defineProperty(adapter,"manifest",{value:{...adapter.manifest,capabilities:{...adapter.manifest.capabilities,resume:false}}});
+ adapter.start=async input=>({...await original(input),providerSessionId:"native-session"});
+ const f=fixture(adapter),{run}=await f.scheduler.dispatch(f.input);
+ expect(run).toMatchObject({state:"ACTIVE",providerSessionId:"native-session",resumePolicy:"controlled-reroute"});
+});
+const reference={version:1 as const,id:"execution",kind:"managed-worktree" as const,runnerId:"local",repositoryId:"repo",workspaceId:"work",pathRef:"workspace:work",branch:"task/run",baseRevision:"sha"};
+it("passes the frozen managed context through separate creation and prompt admissions",async()=>{
+ const adapter=new GenericMockAdapter(),original=adapter.start.bind(adapter);Object.defineProperty(adapter,"supportsExecutionRef",{value:true});
+ let captured:Parameters<AgentAdapter["start"]>[0]|undefined;
+ adapter.start=async input=>{captured=input;input.beforeCreate?.();return {...await original({...input,executionRef:undefined}),executionRef:structuredClone(input.executionRef!)};};
+ const f=fixture(adapter),{run}=await f.scheduler.dispatch({...f.input,onRunStarting:run=>{run.executionRef=structuredClone(reference);}});
+ expect(run.state).toBe("ACTIVE");expect(captured?.executionRef).toEqual(reference);expect(f.sending).toHaveBeenCalledTimes(2);
+ expect(()=>captured!.beforeCreate!()).toThrowError(expect.objectContaining({code:"NATIVE_START_ADMISSION_CLOSED"}));
+});
+it.each(["creation-admission","prompt-admission","returned-context"] as const)("retains uncertainty when the owning backend omits %s",async missing=>{
+ const adapter=new GenericMockAdapter(),original=adapter.start.bind(adapter);Object.defineProperty(adapter,"supportsExecutionRef",{value:true});
+ adapter.start=async input=>{if(missing!=="creation-admission")input.beforeCreate?.();const session=await original({...input,executionRef:undefined,...(missing==="prompt-admission"?{beforeSend:undefined}:{})});return {...session,...(missing!=="returned-context"?{executionRef:input.executionRef}: {})};};
+ const f=fixture(adapter),{run}=await f.scheduler.dispatch({...f.input,onRunStarting:run=>{run.executionRef=structuredClone(reference);}});
+ expect(run.state).toBe("RUNNER_UNAVAILABLE");expect(f.settled).toMatchObject([{kind:"unknown"}]);
+});

@@ -5,6 +5,7 @@ import { isDeepStrictEqual } from "node:util";
 import { InteractionStoreError, migrateNativeInteractions } from "./interaction-store.js";
 import { assertDatabaseLocationOperational, assertDatabaseOperational, assertDatabaseSchema, CONVERGENCE_SCHEMA_NAME, CONTROL_RUNTIME_SCHEMA_NAME, GUARDED_START_SCHEMA_NAME, databaseWriterProtocol, installWriterGate, upgradeConvergenceWriterGate, upgradeControlRuntimeWriterGate, upgradeGuardedStartWriterGate } from "./database-compatibility.js";
 import { AUTOMATIC_VERIFICATION_SCHEMA_NAME, upgradeAutomaticVerificationWriterGate } from "./database-compatibility.js";
+import { USAGE_ORIGIN_SCHEMA_NAME, upgradeUsageOriginWriterGate } from "./database-compatibility.js";
 
 export * from "./interaction-store.js";
 export * from "./database-compatibility.js";
@@ -13,6 +14,14 @@ export * from "./instance-lock.js";
 
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
+
+export interface RunReadFilter {
+  states?: readonly string[];
+  excludedStates?: readonly string[];
+  runnerId?: string;
+  profileIds?: readonly string[];
+  hasPullRequest?: true;
+}
 
 export interface Migration {
   version: number;
@@ -294,6 +303,12 @@ export const migrations: readonly Migration[] = [
     sql: "",
     afterApply: database => upgradeAutomaticVerificationWriterGate(database.handle),
   },
+  {
+    version: 10,
+    name: USAGE_ORIGIN_SCHEMA_NAME,
+    sql: "",
+    afterApply: database => upgradeUsageOriginWriterGate(database.handle),
+  },
 ] as const;
 
 export class MigrationError extends Error {
@@ -444,6 +459,7 @@ export class DispatcherDatabase {
           if(migration.version===7&&migration.name===CONTROL_RUNTIME_SCHEMA_NAME)this.writerProtocol=3;
           if(migration.version===8&&migration.name===GUARDED_START_SCHEMA_NAME)this.writerProtocol=4;
           if(migration.version===9&&migration.name===AUTOMATIC_VERIFICATION_SCHEMA_NAME)this.writerProtocol=5;
+          if(migration.version===10&&migration.name===USAGE_ORIGIN_SCHEMA_NAME)this.writerProtocol=6;
           this.handle.exec(migration.sql);
           migration.afterApply?.(this);
           this.handle
@@ -537,6 +553,26 @@ export class DispatcherDatabase {
   listEntities<T extends JsonValue>(kind: string): T[] {
     const rows = this.handle.prepare("SELECT document_json FROM entities WHERE kind = ? ORDER BY updated_at DESC").all(kind);
     return rows.map((value) => decode(String(rowObject(value)?.document_json)) as T);
+  }
+
+  /** Select candidate rows before decoding; callers retain work eligibility and authority checks. */
+  listRunsMatching<T extends JsonValue>(filters: readonly RunReadFilter[]): T[] {
+    if (!filters.length) return [];
+    const parameters: string[] = [];
+    const scopes = filters.map(filter => {
+      const clauses: string[] = [];
+      for (const [field, values, excluded] of [["state", filter.states, false], ["state", filter.excludedStates, true], ["profileId", filter.profileIds, false]] as const) {
+        if (values === undefined) continue;
+        if (!values.length) { if (!excluded) clauses.push("0"); continue; }
+        clauses.push(`COALESCE(json_extract(document_json,'$.${field}'),'') ${excluded ? "NOT IN" : "IN"} (${values.map(() => "?").join(",")})`);
+        parameters.push(...values);
+      }
+      if (filter.runnerId !== undefined) { clauses.push("json_extract(document_json,'$.runnerId')=?"); parameters.push(filter.runnerId); }
+      if (filter.hasPullRequest) clauses.push("COALESCE(json_extract(document_json,'$.prUrl'),'') != ''");
+      return `(${clauses.length ? clauses.join(" AND ") : "1"})`;
+    });
+    const rows = this.handle.prepare(`SELECT document_json FROM entities WHERE kind='run' AND (${scopes.join(" OR ")}) ORDER BY updated_at DESC`).all(...parameters);
+    return rows.map(value => decode(String(rowObject(value)?.document_json)) as T);
   }
 
   listTaskRunsPage<T extends JsonValue>(taskId:string,offset=0,limit=20):{runs:T[];offset:number;limit:number;total:number;hasActiveRun:boolean;nextOffset?:number} {

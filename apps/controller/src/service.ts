@@ -1,8 +1,9 @@
 import {CanonicalLocalResults} from "./local-results.js";
+import {PiExecutionRuntime} from "./pi-runtime.js";
 import {nativeSessionView} from "./native-session-view.js";
 import {isGuardedControllerStart} from "./start-recovery.js";
 import {parseNativeModelDefaultReview,qualifyNativeModelDefault,readNativeModelDefaultEvidence} from "./model-defaults.js";
-import type {RunGitDelivery,ScmDeliverySelection,MutationFence} from "@dispatcher/domain";
+import {isExecutionContextRef,type NativeBinding,type RunGitDelivery,type ScmDeliverySelection,type MutationFence} from "@dispatcher/domain";
 import {NativeInteractions,InteractionGuardError,type ControllerInteractionOperation,type InteractionPrincipal} from "./native-interactions.js";
 import {AdapterAdmissionError,assertAdapterWriteAdmission,type AdapterStartOutcome} from "@dispatcher/adapters";
 import { resolveProfileExecutionContext } from "./execution-context.js";
@@ -77,6 +78,7 @@ import {
   type QoderProfileConfig,
   type CliAgentBackend,
   type CliAgentProfile,
+  type CliStartInput,
   type NativeCliProvider,
   type DevinBackend,
   type DevinProfileConfig,
@@ -153,7 +155,7 @@ import {
 } from "@dispatcher/integrations";
 import { LlmRuntime, LlmRuntimeError, type FetchLike, type LlmConfiguration, type LlmRole } from "@dispatcher/llm-runtime";
 import { createLogger, redactValue } from "@dispatcher/observability";
-import { DispatcherDatabase, RevisionConflictError, type JsonValue } from "@dispatcher/persistence";
+import { DispatcherDatabase, InteractionStore, RevisionConflictError, type JsonValue } from "@dispatcher/persistence";
 import { EmbeddedRunner, EventBus, LeaseFenceError, LocalGitDelivery, LocalGitDeliveryError, ProcessManager, RemoteRunnerServer, RunnerEnrollmentAuthority, RunnerLeaseAuthority, RunnerRegistry, VerificationRegistry, reconcileRunnerState, type RunnerEnrollmentRecord, type RunnerEvents } from "@dispatcher/runner";
 import {
   SemanticPolicyError,
@@ -481,6 +483,7 @@ export class ControllerService {
   readonly connectors = new ConnectorRegistry();
   readonly tasks: CanonicalTaskService;
   private readonly nativeInteractions:NativeInteractions;
+  private readonly piRuntimes=new Map<string,PiExecutionRuntime>();
   readonly projections: ProjectionWorker;
   readonly semanticTools: SemanticToolRegistry;
   readonly semanticWorkflows: SemanticWorkflowEngine;
@@ -784,6 +787,7 @@ export class ControllerService {
   async stop(): Promise<void> {
     if (this.stopping) return this.stopping;
     this.stopping = (async () => {
+      for(const runtime of this.piRuntimes.values())runtime.beginShutdown();
       this.usageReadClosed=true;
       this.usageShutdown.abort();
       for(const read of this.usageReads.values())try{
@@ -798,11 +802,24 @@ export class ControllerService {
       await Promise.allSettled([...this.remoteLifecycleJobs.values()]);
       await this.profileProbes.drain();
       await this.drainCatalogReads();
+      const runtimeStopErrors:unknown[]=[];
+      // Drain every owned runtime before persisting receipts: one failed write must
+      // not strand another profile's process or prevent HTTP shutdown.
+      const runtimeStops=await Promise.allSettled([...this.piRuntimes].map(async([profileId,runtime])=>({profileId,receipts:await runtime.disconnectLocal()})));
+      for(const result of runtimeStops){
+        if(result.status==="rejected"){runtimeStopErrors.push(result.reason);continue;}
+        const {profileId,receipts}=result.value;
+        try{this.database.saveEntity("native-runtime-disconnect",profileId,json({profileId,backendId:"pi-rpc",receipts,observedAt:this.now().toISOString()}));}
+        catch(error){runtimeStopErrors.push(error);}
+      }
       // Hijacked SSE responses otherwise keep Fastify close waiting for the browser.
       for (const close of this.dashboardStreamClosers) close();
       await this.app.close();
       this.events.close();
       if(localReviewStopError)throw localReviewStopError;
+      if(runtimeStopErrors.length===1)throw runtimeStopErrors[0];
+      if(runtimeStopErrors.length)throw new AggregateError(runtimeStopErrors,"Pi runtime shutdown could not be fully recorded");
+      if([...this.piRuntimes.values()].some(runtime=>runtime.hasUnclosedHosts()))throw new AdapterContractError("NATIVE_RUNTIME_CLEANUP_UNKNOWN","Owned Pi callbacks or processes remain unconfirmed; preserve the database for reconciliation");
       this.database.checkpoint();
       this.database.close();
       this.listening = false;
@@ -927,7 +944,7 @@ export class ControllerService {
     const runnerId = this.embeddedRunner?.runner.id;
     if (!runnerId || !this.runners.list().some((runner) => runner.id === runnerId && runner.state === "ONLINE")) return;
     const now = this.now();
-    for (const value of this.database.listEntities<JsonValue>("run")) {
+    for (const value of this.database.listRunsMatching<JsonValue>([{runnerId,excludedStates:["COMPLETE","FAILED","CANCELLED","SUPERSEDED"]}])) {
       const run = value as unknown as Run;
       if (run.runnerId !== runnerId || isTerminalRunState(run.state)) continue;
       this.restoreLeaseAuthority(run);
@@ -1140,6 +1157,7 @@ export class ControllerService {
         continue;
       }
       if (this.profileHasActiveOperations(id)) throw new ConfigPlanError("ACTIVE_AGENT_PROFILE", `Finish or cancel active harness operations before changing or removing profile ${id}`);
+      if(this.piRuntimes.get(id)?.hasUnclosedHosts())throw new ConfigPlanError("NATIVE_RUNTIME_DRAIN_REQUIRED","Disconnect the owned Pi runtime before changing its profile");
       if (previous.runner?.mode === "remote" && !isDeepStrictEqual(previous.runner, runnerIdentity(previous.runner.id)) && this.remoteRunnerServer?.isConnected(previous.runner.id)) {
         throw new ConfigPlanError("RUNNER_CONNECTED", "Revoke and disconnect the Runner before changing its execution identity");
       }
@@ -1229,6 +1247,7 @@ export class ControllerService {
     }
 
     this.agentAdapters.clear();
+    for(const id of this.piRuntimes.keys())if(!retainedAdapters.has(id))this.piRuntimes.delete(id);
     for (const [id, adapter] of retainedAdapters) this.agentAdapters.set(id, adapter);
     for (const id of this.profileAdapterConfigurations.keys()) {
       if (!retainedAdapters.has(id)) this.profileAdapterConfigurations.delete(id);
@@ -1257,13 +1276,23 @@ export class ControllerService {
     const resolveProviderCredential = (reference: string): Promise<string> => this.secrets.resolve(reference, { principal: "controller", purpose: "provider" });
     for (const profile of enabledProfiles) {
       if (retainedAdapters.has(profile.id)) continue;
+      let piRuntime:PiExecutionRuntime|undefined;
+      if(profile.nativeInteraction?.backendId==="pi-rpc"){
+        piRuntime=new PiExecutionRuntime({profile:{id:profile.id,alias:profile.alias,executable:stringSetting(profile.settings?.executable)!,model:stringSetting(profile.settings?.model)!},agentDirectory:stringSetting(profile.settings?.agentDirectory)!,sessionDirectory:stringSetting(profile.settings?.sessionDirectory)!,runnerId:profile.runnerId,assertInput:input=>this.assertManagedPiInput(profile.id,input),bindingFor:id=>this.persistedPiBinding(profile.id,id)});
+        this.piRuntimes.set(profile.id,piRuntime);
+      }
       const adapter = createNativeProfileAdapter(profile, {
         store, resolveCredential: resolveProviderCredential,
         ...(this.options.codexBackendFactory ? { codexBackendFactory: this.options.codexBackendFactory } : {}),
         ...(this.options.codexNativeReader ? { codexNativeReader: this.options.codexNativeReader } : {}),
-        ...(this.options.cliBackendFactory ? { cliBackendFactory: this.options.cliBackendFactory } : {}),
+        ...(piRuntime?{cliBackendFactory:()=>piRuntime!}:this.options.cliBackendFactory ? { cliBackendFactory: this.options.cliBackendFactory } : {}),
       });
       if (adapter) {
+        adapter.setNativeEventSink?.(event=>{
+          if(this.stopping)throw new AdapterContractError("NATIVE_OBSERVER_CLOSED","Controller observation is closed");
+          const result=this.nativeInteractions.applyNativeBindingEvent(event);
+          if(!result.applied&&result.code!=="DUPLICATE_NATIVE_EVENT")throw new AdapterContractError(result.code??"NATIVE_EVENT_REJECTED","Native observation requires reconciliation");
+        },context=>{const current=this.nativeInteractions.registerNativeObserver(context);return ()=>!this.stopping&&current();});
         this.agentAdapters.set(profile.id, adapter);
         this.profileAdapterConfigurations.set(profile.id, adapterConfiguration(profile));
       }
@@ -1571,7 +1600,8 @@ export class ControllerService {
   }
   private kickDueRunUsage():void {
     if(this.usageReadClosed)return;
-    for(const value of this.database.listEntities<JsonValue>("run")){if(this.usageReads.size>=4)break;const run=value as unknown as Run;if(typeof run.sessionId==="string"&&!run.sessionId.startsWith("unstarted:"))this.kickRunUsage(run);}
+    const profileIds=[...this.agentAdapters].filter(([,adapter])=>adapter.usage).map(([id])=>id);
+    for(const value of this.database.listRunsMatching<JsonValue>([{profileIds}])){if(this.usageReads.size>=4)break;const run=value as unknown as Run;if(typeof run.sessionId==="string"&&!run.sessionId.startsWith("unstarted:"))this.kickRunUsage(run);}
   }
   private usageSourceScope(run:Run,adapter:AgentAdapter):string|undefined {
       try{
@@ -1899,6 +1929,23 @@ export class ControllerService {
       if(this.configuration.current().revision!==run.executionSelection!.configRevision||this.resolveProfileExecutionContext(run.profileId,repositoryId,"start").fingerprint!==fingerprint||this.agentAdapters.get(run.profileId)!==adapter)throw new InteractionGuardError("EXECUTION_CONTEXT_DRIFT");
       admit();
     },settled:outcome=>{this.nativeInteractions.settleNativeStart(command.id,outcome);},assertProjection:()=>this.nativeInteractions.assertNativeStartProjection(command.id)};
+  }
+
+  private assertManagedPiInput(profileId:string,input:CliStartInput):void {
+    const ref=input.executionRef,identity=input.nativeInput;
+    if(this.stopping||!isExecutionContextRef(ref)||ref.kind!=="managed-worktree"||this.embeddedRunner?.runner.id!==ref.runnerId||!identity)throw new InteractionGuardError("EXECUTION_CONTEXT_DRIFT");
+    const run=this.database.getEntity<JsonValue>("run",identity.runId) as unknown as Run|undefined,workspace=this.workspaces.get(input.workspacePath);
+    const task=run?this.database.getCanonicalTask<JsonValue>(run.taskId)?.document as unknown as Task|undefined:undefined;
+    const session=this.database.getEntity<JsonValue>("adapter-session",identity.sessionId) as unknown as AdapterSession|undefined;
+    if(!run||!session||run.profileId!==profileId||run.providerId!=="pi"||run.runnerId!==ref.runnerId||run.sessionId!==identity.sessionId||identity.backendId!=="pi-rpc"||isTerminalRunState(run.state)||task?.currentRunId!==run.id||!isDeepStrictEqual(run.executionRef,ref)||!isDeepStrictEqual(run.executionSelection,identity.executionSelection)||!isDeepStrictEqual(session.execution,{generation:run.generation,attempt:run.attempt,leaseId:run.leaseId})||run.worktree!==input.workspacePath||!workspace||workspace.runId!==run.id||ref.workspaceId!==run.id||workspace.repositoryId!==ref.repositoryId||workspace.branch!==ref.branch||workspace.baseRevision!==ref.baseRevision)throw new InteractionGuardError("EXECUTION_CONTEXT_DRIFT");
+    this.fenceNativeSpawn(run.id,profileId);
+  }
+
+  private persistedPiBinding(profileId:string,nativeSessionId:string):NativeBinding|undefined {
+    const rows=this.database.handle.prepare("SELECT document_json FROM entities WHERE kind='adapter-session' AND json_extract(document_json,'$.profileId')=? AND json_extract(document_json,'$.nativeBinding.nativeSessionId')=? LIMIT 2").all(profileId,nativeSessionId) as Array<{document_json:string}>;
+    if(rows.length!==1)return;
+    const session=JSON.parse(rows[0]!.document_json) as AdapterSession,binding=new InteractionStore(this.database).binding(session.id);
+    return binding&&isDeepStrictEqual(binding,session.nativeBinding)?binding:undefined;
   }
 
   private async cleanupStaleStart(run:Run,admission:LocalStartAdmission):Promise<void> {
@@ -2771,6 +2818,7 @@ export class ControllerService {
         runId,
         onRunStarting: (run, decision) => {
           if(!run.executionSelection)run.executionSelection=this.compileLegacyRunSelection(run,repositoryId,decision.selected!.adapter);
+          if(!remote&&decision.selected!.adapter.supportsExecutionRef)run.executionRef={version:1,id:`execution:${run.id}`,kind:"managed-worktree",runnerId:run.runnerId,repositoryId,workspaceId:run.id,pathRef:`workspace:${run.id}`,branch:workspace.branch,baseRevision:workspace.baseRevision};
           const selectedModel = this.configuration.current().config.agentProfiles.find((profile) => profile.id === run.profileId)?.settings?.model;
           if(publication?.selection?.requestedModel)run.model={id:publication.selection.requestedModel,source:"selection"};
           if (!publication?.selection && typeof selectedModel === "string") run.model = { id: selectedModel, source: "configuration" };
@@ -2910,6 +2958,7 @@ export class ControllerService {
         onRunStarting: (replacement,decision) => {
           assertTaskOwner(true);
           replacement.executionSelection=this.compileLegacyRunSelection(replacement,repository.id,decision.selected!.adapter);
+          if(decision.selected!.adapter.supportsExecutionRef)replacement.executionRef={version:1,id:`execution:${replacement.id}`,kind:"managed-worktree",runnerId:replacement.runnerId,repositoryId:repository.id,workspaceId:replacement.id,pathRef:`workspace:${replacement.id}`,branch:workspace.branch,baseRevision:workspace.baseRevision};
           replacement.branch = workspace.branch; replacement.leaseExpiresAt = new Date(this.now().getTime() + 15 * 60_000).toISOString();
           replacement.revokedLeaseIds = [...new Set([...(run.revokedLeaseIds ?? []), run.leaseId])];
           if (typeof profile.settings?.model === "string") replacement.model = { id: profile.settings.model, source: "configuration" };
@@ -3225,7 +3274,7 @@ export class ControllerService {
   }
 
   private async notifyDueAttention(): Promise<void> {
-    for (const value of this.database.listEntities<JsonValue>("run")) {
+    for (const value of this.database.listRunsMatching<JsonValue>([{states:["WAITING_USER","RESOURCE_BLOCKED","FAILED"]},{states:["COMPLETE"],hasPullRequest:true}])) {
       const run = value as unknown as Run;
       if (!["WAITING_USER", "RESOURCE_BLOCKED", "FAILED", "COMPLETE"].includes(run.state)) continue;
       try {
@@ -3485,7 +3534,7 @@ export class ControllerService {
 
   private async advanceDueRuns(limit: number, baseDelayMs: number, maxDelayMs: number): Promise<void> {
     const now = this.now().getTime();
-    const due = this.database.listEntities<JsonValue>("run")
+    const due = this.database.listRunsMatching<JsonValue>([{states:[...ADVANCEABLE_RUN_STATES]}])
       .map((value) => value as unknown as Run)
       .filter((run) => ADVANCEABLE_RUN_STATES.has(run.state) && !this.runAdvances.has(run.id) && (this.runRetries.get(run.id)?.nextAttemptAt ?? 0) <= now);
     await runBounded(due, limit, async (run) => {
@@ -3508,7 +3557,7 @@ export class ControllerService {
 
   private async reconcileDeliveryRuns(limit: number): Promise<void> {
     const now = this.now();
-    const due = this.database.listEntities<JsonValue>("run").map((value) => value as unknown as Run).filter((run) => {
+    const due = this.database.listRunsMatching<JsonValue>([{states:["COMPLETE"],hasPullRequest:true}]).map((value) => value as unknown as Run).filter((run) => {
       if (run.state !== "COMPLETE" || !run.prUrl) return false;
       const monitor = this.database.getEntity<JsonValue>("delivery-monitor", `${run.id}:${run.generation}`) as unknown as { nextAttemptAt: string } | undefined;
       return !monitor || Date.parse(monitor.nextAttemptAt) <= now.getTime();

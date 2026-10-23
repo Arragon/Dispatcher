@@ -149,6 +149,11 @@
   migrations1–8 and reject already-open old writers too. Schema8 backup bookkeeping
   still uses writer4; rollback requires its matching backup and binary, never
   trigger removal or schema downgrade.
+- Usage producer origins require schema10/writer6. An old writer can otherwise
+  materialize a collector alias as a second event. Preserve migrations1–9 and
+  schema9 archive writer5; upgrade only a restored copy. Never backfill origin,
+  attempt or billing occurrence into immutable legacy observations. Snapshot
+  ordering must use proven native occurrence, not whichever collector arrived first.
 - A caught failure inside an outer SQLite transaction needs a savepoint to
   undo partial native binding/projection writes. Merely detecting an existing
   transaction and running the inner callback is not atomic.
@@ -899,3 +904,14 @@
   current checkout's migration catalog can silently prepare data an older pinned
   artifact cannot read. Capture workload helper hashes before execution; native
   API query timing does not prove browser or provider acceptance.
+
+- Filtering history pages is insufficient if each background worker still
+  materializes every Run. Filter worker eligibility in SQLite before decoding
+  JSON, preserving terminal usage collection and completed PR reconciliation.
+  Test irrelevant-history decode counts; measure RSS separately with the same
+  real HTTP workload and worker settings. A no-worker diagnostic is not the
+  default Controller performance result.
+- Pi local shutdown must attempt all owned runtimes even when a disconnect or
+  receipt write fails. Preserve errors after closing HTTP and retain the DB for
+  reconciliation. A drained local root is not proof of native background-tool
+  quiescence, and `agent_settled` cannot supply missing approval/tool facts.

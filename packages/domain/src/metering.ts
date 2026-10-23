@@ -1,4 +1,4 @@
-import type {UsageObservationV1} from "./usage.js";
+import {usageAggregationTime,type UsageObservationV1} from "./usage.js";
 import {DECIMAL_SCALE,decimalAmount,decimalString} from "./decimal.js";
 
 /** Explicit price evidence; quantities and rates never pass through JS number. */
@@ -34,6 +34,8 @@ function effective(input:CostEstimateInput):{values:UsageObservationV1[];partial
  for(const value of input.observations){
   if(value.scope==="session"||value.scope==="account-period")continue;
   if(value.version!==1||value.runId!==input.runId||!text(value.profileId)||!text(value.sessionId)||!text(value.eventId)||!time(value.observedAt)||!time(value.collectedAt)||!Number.isSafeInteger(value.generation)||value.generation!<1||!["turn","run"].includes(value.scope)||!["delta","snapshot"].includes(value.mode)||!["native-event","native-query","native-result"].includes(value.source)||!["complete","partial","unknown"].includes(value.completeness)||value.scope==="turn"&&!text(value.turnId)||value.mode==="delta"&&!text(value.turnId)||!Array.isArray(value.metrics)||value.metrics.length>64)fail("USAGE_INVALID");
+  const origin=value.producerOrigin;
+  if(value.attempt!==undefined&&(!Number.isSafeInteger(value.attempt)||value.attempt<1)||value.nativeSessionId!==undefined&&!text(value.nativeSessionId)||origin!==undefined&&(!origin||typeof origin!=="object"||Array.isArray(origin)||!text(origin.producerId)||!text(origin.eventId)||Object.keys(origin).some(key=>!["producerId","eventId"].includes(key)))||value.occurredAt!==undefined&&(!origin||!time(value.occurredAt)))fail("USAGE_INVALID");
   if(new Set(value.metrics.map(m=>m.name)).size!==value.metrics.length)fail("USAGE_INVALID");
   for(const metric of value.metrics){
    if(!text(metric.name)||!text(metric.unit)||typeof metric.value!=="string")fail("USAGE_INVALID");try{decimalAmount(metric.value);}catch{fail("USAGE_INVALID");}
@@ -41,14 +43,24 @@ function effective(input:CostEstimateInput):{values:UsageObservationV1[];partial
   }
   const key=identity(value),prior=events.get(key);if(prior&&stable({...prior,collectedAt:undefined})!==stable({...value,collectedAt:undefined}))fail("EVENT_ID_CONFLICT");events.set(key,value);
  }
- const records=[...events.values()];if(new Set(records.map(v=>stable([v.profileId,v.sessionId,v.generation,v.source]))).size>1)fail("USAGE_BASIS_AMBIGUOUS");
+ const collected=[...events.values()];if(new Set(collected.map(v=>stable([v.profileId,v.sessionId,v.generation,v.attempt,v.nativeSessionId,v.producerOrigin?.producerId,v.producerOrigin?undefined:v.source]))).size>1)fail("USAGE_BASIS_AMBIGUOUS");
+ const origins=new Map<string,UsageObservationV1>(),records:UsageObservationV1[]=[];
+ for(const value of collected.sort((a,b)=>identity(a).localeCompare(identity(b)))){
+  if(!value.producerOrigin){records.push(value);continue;}
+  const key=stable([value.profileId,value.nativeSessionId??value.sessionId,value.producerOrigin]),prior=origins.get(key);
+  const semantics=(v:UsageObservationV1)=>stable({...v,eventId:undefined,source:undefined,observedAt:undefined,collectedAt:undefined});
+  if(prior){if(semantics(prior)!==semantics(value))fail("EVENT_ID_CONFLICT");continue;}
+  origins.set(key,value);records.push(value);
+ }
  const hasRun=records.some(v=>v.scope==="run");let partial=hasRun&&records.some(v=>v.scope==="turn");
  const groups=new Map<string,UsageObservationV1[]>();for(const v of records){if(hasRun&&v.scope==="turn")continue;const k=stable([v.scope,v.scope==="turn"?v.turnId:undefined]);groups.set(k,[...(groups.get(k)??[]),v]);}
  const values:UsageObservationV1[]=[];
  for(const group of groups.values()){
-  const snapshots=group.filter(v=>v.mode==="snapshot").sort((a,b)=>Date.parse(b.observedAt)-Date.parse(a.observedAt));const latest=snapshots[0];
-  if(latest&&snapshots.some(v=>v!==latest&&Date.parse(v.observedAt)===Date.parse(latest.observedAt)))fail("SNAPSHOT_ORDER_AMBIGUOUS");
-  if(latest)values.push(latest);for(const v of group.filter(v=>v.mode==="delta")){if(!latest||Date.parse(v.observedAt)>Date.parse(latest.observedAt))values.push(v);else partial=true;}
+  const snapshots=group.filter(v=>v.mode==="snapshot");
+  if(snapshots.length&&group.length>1&&group.some(v=>usageAggregationTime(v)===undefined))fail("USAGE_ORDER_UNPROVEN");
+  snapshots.sort((a,b)=>(usageAggregationTime(b)??0)-(usageAggregationTime(a)??0));const latest=snapshots[0];
+  if(latest&&snapshots.some(v=>v!==latest&&usageAggregationTime(v)===usageAggregationTime(latest)))fail(latest.producerOrigin?"USAGE_ORDER_UNPROVEN":"SNAPSHOT_ORDER_AMBIGUOUS");
+  if(latest)values.push(latest);for(const v of group.filter(v=>v.mode==="delta")){if(latest?.producerOrigin&&usageAggregationTime(v)===usageAggregationTime(latest))fail("USAGE_ORDER_UNPROVEN");if(!latest||usageAggregationTime(v)!>usageAggregationTime(latest)!)values.push(v);else partial=true;}
  }
  return {values:values.sort((a,b)=>Date.parse(a.observedAt)-Date.parse(b.observedAt)||identity(a).localeCompare(identity(b))),partial};
 }

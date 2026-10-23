@@ -31,7 +31,7 @@ describe("offline database backup and restore preparation",()=>{
  });
  it("restores only a new copy behind both barriers and does not downgrade the source archive",async()=>{
   const f=fixture(5),bundle=join(root(),"bundle"),target=join(root(),"restored");await createLocalDatabaseBackup(f.directory,bundle);const before=hash(join(bundle,"dispatcher.sqlite")),sourceBefore=hash(f.path);
-  expect(restoreLocalDatabase(bundle,target,{execute:true,confirmed:true})).toMatchObject({applied:true,reconciliationRequired:true});expect(inspectDispatcherDatabase(join(target,"dispatcher.sqlite"))).toMatchObject({schemaVersion:9,reconciliationRequired:true,integrity:true});expect(existsSync(join(target,"dispatcher.sqlite.restore-pending"))).toBe(true);expect(()=>new DispatcherDatabase(join(target,"dispatcher.sqlite"))).toThrowError(expect.objectContaining({code:"RESTORE_RECONCILIATION_REQUIRED"}));expect(hash(join(bundle,"dispatcher.sqlite"))).toBe(before);
+  expect(restoreLocalDatabase(bundle,target,{execute:true,confirmed:true})).toMatchObject({applied:true,reconciliationRequired:true});expect(inspectDispatcherDatabase(join(target,"dispatcher.sqlite"))).toMatchObject({schemaVersion:10,reconciliationRequired:true,integrity:true});expect(existsSync(join(target,"dispatcher.sqlite.restore-pending"))).toBe(true);expect(()=>new DispatcherDatabase(join(target,"dispatcher.sqlite"))).toThrowError(expect.objectContaining({code:"RESTORE_RECONCILIATION_REQUIRED"}));expect(hash(join(bundle,"dispatcher.sqlite"))).toBe(before);
   expect(()=>restoreLocalDatabase(bundle,f.directory,{execute:true,confirmed:true})).toThrow();expect(hash(f.path)).toBe(sourceBefore);
  });
  it("rejects archive tampering before creating target data",async()=>{

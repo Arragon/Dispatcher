@@ -3,7 +3,72 @@
 Local implementation/evidence backlog; none of these rows claims a passed
 Gate. Continue independent units without bypassing data/control safeguards.
 
-Execution checkpoint2026-10-20 macOS: official used90%/remaining10% after
+## Current checkpoint 2026-10-22: authorized continuation
+
+The user explicitly resumed the complete plan and superseded the historical
+quota stop below. Work proceeds in isolated `codex/dispatcher-plan-completion`
+from c027ea3. The nine source WIP/evidence files were copied with SHA256 rechecks;
+`resume-source-20261022.json` records ownership and provenance. Original dirty
+checkouts, fixed0d2cd42 and existing real-data/native evidence remain preserved.
+
+R-004 has a local root-cause fix: five background workers now filter eligible
+Runs before JSON decoding. One cycle over10k inert history changes50k irrelevant
+decodes to0. The unchanged real HTTP10000/500 benchmark with workers enabled
+measured peak174374912B after the fix, compared with257835008B on fixed0d2cd42
+in the same investigation. This is development evidence; no latency improvement
+or fixed-artifact/browser/P4 qualification is claimed.
+
+R-019 now has explicit Pi ConfigPlan configuration, Adapter binding/observer
+composition, canonical dispatch/reroute ExecutionContextRef and runtime ownership.
+Start, sink-failure blocking, not-created cleanup and all-runtime shutdown error
+isolation have targeted regressions. Native source qualification is still missing:
+an actual temporary protocol child can reach Adapter COMPLETED while advance
+correctly rejects NATIVE_STATE_UNKNOWN. Native pending tools/approvals remain
+unknown even with synthetic read evidence. Continue independent development;
+do not manufacture quiescence or promote start evidence into a full Pi loop.
+
+R-010 adds canonical producer-origin/collector-alias admission and native occurrence
+ordering; the exact cost engine deduplicates equivalent aliases. Additive
+schema10/writer6 prevents old writers from duplicating quantities. Migrations1–9
+are unchanged; old archive protocols remain bound to their own schema. Existing
+production legacy emitters keep their old immutable records and contexts. A
+qualified producer/session cutover, scoped quota TTL and billing baseline/UI
+remain required. Final default `mise exec -- pnpm check` passes163 files/1728
+tests plus build/typecheck/lint/boundaries. No actual service/data/native Gate
+is promoted by this local verification.
+
+## Historical checkpoint 2026-10-22: stopped at remaining 0%
+
+The user changed the stop threshold from10% to0%. Official quota now reports
+used100%/remaining0% (ordinaryUsageAllowed remains true); the explicit user stop
+condition takes precedence. No further implementation or tests are started.
+HEAD remains c027ea3; fixed/last full-gate source remains0d2cd42. Preserve the six
+uncommitted Pi adapter files recorded in quota-stop-20261022.json as unfinished
+WIP. Controller registration has not been implemented. Agent-reported target
+checks:19 RED then19 GREEN; adapters build FAILED TS2375 at
+native-binding-events.ts:61 (possibly undefined nativeSessionId/nativeBinding).
+No full gate ran for this WIP; prior155/1604 does not cover it. Further review is
+needed for pre-creation observer error classification and durable sink-failure
+identity blocking. Do not activate or promote this WIP. A/B remain incomplete.
+
+R-004 diagnostic completed six private synthetic DB/API-inject processes against
+fixed0d2cd42. Comparing no/page/all SQL statement caches did not materially
+explain the earlier274251776B HTTP benchmark peak: API end RSS186351616 /
+186089472 /185450496B; DB end RSS73678848 /71614464 /71319552B. The probe used
+smaller synthetic documents and API injection, so it cannot overturn the retained
+real-HTTP benchmark or qualify P4. No production optimization or threshold change
+was made. Results are retained in quota-stop-20261022.json; probe script/log remain
+/tmp/dispatcher-history-diagnose.{mjs,log}. An exact owned-process lookup confirmed
+no remaining diagnostic process. Adapter agent reports commands completed and
+fixture cleanup ran. Actual HTTP/startup allocation profiling remains open.
+
+Resume only after user authorization, rechecking quota and worktree state. First
+repair and verify the preserved Pi WIP, then complete Controller source/observer
+registration, executionRef/admission plumbing and qualified shutdown behavior.
+Continue R-004 investigation and all original A/B Gates. Existing sources, WIP
+backups, schema9/writer5 boundaries, fixed artifacts and real evidence stay intact.
+
+Historical Execution checkpoint2026-10-20 macOS: official used90%/remaining10% after
 e90b3d7 evidence unit; development stopped per the user's threshold. Production
 source/fixed release0d2cd42, final default155 files1604 tests green. Preserve this
 worktree, all frozen sources/WIP/backups and release; no push/merge/service

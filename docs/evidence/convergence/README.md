@@ -2727,3 +2727,134 @@ complete guarded runtime/observer/Harness composition R-019, qualify account/mod
 R-018 and real A/B/Gate flows, and separately qualify schema8→9 data activation.
 Do not reopen Done prototypes, replay UNKNOWN verification or treat local tests
 as formal acceptance. Linear09/INH-1917/CV-13/MAC-01 receive this exact boundary.
+
+## Resume and quota stop 2026-10-22
+
+The user changed the stop threshold from10% to0%. Official quota now reports
+used100%/remaining0% (ordinaryUsageAllowed remains true); the explicit user stop
+condition takes precedence. No further implementation or tests are started.
+HEAD remains c027ea3; fixed/last full-gate source remains0d2cd42. Preserve the six
+uncommitted Pi adapter files recorded in quota-stop-20261022.json as unfinished
+WIP. Controller registration has not been implemented. Agent-reported target
+checks:19 RED then19 GREEN; adapters build FAILED TS2375 at
+native-binding-events.ts:61 (possibly undefined nativeSessionId/nativeBinding).
+No full gate ran for this WIP; prior155/1604 does not cover it. Further review is
+needed for pre-creation observer error classification and durable sink-failure
+identity blocking. Do not activate or promote this WIP. A/B remain incomplete.
+
+R-004 diagnostic completed six private synthetic DB/API-inject processes against
+fixed0d2cd42. Comparing no/page/all SQL statement caches did not materially
+explain the earlier274251776B HTTP benchmark peak: API end RSS186351616 /
+186089472 /185450496B; DB end RSS73678848 /71614464 /71319552B. The probe used
+smaller synthetic documents and API injection, so it cannot overturn the retained
+real-HTTP benchmark or qualify P4. No production optimization or threshold change
+was made. Results are retained in quota-stop-20261022.json; probe script/log remain
+/tmp/dispatcher-history-diagnose.{mjs,log}. An exact owned-process lookup confirmed
+no remaining diagnostic process. Adapter agent reports commands completed and
+fixture cleanup ran. Actual HTTP/startup allocation profiling remains open.
+
+Resume only after user authorization, rechecking quota and worktree state. First
+repair and verify the preserved Pi WIP, then complete Controller source/observer
+registration, executionRef/admission plumbing and qualified shutdown behavior.
+Continue R-004 investigation and all original A/B Gates. Existing sources, WIP
+backups, schema9/writer5 boundaries, fixed artifacts and real evidence stay intact.
+
+## Authorized continuation: guarded Pi, origin ledger and worker memory
+
+The user resumed the full plan after the historical quota stop. This unit uses
+the attached isolated `codex/dispatcher-plan-completion` checkout based on c027ea3.
+Nine source WIP/evidence files were copied only after matching SHA256 checks;
+`resume-source-20261022.json` retains their source paths, HEAD and hashes. Primary,
+convergence and local-continuation dirty worktrees remain preserved.
+
+### Worker memory root cause (R-004 / CV-13)
+
+Five background methods decoded every Run before filtering. The regression first
+observed50,000 irrelevant JSON decodes in one cycle with10k inert history, then0
+after parameterized SQL filters. Lease, advancement, terminal usage, attention and
+completed-PR eligibility retain their prior post-read authority checks. Actual
+candidates and startup/Fleet global reads can still be large. No budget, worker
+setting or historical document fixture changed.
+
+The standard command was `mise exec -- pnpm benchmark -- --scenario history
+--history-runs 10000 --duration 5`; the baseline added only `--release-dir
+/Users/wangdongxin/.local/share/dispatcher/releases/0d2cd42`. Both verified10k
+unique Runs,500 pages,5952B maximum response, zero DB growth and physical exit0.
+Baseline peak257835008B/p95 19.431709ms; development fix peak174374912B/p95
+29.7115ms. There is memory improvement, with no latency improvement claimed.
+Retained reports: `history-baseline-20261022.json` and
+`history-workers-filtered-20261022.json`. Diagnostic A/B with the same fixed
+runtime identified worker allocations; disabling the worker was only a diagnostic
+control. This is not fixed-artifact/browser/slow-client/soak or full P4 acceptance.
+Targeted query/worker/history checks passed3 files/4 tests; existing
+personal-loop/persistence/benchmark regressions passed3 files/98 tests.
+
+### Pi runtime composition (R-019 / CV-10, R-005 / CV-08)
+
+Explicit ConfigPlan configuration selects compatible pi-rpc in a managed
+worktree, with absolute owning executable/native directories and explicit model.
+The ordinary Pi CLI path retains its separate behavior. Scheduler now forwards
+canonical ExecutionContextRef and independently requires creation and prompt
+admission. Controller validates frozen workspace/selection/Run/Session/lease
+identity. Native binding ingestion occurs before prompt; an event-storage failure
+durably latches identity failure and leaves startup UNKNOWN.
+
+Pi Runtime ports the committed a499d84 ownership implementation and adds strict
+known-not-created cleanup. It never closes another active host or releases an
+unknown cleanup barrier. Adapter/config/runtime target checks passed10 files/234
+tests; runtime follow-up passed27 tests. Controller/Scheduler targeted composition
+passed2 files/21 tests. Shutdown failure isolation first failed2 regressions, then
+attempted every runtime, preserved each available receipt and closed HTTP before
+reporting failure. Legacy→Pi reroute now transfers its canonical reference and
+worktree/attempt with the existing stop/authority checks;3 new cases plus
+personal-loop passed88 tests. Pi old-owner reroute remains blocked before any
+stop or replacement creation because qualified native stop facts are absent.
+
+`pi-readonly-gap-20261022.json` records the outstanding native loop boundary:
+temporary protocol child dispatch201/ACTIVE, Adapter COMPLETED, native start
+ACKNOWLEDGED, then advance409/NATIVE_STATE_UNKNOWN without any new RPC. Runtime
+read capability is unqualified; synthetic read evidence still leaves pending
+tools/approvals unknown. No settled event is promoted into quiescence. Controller
+native-source registration and real capability/stop/handoff qualification remain
+required. All children in this unit are disposable protocol fixtures; no real
+account, GUI or native release Gate is claimed. One earlier combined target run
+hit the unchanged3s version-probe deadline; later7 isolated probes passed, which
+does not explain that failure or authorize a longer timeout.
+
+### Canonical usage origin (R-010 / CV-06, R-014 / CV-07)
+
+The owning producer registration can admit attempt/native-session provenance,
+stable native origin and explicit billing occurrence. Equivalent event/query
+collectors point to one immutable observation via aliases. Changed payloads
+conflict atomically. Legacy record addresses/contexts remain unchanged; no
+producer identity or billing time is inferred. Snapshot ordering uses native
+occurrence; missing/ambiguous ordering exposes observations with unavailable
+totals. Exact cost estimation deduplicates origin aliases and rejects conflicts.
+
+Independent review reproduced old-writer alias double counting, collector-order
+dependent totals and duplicate estimated consumption. Nine added RED cases now
+pass; expanded16-file/148-test checks and domain/persistence/controller builds
+passed. Migration10/canonical_usage_origin_writer_protocol raises writer6;
+migrations1–9 remain byte-identical. Open old writers and old catalogs are
+rejected; schema9 archives remain writer5, restored copies alone upgrade, and
+inner/outer transaction rollback restores writer5. No real data was upgraded.
+Qualified producer cutover, scoped account quota TTL and frozen billing
+baseline/Controller/UI composition remain open.
+
+### Full verification
+
+First `mise exec -- pnpm check` completed build/typecheck/lint/boundaries, then
+163 test files:162 passed,1 failed;1725 tests passed,2 failed. Both failures were
+doctor fixtures pinned to schema9/future10. Updated expectations now cover
+schema9 upgrade-required, schema10 current and future11 rejection, retaining
+source-byte immutability. Log:
+`/tmp/dispatcher-completion-full-check-20261022.log`. Targeted repair and final
+full-gate results follow; the earlier155/1604 gate does not cover this unit.
+
+The final default `mise exec -- pnpm check` passed build, all workspace
+typechecks, ESLint and boundary checks, then163 files/1728 tests with no failures
+(90.08s test duration). Log:
+`/tmp/dispatcher-completion-full-check-final-20261022.log`. The doctor/Pi target
+repair also passed2 files/22 tests. Pi advance regression explicitly retains
+ACTIVE/NATIVE_STATE_UNKNOWN after a completed turn with no extra RPC. Full-gate
+verification does not qualify native accounts, release activation or A/B Gates.

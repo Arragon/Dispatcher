@@ -117,23 +117,27 @@ export class CanonicalScheduler {
     if(Boolean(input.onRunStartSending)!==Boolean(input.onRunStartSettled))throw new Error("Start admission requires both sending and settlement callbacks");
     const run=input.run,guarded=Boolean(input.onRunStartSending);
     if(run.state!=="STARTING"||!run.worktree||guarded&&run.sessionId.startsWith("unstarted:"))throw new Error("Reserved start requires its frozen identity and workspace");
-    let invoked=false,admitted=false,open=true;
+    let invoked=false,admitted=false,creationAdmitted=false,open=true;
     const beforeSend=()=>{
       if(!open)throw new AdapterContractError("NATIVE_START_ADMISSION_CLOSED","Native creation admission is closed");
       input.onRunStartSending!(run);admitted=true;
     };
+    const beforeCreate=()=>{
+      if(!open)throw new AdapterContractError("NATIVE_START_ADMISSION_CLOSED","Native creation admission is closed");
+      input.onRunStartSending!(run);creationAdmitted=true;
+    };
     try {
       await input.beforeStart?.();
-      if(run.executionRef)throw new AdapterStartError("not-created","EXECUTION_CONTEXT_UNQUALIFIED","Native execution context requires a qualified owning backend before creation");
-      const request={runId:run.id,workspacePath:run.worktree,prompt:renderTaskContract(input.contract),execution:{generation:run.generation,attempt:run.attempt,leaseId:run.leaseId},...(guarded?{sessionId:run.sessionId,beforeSend}:{}),...(run.executionSelection?{executionSelection:structuredClone(run.executionSelection)}:{})};
+      if(run.executionRef&&(!guarded||input.adapter.supportsExecutionRef!==true))throw new AdapterStartError("not-created","EXECUTION_CONTEXT_UNQUALIFIED","Native execution context requires a qualified owning backend before creation");
+      const request={runId:run.id,workspacePath:run.worktree,prompt:renderTaskContract(input.contract),execution:{generation:run.generation,attempt:run.attempt,leaseId:run.leaseId},...(guarded?{sessionId:run.sessionId,beforeSend}:{}),...(run.executionRef?{executionRef:structuredClone(run.executionRef),beforeCreate}:{}),...(run.executionSelection?{executionSelection:structuredClone(run.executionSelection)}:{})};
       invoked=true;
       const session=await input.adapter.start(request);
       open=false;
-      if(guarded&&(!admitted||session.id!==run.sessionId||session.runId!==run.id||session.profileId!==undefined&&session.profileId!==run.profileId||session.workspacePath!==run.worktree||!isDeepStrictEqual(session.execution,request.execution)||!isDeepStrictEqual(session.executionSelection,run.executionSelection)))throw new AdapterContractError("NATIVE_START_IDENTITY_CHANGED","Native creation did not confirm the reserved invocation");
+      if(guarded&&(!admitted||run.executionRef&&!creationAdmitted||session.id!==run.sessionId||session.runId!==run.id||session.profileId!==undefined&&session.profileId!==run.profileId||session.workspacePath!==run.worktree||!isDeepStrictEqual(session.execution,request.execution)||!isDeepStrictEqual(session.executionRef,run.executionRef)||!isDeepStrictEqual(session.executionSelection,run.executionSelection)))throw new AdapterContractError("NATIVE_START_IDENTITY_CHANGED","Native creation did not confirm the reserved invocation");
       input.onRunStartSettled?.(run,{kind:"created",session});
       run.sessionId = session.id;
       if (session.providerSessionId) run.providerSessionId = session.providerSessionId;
-      run.resumePolicy = session.providerSessionId || input.adapter.manifest.capabilities.resume ? "same-session" : "controlled-reroute";
+      run.resumePolicy = input.adapter.manifest.capabilities.resume ? "same-session" : "controlled-reroute";
       run.state = "ACTIVE";
     } catch (error) {
       open=false;

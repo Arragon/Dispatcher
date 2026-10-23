@@ -10,7 +10,7 @@ it("rejects an already-open intermediate v3 writer after control-runtime upgrade
  try{
   const current=new DispatcherDatabase(path);
   try{
-   expect(current.schemaVersion()).toBe(9);
+   expect(current.schemaVersion()).toBe(10);
    expect(()=>old.saveEntity("receipt","kept",{id:"changed"})).toThrow("DATABASE_WRITER_UNSUPPORTED");
    expect(()=>new DispatcherDatabase(path,v6)).toThrowError(expect.objectContaining({code:"DATABASE_SCHEMA_UNSUPPORTED"}));
    expect(current.getEntity("receipt","kept")).toEqual({id:"kept"});
@@ -28,7 +28,7 @@ it("rolls back a failed control writer upgrade with its connection protocol",()=
   }}])).toThrow(MigrationError);
   expect(db.schemaVersion()).toBe(6);expect(db.getEntity("receipt","temporary")).toBeUndefined();
   expect(()=>db.saveEntity("receipt","previous",{id:"previous"})).not.toThrow();
-  db.migrate();expect(db.schemaVersion()).toBe(9);expect(db.getEntity("receipt","previous")).toEqual({id:"previous"});
+  db.migrate();expect(db.schemaVersion()).toBe(10);expect(db.getEntity("receipt","previous")).toEqual({id:"previous"});
  }finally{db.close();}
 });
 
@@ -37,6 +37,6 @@ it("restores protocol two after an outer rollback of the control migration",()=>
  try{
   expect(()=>db.transaction(()=>{db.migrate();throw Error("outer rollback");})).toThrow("outer rollback");
   expect(db.schemaVersion()).toBe(6);expect(()=>db.saveEntity("receipt","previous",{id:"previous"})).not.toThrow();
-  db.migrate();expect(db.schemaVersion()).toBe(9);
+  db.migrate();expect(db.schemaVersion()).toBe(10);
  }finally{db.close();}
 });
