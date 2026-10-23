@@ -3763,3 +3763,57 @@ source (a499d84:424/64/21 lines respectively) and its original assertions via
 canonical selection, exact ownership and ConfigPlan; these files are not yet
 ported or qualified. Do not mark the overall goal or CV-09 complete, reset quota,
 activate real native accounts, or weaken pending original Gates from this receipt.
+
+### 2026-10-23 OpenCode bounded server preservation (locally complete)
+
+Source5698afa63e163855668fb875e16faca61349e09a reuses a499d84's server and all145
+expanded direct cases:59 server /49 lifecycle /7 interrupt /30 turn-result.
+Canonical fixture adaptations are explicit: current Runner import; independently
+registered original managed refs and ExecutionSelection for attach; canonical
+selection mutation; waiting before input instead of an unearned received fact.
+The last two suites are unchanged. Added32 regressions yield177 focused cases.
+Captured original repository/base/ref authorizes attach, not incoming request
+fields; context-free reads cannot become attachment authority by re-registration.
+Async waiting follows durable binding and precedes prompt; received follows native
+accepted input and persistence failure fences the port. Project identity is
+pinned and stable foreign sessions rejected; pending approvals are checked during
+prompt preparation. Local callbacks remain owned; native writer release unknown.
+
+Original missing-module RED,42-failure canonical/async regression RED and narrow
+exactOptionalPropertyTypes failure remain in /tmp/dispatcher-opencode-{original-
+missing-module-red,contract-red,adapters-typecheck}.log. Focused177 passes and
+adapters typecheck/scoped lint pass. One final-code default mise exec -- pnpm check
+exits0 with183 files/2280 tests88.19s plus build/typecheck/lint/boundaries; complete
+log /tmp/dispatcher-opencode-full-check.log. Tests ran on cde9407 plus the saved
+production/test payload; only plan/report text followed verification. No skipped
+assertion, deadline/worker change, probe cache or unchanged retry. Independent
+fresh-context spec and quality review approves with no findings; original145 and
+saved logs checked, no duplicate suite run. /tmp/dispatcher-opencode-server-review-
+20261023.md is the scoped report. R-020 historical failures are retained unchanged;
+a green current gate is not a causal fix or fixed-service/runtime qualification.
+
+Only standalone optional readonly injection is restored here; no server execution
+profile/factory/ConfigPlan/catalog/Controller activation. Continue owned server+
+producer and original20+20 cases through the next explicit plan, then runtime/
+service12+8 and actual backend catalog identity. CV-09 and goal remain incomplete.
+Official quota64% used/36% remaining; ordinaryUsageAllowed=true; reset credits2
+unused. Linear startup6fb45a4d and focused31cdf2ca plus source/full e666364f-
+209d-4496-862d-abbc2a74d5fb saved/read back; final reviewed receipt follows.
+
+Read-only next-unit inventory (/tmp/dispatcher-remaining-native-inventory-20261023.md)
+distinguishes existing equivalents from missing filenames/stale pending labels.
+After OpenCode: restore qualified protocol dependencies/license and root-only
+ownership; Devin ACP/client/catalog/runtime/config/service; Copilot committed
+modules then8 separately frozen WIP files (hashes verified against manifest);
+Cursor locator/resume protection; existing Devin v3 hardening; canonical history/
+capability/control UI; native retention/delivery assertion gaps; CV-13/14 evidence.
+These are development units, not passed external Gates or permission to enable
+cloud work. Preserve the frozen503-row source list and record actual mappings.
+
+Recorded rulings: terminal durability stays in the execution wrapper that owns its
+sink; optional original-context registration preserves readonly consumers while
+missing context closes attach; optional standalone read injection does not enable
+a server; broad whole-branch review/integration remains at parentCV-14 after all
+development and local task reviews. If wrong these cost bounded consumer/context
+or cross-boundary rework; no native authority is granted by the rulings. Retain
+SDD reports/ledgers until that final review rather than finishing the branch now.

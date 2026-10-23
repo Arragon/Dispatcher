@@ -81,8 +81,18 @@ visible before JSON completion) is fixed through atomic temporary-file publicati
 with unchanged exact receipt/callback/deadline assertions. The unchanged10k test
 continues to prove zero unrelated historical JSON decodes.
 
-Next: retained OpenCode backend/host/service and original assertions, other native
-providers, then actual provider/GUI/writer/service/release qualification. The
+OpenCode bounded server is now saved at5698afa after independent spec/quality
+review with no findings. All145 original direct cases remain with documented
+canonical fixtures;32 new context/event/project/approval regressions bring the
+focused slice to177. One final-code default full gate passes183 files/2280 tests
+(88.19s), plus build/typecheck/lint/boundaries. Captured original managed context
+authorizes attach, async waiting precedes input and received follows native ACK;
+local callback ownership and unknown native release stay explicit. This is the
+internal server/read-injection slice only, with no profile/server activation.
+
+Next: retained OpenCode owned-host/execution/Controller stack and its60 original
+cases, config/catalog adaptation, other native providers, then actual
+provider/GUI/writer/service/release qualification. The
 current integration used fixtures only; no real account/config/service activation
 or persisted-format/dependency change occurred. CV-09 and the full goal remain
 incomplete.

@@ -385,6 +385,11 @@ Controller exact-source/启动审批/全宿主关闭及原native-history reader/
 不重连、不重放，也不把本地root关闭当作writer释放。OpenCode及原真实环境Gates
 仍未完成，因此本卡验收框和Linear状态继续保持未完成。
 
+OpenCode server后端已保存5698afa：保留145个原始用例并新增32个原始上下文/
+异步持久化/project/审批回归；默认183文件/2280例和非测试门禁通过，独立
+spec/quality审查无遗留问题。当前仅内部后端及standalone只读注入，未激活
+server profile；owned host/producer/Controller/config/catalog及原真实Gates继续。
+
 ### CV-10 · 保留其他本地Harness增量与Copilot未提交工作
 
 - **映射/架构**：M17.2；原票 INH-1539、INH-1541、INH-1543、INH-1551、INH-1550、INH-1468；沿用D1–D3和相应C1–C6。
