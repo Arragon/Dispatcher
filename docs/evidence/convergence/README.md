@@ -3754,3 +3754,12 @@ complete, while parentCV-09/OpenCode and all original actual Gates stay open.
 Current Linear19a8a185-939f-4953-9b0e-5cc542fdc7d0 is saved/read back. Quota57%
 used/43% remaining with both reset credits unused. The source manifest remains503
 rows; no synthetic source entry or real capability promotion was added.
+
+Native-history source saved ate583f77. Final CV-09 receiptac528c30-2bd3-4073-be51-8f1b322aee71
+and umbrellad5b29685-7d10-41d2-938c-65909f5b9020 are saved and read back with the
+exact source and2103-test evidence. The managed checkout has no remaining source
+WIP or root test session. Continue the preserved OpenCode backend/host/service
+source (a499d84:424/64/21 lines respectively) and its original assertions via
+canonical selection, exact ownership and ConfigPlan; these files are not yet
+ported or qualified. Do not mark the overall goal or CV-09 complete, reset quota,
+activate real native accounts, or weaken pending original Gates from this receipt.
