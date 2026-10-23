@@ -3545,3 +3545,46 @@ are saved and read back with that source and1956-test result. The goal remains
 active/incomplete. Next concrete unit is ConfigPlan/native-profile/catalog backend
 context plus Controller/Runner source and shutdown composition, preserving the
 current generic native-mutation denial and separate real-provider qualification.
+
+### CV-09 composition Task1: registration and catalog identity
+
+The next composition plan2026-10-23-codex-runtime-composition retains Task2 as
+the necessary Controller/Runner startup/source/shutdown work. Task1 now accepts
+the actual compatible codex-app-server/provider pair through confirmed ConfigPlan,
+embedded managed-worktree execution and explicit absolute executable/home paths.
+Native login rejects credentialRef for this opt-in only; historical exec profiles
+retain their existing credential contract. Pi's existing pair/model rules remain.
+Structural native-profile creation requires the configured host, rejects wrong
+or absent hosts and forbids injecting App Server without applied opt-in. Missing
+runtime does not fall back to exec; the existing ConfigPlan engine restores the
+prior runtime after apply failure. Task1 itself does not supply that runtime.
+
+CodexAdapter now supplies its actual backend to the existing catalog reader.
+The reader captures the profile/context/backend before awaits, rejects foreign
+account and unsupported backend before I/O, and includes backend in fingerprint
+and content revision. No native candidates are promoted into entitlement/price
+or runtime confirmation, and no stored historical selection/catalog is rewritten.
+
+Initial contract target is RED12 failed/21 passed. After adaptation, combined
+Codex/Pi config, factory, catalog and execution-selection target passes5 files/81
+tests. Build/typecheck/lint/boundaries plus first default full check pass177
+files/1981 tests (82.17s). A final self-review regression demonstrates a known
+foreign backend could still evaluate a factory before unconditional rejection;
+the corrected guard now precedes construction. That regression is RED1/7, then
+the combined target passes5 files/82 tests. Independent read-only review reports
+no remaining actionable findings. The post-ordering-fix full2 is pending; the
+177/1981 pre-fix pass cannot qualify this final correction. All logs use
+/tmp/dispatcher-codex-composition-{contract-red,contract-green,contract-green2,
+contract-lint,contract-full,factory-red,factory-green,contract-full2}-20261023.log.
+Linear progressc341701b-ffa9-4efc-84e4-27fbea7bd008 is saved/read back. Quota47%
+used/53% remaining with no reset consumed. R-020 prior failures remain retained;
+no deadline/assertion/worker/retry policy changed and no real account/config/
+service operation occurred. Task2 service composition and all original real Gates
+remain incomplete rather than being replaced by this static prerequisite.
+
+Final post-ordering-fix default full2 terminates exit0 with177 files/1982 tests
+(86.66s), plus build/typecheck/lint/boundaries. This exact version includes the
+zero-factory-call regression and the clean scoped review. Task1's local static
+contracts are verified; Task2 remains required and unimplemented. No fresh full
+rerun is needed without a new code change or concern, and R-020 is not declared
+causally fixed by this green check.

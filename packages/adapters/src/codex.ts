@@ -239,7 +239,7 @@ export class CodexAdapter implements AgentAdapter {
   legacyInvocationDefaults():{backendId:string;model?:string}{return {backendId:this.backendId,...(this.profile.model?{model:this.profile.model}:{})};}
 
   modelCatalog(context:ModelCatalogContext & {workspacePath:string;signal?:AbortSignal}):Promise<AccountModelCatalog> {
-    return readCodexCatalog({profile:this.profile,context,workspacePath:context.workspacePath,...(context.signal?{signal:context.signal}:{}),...(this.catalogRequest?{request:this.catalogRequest}:{})});
+    return readCodexCatalog({profile:this.profile,context,backendId:this.backendId,workspacePath:context.workspacePath,...(context.signal?{signal:context.signal}:{}),...(this.catalogRequest?{request:this.catalogRequest}:{})});
   }
   accountQuota(signal?:AbortSignal){return readCodexQuota({profile:this.profile,...(signal?{signal}:{}),...(this.catalogRequest?{request:this.catalogRequest}:{})});}
   async start(input: AdapterStartInput): Promise<AdapterSession> {

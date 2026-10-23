@@ -1,8 +1,22 @@
 import {fixtureMarker,fixtureOutcome,awaitFixtureReady} from "./catalog-fixtures.js";
 import { describe,expect,it,vi } from "vitest";
 import { readCodexCatalog, normalizeCodexCatalog } from "../src/codex-catalog.js";
+import {CodexAdapter} from "../src/codex.js";
 const context={profileId:"a",runnerId:"local",repositoryId:"repo",executionContextRef:"repo-context",reason:"open" as const};
 const model={model:"native-model",displayName:"Native model",hidden:false,isDefault:true,defaultReasoningEffort:"medium",supportedReasoningEfforts:[{reasoningEffort:"low"},{reasoningEffort:"medium"}]};
+it("keeps App Server and exec catalogs distinct even for the same account and model payload",()=>{
+ const exec=normalizeCodexCatalog({data:[model]},context,"same-context","now"),native=normalizeCodexCatalog({data:[model]},context,"same-context","now","codex-app-server");expect(native.backendId).toBe("codex-app-server");expect(exec.backendId).toBe("codex-exec-json");expect(native.revision).not.toBe(exec.revision);
+});
+it("uses the actual owning Codex Adapter backend for its catalog",async()=>{
+ const start=vi.fn(),adapter=new CodexAdapter({id:"a",alias:"A",codexHome:"/missing/fixture"},{backendId:"codex-app-server",start},undefined,async input=>input.method==="account/read"?{account:null}:{data:[model],nextCursor:null});expect((await adapter.modelCatalog({...context,workspacePath:"/tmp"})).backendId).toBe("codex-app-server");expect(start).not.toHaveBeenCalled();
+});
+it("captures catalog account and backend before awaiting account reads",async()=>{
+ const held=Promise.withResolvers<unknown>(),calls:Array<{codexHome:string;method:string}>=[],input={profile:{id:"a",alias:"A",codexHome:"/missing/original"},context:{...context},backendId:"codex-app-server" as "codex-app-server"|"codex-exec-json",workspacePath:"/tmp",request:async(query:{codexHome:string;method:string})=>{calls.push(query);return query.method==="account/read"?held.promise:{data:[model],nextCursor:null};}},reading=readCodexCatalog(input);
+ input.profile.id="changed";input.profile.codexHome="/missing/changed";input.context.profileId="changed";input.backendId="codex-exec-json";held.resolve({account:null});expect(await reading).toMatchObject({profileId:"a",backendId:"codex-app-server"});expect(calls.every(call=>call.codexHome==="/missing/original")).toBe(true);
+});
+it("rejects foreign account or unsupported backend before catalog I/O",async()=>{
+ const request=vi.fn(async()=>({account:null})),input={profile:{id:"a",alias:"A",codexHome:"/missing"},context,workspacePath:"/tmp",request};await expect(readCodexCatalog({...input,context:{...context,profileId:"foreign"}})).rejects.toMatchObject({code:"NATIVE_CONTEXT_CHANGED"});await expect(readCodexCatalog({...input,backendId:"unsupported" as never})).rejects.toMatchObject({code:"NATIVE_CONTEXT_CHANGED"});expect(request).not.toHaveBeenCalled();
+});
 describe("Codex native catalogs",()=>{
   it("normalizes only native choices, stable content revisions and unconfirmed access without invented prices",()=>{
     const a=normalizeCodexCatalog({data:[model]},context,"fingerprint","2026-10-15T00:00:00Z");

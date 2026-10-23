@@ -661,6 +661,10 @@
   completed native turn supplies recent availability evidence, without implying
   a remaining quota value. Exit zero alone is insufficient: require native
   thread identity and a completed JSON turn.
+- A catalog's backend is part of its identity and revision, even when exec and
+  App Server read identical native models. Capture account/context/backend before
+  awaiting pages. A configured native host must fail closed when absent or
+  mismatched; reject a known foreign backend before evaluating its factory.
 - A persisted RUNNING adapter session with no attached process cannot establish
   liveness after Controller restart. Mark affected publication execution unknown
   and retain the worktree for inspection; do not automatically resume or reroute.

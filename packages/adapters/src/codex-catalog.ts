@@ -50,7 +50,8 @@ export function readCodexNative(input:CodexReadRequest):Promise<unknown>{
   });
 }
 
-export function normalizeCodexCatalog(value:unknown,context:ModelCatalogContext,contextFingerprint:string,fetchedAt:string):AccountModelCatalog{
+export function normalizeCodexCatalog(value:unknown,context:ModelCatalogContext,contextFingerprint:string,fetchedAt:string,backendId:"codex-exec-json"|"codex-app-server"="codex-exec-json"):AccountModelCatalog{
+  if(!["codex-exec-json","codex-app-server"].includes(backendId))throw new AdapterContractError("NATIVE_CONTEXT_CHANGED","Codex catalog backend is unavailable");
   const raw=object(value);if(!Array.isArray(raw.data)||!raw.data.length||raw.data.length>1000)throw invalid();
   const seen=new Set<string>();
   const entries:AccountModelCatalog["entries"]=raw.data.map((value):AccountModelCatalog["entries"][number]=>{
@@ -60,9 +61,11 @@ export function normalizeCodexCatalog(value:unknown,context:ModelCatalogContext,
     if(!efforts.includes(nativeDefault)||new Set(efforts).size!==efforts.length)throw invalid();
     return {id,displayName:text(m.displayName),kind:"model",selectable:!m.hidden,...(m.hidden?{unsupportedReason:"Hidden by native client"}:{}),access:"unconfirmed",parameterOptions:{reasoningEffort:efforts},parameterDefaults:{reasoningEffort:nativeDefault},billing:{mode:"unknown"}};
   }).sort((a,b)=>a.id.localeCompare(b.id));
-  return {profileId:context.profileId,runnerId:context.runnerId,providerId:"codex",backendId:"codex-exec-json",contextFingerprint,revision:digest({contextFingerprint,entries}),fetchedAt,freshness:"native-fresh",source:"native-rpc",selectionSupport:"explicit",entries};
+  return {profileId:context.profileId,runnerId:context.runnerId,providerId:"codex",backendId,contextFingerprint,revision:digest({backendId,contextFingerprint,entries}),fetchedAt,freshness:"native-fresh",source:"native-rpc",selectionSupport:"explicit",entries};
 }
-export async function readCodexCatalog(input:{profile:CodexProfileConfig;context:ModelCatalogContext;workspacePath:string;signal?:AbortSignal;request?:(input:CodexReadRequest)=>Promise<unknown>}):Promise<AccountModelCatalog>{
+export async function readCodexCatalog(original:{profile:CodexProfileConfig;context:ModelCatalogContext;backendId?:"codex-exec-json"|"codex-app-server";workspacePath:string;signal?:AbortSignal;request?:(input:CodexReadRequest)=>Promise<unknown>}):Promise<AccountModelCatalog>{
+  const input={...original,profile:structuredClone(original.profile),context:{...original.context}},backendId=input.backendId??"codex-exec-json";
+  if(input.profile.id!==input.context.profileId||!["codex-exec-json","codex-app-server"].includes(backendId))throw new AdapterContractError("NATIVE_CONTEXT_CHANGED","Codex catalog account or backend differs from its owner");
   const request=input.request??readCodexNative;
   const query=(method:CodexReadRequest["method"],params:Record<string,unknown>)=>{if(input.signal?.aborted)throw new AdapterContractError("MODEL_CATALOG_CANCELLED","Native catalog read was cancelled");return request({executable:input.profile.executable??"codex",codexHome:input.profile.codexHome,workspacePath:input.workspacePath,method,params,...(input.signal?{signal:input.signal}:{})});};
   const account=object(await query("account/read",{refreshToken:false}));
@@ -73,8 +76,8 @@ export async function readCodexCatalog(input:{profile:CodexProfileConfig;context
     if(value.nextCursor===undefined||value.nextCursor===null){
       const configHash=async(path:string)=>{try{return createHash("sha256").update(await readFile(path)).digest("hex");}catch(error){if((error as NodeJS.ErrnoException).code==="ENOENT")return null;throw error;}};
       const authStamp=await stat(join(input.profile.codexHome,"auth.json")).then(s=>({size:s.size,mtime:s.mtimeMs})).catch(()=>null);
-      const fingerprint=digest({profileId:input.profile.id,runnerId:input.context.runnerId,repositoryId:input.context.repositoryId,executionContextRef:input.context.executionContextRef,codexHome:input.profile.codexHome,executable:input.profile.executable??"codex",account:account.account??null,authStamp,globalConfig:await configHash(join(input.profile.codexHome,"config.toml")),projectConfig:await configHash(join(input.workspacePath,".codex","config.toml"))});
-      const catalog=normalizeCodexCatalog({data},input.context,fingerprint,new Date().toISOString());
+      const fingerprint=digest({profileId:input.profile.id,backendId,runnerId:input.context.runnerId,repositoryId:input.context.repositoryId,executionContextRef:input.context.executionContextRef,codexHome:input.profile.codexHome,executable:input.profile.executable??"codex",account:account.account??null,authStamp,globalConfig:await configHash(join(input.profile.codexHome,"config.toml")),projectConfig:await configHash(join(input.workspacePath,".codex","config.toml"))});
+      const catalog=normalizeCodexCatalog({data},input.context,fingerprint,new Date().toISOString(),backendId);
       if(account.requiresOpenaiAuth===true&&!account.account){catalog.freshness="unverified";catalog.selectionSupport="native-default-only";catalog.failure={code:"NATIVE_AUTH_REQUIRED",message:"Native account authentication is required"};}
       return catalog;
     }

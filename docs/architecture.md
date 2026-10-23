@@ -1283,6 +1283,20 @@ clears a local host barrier only with a closed/not-created/drained receipt;
 uncertain roots remain retained. Controller configuration/registration and actual
 installed-protocol/account qualification are separate from this host contract.
 
+Explicit App Server registration uses the existing per-profile nativeInteraction
+field and confirmed ConfigPlan. It accepts compatible managed-worktree execution
+on an embedded Runner with absolute executable and CODEX_HOME paths and native
+login. Pi keeps its existing provider/backend pair. A configured App Server
+requires its exact supplied execution host; missing/mismatched hosts or native
+backend injection without opt-in are rejected rather than using exec. Full
+Controller host registration remains the next composition step.
+
+Codex catalog reads capture the profile, logical context and actual owning
+backend before asynchronous queries. Exec and App Server keep distinct backend
+identities in the fingerprint and content revision. Foreign account context and
+unsupported backend ids fail before I/O; catalog candidates still do not prove
+entitlement, native model confirmation, price or runtime capability.
+
 ## Diagnostic reads and registered checks
 
 The diagnostics snapshot combines saved account evidence, current transport

@@ -10,6 +10,7 @@ import {join} from "node:path";
 /** Structural registration contract; adapters do not depend on configuration or persistence. */
 export interface NativeProfileRegistration {
   id: string; alias: string; provider: string; enabled?: boolean; credentialRef?: string; settings?: Record<string, unknown>;
+  nativeInteraction?:{mode:"compatible";backendId:"pi-rpc"|"codex-app-server";executionLocation:"managed-worktree"};
 }
 /** Native account locations used by our registered adapters/catalogs; owning host only. */
 export function nativePrivatePaths(profiles:readonly NativeProfileRegistration[]):string[]{
@@ -54,7 +55,13 @@ export function createNativeProfileAdapter(profile: NativeProfileRegistration, o
   if (profile.enabled === false) return;
   if (profile.provider === "codex") {
     const native = codexProfile(profile); if (!native) return;
-    return new CodexAdapter(native, options.codexBackendFactory?.(native), options.store, options.codexNativeReader);
+    const configured=profile.nativeInteraction?.backendId;
+    if(configured&&configured!=="codex-app-server")throw new AdapterContractError("BACKEND_MISMATCH","Codex profile selects another provider's native backend");
+    const backend=options.codexBackendFactory?.(native);
+    if(configured&&!backend)throw new AdapterContractError("CODEX_RUNTIME_UNAVAILABLE","Configured Codex App Server requires its owning execution host");
+    if(configured&&backend?.backendId!==configured)throw new AdapterContractError("BACKEND_MISMATCH","Configured Codex native host returned a different backend");
+    if(!configured&&backend?.backendId==="codex-app-server")throw new AdapterContractError("NATIVE_INTERACTION_REQUIRED","Codex App Server requires explicit applied native configuration");
+    return new CodexAdapter(native, backend, options.store, options.codexNativeReader);
   }
   if (profile.provider !== "cursor" && profile.provider !== "kiro" && !isNativeCliProvider(profile.provider)) return;
   const native = cliProfile(profile), backend = options.cliBackendFactory?.(profile.provider, native), store = options.store, resolve = options.resolveCredential;

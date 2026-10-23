@@ -36,7 +36,7 @@ export interface AgentProfileConfig {
   runnerId: string;
   credentialRef?: string;
   settings?: Record<string, JsonValue>;
-  nativeInteraction?:{mode:"compatible";backendId:"pi-rpc";executionLocation:"managed-worktree";surface?:never};
+  nativeInteraction?:{mode:"compatible";backendId:"pi-rpc"|"codex-app-server";executionLocation:"managed-worktree";surface?:never};
 }
 
 export interface RepositoryConfig {
@@ -305,7 +305,7 @@ export const dispatcherConfigSchema = {
           enabled: { type: "boolean" },
           nativeInteraction: {
             type: "object", additionalProperties: false, required: ["mode", "backendId", "executionLocation"],
-            properties: { mode: { const: "compatible" }, backendId: { const: "pi-rpc" }, executionLocation: { const: "managed-worktree" } },
+            properties: { mode: { const: "compatible" }, backendId: { enum: ["pi-rpc","codex-app-server"] }, executionLocation: { const: "managed-worktree" } },
           },
           credentialRef: integrationSchema.properties.credentialRef,
           settings: { type: "object", additionalProperties: true },
@@ -445,13 +445,14 @@ export function validateConfig(input: unknown): DispatcherConfig {
       throw new ConfigValidationError([`/agentProfiles/${profile.id} references unknown runner ${profile.runnerId}`]);
     }
     if (profile.nativeInteraction) {
-      if (profile.provider !== "pi" || config.runners.find(runner => runner.id === profile.runnerId)?.mode !== "embedded") throw new ConfigValidationError([`/agentProfiles/${profile.id}/nativeInteraction requires Pi RPC on an embedded Runner`]);
-      for (const key of ["executable", "agentDirectory", "sessionDirectory"]) {
+      const pi=profile.nativeInteraction.backendId==="pi-rpc",provider=pi?"pi":"codex",label=pi?"Pi RPC":"Codex App Server";
+      if (profile.provider !== provider || config.runners.find(runner => runner.id === profile.runnerId)?.mode !== "embedded") throw new ConfigValidationError([`/agentProfiles/${profile.id}/nativeInteraction requires ${label} on an embedded Runner`]);
+      for (const key of pi?["executable", "agentDirectory", "sessionDirectory"]:["executable","codexHome"]) {
         const path = profile.settings?.[key];
-        if (typeof path !== "string" || !isAbsolute(path) || path.length > 4096 || Array.from(path).some(character => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127)) throw new ConfigValidationError([`/agentProfiles/${profile.id}/settings/${key} must be an explicit absolute Pi RPC path`]);
+        if (typeof path !== "string" || !isAbsolute(path) || path.length > 4096 || Array.from(path).some(character => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127)) throw new ConfigValidationError([`/agentProfiles/${profile.id}/settings/${key} must be an explicit absolute ${label} path`]);
       }
       const model = profile.settings?.model;
-      if (typeof model !== "string" || model.length > 240 || !/^[^\s/]+\/\S+$/u.test(model) || Array.from(model).some(character => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127)) throw new ConfigValidationError([`/agentProfiles/${profile.id}/settings/model must be an explicit Pi RPC provider/model`]);
+      if (pi&&(typeof model !== "string" || model.length > 240 || !/^[^\s/]+\/\S+$/u.test(model) || Array.from(model).some(character => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127))) throw new ConfigValidationError([`/agentProfiles/${profile.id}/settings/model must be an explicit Pi RPC provider/model`]);
     }
     if (profile.provider === "codex" && (typeof profile.settings?.codexHome !== "string" || !profile.settings.codexHome)) {
       throw new ConfigValidationError([`/agentProfiles/${profile.id}/settings/codexHome is required for Codex`]);
@@ -461,7 +462,7 @@ export function validateConfig(input: unknown): DispatcherConfig {
       && (!["cursor", "opencode", "grok", "antigravity"].includes(profile.provider) || typeof profile.settings.approveTools !== "boolean")) {
       throw new ConfigValidationError([`/agentProfiles/${profile.id}/settings/approveTools must be boolean and is supported only by Cursor, OpenCode, Grok or Antigravity`]);
     }
-    if (["opencode", "pi", "antigravity", "zcode", "workbuddy-cli", "qoder-cn"].includes(profile.provider) && profile.credentialRef) {
+    if ((["opencode", "pi", "antigravity", "zcode", "workbuddy-cli", "qoder-cn"].includes(profile.provider)||profile.nativeInteraction?.backendId==="codex-app-server") && profile.credentialRef) {
       throw new ConfigValidationError([`/agentProfiles/${profile.id} uses native login; credentialRef is not supported`]);
     }
     if (profile.provider === "zcode" && profile.settings?.model !== undefined) throw new ConfigValidationError([`/agentProfiles/${profile.id} selects its model in the native ZCode client`]);
