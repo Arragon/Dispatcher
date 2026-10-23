@@ -3026,3 +3026,30 @@ MCP HTTP transport recovered. INH-1924 checkpoint comment
 170/1762 result and the code/real-provider gaps. The quota final evidence is now
 also confirmed synchronized as described above. Append the final pricing commit
 and post-review gate after verification; do not mark the whole CV-07 card Done.
+
+CV-07 source and reviewed regression fixes are committed as254f866. The worktree
+was clean after commit. The final INH-1924 save_comment and INH-1924/INH-1917
+readbacks failed again at MCP HTTP transport; success is not assumed. A fallback
+through the already authorized Linear desktop app reached workspace search for
+INH-1924 but remained Syncing with no issue result, so no UI comment was posted.
+CV-06 final comment aca14007-7dea-424d-ac91-6a024a36357a and CV-07 pre-review
+checkpoint72a9f2e3-8843-4d44-bd1f-33eba3167ea9 remain the last confirmed reads.
+The254f866/170-files/1767-tests final result and umbrella delta still need remote
+read-before-write synchronization. This external outage does not block source
+work, justify guessing tracker state, or close the open Gates.
+
+Next independent CV-06 increment is owning-Runner account quota forwarding.
+Current RemoteNativeAdapter exposes no accountQuota and NativeRunnerRuntime
+registers no account-only quota command; canonical usage already has a separate
+Run-fenced transport. The account read must remain profile/account scoped and
+must not fabricate a Run or borrow its lease. Reuse the existing quota coordinator's
+bounded/coalesced reads, TTL/reset, last-success, context and cleanup guards on
+both physical owners rather than copying a weaker lifecycle. A pending physical
+reader must continue to fence its Runner account registration and shutdown even
+if the Controller's transport wait expires. New transport admission and DTO
+validation must preserve exact public decimal periods, verify owner/registration
+before and after awaits, and leave Runs/resources/native starts untouched.
+Qualification requires protocol negatives, malformed/foreign response rejection,
+capability/offline checks, pending-context/shutdown regressions, cached GET no
+provider traffic, restart preservation, and final pnpm check. Actual remote/native
+account evidence remains distinct from those controlled integration tests.
