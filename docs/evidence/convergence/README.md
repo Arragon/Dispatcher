@@ -3817,3 +3817,48 @@ a server; broad whole-branch review/integration remains at parentCV-14 after all
 development and local task reviews. If wrong these cost bounded consumer/context
 or cross-boundary rework; no native authority is granted by the rulings. Retain
 SDD reports/ledgers until that final review rather than finishing the branch now.
+
+### 2026-10-23 OpenCode owned host and canonical execution (locally complete)
+
+Source105ef8bc3c149c0b5b28a57a6f9276831c06e5fd plus reviewed compatibility
+fixa0096262f12e7c0bbe4c12083dae0bd9623fc550 preserve all20 owned-host and20
+execution source cases with canonical selection/observer adaptations. Current
+owned23/producer82/shared-observer66 include captured sanitized environment,
+root/group/natural-stream distinctions, sticky unknown cleanup, raw callback
+ownership, binding-before-prompt, durable terminal facts and pending-create
+uncertainty. Exact allocated opencode-session observation is separate from Pi's
+reserved and Codex's thread shapes; existing27 observer cases remain unchanged.
+Internal typed server execution is injected explicitly; no applied server
+profile, catalog qualification or Controller activation is inferred.
+
+Independent review found one Important prompt-bound regression and two Minor
+executable-bound/factory-receiver regressions. RED producer82 records8 failed/
+74 passed (exit1);3 production lines restore262144 UTF-16 units,4096 safe
+executable characters and the original factory receiver. Added13 regressions
+preserve accepted ASCII/CJK/surrogate inputs and reject actual oversized values
+before factory/I/O. Scoped fix re-review passes round1/5, all3 addressed, no new
+finding: /tmp/dispatcher-opencode-owned-execution-rereview-20261023.md.
+
+Retained gates are distinct: initial185/2410 exit0; pending-create RED exit1 then
+185/2411 exit0; fix1 lint no-this-alias exit1 before tests, then changed receiver
+test observation without suppression and final185/2424 exit0. Final focused4files/
+247 tests9.14s and scoped lint pass. Final default mise exec -- pnpm check passes
+build/typecheck/lint/boundaries and185 files/2424 tests87.92s (wall98.485s).
+Evidence: /tmp/dispatcher-opencode-task1-fix1-logs/full-check-after-receiver-style
+{.log,-source.json,-result.json}; earlier logs/manifests remain separately saved.
+Root compares all11 source/test/architecture/know-how Git blobs to the final gate
+SHA256 payload: exact match. Only documented plan checklist/evidence text changed
+afterward. No suite rerun by reviewers, skipped/loosened assertion, timeout/worker
+change, probe cache or unchanged-code retry. R-020 remains a separate unresolved
+historical native-probe issue, not resolved by a green current gate.
+
+Ruling: fix both Minor same-path constructor compatibility issues together with
+the Important source-contract regression because dependent runtime/config must
+receive one consistent constructor. If wrong, cost is bounded constructor/test
+rework; no native authority change. Broad review remains parentCV-14; retain SDD
+artifacts. Next canonical OpenCode catalog plan preserves31 source invariants on
+AccountModelCatalog, then scoped runtime12/service8 and explicit configuration.
+No dependency/persisted-format or real account/native/service activation occurred.
+CV-09 and goal remain incomplete. Official last quota79% used/21% remaining,
+ordinaryUsageAllowed=true and2 reset credits unused. Linear fix source receipt
+fec84563-dac7-4922-804c-1eb5ecfa485c saved; final reviewed receipts follow.

@@ -388,7 +388,10 @@ Controller exact-source/启动审批/全宿主关闭及原native-history reader/
 OpenCode server后端已保存5698afa：保留145个原始用例并新增32个原始上下文/
 异步持久化/project/审批回归；默认183文件/2280例和非测试门禁通过，独立
 spec/quality审查无遗留问题。当前仅内部后端及standalone只读注入，未激活
-server profile；owned host/producer/Controller/config/catalog及原真实Gates继续。
+server profile。owned host/producer及精确分配observer随后保存105ef8b与修复a009626，
+保留原20+20例，当前host23/producer82/shared observer66；完整185文件/2424例
+与非测试门禁通过，独立复审关闭3项输入兼容问题。清理未知、pending-create和
+持久化失败继续保守处理；catalog实际backend、Controller/runtime/config及原真实Gates继续。
 
 ### CV-10 · 保留其他本地Harness增量与Copilot未提交工作
 

@@ -90,8 +90,17 @@ authorizes attach, async waiting precedes input and received follows native ACK;
 local callback ownership and unknown native release stay explicit. This is the
 internal server/read-injection slice only, with no profile/server activation.
 
-Next: retained OpenCode owned-host/execution/Controller stack and its60 original
-cases, config/catalog adaptation, other native providers, then actual
+OpenCode owned host/producer and exact allocated observer are now saved at105ef8b
+with compatibility fixes a009626. All20+20 original host/producer cases remain;
+current23 host/82 producer and66 shared observer cases cover captured environment,
+pending-create uncertainty, callback ownership, durable terminal facts and source
+input/receiver compatibility. Independent scoped review closes all3 findings.
+Final default check passes185 files/2424 tests (87.92s), plus non-test gates;11
+source/test/architecture/knowledge Git blobs match its captured source manifest.
+The earlier compatibility RED and lint failure remain separate retained evidence.
+
+Next: canonical OpenCode catalog identity/capture, retained Controller runtime/
+service and their20 original cases, explicit ConfigPlan registration, other native providers, then actual
 provider/GUI/writer/service/release qualification. The
 current integration used fixtures only; no real account/config/service activation
 or persisted-format/dependency change occurred. CV-09 and the full goal remain
