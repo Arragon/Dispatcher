@@ -7,7 +7,7 @@ import * as versionProbe from "../src/native-version-probe.js";
 
 const cleanup:Array<()=>Promise<void>>=[];
 afterEach(async()=>{for(const close of cleanup.splice(0))await close();});
-function fixture(mode="normal"){
+function fixture(mode="normal",beforeSpawn?:()=>void){
  const root=realpathSync(mkdtempSync(join(tmpdir(),"opencode-owned-host-"))),file=join(root,"native.cjs");
  const source=`#!${process.execPath}
 const fs=require('node:fs'),http=require('node:http'),path=require('node:path');
@@ -47,7 +47,7 @@ setTimeout(()=>process.exit(2),30000);
 `;
  writeFileSync(file,source);chmodSync(file,0o700);if(mode==="missing")rmSync(file);
  const scope={profileId:"p",runnerId:"local",nativeStoreRef:"store-unqualified",workspacePath:root,scopeFingerprint:"scope",backendId:"opencode-server-v2" as const,executable:file};
- const host=new adapters.OpenCodeV2OwnedServer(scope);cleanup.push(async()=>{await host.disconnectLocal();rmSync(root,{recursive:true,force:true});rmSync(root+".old",{recursive:true,force:true});});return {root,file,scope,host};
+ const host=new adapters.OpenCodeV2OwnedServer(scope,beforeSpawn);cleanup.push(async()=>{await host.disconnectLocal();rmSync(root,{recursive:true,force:true});rmSync(root+".old",{recursive:true,force:true});});return {root,file,scope,host};
 }
 it("starts a version-pinned private loopback host with cwd/PWD and a scoped port",async()=>{
  const f=fixture();const port=await f.host.ready();const started=JSON.parse(readFileSync(join(f.root,"started.json"),"utf8"));
@@ -120,4 +120,13 @@ it('retains exit-unconfirmed probe uncertainty without inventing absent service 
 });
 it('closes admission on root exit independently of inherited pipe drain',async()=>{
  const f=fixture();await f.host.ready();const request=f.host.request({method:'GET',path:'/api/root-exit'}).catch(error=>error);await vi.waitFor(()=>expect(existsSync(join(f.root,'root-exiting'))).toBe(true));await expect(f.host.request({method:'GET',path:'/api/echo'})).rejects.toMatchObject({code:'OPENCODE_LOCAL_CONNECTION_CLOSED'});await request;const receipt=await f.host.disconnectLocal();expect(receipt).toMatchObject({connection:'closed',ownedRoot:'exited',callbacks:'unknown',backgroundTools:'unknown'});await new Promise(resolve=>setTimeout(resolve,1800));expect((await f.host.disconnectLocal()).callbacks).toBe('unknown');
+});
+
+it('rejects an asynchronous spawn admission before acquiring the owned version probe',async()=>{
+ const probe=vi.spyOn(versionProbe,'readOwnedNativeVersion'),guard=vi.fn(async()=>{});
+ try{const f=fixture('normal',guard);expect(await f.host.ready().then(()=>({state:'resolved'}),error=>({state:'rejected',code:error.code,outcome:error.outcome,message:error.message}))).toMatchObject({state:'rejected',code:'OPENCODE_SPAWN_ADMISSION_REJECTED',outcome:'not-created',message:'OPENCODE_SPAWN_ADMISSION_REJECTED'});expect(guard).toHaveBeenCalledTimes(1);expect(probe).not.toHaveBeenCalled();expect(existsSync(join(f.root,'probe-environment.json'))).toBe(false);expect(existsSync(join(f.root,'started.json'))).toBe(false);expect(await f.host.disconnectLocal()).toMatchObject({connection:'closed',ownedRoot:'not-created',callbacks:'drained',backgroundTools:'unknown',nativeSessionDeleted:false});}finally{probe.mockRestore();}
+});
+it('rechecks the original spawn admission after a gated owned version probe before service spawn',async()=>{
+ let allowed=true;const guard=vi.fn(()=>{if(!allowed)throw Error('secret://private-path');}),f=fixture('probe-gate',guard);
+ await vi.waitFor(()=>expect(existsSync(join(f.root,'probe-entered'))).toBe(true));allowed=false;writeFileSync(join(f.root,'probe-release'),'continue');expect(await f.host.ready().then(()=>({state:'resolved'}),error=>({state:'rejected',code:error.code,outcome:error.outcome,message:error.message}))).toMatchObject({state:'rejected',code:'OPENCODE_SPAWN_ADMISSION_REJECTED',outcome:'not-created',message:'OPENCODE_SPAWN_ADMISSION_REJECTED'});expect(guard).toHaveBeenCalledTimes(2);expect(existsSync(join(f.root,'probe-environment.json'))).toBe(true);expect(existsSync(join(f.root,'started.json'))).toBe(false);expect(existsSync(join(f.root,'session.json'))).toBe(false);expect(existsSync(join(f.root,'prompt.txt'))).toBe(false);const receipt=await f.host.disconnectLocal();expect(receipt).toMatchObject({connection:'closed',ownedRoot:'not-created',callbacks:'drained',backgroundTools:'unknown',nativeSessionDeleted:false});receipt.connection='unknown';expect((await f.host.disconnectLocal()).connection).toBe('closed');
 });

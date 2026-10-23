@@ -4,6 +4,7 @@ import {realpathSync,statSync} from "node:fs";
 import {isAbsolute} from "node:path";
 import {StringDecoder} from "node:string_decoder";
 import {isDeepStrictEqual} from "node:util";
+import {assertAdapterWriteAdmission} from "./contracts.js";
 import type {LocalRuntimeDisconnect} from "./interaction-contracts.js";
 import {OpenCodeV2Error,OpenCodeV2HttpTransport,OpenCodeV2InteractionPort,isOpenCodeV2ProtocolVersion,type OpenCodeV2Request,type OpenCodeV2Scope,type OpenCodeV2Transport} from "./opencode-server.js";
 import {OwnedProcessGroup} from "./owned-process.js";
@@ -20,6 +21,7 @@ function directory(path:string):DirectoryIdentity {
 /** Owns only the newly spawned stdio server; native tool/writer state stays unknown. */
 export class OpenCodeV2OwnedServer implements OpenCodeV2Transport {
  private readonly scope:OpenCodeV2OwnedScope;
+ private readonly beforeSpawn:(()=>void)|undefined;
  private readonly workspace:DirectoryIdentity;
  private readonly environment:NodeJS.ProcessEnv;
  private temporary?:DirectoryIdentity;
@@ -38,9 +40,9 @@ export class OpenCodeV2OwnedServer implements OpenCodeV2Transport {
  #password:string|undefined;
  private childCleanup?:Promise<void>;
  private cleanup?:Promise<LocalRuntimeDisconnect>;
- constructor(scope:OpenCodeV2OwnedScope){
+ constructor(scope:OpenCodeV2OwnedScope,beforeSpawn?:()=>void){
   if(![scope.profileId,scope.runnerId,scope.nativeStoreRef,scope.scopeFingerprint,scope.workspacePath,scope.executable].every(value=>typeof value==="string"&&value.length>0&&value.length<=4096&&Array.from(value).every(char=>char.charCodeAt(0)>=32&&char.charCodeAt(0)!==127))||!["opencode-server-v2","opencode-cli-json"].includes(scope.backendId)||scope.protocolVersion!==undefined&&!isOpenCodeV2ProtocolVersion(scope.protocolVersion))throw new OpenCodeV2Error("OPENCODE_SCOPE_INVALID","not-created");
-  this.scope=structuredClone(scope);this.environment=childExecutionEnvironment(process.env);try{this.workspace=directory(scope.workspacePath);}catch{throw new OpenCodeV2Error("OPENCODE_SCOPE_CHANGED","not-created");}
+  this.beforeSpawn=beforeSpawn;this.scope=structuredClone(scope);this.environment=childExecutionEnvironment(process.env);try{this.workspace=directory(scope.workspacePath);}catch{throw new OpenCodeV2Error("OPENCODE_SCOPE_CHANGED","not-created");}
   this.opening=this.open().catch(async error=>{this.closeAdmission();await this.cleanChild();throw new OpenCodeV2Error(error instanceof OpenCodeV2Error?error.code:"OPENCODE_RUNTIME_UNAVAILABLE",this.child?"unknown":"not-created");});
   void this.opening.catch(()=>undefined);
  }
@@ -60,6 +62,7 @@ export class OpenCodeV2OwnedServer implements OpenCodeV2Transport {
   // A fresh stdio host has no service password or PTY handoff to inherit.
   delete env.OPENCODE_SERVER_PASSWORD;delete env.OPENCODE_PTY_HANDOFF;
   const ownsGroup=process.platform!=="win32";
+  this.assertSpawnAdmission();
   const child=spawn(this.scope.executable,["serve","--stdio","--hostname","127.0.0.1","--port","0"],{cwd:this.workspace.path,env,shell:false,detached:ownsGroup,stdio:["pipe","pipe","pipe"]});
   this.streamsClosed=new Promise(resolve=>child.once("close",()=>resolve()));
   this.child=child;this.cancellation=new OwnedProcessGroup(child);
@@ -76,7 +79,13 @@ export class OpenCodeV2OwnedServer implements OpenCodeV2Transport {
   this.port=new OpenCodeV2InteractionPort({...this.scope,protocolVersion:version,server:{pid:child.pid!,tmpDirectory:this.temporary.path,ownership:"owned",shared:false}},this);
   return this.port;
  }
+ private assertSpawnAdmission():void {
+  this.assertOpen("not-created");
+  try{assertAdapterWriteAdmission(this.beforeSpawn);}catch{throw new OpenCodeV2Error("OPENCODE_SPAWN_ADMISSION_REJECTED","not-created");}
+  this.assertOpen("not-created");
+ }
  private async readVersion():Promise<string>{
+  this.assertSpawnAdmission();
   this.probeState="pending";
   try{return await readOwnedNativeVersion({executable:this.scope.executable,workspacePath:this.workspace.path,environment:this.environment,signal:this.startupAbort.signal,failure:code=>new OpenCodeV2Error(code==="exit-unconfirmed"?"OPENCODE_PROBE_EXIT_UNCONFIRMED":this.closed?"OPENCODE_LOCAL_CONNECTION_CLOSED":"OPENCODE_RUNTIME_UNAVAILABLE","not-created")});}
   catch(error){if(error instanceof OpenCodeV2Error&&error.code==="OPENCODE_PROBE_EXIT_UNCONFIRMED")this.probeState="exit-unconfirmed";throw error;}

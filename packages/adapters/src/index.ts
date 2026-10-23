@@ -28,3 +28,5 @@ export * from "./opencode-server.js";
 
 export * from "./opencode-owned-server.js";
 export * from "./opencode-execution.js";
+
+export {freezeExecutionSelection} from "./execution-selection.js";
