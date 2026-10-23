@@ -62,25 +62,30 @@ data or installed service was upgraded. Conditional-free/rate-interval producer
 admission and real native rate evidence remain required; unqualified rates stay
 unavailable, with no static/public price fallback.
 
-Current2026-10-23 Codex checkpoint: the canonical backend/internal per-execution
-host and explicit ConfigPlan/profile/catalog/Controller composition are locally
-verified. Final uninstrumented defaultfull4 passes178 files/2056 tests (87.11s)
-and all non-test gates, after independent review and proven regression fixes.
-The scoped service retains all59 source case groups with current canonical
-fixtures and adds15 regressions. Restart recovers only consistent bound metadata
-as UNKNOWN/manual with no native connection/replay; unsupported or partial data
-keeps the original preflight barrier. Exact binding sources, original invocation
-and lease guards, startup approval settlement and all-backend cleanup receipts
-remain separate from actual writer authority. Failed persistence retains the
-closed host until durable-only retry; active canonical Runs still block account
-replacement. Earlier R-020 probe failures remain unresolved evidence, not a
-causally fixed issue or the current gate result. The newly introduced history
-scan regression was caught by the original10k test and fixed with existing SQL
-filtering; zero unrelated historical JSON decodes is preserved.
-Next: port the retained native-history service/API and assertions through the
-exact current source/authorization, then OpenCode and actual provider/GUI/service/
-release qualification. No actual account configuration or service was activated
-by this fixture-based integration; the full goal and CV-09 remain incomplete.
+Current2026-10-23 checkpoint: Codex canonical backend/per-execution host,
+ConfigPlan/profile/catalog/Controller composition and the retained native-history
+reader/API are locally verified. Final uninstrumented native-history full3 passes
+179 files/2103 tests (86.37s) and build/typecheck/lint/boundaries after scoped
+independent review and proven RED/GREEN fixes. All59 source Codex service case
+groups remain with canonical fixtures; current service90 includes15 composition
+regressions and16 history API cases. All27 reader cases remain unchanged plus4
+new admission/metadata regressions. Authorized history is bounded and exact-source;
+no transcript persistence/input/reattachment or cold replay is inferred.
+
+Restart recovers only consistent bound metadata as UNKNOWN/manual; unsupported or
+partial data keeps the preflight barrier. Failed local receipt persistence
+retains the closed host for durable-only retry; active canonical Runs still block
+account replacement. R-020 native-probe intermittency is retained, not causally
+fixed by a green suite. A distinct observed transport fixture race (pathname
+visible before JSON completion) is fixed through atomic temporary-file publication
+with unchanged exact receipt/callback/deadline assertions. The unchanged10k test
+continues to prove zero unrelated historical JSON decodes.
+
+Next: retained OpenCode backend/host/service and original assertions, other native
+providers, then actual provider/GUI/writer/service/release qualification. The
+current integration used fixtures only; no real account/config/service activation
+or persisted-format/dependency change occurred. CV-09 and the full goal remain
+incomplete.
 
 ## Historical checkpoint 2026-10-22: stopped at remaining 0%
 

@@ -976,3 +976,16 @@
   reconciliation while old observations and source ownership become unknown.
   Partial/conflicting bindings retain the preflight barrier; neither case permits
   cold continuation or replay of a possibly delivered native start.
+
+- A queued native history read must recheck source and authorization inside its
+  scheduled I/O callback. Initial authorization plus an after-await check can
+  still call the provider after permission has been revoked in between.
+- Date.parse accepts some parenthesized text containing credential assignments.
+  Finite date parsing alone does not sanitize history metadata. Apply the same
+  safe-metadata check as identities/cursors and reject an unsafe page rather than
+  inventing a cleaned timestamp; keep transcript out of Core persistence.
+
+- A child fixture's JSON pathname can become visible before writeFileSync finishes
+  writing it. If existence signals a completed receipt, write a sibling temporary
+  file and rename after close. Keep exact content/callback assertions and the
+  existing deadline instead of sleeps, longer timeouts or suppressed parse errors.

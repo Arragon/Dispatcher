@@ -3684,3 +3684,73 @@ CV-09, native-history/OpenCode and original real Gates remain In Progress. This
 checkpoint neither fixes R-020 causally nor promotes any fixture capability to
 actual account/installed protocol qualification. No push/merge/PR/deploy/native
 account operation, persisted-format change or dependency addition occurred.
+
+Task2 source saved ate9f6329. Final CV-09 receipt2b4eee65-40e7-4b0d-b59d-1a70a20a0eca
+and umbrella0344087c-9049-40cf-ad67-11a48e1d88bd are saved/read back with source
+and2056-test evidence. Quota54% used/46% remaining; reset credits unused. Continue
+the dependency-ready retained native-history reader/API using the saved follow-on
+plan. Its source service110 lines and original tests80 lines are available from
+a499d84; actual target files were absent at this checkpoint, not silently complete.
+
+
+### 2026-10-23 bounded native history service/API port (in progress)
+
+Basee9f6329. Reused the110-line same-repository a499d84 NativeHistoryService and
+all27 expanded source cases without removing or changing their assertions.
+Missing target module RED is retained, then27/27 pass with the preserved source.
+Added16 API cases first fail because the route is absent, then pass after exact
+Controller source/NativeInteractions composition: selected execution only,
+auth before read, default50/max100/native cursor, no transcript persistence or
+native input/replacement, unknown unqualified reads, malformed queries, original
+adapter/runtime/generation/lease/selection/reference/shutdown drift and authorized
+terminal history. The existing manual canonical fixture now names its local
+project, as required by real history authorization, without production DTO changes.
+
+Own review reproduces one queued-read gap: immediate scope revocation still
+called history once despite a forbidden response. A new RED case now passes after
+recheck at actual queued read admission. Independent read-only review confirms a
+P2 timestamp normalization gap: Date.parse can accept parenthesized credential
+text that the generic reader returned unchanged. Three credential-bearing date
+cases reproduceRED; safeMetadata now rejects the whole page while retaining the
+existing length/date constraints. Actual Codex omits this field and Pi has an
+additional timestamp-prefix guard; this is a core reader fix, not claimed as a
+proven current Codex/Pi end-to-end leak. Original assertions remain unchanged.
+
+Current target has31 reader and90 service cases; focused6-file/143-case checks
+pass. The first default full passes179 files/2100 cases (87.54s) before the3 new
+timestamp regressions/fix; final full2 and scoped review recheck remain required.
+Logs: /tmp/dispatcher-native-history-{red,first,api-red,api-first,admission-red,
+targeted,timestamp-red,targeted2,full,full2}-20261023.log. No skips, weakened tests,
+new deadline/worker/retry policy, native/account action, dependency or persisted
+format change. Current Linear447c9f9c-f035-4d86-9072-0678dcb14071 is saved/read back.
+Review's actual-provider/cursor/service/GUI/writer/release limits are accepted as
+existing separate Gates; the parent CV-09 and overall goal remain incomplete.
+
+
+Timestamp P2 is fixed and independently approved:3 new RED dates now reject via
+safeMetadata while keeping length/date parsing and ordinary ISO values. Focused
+final history/regression suite passes6 files/143 tests. Finalfull2 passes all
+non-test gates and2102/2103 tests in87.95s; its sole failure is a transport fixture
+publication race at codex-app-server-transport.test.ts:90 (Unexpected end of JSON
+input after observing reply.json existence), distinct from the retained R-020
+startup-probe issue. The child wrote directly to its observable JSON path, so the
+parent could see an empty file during write. Only that fixture now writes a
+sibling temporary file then renames after completion. Original callback-once,
+exact receipt, timeout and worker assertions/settings remain unchanged; production
+transport is untouched. Scoped review approves this synchronization fix, and
+transport+reader+service checks pass3 files/137 cases. An API assertion also keeps
+ordinary ISO timestamp metadata unchanged. Finalfull3 is running after the
+fixture correction, not an unchanged-code retry to green. No original failure log
+is discarded. Actual provider/cursor and native Gates remain separate; the
+executor accepts those scoped-review exclusions without promoting their status.
+
+
+Final native-history source gate: defaultfull3 exits0 with179 files/2103 tests in
+86.37s, plus build/typecheck/lint/boundaries. It contains the timestamp safe-metadata
+fix, ordinary ISO API preservation and atomic child receipt publication. No source
+or test edits followed this check; only final evidence/plan/disposition notes.
+Scoped review has no residual findings. The native-history increment is locally
+complete, while parentCV-09/OpenCode and all original actual Gates stay open.
+Current Linear19a8a185-939f-4953-9b0e-5cc542fdc7d0 is saved/read back. Quota57%
+used/43% remaining with both reset credits unused. The source manifest remains503
+rows; no synthetic source entry or real capability promotion was added.

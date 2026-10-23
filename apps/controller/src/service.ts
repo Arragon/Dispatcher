@@ -1,6 +1,7 @@
 import {CanonicalLocalResults} from "./local-results.js";
 import {CodexExecutionRuntime} from "./codex-runtime.js";
 import {PiExecutionRuntime} from "./pi-runtime.js";
+import {NativeHistoryService,NativeHistoryError} from "./native-history.js";
 import {nativeSessionView} from "./native-session-view.js";
 import {isGuardedControllerStart,isReadableManagedCodexRun} from "./start-recovery.js";
 import {parseNativeModelDefaultReview,qualifyNativeModelDefault,readNativeModelDefaultEvidence} from "./model-defaults.js";
@@ -862,6 +863,18 @@ export class ControllerService {
     const runtime=this.nativeRuntime(binding.profileId);
     if(runtime)return this.nativeRuntimeAdapters.get(runtime)===this.agentAdapters.get(binding.profileId)?runtime.source(binding):undefined;
     return this.agentAdapters.get(binding.profileId)?.interaction;
+  }
+
+  private nativeHistoryService(expectedRun:Run):NativeHistoryService {
+    const captured=structuredClone(expectedRun);
+    return new NativeHistoryService(this.database,binding=>{
+      if(this.stopping)return undefined;
+      try{const port=this.nativePort(binding),handle=port?.readHandle?.(structuredClone(binding));return port&&handle&&isDeepStrictEqual(handle.binding,binding)?{binding,scopeFingerprint:handle.scopeFingerprint,port}:undefined;}catch{return undefined;}
+    },(principal,scope)=>{
+      const run=this.database.getEntity<JsonValue>("run",scope.runId) as unknown as Run|undefined;
+      if(!run||run.id!==captured.id||run.sessionId!==captured.sessionId||run.taskId!==captured.taskId||run.profileId!==captured.profileId||run.providerId!==captured.providerId||run.runnerId!==captured.runnerId||run.generation!==captured.generation||run.attempt!==captured.attempt||run.leaseId!==captured.leaseId||run.worktree!==captured.worktree||!isDeepStrictEqual(run.executionRef,captured.executionRef)||!isDeepStrictEqual(run.executionSelection,captured.executionSelection))return false;
+      return this.nativeInteractions.authorizeInteraction(principal,"history",this.nativeInteractions.fenceFor(run,"history-read")).allowed;
+    });
   }
 
   private async refreshNativeObservation(run:Run,principal:InteractionPrincipal):Promise<void> {
@@ -4646,6 +4659,14 @@ export class ControllerService {
       try {const binding=hasSession?store.binding(run.sessionId):undefined;capabilities=binding?this.nativePort(binding)?.capabilities():undefined;}catch{/* An invalid declaration cannot qualify any capability. */}
       return {run,contract,nativeSession:nativeSessionView(this.database,run,capabilities,this.now())};
     });
+    this.app.get<{Params:{id:string};Querystring:{cursor?:string;limit?:string}}>("/api/runs/:id/history",async(request,reply)=>{
+      const principal=this.principalFor(request);
+      const query=request.query;
+      if(Object.keys(query).some(key=>!['cursor','limit'].includes(key))||query.limit!==undefined&&(typeof query.limit!=="string"||!/^\d{1,3}$/.test(query.limit)||Number(query.limit)<1)||query.cursor!==undefined&&typeof query.cursor!=="string")return reply.code(400).send({code:"INVALID_HISTORY_REQUEST"});
+      const run=this.database.getEntity<JsonValue>("run",request.params.id) as unknown as Run|undefined;
+      if(!run)return reply.code(404).send({code:"RUN_NOT_FOUND"});
+      return {source:"native",page:await this.nativeHistoryService(run).readNativeHistory({...principal,profileId:run.profileId},run.sessionId,{...(query.cursor!==undefined?{cursor:query.cursor}:{}),...(query.limit!==undefined?{limit:Number(query.limit)}:{})})};
+    });
     this.app.get<{Params:{id:string}}>("/api/runs/:id/result",async(request,reply)=>{
       const result=this.database.getEntity<JsonValue>("run-result",request.params.id);
       return result?{result,...((result as {deliveryType?:string}).deliveryType==="none"?{review:await this.localResults.read(request.params.id)}:{})}:reply.code(404).send({code:"RUN_RESULT_UNAVAILABLE"});
@@ -4906,14 +4927,14 @@ export class ControllerService {
       const semanticStatus = error instanceof SemanticPolicyError
         ? error.code === "FORBIDDEN" ? 403 : error.code === "STALE_WORKFLOW" ? 409 : 400
         : undefined;
-      const status = error instanceof InteractionGuardError?error.code==="FORBIDDEN"?403:409:error instanceof AdapterAdmissionError?409:error instanceof LocalGitDeliveryError?409:error instanceof UsageObservationError?400:error instanceof InputReceiptError||error instanceof AdapterContractError&&["SESSION_DETACHED","SESSION_CANCELLED","SESSION_BUSY","SESSION_CONTEXT_CHANGED","CANCELLATION_UNCONFIRMED"].includes(error.code)?409:error instanceof PublicationError ? error.statusCode : error instanceof TaskDispatchError ? error.statusCode : error instanceof RevisionConflictError
+      const status = error instanceof NativeHistoryError?error.code==="FORBIDDEN"?403:error.code==="INVALID_HISTORY_REQUEST"?400:409:error instanceof InteractionGuardError?error.code==="FORBIDDEN"?403:409:error instanceof AdapterAdmissionError?409:error instanceof LocalGitDeliveryError?409:error instanceof UsageObservationError?400:error instanceof InputReceiptError||error instanceof AdapterContractError&&["SESSION_DETACHED","SESSION_CANCELLED","SESSION_BUSY","SESSION_CONTEXT_CHANGED","CANCELLATION_UNCONFIRMED"].includes(error.code)?409:error instanceof PublicationError ? error.statusCode : error instanceof TaskDispatchError ? error.statusCode : error instanceof RevisionConflictError
         ? 409
         : error instanceof LlmRuntimeError
           ? error.code === "SELECTION_CHANGED" ? 409 : error.code === "NO_AVAILABLE_PROFILE" ? 503 : 400
         : error instanceof ConfigPlanError && ["PROFILE_CONTEXT_CHANGED","CONNECTOR_CONTEXT_CHANGED","REMOTE_DRAFT_PROBE_UNAVAILABLE","RUNNER_CREDENTIAL_BUSY","CREDENTIAL_CHANGE_PENDING","CREDENTIAL_IN_USE","NATIVE_PICKER_UNAVAILABLE","NATIVE_PICKER_BUSY"].includes(error.code)?409:error instanceof ConfigPlanError || error instanceof ConfigValidationError
           ? 400
           : semanticStatus ?? workspaceStatus ?? connectorStatus ?? secretStatus ?? (error && typeof error === "object" && "validation" in error ? 400 : 500);
-      const code = error instanceof InteractionGuardError||error instanceof LocalGitDeliveryError||error instanceof UsageObservationError||error instanceof InputReceiptError||error instanceof AdapterContractError||error instanceof PublicationError || error instanceof TaskDispatchError || error instanceof RevisionConflictError || error instanceof ConfigPlanError || error instanceof SecretStoreError || error instanceof LlmRuntimeError || error instanceof ConnectorError || error instanceof WorkspacePolicyError || error instanceof SemanticPolicyError
+      const code = error instanceof NativeHistoryError||error instanceof InteractionGuardError||error instanceof LocalGitDeliveryError||error instanceof UsageObservationError||error instanceof InputReceiptError||error instanceof AdapterContractError||error instanceof PublicationError || error instanceof TaskDispatchError || error instanceof RevisionConflictError || error instanceof ConfigPlanError || error instanceof SecretStoreError || error instanceof LlmRuntimeError || error instanceof ConnectorError || error instanceof WorkspacePolicyError || error instanceof SemanticPolicyError
         ? error.code
         : error instanceof ConfigValidationError
           ? error.code

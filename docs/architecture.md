@@ -1326,6 +1326,29 @@ identities in the fingerprint and content revision. Foreign account context and
 unsupported backend ids fail before I/O; catalog candidates still do not prove
 entitlement, native model confirmation, price or runtime capability.
 
+## Authorized native history
+
+`GET /api/runs/:id/history` resolves the selected canonical Run/session and exact
+persisted native binding through the owning runtime source. It authorizes before
+source discovery and again at queued I/O admission and after completion. Captured
+Run generation, attempt, lease, selection/reference, workspace and original port
+must remain current; a replaced adapter, closed runtime or shutdown cannot publish
+a late page. Authorized HUMAN/terminal history remains a read and requires no
+execution mutation authority. Missing or unqualified sources yield bounded
+unknown/unsupported pages without native input, reattachment or a new session.
+
+The preserved native reader requests50 entries by default, caps pages at100,
+retains actual native cursors/order and distinguishes deleted/unreachable,
+summary-only, gaps and partial ranges. Each entry/page/serialized response is
+bounded; only the requested normalized page leaves the read path. Text and
+metadata use existing redactors; credentials in parseable timestamp metadata
+cause rejection instead of invented cleaned identities. No transcript is saved
+to Core or emitted as binding events.
+
+A five-second deadline aborts the original read context; a late result cannot
+return transcript or update persistence. HTTP close and owning native-host cleanup
+remain separate from native writer-release or actual-provider qualification.
+
 ## Diagnostic reads and registered checks
 
 The diagnostics snapshot combines saved account evidence, current transport
