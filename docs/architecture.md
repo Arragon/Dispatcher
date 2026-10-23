@@ -1252,6 +1252,21 @@ synchronous and checks model/execution/observer/identity on both sides of the
 callback. Pi retains the reserved-identity default. This internal contract does
 not register or activate a Codex runtime.
 
+The internal App Server backend consumes one captured canonical execution
+selection and managed execution reference with the original synchronous final
+admission callback. An explicitly injected CodexAdapter uses the same durable
+observer and waits for native readiness, preserving the allocated identity when
+publishing RUNNING. Default exec registration remains unchanged. Generic native
+send/resume/cancel stay closed until the owning command/stop path is qualified.
+Read/history and source-kind observations do not qualify native UI surfaces.
+
+Binding and turn-event callbacks share runtime ownership. Initial event durability
+precedes the first prompt; terminal result settlement waits for the durable event.
+A callback failure fences further input. Local disconnect cancels local waiters
+without revoking already admitted callback work; the existing bounded shutdown
+reports callbacks unknown if that work has not drained, independently of root
+exit. Neither callback completion nor local cleanup proves native writer release.
+
 ## Diagnostic reads and registered checks
 
 The diagnostics snapshot combines saved account evidence, current transport

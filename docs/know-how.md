@@ -20,6 +20,12 @@
   it, and never accept a Promise as synchronous permission. Historical partial
   identity needs reconciliation rather than completion from current config.
 
+- A durable native-event sink may return a Promise. Keep the raw admitted work
+  owned through local disconnect, await startup persistence before prompting and
+  terminal persistence before settling the result. Cancelling a local wait does
+  not cancel a database write; a bounded shutdown must retain callbacks unknown
+  while that write is still pending, even if the owned native root has exited.
+
 - Fastify hijacked dashboard SSE responses must be ended before awaiting
   `app.close()`. Waiting for server close first leaves an open browser holding
   graceful shutdown. Own each response cleanup once, including its timer and

@@ -191,3 +191,17 @@ local gate; it does not erase earlier failures or explain the macOS loader stall
 The six-probe /tmp experiment captured one3.031s failure before JavaScript entry,
 with797 owned-child samples at _dyld_start, then five25–44ms successes. No host
 policy or unrelated process was changed; exact OS trigger remains unresolved.
+
+CV-09 Task2 now preserves the internal App Server backend and its64 source
+cases with28 canonical/async/Adapter regressions. Read-only review's2 P2 findings
+and a narrow input-evaluation follow-up are fixed with RED/GREEN evidence;
+per-turn facts are ordered so pending running persistence cannot be overtaken
+by terminal success. Focused7/164 and final correction4/130 pass. Pre-final full3
+passes175/1916; final full4 on the actual reviewed version is RED at172/175 files,
+1914/1917 tests (84.65s):3 Pi version probes fail before Promise-guard, settlement
+and file-boundary assertions. All Codex92/transport16 and non-test gates pass.
+A prior combined target also failed one Codex owned version probe, extending
+the intermittent evidence beyond Pi. Do not retry to green or weaken deadlines.
+Task2 and the whole branch remain pending final regression qualification;
+continue independent runtime/ConfigPlan/native-source units with those safety
+boundaries intact. No backend registration, actual account or service activation.

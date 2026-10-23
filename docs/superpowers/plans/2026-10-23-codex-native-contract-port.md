@@ -16,7 +16,7 @@
 - Configuration changes go through ConfigPlan; secrets remain opaque secret references.
 - Preserve original source assertions and immutable historical facts; no alternative session or native writer release may be inferred.
 - Real account, installed protocol, native GUI and release Gates remain separate from fixtures.
-- R-020 currently blocks full regression: final173-file/1798-test check has6 Pi probe failures. Preserve logs and do not weaken3s deadlines, assertions or worker defaults.
+- R-020 retains intermittent native probe failures. Task1 final174-file/1825-test check passed; Task2 combined target has one Codex version-probe failure. Preserve every log and do not weaken3s deadlines, assertions or worker defaults.
 - User authorized uninterrupted full-plan execution; continue native inline implementation without a new approval round. Required review remains read-only and scoped.
 
 ## Review focus
@@ -45,9 +45,9 @@
 
 **Interfaces:** Export existing Codex turn/result/start types with ready/events/native observer fields required by the actual backend. App Server start consumes captured canonical execution selection/reference and the original synchronous final guard. Adapter dynamic backend identity and durable callbacks use Task1; exec defaults remain codex-exec-json. AttachRequest consumes executionSelection and current validateExecutionBinding context, never legacy modelSelection.
 
-- [ ] Port source read/cancellation/directory/producer/disconnect cases with explicit canonical fixture adaptation. Document the already migrated7 transport cases and retain every remaining source assertion or named prerequisite; do not skip failures.
-- [ ] Observe RED for missing backend/Adapter behavior; add wrong or absent selection/reference and asynchronous-guard cases.
-- [ ] Reuse source backend behavior, adapting only current DTOs and actual lifecycle boundaries. Keep unsupported native token events, release/reclaim and UI surfaces unknown.
+- [x] Port source read/cancellation/directory/producer/disconnect cases with explicit canonical fixture adaptation. Document the already migrated7 transport cases and retain every remaining source assertion or named prerequisite; do not skip failures.
+- [x] Observe RED for missing backend/Adapter behavior; add wrong or absent selection/reference and asynchronous-guard cases.
+- [x] Reuse source backend behavior, adapting only current DTOs and actual lifecycle boundaries. Keep unsupported native token events, release/reclaim and UI surfaces unknown.
 - [ ] Run migrated Codex/backend/observer targets and existing exec/catalog/quota/selection tests, then full `mise exec -- pnpm check`; preserve all failures and source mappings.
 - [ ] Independent scoped review, fix proven findings with RED/GREEN, update evidence and Linear with readback, checkpoint. No activation is implied.
 

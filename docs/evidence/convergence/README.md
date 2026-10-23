@@ -3342,3 +3342,126 @@ startup follow-up with all previous failed logs preserved. No additional broad
 test is needed without a new code change/finding. Current Linear interim save
 0e7eb03c-c30a-4700-a943-a989075cd27e records the scoped work; final source/full
 receipt and readback follow after checkpointing.
+
+Task1 source is saved at10088ad. CV-09 final receipt
+0be27fb2-204a-4dbd-9b0d-6fb956c97768 and umbrella receipt
+f2b7e5d3-dc9a-4263-93e2-7f2c41178308 were saved/read back. Official quota reads
+35% used/65% remaining with ordinaryUsageAllowed true; no reset consumed.
+
+### CV-09 Task2 initial backend port
+
+The remaining a499d84 codex-app-server.test.ts assertions are now present in
+packages/adapters/test/codex-app-server.test.ts. Its4 owned-stdio/version-directory
+cases already live in the transport test, and3 original native-process disconnect
+cases remain there as mapped above; no source assertion is skipped. Initial
+target64/64 RED established the missing backend. A source-fixture cleanup defect
+was corrected: roots are registered immediately, including constructor failures,
+and afterAll removes only owned roots. The initial15 exact-window empty fixtures
+were removed only after verifying ownership, birth window and empty directory
+layout; receipt /tmp/dispatcher-codex-backend-red-empty-roots-cleanup-20261023.json.
+
+Current uncommitted source ports the remaining original backend behind the
+internal module; exported Codex turn/start types now describe its actual native
+callbacks/ready/events, and reclaim uses canonical ExecutionSelection rather
+than removed modelSelection. Nonblocking events reuse the existing Codex contract.
+Adapter default behavior and public backend registration are not yet changed.
+The source target now passes60/64 in781ms, with4 expected remaining Adapter
+binding/sink/diagnostic and obsolete model-capability projection failures;
+`mise exec -- pnpm --filter @dispatcher/adapters build` passes. These are WIP
+results, not Task2/full acceptance. Logs /tmp/dispatcher-codex-backend-missing-red-
+20261023.log, source-port-20261023.log and build-20261023.log (same prefix).
+
+Next adapt the four cases to current canonical reserved input/observer and
+observable usage evidence, preserving their intent instead of adding a legacy
+manifest DTO. Add wrong/missing selection/reference and asynchronous final Guard
+regressions before integrating CodexAdapter. NativeBindingEvents supplies the
+proved codex-thread boundary. Also verify async event sinks explicitly: original
+AppServerTurn synchronously projects completion and ignores returned Promises;
+the current durable sink returns a Promise. Track those callbacks in the owning
+runtime, await admission/terminal durability, retain unknown cleanup on timeout,
+and never let a metadata failure enable another prompt or result. Reuse the
+existing callback ownership/5s disconnect boundary rather than introduce another
+observer or claim background writer release. These adaptations are not yet done.
+Keep Task2 WIP/internal and all production/native/GUI/release Gates open.
+
+### CV-09 Task2 canonical backend and durable callbacks
+
+The internal source backend now requires a captured canonical ExecutionSelection,
+managed reference and synchronous final guard plus binding/event callbacks before
+native I/O. Duplicate model/effort arguments must match the same selection.
+CodexAdapter selects its manifest only from an explicitly injected backend id,
+uses the existing NativeBindingEvents codex-thread path, awaits readiness and
+preserves the saved binding/provider identity. Default exec behavior remains.
+Native generic send/resume/cancel are explicitly closed until the command/stop
+path is qualified; the original internal backend resume/interrupt assertions
+remain. No backend export/registration, ConfigPlan activation or provider call.
+
+All64 remaining source cases are present, alongside the4 source transport cases
+and3 native-process cases already mapped to the transport suite. Source fixture
+adaptations supply canonical selections/references, reserved execution and the
+owning observer; the old modelCapabilities token/cache flags are replaced by the
+current observable contract: no tokens or usage observations from unsupported
+App Server token events. No obsolete parallel manifest DTO was introduced.
+
+Fourteen new canonical/backend cases first ran RED: together with the retained
+source suite17 failed/61 passed (78 total). The async cases showed premature
+terminal success, a prompt before received-event persistence and a false drained
+shutdown receipt. Binding and event Promises now share runtime ownership; initial
+durability precedes inference and terminal durability precedes result settlement.
+The raw callback survives cancellation of its local waiter. Disconnect retains
+callbacks unknown after the unchanged5s boundary, independently of root exit.
+The first implementation passes78/78;8 additional Adapter guard/ownership cases
+bring the current backend target to86/86. Targeted adapters build passes after
+fixing optional-property narrowing without a type suppression.
+
+Combined observer/selection/backend/transport target:4 files,142/143 tests;
+the sole failure is the Codex transport malformed-error case's3s owned executable
+version probe (not its malformed-error assertion). Preserve this as R-020
+evidence extending beyond Pi, without inferring an exact OS cause. First full
+check passes build/typecheck, then fails lint on an unused copied existsSync
+import and one inline import type; both are corrected directly. The following
+full check and independent read-only review are in progress. No deadline,
+worker default, test skip or assertion weakening. Logs use
+/tmp/dispatcher-codex-backend-{canonical-red,canonical-green,canonical-build2,
+targets,full,full2}-20261023.log. Linear progress3621f6db-ea31-4186-a164-054d473ee8b1
+is saved and read back. Official quota38% used/62% remaining; no reset consumed.
+
+Independent read-only review reports2 Important findings: the read handle exposed
+a cloned binding but closed over the mutable caller binding, and native
+preparation errors escaped not-created classification. Four new RED cases
+reproduce both; the pre-fix default full2 reaches174/175 files and1911/1915 tests,
+failing exactly those4 cases (86.94s). All probes pass in that run; that does not
+resolve R-020. A fifth RED proves that completed-event persistence could overtake
+an admitted, still pending running-event sink. Each turn now submits its facts
+through the same ordered sink path; earlier failure prevents later success.
+The raw pending sink remains owned independently of the cancelled local wait.
+The focused backend/observer/selection/exec/write/catalog/quota target passes
+7 files/164 tests, including91 backend cases. Read-handle identity and ordering
+fixes pass the same review seat's recheck.
+
+That recheck identifies a remaining narrow pre-invocation edge: the invocation
+flag is set before evaluating a store read in backend.start arguments. A store
+failure there is still known unsent. Move input construction before the flag,
+with a direct regression, after current full3 terminates; full3 cannot qualify
+the final correction. No activation/merge readiness is claimed. Progress
+9f1148f3-0553-4bea-a9d8-773bcdd3fee0 is saved and read back on CV-09.
+
+Full3 terminates exit0 with175 files/1916 tests (82.16s), including every
+non-test gate. The narrow argument-evaluation correction follows its own RED:
+1 failed/91 passed, confirming backend.start was never called. The complete
+backend input is now constructed before marking invocation. Post-fix target
+4 files/130 tests passes, with92 backend cases. Same-seat focused recheck finds
+no residual issue and approves the scoped code; final full4 remains required
+for this exact version. No broad rerun is for retry-to-green: every rerun
+followed a concrete code/test correction, and all earlier outcomes are retained.
+
+Final full4 on the reviewed input-evaluation correction terminates exit1:
+build/typecheck/lint/boundaries pass;172/175 files and1914/1917 tests pass
+(84.65s). The3 failures are Pi version probes before their intended assertions:
+pi-rpc-client Promise guard, pi-rpc-execution bounded consumer settlement and
+pi-rpc-read port-file-outside. Codex backend92 and transport16 pass in this run.
+The current whole-branch gate is RED, with no cause/fix claim for R-020 and no
+retry-to-green. Preserve full3's175/1916 as pre-final-correction evidence only.
+Task2 has scoped implementation/review evidence but remains unqualified by its
+required final full gate. Save an explicit development checkpoint and proceed
+with independent parent-plan work; no merge/service/provider promotion.

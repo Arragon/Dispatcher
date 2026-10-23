@@ -5,7 +5,10 @@ import {assertSessionModelBinding,freezeExecutionSelection,sessionModel} from ".
 import { OwnedProcessGroup } from "./owned-process.js";
 import { readCodexCatalog, type CodexReadRequest } from "./codex-catalog.js";
 import {readCodexQuota} from "./codex-quota.js";
-import type { ModelCatalogContext, AccountModelCatalog,UsageObservationV1 } from "@dispatcher/domain";
+import {isExecutionContextRef,validateExecutionBinding,type ModelCatalogContext,type AccountModelCatalog,type UsageObservationV1,type ExecutionContextRef,type ExecutionSelection,type NativeBinding,type NativeTurnFact} from "@dispatcher/domain";
+import {NativeBindingEvents} from "./native-binding-events.js";
+import type {NativeInteractionPort} from "./interaction-contracts.js";
+import type {NativeRequestEvent} from "./native-requests.js";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { promisify } from "node:util";
@@ -16,6 +19,9 @@ import {
   type AdapterStartInput,
   AdapterStartError,
   assertAdapterWriteAdmission,
+  startPreparationFailure,
+  type NativeEventSink,
+  type NativeObserverBegin,
   validateManifest,
   type AdapterEvent,
   type AdapterManifest,
@@ -79,23 +85,38 @@ export const codexManifest: AdapterManifest = {
   capabilities: { pause: false, resume: true, usage: true, diagnostics: true },
 };
 
-interface CodexTurnResult {
+export interface CodexTurnResult {
   state: "completed" | "cancelled" | "failed" | "waiting";
   summary: string;
   providerSessionId?: string;
   events: NormalizedCodexEvent[];
 }
 
-interface CodexTurn {
+export interface CodexTurn {
   readonly processId?: number | undefined;
+  ready?():Promise<void>;
   cancel(): Promise<void>;
   status(): "running" | "completed";
   result(): Promise<CodexTurnResult>;
   events?():NormalizedCodexEvent[];
+  snapshot?():Pick<CodexTurnResult,"events"|"providerSessionId">;
 }
 
+export interface CodexStartInput {
+  executable:string;codexHome:string;workspacePath:string;prompt:string;model?:string;reasoningEffort?:string;providerSessionId?:string;commandId?:string;
+  executionRef?:ExecutionContextRef;
+  executionSelection?:ExecutionSelection;
+  beforePrompt?:()=>void;
+  onBinding?:(binding:NativeBinding)=>Promise<void>;
+  onNativeEvent?:(fact:NativeTurnFact)=>void|Promise<void>;
+}
 export interface CodexBackend {
-  start(input: { executable: string; codexHome: string; workspacePath: string; prompt: string; model?: string; reasoningEffort?: string; providerSessionId?: string }): CodexTurn;
+  readonly backendId?:"codex-exec-json"|"codex-app-server";
+  readonly interaction?:NativeInteractionPort;
+  hasActiveOperations?():boolean;
+  diagnostics?(nativeSessionId:string):Record<string,unknown>;
+  setNativeRequestSink?(sink:(event:NativeRequestEvent)=>void):void;
+  start(input:CodexStartInput):CodexTurn;
 }
 
 export class CodexCliBackend implements CodexBackend {
@@ -189,42 +210,64 @@ class SpawnedCodexTurn implements CodexTurn {
 
 export class CodexAdapter implements AgentAdapter {
   readonly supportsExecutionSelection = true;
-  readonly manifest = validateManifest(codexManifest);
+  readonly manifest:AdapterManifest;
+  private readonly backendId:"codex-exec-json"|"codex-app-server";
+  private readonly nativeEvents:NativeBindingEvents;
+  get supportsExecutionRef():boolean{return this.backendId==="codex-app-server";}
+  readonly interaction?:NativeInteractionPort;
   private readonly turns = new Map<string, CodexTurn>();
   private readonly usageResults=new WeakMap<object,PassiveTurnResult<CodexTurnResult>>();
   private pending = 0;
   private readonly sending = new Set<string>();
   private readonly cancelled=new Set<string>();
 
-  hasActiveOperations(): boolean { return this.pending > 0 || this.sending.size > 0 || [...this.turns.values()].some((turn) => turn.status() === "running"); }
+  hasActiveOperations(): boolean { return this.pending > 0 || this.sending.size > 0 || this.backend.hasActiveOperations?.()===true || [...this.turns.values()].some((turn) => turn.status() === "running"); }
 
   constructor(
     readonly profile: CodexProfileConfig,
     private readonly backend: CodexBackend = new CodexCliBackend(),
     private readonly store: SessionStore = new MemorySessionStore(),
     private readonly catalogRequest?: (input:CodexReadRequest)=>Promise<unknown>,
-  ) {}
+  ) {
+    this.backendId=backend.backendId??"codex-exec-json";this.nativeEvents=new NativeBindingEvents(store);
+    if(backend.interaction)this.interaction=backend.interaction;
+    this.manifest=validateManifest(this.supportsExecutionRef?{...codexManifest,backends:[{id:this.backendId,kind:"daemon",priority:1,capabilities:["code","git","start","status","result","usage","diagnostics"]}],capabilities:{...codexManifest.capabilities,resume:false}}:codexManifest);
+  }
 
-  legacyInvocationDefaults():{backendId:string;model?:string}{return {backendId:"codex-exec-json",...(this.profile.model?{model:this.profile.model}:{})};}
+  setNativeEventSink(sink:NativeEventSink,onBegin:NativeObserverBegin):void{this.nativeEvents.setSink(sink,onBegin);}
+
+  legacyInvocationDefaults():{backendId:string;model?:string}{return {backendId:this.backendId,...(this.profile.model?{model:this.profile.model}:{})};}
 
   modelCatalog(context:ModelCatalogContext & {workspacePath:string;signal?:AbortSignal}):Promise<AccountModelCatalog> {
     return readCodexCatalog({profile:this.profile,context,workspacePath:context.workspacePath,...(context.signal?{signal:context.signal}:{}),...(this.catalogRequest?{request:this.catalogRequest}:{})});
   }
   accountQuota(signal?:AbortSignal){return readCodexQuota({profile:this.profile,...(signal?{signal}:{}),...(this.catalogRequest?{request:this.catalogRequest}:{})});}
   async start(input: AdapterStartInput): Promise<AdapterSession> {
+    this.pending++;
+    let invoked=false;
+    try{
     const request=captureAdapterStartInput(input);
-    const backendId="codex-exec-json";
+    const backendId=this.backendId;
     if(request.backendId!==undefined&&request.backendId!==backendId)throw new AdapterContractError("BACKEND_MISMATCH","Requested backend differs from the owning Codex adapter");
     const selection=freezeExecutionSelection(request.executionSelection,{profileId:this.profile.id,providerId:this.manifest.id,backendId,selection:true,reasoning:true});
+    if(this.supportsExecutionRef){try{
+      this.nativeEvents.assertAvailable();
+      if(!request.sessionId||!request.execution||!isExecutionContextRef(request.executionRef)||request.executionRef.kind!=="managed-worktree"||!selection||typeof request.beforeCreate!=="function"||typeof request.beforeSend!=="function")throw new AdapterContractError("CODEX_START_INVALID","Native startup requires reserved execution and synchronous admission");
+      if(Object.hasOwn(request,"modelSelection")||Object.hasOwn(request,"legacyModel"))throw new AdapterContractError("MODEL_LEGACY_REVIEW_REQUIRED","Native startup requires one canonical selection");
+      const checked=validateExecutionBinding({profileId:this.profile.id,providerId:this.manifest.id,backendId,runnerId:request.executionRef.runnerId,executionRef:request.executionRef},selection,{repositoryId:request.executionRef.repositoryId,baseRevision:request.executionRef.baseRevision});
+      if(!checked.valid)throw new AdapterContractError(checked.code,"Native startup context changed");
+      assertAdapterWriteAdmission(request.beforeCreate);assertAdapterWriteAdmission(request.beforeSend);
+    }catch(error){throw startPreparationFailure(error);}}
     const now = new Date().toISOString();
     const session: AdapterSession = {
       id: startSessionId(this.store,request.sessionId),
       runId: request.runId,
       ...(request.execution?{execution:request.execution}:{}),
-      backendId: request.backendId ?? "codex-exec-json",
+      backendId,
       workspacePath: request.workspacePath,
       state: "STARTING",
       profileId: this.profile.id,
+      ...(request.executionRef?{executionRef:request.executionRef}:{}),
       ...(selection?{executionSelection:selection}:{legacyModel:{...(this.profile.model?{id:this.profile.model}:{})}}),
       createdAt: now,
       updatedAt: now,
@@ -233,25 +276,38 @@ export class CodexAdapter implements AgentAdapter {
     this.store.save(session);
     assertSessionModelBinding(this.store.load(session.id),session);
     const model=sessionModel(session);
+    const observer=this.supportsExecutionRef?this.nativeEvents.begin(session.id):undefined;
+    const nativeOptions=observer?this.nativeEvents.startOptions(session,observer,"codex",()=>{assertAdapterWriteAdmission(request.beforeCreate);assertAdapterWriteAdmission(request.beforeSend);},"codex-thread"):undefined;
     try{assertAdapterWriteAdmission(request.beforeSend);}
     catch(error){this.update(session.id,{state:"FAILED"});throw new AdapterStartError("not-created",(error as AdapterContractError).code,"Native creation admission rejected before Codex invocation");}
-    let turn:CodexTurn;
-    try{turn = this.backend.start({
+    const backendInput:CodexStartInput={
       executable: this.profile.executable ?? "codex",
       codexHome: this.profile.codexHome,
       workspacePath: request.workspacePath,
       ...(typeof session.executionSelection?.nativeParameters.reasoningEffort==="string" ? {reasoningEffort:session.executionSelection.nativeParameters.reasoningEffort}:{}),
       prompt: request.prompt ?? "Inspect the task context and report readiness.",
       ...(model?{model}:{}),
-    });}catch(error){throw localStartFailure(error);}
+      ...(nativeOptions&&observer?{...nativeOptions,onNativeEvent:observer,executionRef:session.executionRef!,executionSelection:selection!,commandId:this.require(session.id).nativeInvocationId!}:{}),
+    };
+    let turn:CodexTurn;
+    try{invoked=true;turn=this.backend.start(backendInput);}catch(error){throw localStartFailure(error);}
     this.turns.set(session.id, turn);
+    if(observer){
+      if(!turn.ready)throw new AdapterStartError("unknown","NATIVE_READINESS_UNAVAILABLE","Native readiness requires reconciliation");
+      await turn.ready();nativeOptions!.beforePrompt();
+      if(turn.status()==="completed")return this.finishCurrentTurn(session.id);
+      return this.update(session.id,{state:"RUNNING"});
+    }
     session.state = "RUNNING";
     if (turn.processId !== undefined) session.processId = turn.processId;
     try { this.store.save(session); } catch (error) { await turn.cancel(); throw error; }
     return structuredClone(session);
+    }catch(error){if(this.supportsExecutionRef&&!invoked)throw startPreparationFailure(error);throw error;}
+    finally{this.pending--;}
   }
 
   async send(sessionId: string, message: string, beforeSend?:()=>void): Promise<AdapterEvent> {
+    if(this.supportsExecutionRef)throw new AdapterContractError("UNSUPPORTED_CAPABILITY","Native continuation requires the qualified command path");
     if (this.cancelled.has(sessionId)||this.require(sessionId).state === "CANCELLED") throw new AdapterContractError("SESSION_CANCELLED", "A cancelled Codex session cannot accept input");
     if(!this.turns.has(sessionId)&&["STARTING","RUNNING"].includes(this.require(sessionId).state))throw new AdapterContractError("SESSION_DETACHED","Inspect the original native process before continuing this session");
     if (this.sending.has(sessionId) || (this.require(sessionId).state === "RUNNING" && this.turns.get(sessionId)?.status() === "running")) throw new AdapterContractError("SESSION_BUSY", "Wait for the active Codex turn before sending another message");
@@ -289,6 +345,7 @@ export class CodexAdapter implements AgentAdapter {
     return this.status(sessionId);
   }
   async cancel(sessionId: string, beforeSend?:()=>void): Promise<AdapterSession> {
+    if(this.supportsExecutionRef)throw new AdapterContractError("CODEX_NATIVE_STOP_UNQUALIFIED","Native stop requires the qualified command path");
     this.pending++;
     try {
       const session=this.require(sessionId);
@@ -327,7 +384,7 @@ export class CodexAdapter implements AgentAdapter {
   }
   async diagnostics(sessionId: string): Promise<Record<string, unknown>> {
     const session = this.require(sessionId);
-    return { sessionId, profileId: session.profileId, alias: this.profile.alias, attached: this.turns.has(sessionId), resumable: Boolean(session.providerSessionId) };
+    return { sessionId, profileId: session.profileId, alias: this.profile.alias, attached: this.turns.has(sessionId), resumable: !this.supportsExecutionRef&&Boolean(session.providerSessionId),...(session.providerSessionId?this.backend.diagnostics?.(session.providerSessionId):{}) };
   }
 
   private async finishCurrentTurn(sessionId: string): Promise<AdapterSession> {
