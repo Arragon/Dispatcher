@@ -3588,3 +3588,13 @@ zero-factory-call regression and the clean scoped review. Task1's local static
 contracts are verified; Task2 remains required and unimplemented. No fresh full
 rerun is needed without a new code change or concern, and R-020 is not declared
 causally fixed by this green check.
+
+Task1 source is saved ata007205. Final CV-09 receipt
+1451ce9d-cf36-4b9b-ac0f-6cbeca502a89 and umbrella1e9c73f7-2eff-43ad-9b3e-e6fc47dabb46
+are saved and read back with source and1982-test evidence. No unfinished source
+edit or native process is left by this unit. Next Task2 must preserve the full
+a499d84 codex-runtime-service assertions, adapting the old publication fixtures
+to canonical selection/observer authority rather than accepting legacy DTOs.
+Current CodexStartInput.commandId carries the Adapter's nativeInvocationId;
+it is not the NativeInteractions native-start journal command id. Correlate the
+managed workspace/Run/session/observer and keep the original beforePrompt guard.
