@@ -62,17 +62,25 @@ data or installed service was upgraded. Conditional-free/rate-interval producer
 admission and real native rate evidence remain required; unqualified rates stay
 unavailable, with no static/public price fallback.
 
-Current2026-10-23 Codex checkpoint: canonical backend and internal per-execution
-host contracts are locally verified after scoped review and RED/GREEN fixes.
-The final uninstrumented default check passes176 files/1956 tests (82.21s) and
-all non-test gates, including backend92 and runtime39. The host fixes preserve
-physical home/workspace identity, immutable selection, exact durable source,
-synchronous callback authority and post-lookup shutdown fencing. Earlier R-020
-failures remain unresolved evidence, rather than the current gate result.
-Next: ConfigPlan/native-profile/catalog-backend context and Controller/Runner
-registration/source/shutdown composition, then qualified native observation and
-actual provider/GUI/service/release evidence. No configuration or service was
-activated by this internal port; the full goal and CV-09 remain incomplete.
+Current2026-10-23 Codex checkpoint: the canonical backend/internal per-execution
+host and explicit ConfigPlan/profile/catalog/Controller composition are locally
+verified. Final uninstrumented defaultfull4 passes178 files/2056 tests (87.11s)
+and all non-test gates, after independent review and proven regression fixes.
+The scoped service retains all59 source case groups with current canonical
+fixtures and adds15 regressions. Restart recovers only consistent bound metadata
+as UNKNOWN/manual with no native connection/replay; unsupported or partial data
+keeps the original preflight barrier. Exact binding sources, original invocation
+and lease guards, startup approval settlement and all-backend cleanup receipts
+remain separate from actual writer authority. Failed persistence retains the
+closed host until durable-only retry; active canonical Runs still block account
+replacement. Earlier R-020 probe failures remain unresolved evidence, not a
+causally fixed issue or the current gate result. The newly introduced history
+scan regression was caught by the original10k test and fixed with existing SQL
+filtering; zero unrelated historical JSON decodes is preserved.
+Next: port the retained native-history service/API and assertions through the
+exact current source/authorization, then OpenCode and actual provider/GUI/service/
+release qualification. No actual account configuration or service was activated
+by this fixture-based integration; the full goal and CV-09 remain incomplete.
 
 ## Historical checkpoint 2026-10-22: stopped at remaining 0%
 

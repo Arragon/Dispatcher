@@ -376,6 +376,13 @@ flowchart TD
 
 **失败/停止/回退**：动态共享服务归属或原生writer停止无法证实时，保留观察与历史并关闭控制转移；不杀共享服务。
 
+本地增量证据（2026-10-23）：Codex canonical backend/host、ConfigPlan/catalog 与
+Controller exact-source/启动审批/全宿主关闭组合已通过178文件/2056例默认检查，
+含59个旧service用例组和15个新增回归；独立审查修复后无遗留代码问题。
+重启仅对一致绑定元数据作UNKNOWN/manual对账，部分或冲突记录保持启动保护，
+不重连、不重放，也不把本地root关闭当作writer释放。native-history API、OpenCode
+及原真实环境Gates仍未完成，因此本卡验收框和Linear状态继续保持未完成。
+
 ### CV-10 · 保留其他本地Harness增量与Copilot未提交工作
 
 - **映射/架构**：M17.2；原票 INH-1539、INH-1541、INH-1543、INH-1551、INH-1550、INH-1468；沿用D1–D3和相应C1–C6。

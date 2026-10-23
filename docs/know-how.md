@@ -963,3 +963,16 @@
   as error. A timed-out wire request does not release the physical reader's
   registration or database guard. Quiesce RPC admission even when storage close
   fails; holding the database open alone does not stop new commands.
+
+- CodexStartInput.commandId carries the Adapter invocation id, not the Core
+  native-start journal id. Derive the owning Run from the managed workspace and
+  compare its reserved Adapter session, immutable selection/reference and lease;
+  never use that invocation id to find or manufacture another Run.
+- A closed native runtime must remain registered until normalized local cleanup
+  and its invalidating read barrier commit together. On persistence failure,
+  retry the cached receipt without another physical disconnect. Local drain does
+  not end an active canonical Run or qualify native writer release.
+- Consistent stored Codex binding metadata can support read-only restart
+  reconciliation while old observations and source ownership become unknown.
+  Partial/conflicting bindings retain the preflight barrier; neither case permits
+  cold continuation or replay of a possibly delivered native start.

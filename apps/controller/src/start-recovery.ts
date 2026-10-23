@@ -1,5 +1,5 @@
 import {isDeepStrictEqual} from "node:util";
-import type {Run,Session} from "@dispatcher/domain";
+import {isExecutionContextRef,normalizeNativeBinding,validateExecutionBinding,type Run,type Session} from "@dispatcher/domain";
 import type {AdapterSession} from "@dispatcher/adapters";
 import {InteractionStore,type DispatcherDatabase,type JsonValue} from "@dispatcher/persistence";
 import {contentHash} from "./task-publications.js";
@@ -27,5 +27,23 @@ export function isGuardedControllerStart(database:DispatcherDatabase,run:Run):bo
     if(command.state==="ACKNOWLEDGED"&&!adapter)return false;
     if(adapter&&(adapter.id!==run.sessionId||adapter.runId!==run.id||adapter.profileId!==run.profileId||adapter.backendId!==selection.backendId||adapter.workspacePath!==run.worktree||adapter.nativeBinding||adapter.executionRef||adapter.nativeIdentityIssue||!isDeepStrictEqual(adapter.executionSelection,selection)||!isDeepStrictEqual(adapter.execution,{generation:run.generation,attempt:run.attempt,leaseId:run.leaseId})))return false;
     return true;
+  }catch{return false;}
+}
+
+/** A consistent bound Codex record can be read after restart; it grants no live source or writer. */
+export function isReadableManagedCodexRun(database:DispatcherDatabase,run:Run):boolean {
+  try{
+    const ref=run.executionRef,selection=run.executionSelection;
+    if(Object.hasOwn(run,"modelSelection")||run.providerId!=="codex"||!selection||selection.backendId!=="codex-app-server"||!isExecutionContextRef(ref)||ref.kind!=="managed-worktree"||ref.workspaceId!==run.id||!run.worktree)return false;
+    const store=new InteractionStore(database),binding=store.binding(run.sessionId),control=store.control(run.sessionId);
+    const session=database.getEntity<JsonValue>("session",run.sessionId) as unknown as Session|undefined,adapter=database.getEntity<JsonValue>("adapter-session",run.sessionId) as unknown as AdapterSession|undefined;
+    const task=database.getCanonicalTask<JsonValue>(run.taskId),contract=database.getEntity<JsonValue>("run-contract",run.id) as {workspace?:{repositoryId?:string;baseCommit?:string}}|undefined;
+    if(!session||session.id!==run.sessionId||session.profileId!==run.profileId||session.providerId!=="codex"||!adapter||!binding||!control||control.version!==1||!Number.isSafeInteger(control.epoch)||control.epoch<1||!Number.isSafeInteger(control.revision)||control.revision<1||!["AUTOMATED","HANDOFF_REQUESTED","HUMAN","RECONCILING","CONFLICT"].includes(control.state)||!["none","cooperative","native-enforced"].includes(control.exclusion)||control.sessionId!==run.sessionId||control.activeRunId!==run.id||!task||(task.document as {currentRunId?:string}).currentRunId!==run.id||!contract?.workspace?.repositoryId||!contract.workspace.baseCommit)return false;
+    const owners=database.handle.prepare("SELECT session_id,epoch,revision,state FROM session_controls WHERE active_run_id=?").all(run.id);if(owners.length!==1||owners[0]!.session_id!==run.sessionId||owners[0]!.epoch!==control.epoch||owners[0]!.revision!==control.revision||owners[0]!.state!==control.state)return false;
+    if(adapter.id!==run.sessionId||adapter.runId!==run.id||adapter.profileId!==run.profileId||adapter.backendId!==selection.backendId||adapter.workspacePath!==run.worktree||adapter.nativeIdentityIssue||!adapter.nativeInvocationId||!isDeepStrictEqual(adapter.executionSelection,selection)||!isDeepStrictEqual(adapter.executionRef,ref)||!isDeepStrictEqual(session.executionRef,ref)||!isDeepStrictEqual(adapter.execution,{generation:run.generation,attempt:run.attempt,leaseId:run.leaseId}))return false;
+    if(database.handle.prepare("SELECT 1 FROM native_identity_diagnostics WHERE session_id=? AND code!='LEGACY_NATIVE_BINDING_MISSING' LIMIT 1").get(run.sessionId))return false;
+    const normalized=normalizeNativeBinding(session,adapter,run);
+    if(!("binding" in normalized)||!isDeepStrictEqual(normalized.binding,binding)||binding.identityState!=="bound"||binding.product!=="codex"||binding.region!=="global"||binding.nativeThreadId!==binding.nativeSessionId||binding.parentSessionId!==undefined||!isDeepStrictEqual(adapter.nativeBinding,binding)||!isDeepStrictEqual(session.nativeBinding,binding))return false;
+    return validateExecutionBinding({profileId:run.profileId,providerId:run.providerId,backendId:binding.backendId,runnerId:run.runnerId,executionRef:ref,nativeBinding:binding},selection,{repositoryId:contract.workspace.repositoryId,baseRevision:contract.workspace.baseCommit}).valid;
   }catch{return false;}
 }

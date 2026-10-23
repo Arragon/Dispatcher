@@ -45,10 +45,10 @@
 
 **Interfaces:** Controller owns a CodexExecutionRuntime map alongside Pi, an optional scoped codexAppServerFactory test/integration hook and exact persisted binding lookup. Applied native profiles construct that runtime and pass it through the native profile factory. assertManagedCodexInput derives the original Run/session from the managed workspace/reference plus captured invocation, validates canonical selection and generation/attempt/lease/workspace and calls existing native spawn fencing. Selected source resolution reuses NativeInteractions and exact runtime.source(binding); capability evidence remains unknown unless separately qualified. All-runtime lifecycle iteration records each backend's actual id and retains unknown receipts; it never implies native writer release.
 
-- [ ] Inspect and port the existing a499d84 service source assertions, including source/ingress/history/cancellation cases, with one canonical selection/observer and named unavailable prerequisites rather than skipped tests.
-- [ ] Observe RED for configured registration, binding-before-prompt, persistence rejection, unchanged adapter retention and local-only shutdown; implement exact current authority and lifecycle composition.
-- [ ] Add RED for cross-runtime receipt/disconnect failure isolation, post-lookup shutdown, physical/profile drift and no replacement session on UNKNOWN; preserve generic native mutation denial.
-- [ ] Run migrated service, Pi service/reroute, config/catalog/price and default full checks; complete independent read-only review and fixes with exact evidence/Linear readback before checkpointing.
+- [x] Inspect and port the existing a499d84 service source assertions, including source/ingress/history/cancellation cases, with one canonical selection/observer and named unavailable prerequisites rather than skipped tests.
+- [x] Observe RED for configured registration, binding-before-prompt, persistence rejection, unchanged adapter retention and local-only shutdown; implement exact current authority and lifecycle composition.
+- [x] Add RED for cross-runtime receipt/disconnect failure isolation, post-lookup shutdown, physical/profile drift and no replacement session on UNKNOWN; preserve generic native mutation denial.
+- [x] Run migrated service, Pi service/reroute, config/catalog/price and default full checks; complete independent read-only review and fixes with exact evidence/Linear readback before checkpointing.
 
 ## Completion boundary
 
@@ -57,3 +57,13 @@ Both tasks are necessary for this composition increment. They do not complete th
 Task1 final local evidence: initial12 RED failures; final5 files/82 targeted cases
 and default177 files/1982 tests pass86.66s after factory-order correction and
 clean independent review. Task2 and the parent goal remain incomplete.
+
+
+Task2 final local evidence: all59 source service cases migrated with canonical
+fixtures plus15 regressions (74 total). Scoped metadata/recovery/history suites
+pass5 files/96 cases. Independent review's2 P2 findings have proven RED/GREEN
+fixes and no residual findings. Final defaultfull4 exits0 with178 files/2056 tests
+(87.11s) plus build/typecheck/lint/boundaries. Prior full3 failures are retained;
+no skip/deadline/worker/retry weakening. The complete composition increment is
+locally verified; native-history API/service, OpenCode and actual-provider Gates
+remain in the parent plan and are not marked complete by these two tasks.

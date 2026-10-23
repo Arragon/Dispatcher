@@ -3598,3 +3598,89 @@ to canonical selection/observer authority rather than accepting legacy DTOs.
 Current CodexStartInput.commandId carries the Adapter's nativeInvocationId;
 it is not the NativeInteractions native-start journal command id. Correlate the
 managed workspace/Run/session/observer and keep the original beforePrompt guard.
+
+
+### 2026-10-23 Codex Controller composition (Task2, work in progress)
+
+Base7d4d799. The complete a499d84 codex-runtime-service source has59 expanded
+cases. Fixtures now supply the existing immutable execution selection, frozen
+run-contract, managed execution reference and original observer guards. Legacy
+publication DTOs were replaced with the current v3 review/commit flow (HTTP200
+normalized receipts); assertions load the exact Run by receipt.runId. Generic
+source send/resume is deliberately denied by the already-frozen native command
+boundary; internal exact continuation remains covered in the host/backend suites.
+The three idle-account replacement cases explicitly terminate their canonical
+fixture Run before expecting replacement, preserving the current active-Run
+configuration guard without inferring writer release from native turn completion.
+The existing CLEANUP_UNKNOWN code is retained. No source case is skipped.
+
+Initial configured-host RED reproduces CODEX_RUNTIME_UNAVAILABLE. Composition
+then moves54failed/5passed through14failed/45passed,2failed/57passed and finally
+all59 source cases passing. Added8 regressions cover unknown-only restart,
+four corrupt restart records, mixed Pi/Codex failure isolation and an original
+UNKNOWN creation that cannot replay or reopen after persistence failure. Final
+scoped native composition run has67 Codex cases and14 original recovery cases
+passing; the sixth combined run has86/87 overall because one unchanged Pi
+startup probe fails around3s before its intended observer assertion. Earlier
+fifth run had84/84 before the final3 new cases were added. This is retained R-020
+evidence, not a cause fix or a retry-to-green policy.
+
+Current implementation owns exact scoped hosts/factories and actual backend
+shutdown receipts, uses the original managed Run/invocation/lease/observer,
+coalesces qualified read metadata and exact original approval callbacks, allocates
+durable epochs and settles startup ingress only after canonical projection.
+Closed cleanup receipts and observation invalidation commit atomically; failures
+retain the closed host for durable-only retry. Restart accepts consistent bound
+canonical Codex metadata for unknown/manual read reconciliation; partial or
+conflicting data remains preflight-blocked, with no native reattachment/replay.
+
+Logs: /tmp/dispatcher-codex-service-{composition-red,composition-first,
+composition-second,composition-third,restart-red,composition-fourth,
+composition-fifth,composition-sixth,full,full2}-20261023.log. The first defaultfull
+passes build/typecheck, then reports one new test-only consistent-type-imports
+lint error. A malformed local Python edit did not apply the intended correction,
+so full2 retains the same lint failure; the ordinary import is now corrected
+(no suppression). Independent read-only review and the final default gate are
+pending. Real installed protocol, account, GUI, writer-release, service and release
+Gates remain open; parentCV-09 and the full goal are incomplete. Native-history
+API/service and other provider composition remain separate source-disposition
+work, not silently claimed here.
+
+
+Review/final-gate follow-up: the full3 exact source default check ran178 files/
+2049 cases in89.01s and retained3 real regressions (frozen contract omitted on
+native-summary failure/historical records; an unbound profile capability query;
+new observer worker decoding10000 unrelated terminal Run documents). Existing
+assertions were not changed. Summary now keeps the frozen contract on both paths,
+protects legacy missing-session records and queries capabilities only for a
+binding. The worker uses existing SQL listRunsMatching before decoding, restoring
+zero unrelated decodes in the unchanged10k-history test.
+
+Independent read-only review found2 P2 issues: the contract omission and accepting
+foreign canonical Session provider/Codex product/region/thread/parent/control
+shapes at restart. A focused RED run confirms7 failures and4 passing prior cases;
+6 new corrupt variants plus the frozen-contract assertion fail before fixes.
+An additional mismatched Adapter thread test already rejected before the fix and
+is retained as defense regression, not falsely described as new RED evidence.
+The recognizer now checks exact canonical provider, all binding copies and Codex
+shape plus control row/counter consistency before any restart writes. The scoped
+review rechecks both fixes with12 focused cases passing and no residual findings.
+Executor accepts its declined installed/account/GUI/writer/service/release and
+R-020 items as their original separate Gates; no requirement is dropped. The final
+default check remains required. Focused final composition plus existing metadata,
+recovery and history regression suites pass5 files/96 cases; Codex service has
+74 cases (all59 original groups plus15 new cases). No source skip/loosened
+assertion, lint suppression, timeout or worker/retry policy change was introduced.
+Current Linear progressdad8b8b4-c65a-4089-a885-0c30f8508e35 is saved/read back.
+Quota52% used/48% remaining; both reset credits unused.
+
+
+Final Task2 source gate: defaultfull4 terminates exit0 with178 files/2056 tests
+in87.11s plus build/typecheck/lint/boundaries. No source/test changes followed;
+only evidence/plan/disposition notes are being finalized. The scoped review is
+approved after both P2 fixes, and all full3 regressions remain covered without
+changing their original expectations. Task1+Task2 composition is locally complete;
+CV-09, native-history/OpenCode and original real Gates remain In Progress. This
+checkpoint neither fixes R-020 causally nor promotes any fixture capability to
+actual account/installed protocol qualification. No push/merge/PR/deploy/native
+account operation, persisted-format change or dependency addition occurred.

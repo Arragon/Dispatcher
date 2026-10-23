@@ -1280,16 +1280,45 @@ start shutdown synchronously.
 
 The host has no aggregate interaction port. Known-unsent acquisition cleanup
 clears a local host barrier only with a closed/not-created/drained receipt;
-uncertain roots remain retained. Controller configuration/registration and actual
-installed-protocol/account qualification are separate from this host contract.
+uncertain roots remain retained. Controller composition and actual
+installed-protocol/account qualification have separate evidence boundaries.
 
 Explicit App Server registration uses the existing per-profile nativeInteraction
 field and confirmed ConfigPlan. It accepts compatible managed-worktree execution
 on an embedded Runner with absolute executable and CODEX_HOME paths and native
 login. Pi keeps its existing provider/backend pair. A configured App Server
 requires its exact supplied execution host; missing/mismatched hosts or native
-backend injection without opt-in are rejected rather than using exec. Full
-Controller host registration remains the next composition step.
+backend injection without opt-in are rejected rather than using exec.
+The Controller owns the scoped Codex host alongside Pi and preserves unchanged
+adapters across unrelated ConfigPlans. Spawn admission derives the original Run
+from the managed workspace and validates its immutable selection/reference,
+reserved Adapter invocation, session, generation, attempt and lease. The original
+observer and synchronous beforePrompt guard still fence binding and prompt I/O.
+
+Reads and approval callbacks resolve only the exact persisted execution binding;
+a closed or mismatched owned runtime cannot borrow a profile aggregate port.
+Qualified inspect/history refresh is bounded and coalesced per session; it stores
+metadata, fences late reads and does not prove native quiescence. Startup approval
+ingress waits for both the native ACK and owning canonical Task projection before
+retaining its original fence. Durable connection epochs cannot be reused after
+restart. Generic Codex continuation/cancellation remains unqualified.
+
+Local disconnect closes admission, drains owned roots/callbacks and transactionally
+persists normalized cleanup plus an unknown observation/read barrier. Failed
+persistence retains the closed host; retry writes its cached receipt without
+another physical disconnect. Changing an idle profile requires confirmed durable
+local cleanup; an active canonical Run still blocks replacement. Shutdown attempts
+both native registries and records each actual backend even if another disconnect
+or receipt write fails, then closes HTTP and preserves storage when cleanup is
+uncertain. Local cleanup never deletes native sessions or proves background writer
+release.
+
+Restart accepts only consistent bound canonical managed Codex metadata for read
+and receipt reconciliation. It invalidates prior observations, retains the exact
+identity and marks execution ownership unknown/manual; it never opens a native
+connection, replays startup or grants cold continuation. Conflicting/partial or
+unsupported native records keep the existing preflight barrier closed. This is
+read-only recovery, not native reattachment or actual-provider qualification.
 
 Codex catalog reads capture the profile, logical context and actual owning
 backend before asynchronous queries. Exec and App Server keep distinct backend
