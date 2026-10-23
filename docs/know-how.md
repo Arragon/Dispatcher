@@ -13,6 +13,13 @@
   handles; waiting for `close` conflates root lifetime with inherited pipe life.
   Root-only cleanup cannot establish background-tool or native-writer release.
 
+- Codex thread identity is allocated by the provider, unlike Pi's reserved UUID.
+  Adopt it only for the original unbound STARTING invocation, persisting provider
+  identity and binding together before the durable event. A final admission
+  callback can itself change identity or state: validate both before and after
+  it, and never accept a Promise as synchronous permission. Historical partial
+  identity needs reconciliation rather than completion from current config.
+
 - Fastify hijacked dashboard SSE responses must be ended before awaiting
   `app.close()`. Waiting for server close first leaves an open browser holding
   graceful shutdown. Own each response cleanup once, including its timer and

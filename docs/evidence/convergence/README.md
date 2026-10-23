@@ -3262,3 +3262,83 @@ required regression is qualified. No repeat-until-green gate, deadline extension
 worker-default change, native helper weakening or unrelated host action follows.
 The post-review Linear save currently failed MCP HTTP transport, so its new
 pipe-fix/result delta is pending synchronization rather than assumed delivered.
+
+Transport checkpoint9c85185 includes the reviewed pipe fix; the new file's final
+EOF blank line was removed and full-range/staged diff checks pass. Linear
+recovered: post-review result df3378c2-1d77-4c30-81ee-ef042daf6484 and source
+receipt fa80ea5d-8ce5-4005-8cd2-de9e10aa4d8f were saved/read back on CV-09.
+Umbrella INH-1917 receipt e1dac9b4-a97d-4673-9f0b-ede81456afa4 was saved/read back
+with exact current red-gate results, source checkpoints and open Gates.
+
+R-020 /tmp-only six-probe experiment used the unchanged owned version reader,
+alternating full Pi and minimal Node fixture scripts. The first full fixture
+failed at3031ms with no JavaScript-entry marker; all subsequent probes completed
+25–44ms with confirmed exit. A read-only sample of that freshly owned failing
+child recorded797 samples at _dyld_start,112KiB footprint and no loaded binary
+image description during the observed window. It localizes this occurrence
+before Node JavaScript execution, but does not identify the macOS condition that
+caused the stall or prove every earlier failure has that cause. Sampling itself
+is diagnostic instrumentation, not a production qualification. All owned fixture
+roots and sampler children were cleaned; no unrelated process/service or host
+policy changed. Raw records: /tmp/dispatcher-owned-version-os-results-20261023.json,
+/tmp/dispatcher-owned-version-os-sample-20261023-0.txt and corresponding .mts/log.
+The3s guard remains unchanged; R-020 stays open.
+
+Next CV-09 canonical contract work is specified in
+docs/superpowers/plans/2026-10-23-codex-native-contract-port.md, implementing the
+existing approved CV-02/CV-08/CV-09 scope inline. Codex allocates thread identity
+after thread/start, unlike Pi's preallocated UUID. Extend the existing durable
+observer explicitly for that real boundary, preserving Pi's default rules, then
+port source backend/history/producer assertions to canonical selection and guards.
+No new design approval round, production account call or service activation is
+required by this authorized development increment.
+
+### CV-09 canonical observer allocation
+
+NativeBindingEvents now has an explicit internal codex-thread identity mode;
+the existing reserved default and Pi caller stay unchanged. Only product codex/
+backend codex-app-server can request it. A fresh unbound STARTING invocation may
+adopt the provider's exact global thread id, while an already bound thread must
+match; partial historical identities are rejected. Provider id and binding save
+together before the captured durable sink, with original failure latches and
+pre/post-await authority checks preserved. No new schema, sink or provider call.
+
+The new helper suite initially observed missing allocation/resume/adoption
+restrictions RED. Two fixture mistakes were corrected before implementation:
+reserved Pi must actually supply a forbidden thread id to test that refusal;
+post-sink authority revoke must start with live authority. No production behavior
+was changed to satisfy those erroneous fixture assumptions. The first allocation
+implementation passes16 cases; store-failure/sink-revoke/Pi-positive additions
+bring the helper to19 and pure helper+selection target to2 files/33 tests.
+A combined target is54/55 with one Pi version-probe failure; it is not green.
+
+Two further actual RED cases expose identity overwritten inside final synchronous
+admission and an asynchronous guard treated as permission. Reuse the existing
+assertAdapterWriteAdmission and check the same current facts before and after.
+The pre-fix full check caught exactly those2 assertions (173/174 files;
+1817/1819 tests), with all Pi tests passing in that run. The following uninstrumented
+full check after that fix passes174 files/1819 tests (83.24s), including all
+non-test gates; this is not post-state-fix qualification.
+
+Independent scoped review found one further Important state gap: a currently
+unbound invocation could leave STARTING during native creation/admission and
+still adopt an id because only its captured initial state was checked. Six RED
+cases cover RUNNING/COMPLETED/FAILED before callback and inside final admission.
+assertCurrent now requires STARTING until the binding is saved. The current
+helper27 cases plus selection14 pass2 files/41 tests. Same-seat focused recheck
+and final default full check follow. Logs /tmp/dispatcher-codex-observer-*-20261023.log
+retain every RED/target/full outcome, including state-red and state-green.
+R-020 remains open despite individual green runs; no helper/deadline/test weakening
+or host policy change was made. The OS-boundary Linear update currently failed
+HTTP transport and is not assumed delivered.
+
+The same review seat confirms the current-state gap is addressed; no residual
+scoped findings. Final post-review uninstrumented default pnpm check is terminal
+exit0: build/workspace typechecks/ESLint/boundaries pass;174 files/1825 tests pass
+(83.80s), including helper27, all Pi cases and Codex transport16. This qualifies
+Task1's local shared-observer increment, not the remaining Codex backend/runtime
+or any actual-provider/native/GUI/release Gate. R-020 remains an unresolved OS
+startup follow-up with all previous failed logs preserved. No additional broad
+test is needed without a new code change/finding. Current Linear interim save
+0e7eb03c-c30a-4700-a943-a989075cd27e records the scoped work; final source/full
+receipt and readback follow after checkpointing.

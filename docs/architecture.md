@@ -1227,7 +1227,7 @@ The exact source is available through the owning runtime, but live Controller
 source registration and real native capability qualification remain separate
 requirements before a complete Pi task loop can be enabled.
 
-## Internal Codex App Server transport
+## Internal Codex App Server contracts
 
 The preserved Codex stdio transport is internal to adapters and remains pinned to
 its source protocol version. It does not register a backend, open a session or
@@ -1241,6 +1241,16 @@ inherited pipe closure. Local disconnect stops only that captured root and drain
 local pipes; background tools and native writer release remain unknown. Provider
 binding, history and guarded execution belong to the separate backend/runtime
 composition and do not come from the transport's cleanup receipt.
+
+The shared durable observer explicitly distinguishes reserved identities from
+Codex's provider-allocated thread. Only an unbound, currently STARTING Codex
+App Server invocation can adopt that exact thread id. It saves providerSessionId
+and NativeBinding together before sending the waiting event to the existing
+owning sink; an existing identity must match exactly. Partial historical identity
+cannot be completed from current configuration. The final admission is
+synchronous and checks model/execution/observer/identity on both sides of the
+callback. Pi retains the reserved-identity default. This internal contract does
+not register or activate a Codex runtime.
 
 ## Diagnostic reads and registered checks
 
