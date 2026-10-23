@@ -66,3 +66,27 @@ Original20+20 groups remain, with owned-host23/producer69/shared-observer66 tota
 and the ignored private report receive completion receipts after final source hash
 capture. Independent review, runtime/profile registration and real native Gates
 remain separate; no parent CV-09 acceptance is implied.
+
+Review fix round1/5 (base105ef8b): independent review found unintended prompt,
+executable-string and factory-receiver compatibility narrowing. Restore the current
+port/historical262144 UTF-16-unit prompt bound, owned-host4096-character safe
+executable bound separate from512-character IDs, and captured factory.bind(options).
+Five accepted prompt boundaries, three true oversized prompts, executable513/4096
+and4097/control-character checks, and original method receiver/callback capture
+add13 regressions. RED:8 failed/74 passed. Focused GREEN:4 files/247 passed.
+Native admission/lifetime/observer semantics are unchanged. One final changed-code
+default gate follows self-review; private report retains full commands/source/logs.
+
+Round1 gate diagnosis: first default gate stopped at test lint (`no-this-alias`),
+exit1/9.664s, before suite execution. Keep that source/log/result. Receiver test
+now records `this` in an array and asserts one call plus exact options identity;
+no suppression or assertion weakening. Rechecked4 files/247 tests (9.14s) and
+scoped ESLint exit0. A fresh changed-test gate follows; production fix is unchanged.
+
+Round1 final changed-test gate: `mise exec -- pnpm check` exit0,185 files/2424 tests,
+Vitest87.92s/wall98.485s. Source hashes all12 matched afterward; prior69-case producer
+prefix byte-preserved with13 appended cases (82 total). Final log/source/result:
+`/tmp/dispatcher-opencode-task1-fix1-logs/full-check-after-receiver-style.log`
+and sibling `-source.json`/`-result.json`; failed lint gate retained separately.
+Only this plan/private report receive post-gate receipts. Root scoped re-review
+and all actual native/parent Gates remain separate.

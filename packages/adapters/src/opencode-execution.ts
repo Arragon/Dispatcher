@@ -44,8 +44,8 @@ export class OpenCodeV2ExecutionBackend implements CliAgentBackend {
  constructor(options:OpenCodeV2ExecutionOptions){
   this.scope=structuredClone(options.scope);const reference=structuredClone(options.executionRef);
   this.workspace=directory(this.scope.workspacePath);
-  if(this.scope.backendId!==this.backendId||![this.scope.executable,this.scope.profileId,this.scope.runnerId,this.scope.nativeStoreRef,this.scope.scopeFingerprint].every(identifier)||!isExecutionContextRef(reference)||reference.kind!=="managed-worktree"||reference.runnerId!==this.scope.runnerId)fail("OPENCODE_SCOPE_CHANGED");
-  this.reference=reference;this.factory=options.hostFactory??(scope=>new OpenCodeV2OwnedServer(scope));
+  if(this.scope.backendId!==this.backendId||typeof this.scope.executable!=="string"||!this.scope.executable.length||this.scope.executable.length>4096||Array.from(this.scope.executable).some(char=>char.charCodeAt(0)<32||char.charCodeAt(0)===127)||![this.scope.profileId,this.scope.runnerId,this.scope.nativeStoreRef,this.scope.scopeFingerprint].every(identifier)||!isExecutionContextRef(reference)||reference.kind!=="managed-worktree"||reference.runnerId!==this.scope.runnerId)fail("OPENCODE_SCOPE_CHANGED");
+  this.reference=reference;this.factory=options.hostFactory?.bind(options)??(scope=>new OpenCodeV2OwnedServer(scope));
  }
  private assertWorkspace():void {if(!isDeepStrictEqual(directory(this.scope.workspacePath),this.workspace))fail("OPENCODE_SCOPE_CHANGED");}
  source(binding:NativeBinding):OpenCodeV2InteractionPort|undefined {
@@ -68,7 +68,7 @@ export class OpenCodeV2ExecutionBackend implements CliAgentBackend {
  }
  private validate(input:CliStartInput):OpenCodeV2Model {
   const native=input.nativeInput;
-  if(!native||native.version!==1||native.profileId!==this.scope.profileId||native.backendId!==this.backendId||![native.runId,native.sessionId,native.commandId].every(identifier)||typeof native.prompt!=="string"||!native.prompt.length||Buffer.byteLength(native.prompt)>240_000||typeof input.beforePrompt!=="function"||typeof input.onBinding!=="function"||typeof input.onNativeEvent!=="function")fail("OPENCODE_START_INVALID");
+  if(!native||native.version!==1||native.profileId!==this.scope.profileId||native.backendId!==this.backendId||![native.runId,native.sessionId,native.commandId].every(identifier)||typeof native.prompt!=="string"||!native.prompt.length||native.prompt.length>262_144||typeof input.beforePrompt!=="function"||typeof input.onBinding!=="function"||typeof input.onNativeEvent!=="function")fail("OPENCODE_START_INVALID");
   if(!native.newSession||Object.hasOwn(native,"providerSessionId"))fail("OPENCODE_CONTINUATION_REQUIRES_COMMAND_LANE");
   if(native.approveTools!==false)fail("OPENCODE_TOOL_APPROVAL_UNQUALIFIED");
   if(input.environment&&Object.keys(input.environment).length)fail("OPENCODE_ENVIRONMENT_UNSUPPORTED");
