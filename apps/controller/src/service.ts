@@ -20,7 +20,8 @@ import {qualifyRoutingPolicy,type PolicyConfigEvidence} from "./policy-config.js
 import {TaskClassifier} from "./task-classifier.js";
 import { remoteCatalog, remoteRunInventory,remoteRepositoryRefs,remoteCommitResult,remoteDeliveryTarget,remotePushResult } from "./remote-results.js";
 import { RemoteNativeAdapter } from "./remote-adapter.js";
-import { NATIVE_EXECUTION_CAPABILITY,NATIVE_GIT_DELIVERY_CAPABILITY,requiresNativeGitDelivery, type CommandPayload } from "@dispatcher/protocol";
+import { NATIVE_EXECUTION_CAPABILITY,NATIVE_GIT_DELIVERY_CAPABILITY,NATIVE_MODEL_PRICING_CAPABILITY,requiresNativeGitDelivery,requiresNativeModelPricing, type CommandPayload } from "@dispatcher/protocol";
+import {admitCatalogPricing,samePricingTerms} from "@dispatcher/domain";
 import { ModelRoutingService } from "./model-routing.js";
 import type { WorkspaceHandle } from "@dispatcher/workspace";
 import { PublicationService, PublicationError, publicationValidationFields, contentHash, assertPublicationScope, type PublicationRecord } from "./task-publications.js";
@@ -1646,11 +1647,13 @@ export class ControllerService {
         if(!current())return;
         this.recordProfileResource(run.profileId,run.sessionId,usage);
         const complete=this.recordProfileUsage(run.profileId,run.sessionId,usage);
-        if(!complete)this.database.saveEntity("usage-error",run.id,{runId:run.id,profileId:run.profileId,status:"unknown",reasonCode:Array.isArray(usage.observations)&&usage.observations.length?"USAGE_PARTIAL":"USAGE_NOT_REPORTED",observedAt:this.now().toISOString()});
+        // Keep the specific admission failure; a generic partial result must not hide an event conflict.
+        if(!complete&&(this.database.getEntity("usage-error",run.id) as {status?:string}|undefined)?.status!=="unknown")this.database.saveEntity("usage-error",run.id,{runId:run.id,profileId:run.profileId,status:"unknown",reasonCode:Array.isArray(usage.observations)&&usage.observations.length?"USAGE_PARTIAL":"USAGE_NOT_REPORTED",observedAt:this.now().toISOString()});
         this.database.saveEntity("usage-read-state",run.id,json({...record,state:complete?"complete":"unknown",completedAt:this.now().toISOString(),...(complete?{lastSuccessAt:this.now().toISOString(),lastSuccessfulScopeKey:scopeKey}:{}),nextAttemptAt:new Date(this.now().getTime()+backoffDelayMs(readAttempts,1_000,5*60_000)).toISOString()}));
       }catch(error){
         if(!current())return;
-        this.database.saveEntity("usage-error",run.id,{runId:run.id,profileId:run.profileId,status:"unknown",reasonCode:error instanceof UsageObservationError?error.code:"USAGE_UNAVAILABLE",observedAt:this.now().toISOString()});
+        const previousError=this.database.getEntity("usage-error",run.id) as {status?:string;reasonCode?:string}|undefined;
+        if(previousError?.status!=="unknown"||!["USAGE_INVALID","USAGE_EVENT_CONFLICT","USAGE_SOURCE_CHANGED"].includes(previousError.reasonCode??""))this.database.saveEntity("usage-error",run.id,{runId:run.id,profileId:run.profileId,status:"unknown",reasonCode:error instanceof UsageObservationError?error.code:"USAGE_UNAVAILABLE",observedAt:this.now().toISOString()});
         this.database.saveEntity("usage-read-state",run.id,json({...record,state:"unknown",completedAt:this.now().toISOString(),nextAttemptAt:new Date(this.now().getTime()+backoffDelayMs(readAttempts,1_000,5*60_000)).toISOString()}));
       }
     }).finally(()=>{this.usageReads.delete(run.id);});
@@ -2359,6 +2362,7 @@ export class ControllerService {
     const configured=this.configuration.current().config.runners.find(runner=>runner.id===runnerId&&runner.mode==="remote"),runner=this.runners.list().find(runner=>runner.id===runnerId);
     if(!configured||!runner||!["ONLINE","DEGRADED","DRAINING"].includes(runner.state)||!runner.capabilities.includes(NATIVE_EXECUTION_CAPABILITY)||!this.remoteRunnerServer.isConnected(runnerId))throw new AdapterContractError("REMOTE_EXECUTION_UNAVAILABLE","Owning Runner is offline or has no qualified native execution capability");
     if(requiresNativeGitDelivery(payload)&&!runner.capabilities.includes(NATIVE_GIT_DELIVERY_CAPABILITY))throw new AdapterContractError("REMOTE_DELIVERY_UNAVAILABLE","Owning Runner must advertise native Git delivery support");
+    if(requiresNativeModelPricing(payload)&&!runner.capabilities.includes(NATIVE_MODEL_PRICING_CAPABILITY))throw new AdapterContractError("REMOTE_PRICING_UNAVAILABLE","Owning Runner must preserve frozen native model pricing");
     const credential = this.runnerCredentialContext(runnerId);
     if (!credential.usable) throw new AdapterContractError("REMOTE_CREDENTIAL_CHANGED", "Owning Runner authorization is revoked");
     const response=await this.remoteRunnerServer.sendCommand(runnerId,payload,{...(run?{leaseId:run.leaseId,generation:run.generation,...(run.leaseExpiresAt?{leaseExpiresAt:run.leaseExpiresAt}:{})}:{}),...(messageId?{messageId}:{})});
@@ -2673,7 +2677,11 @@ export class ControllerService {
     const decision=routeDeterministically({capabilities:["code","git"]},candidates);
     if(!decision.selected)throw new PublicationError("EXECUTION_UNAVAILABLE",409,decision.explanation);
     const backendId=decision.selected.adapter.manifest.backends[0]!.id;
-    return {version:1,mode:automatic?"policy-auto":"manual",source:automatic?"policy":explicit?requestedSource==="account-default"?"account-default":"explicit":"native-default",selectionType:explicit?"explicit-model":"native-default",...(explicit?{requestedModel:automatic?routingDecision!.target!.modelId:draft.execution.nativeModelId!,catalogRevision:catalog.revision}:{}),profileId:profile.id,runnerId:profile.runnerId,providerId:profile.provider,backendId,nativeParameters,...(routingDecision?{routingDecision}:{}),contextFingerprint:catalog.contextFingerprint,configRevision:snapshot.revision,selectedAt:this.now().toISOString()};
+    const requestedModel=explicit?automatic?routingDecision!.target!.modelId:draft.execution.nativeModelId!:undefined;
+    const price=requestedModel&&catalog.backendId===backendId?admitCatalogPricing(catalog,requestedModel,nativeParameters,this.now().toISOString()):undefined;
+    if(price?.status==="available"&&this.agentAdapters.get(profile.id) instanceof RemoteNativeAdapter&&!this.runners.list().find(runner=>runner.id===profile.runnerId)?.capabilities.includes(NATIVE_MODEL_PRICING_CAPABILITY))throw new PublicationError("REMOTE_PRICING_UNAVAILABLE",409,"Update the owning Runner before reviewing a priced native selection");
+    const pricingSnapshot=price?.status==="available"?context?.reviewed?.pricingSnapshot&&samePricingTerms(context.reviewed.pricingSnapshot,price.snapshot)?structuredClone(context.reviewed.pricingSnapshot):price.snapshot:undefined;
+    return {version:1,mode:automatic?"policy-auto":"manual",source:automatic?"policy":explicit?requestedSource==="account-default"?"account-default":"explicit":"native-default",selectionType:explicit?"explicit-model":"native-default",...(requestedModel?{requestedModel,catalogRevision:catalog.revision}:{}),profileId:profile.id,runnerId:profile.runnerId,providerId:profile.provider,backendId,nativeParameters,...(routingDecision?{routingDecision}:{}),...(pricingSnapshot?{pricingSnapshot}:{}),contextFingerprint:catalog.contextFingerprint,configRevision:snapshot.revision,selectedAt:this.now().toISOString()};
   }
 
   private compileLegacyRunSelection(run:Run,repositoryId:string,adapter:AgentAdapter):ExecutionSelection {

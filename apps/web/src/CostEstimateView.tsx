@@ -1,0 +1,17 @@
+import type {CostEstimateProjection,PricingSnapshotV1} from "@dispatcher/domain";
+import {Notice} from "./ui.js";
+const reasons:Record<string,string>={BILLING_BASELINE_MISSING:"缺少已验证计费基准",USAGE_UNAVAILABLE:"原生用量读取失败，保留已有用量的部分估算",USAGE_PARTIAL:"原生用量尚未完整采集",USAGE_NOT_REPORTED:"原生来源尚未报告当前用量",USAGE_SHUTDOWN_PENDING:"关闭前用量读取尚未完成",USAGE_READ_PENDING:"正在读取当前原生用量，保留已有用量的部分估算",USAGE_INVALID:"原生用量归属或格式验证失败",USAGE_EVENT_CONFLICT:"原生事件内容冲突，当前不可估算",USAGE_SOURCE_CHANGED:"原生用量来源已变化，当前不可估算",PRICE_NOT_PROVIDED:"原生来源未提供价格",PRICE_TIME_UNPROVEN:"缺少已验证的原生计费时间",PRICE_OUTSIDE_VALIDITY:"计费发生时间不在价格有效期内",CONDITIONS_UNCONFIRMED:"优惠条件尚未证实",USAGE_ORDER_UNPROVEN:"用量发生顺序尚未证实",USAGE_NOT_PROVIDED:"尚无可估算的原生用量",BILLING_DIMENSIONS_INCOMPLETE:"部分计费维度缺失",OBSERVATION_RANGE_FILTERED:"按筛选后的观测估算",RUN_USAGE_CONTEXT_MISMATCH:"用量与此运行的账号或尝试不一致",PRICE_CONTEXT_UNPROVEN:"价格所属执行上下文尚未证实",PRICE_EVIDENCE_INVALID:"价格证据无效"};
+export function PricingSnapshotView({snapshot}:{snapshot:PricingSnapshotV1}):React.JSX.Element {
+ return <section className="detail-section" aria-label="已冻结原生价格"><h3>已冻结原生价格</h3><p>{snapshot.id} · {snapshot.source} · {new Date(snapshot.collectedAt).toLocaleString()}</p><p>单位：{snapshot.unit}{snapshot.currency?` · 币种：${snapshot.currency}`:""}</p>
+  {snapshot.rates&&<><p>每 {snapshot.rates.per} tokens · {snapshot.rates.includesMultiplier?"费率已含倍率，不重复相乘":"费率需另乘倍率"}</p><dl className="details-grid">{([["input","输入"],["output","输出"],["cacheRead","缓存读取"],["cacheWrite","缓存写入"]] as const).map(([key,label])=><div key={key}><dt>{label}单价</dt><dd>{snapshot.rates![key]??"未提供"}</dd></div>)}</dl></>}
+  {snapshot.multiplier!==undefined&&<p>原生倍率：{snapshot.multiplier}</p>}{snapshot.free===true&&<p>{snapshot.conditions?.length?"原生条件免费，需核对条件证据":"原生明确免费"}</p>}{snapshot.conditions?.map(condition=><p key={condition}>条件：{condition}</p>)}
+  {(snapshot.validFrom||snapshot.validUntil)&&<p>有效期：{snapshot.validFrom?new Date(snapshot.validFrom).toLocaleString():"未提供起点"} — {snapshot.validUntil?new Date(snapshot.validUntil).toLocaleString():"未提供终点"}</p>}
+ </section>;
+}
+export function CostEstimateView({projection}:{projection:CostEstimateProjection}):React.JSX.Element {
+ const estimate=projection.estimate,reason=projection.reasonCode??estimate?.reason;
+ return <section className="detail-section" aria-label="费用估算"><h3>费用估算</h3>{estimate?.value!==undefined&&projection.status!=="unavailable"?<><p>{estimate.value} {estimate.unit}</p><p>{projection.status==="partial"?"部分用量或维度估算":"估算输入完整"} · {estimate.scope==="turn"?"回合范围":"运行范围"}</p></>:<Notice>当前不可估算。</Notice>}
+  {reason&&<p><span>{reasons[reason]??reason}</span></p>}{estimate&&<details><summary>估算依据</summary><p>公式：{estimate.formulaVersion}</p><p>计算时间：{new Date(estimate.collectedAt).toLocaleString()}</p><p>舍入：{estimate.rounding.scale} 位小数，四舍五入 · {estimate.rounding.applied?"发生舍入":"未发生舍入"}</p>{Boolean(estimate.missingDimensions?.length)&&<p>缺失维度：{estimate.missingDimensions!.join("、")}</p>}<p>输入事件：{estimate.inputs.map(value=>`${value.profileId}/${value.sessionId}/${value.eventId}`).join("、")||"未提供"}</p>{estimate.pricingSnapshot&&<PricingSnapshotView snapshot={estimate.pricingSnapshot}/>} {estimate.billingTimes?.map(value=><p key={`${value.profileId}:${value.sessionId}:${value.eventId}`}>原生计费时间：{value.eventId} · {new Date(value.occurredAt).toLocaleString()} · {value.source}</p>)}{estimate.segments?.map((value,index)=><p key={index}>费率区间：{value.startsAt} — {value.endsAt??"未提供终点"} · {value.pricingSnapshot.id} · {value.value} {estimate.unit}</p>)}</details>}
+  <p className="muted">估算依据已冻结价格和所选观测；原生实际上报费用单独展示。</p>
+ </section>;
+}

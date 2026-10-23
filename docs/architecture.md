@@ -303,6 +303,11 @@ Migration 10 (`canonical_usage_origin_writer_protocol`) raises the protocol to 6
 for immutable producer-origin observations and collector aliases. Entries 1–9
 remain unchanged; protocol-5 writers are rejected before they can turn a saved
 collector alias into a second quantity. Schema-9 archives retain writer5.
+Migration 11 (`frozen_native_pricing_writer_protocol`) raises writer7 for reviewed
+price snapshots and startup revalidation. Writer6 can preserve immutable JSON but
+does not know that changed native price terms require fresh review. Entries1–10
+remain unchanged, schema10 archives retain writer6 and restored copies alone
+upgrade behind their existing reconciliation barrier.
 Connections register `dispatcher_writer_protocol()` before writes; upgraded
 triggers reject older writers. Nested repository operations use savepoints so
 a caught inner failure cannot partially commit native identity changes.
@@ -397,8 +402,9 @@ native model-catalog fingerprints have distinct meanings; final admission pins
 the former while the existing selection preflight validates the latter. Remote
 startup retains its separate owning-Runner contract pending CV-12 composition.
 Guarded local startup was introduced with schema8; current automatic verification
-requires at least schema9/writer5; current origin-aware usage requires schema10/writer6. Native
-control remains unavailable until its remaining runtime composition is qualified.
+requires at least schema9/writer5; origin-aware usage requires schema10/writer6,
+and native price admission requires schema11/writer7. Native control remains
+unavailable until its remaining runtime composition is qualified.
 Failure revokes and aborts its original owned verification command before
 waiting for the Session lane, then requires both adapter stop and owned command
 drain before FAILED. Stop intent audit stays on the existing Session authority
@@ -1119,6 +1125,34 @@ Run.tokens remains the compatible latest-turn projection. Missing metrics and
 unavailable billing baselines stay unknown. Management reads never query a
 native provider. The current normalized token emitter is Codex; providers with
 no qualified observation emitter do not acquire synthetic usage values.
+
+An owning fresh model catalog may provide a bounded native-account-model price
+snapshot for an exact parameter set. Inventory costs, subscription labels,
+native-default with unknown model, cache-only data and parameter mismatches never
+become prices. Canonical rates/quantities remain decimal strings. Preview exposes
+the admitted snapshot and includes it in the confirmation hash; the existing
+immutable ExecutionSelection freezes it on Run and AdapterSession. Pre-start
+refresh revalidates terms even when the catalog revision is unchanged. A later
+collection timestamp with identical terms preserves the original reviewed fact.
+
+Owning Runners advertise `native-model-pricing-v1`. Strict transport validates the
+optional snapshot and rejects private/numeric/unbound fields; Controller refuses
+priced requests to older peers, and Runner rechecks the account/model price
+before native creation. Ordinary legacy/native-default choices remain unpriced.
+
+The saved usage query can project one selected Run's cost through the existing
+exact engine using its frozen price and canonical observations. It verifies
+profile/session/generation/attempt/native identity, derives billing time only
+from admitted native occurrence and never queries a current catalog or provider.
+Actual reported cost stays an independent metric/unit. The projection retains
+formula, price, effective inputs, interval/time evidence, completeness and rounding;
+filtered observation ranges cannot claim complete Run coverage. Pending/unknown
+collection state makes saved amounts partial, and unresolved identity/event/source
+conflicts make them unavailable until admitted recovery; later read failures do
+not reconcile them. The existing usage UI displays that evidence without converting
+amounts through Number.
+Conditional-free/rate-interval producer admission and real account/model price
+qualification remain follow-up requirements; unsupported evidence stays unavailable.
 
 Account quota is a separate read-only projection, never a Run quantity or a
 resource recovery signal. The Codex reader reuses its owned app-server connection

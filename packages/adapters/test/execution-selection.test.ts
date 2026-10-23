@@ -49,6 +49,14 @@ it("refuses model selection and explicit parameters on incapable native backends
   await expect(kiro.start({runId:"r",workspacePath:"/work",executionSelection:choice})).rejects.toMatchObject({code:"UNSUPPORTED_MODEL_SELECTION"});expect(f.start).not.toHaveBeenCalled();
 });
 
+it("rejects unqualified, private or legacy prices before any native preparation",async()=>{
+ const price={version:1 as const,id:"native-price",source:"native/account-model",collectedAt:"2026-10-22T12:00:00Z",unit:"credits",rates:{per:"1000",input:"1",includesMultiplier:true}};
+ for(const patch of [{pricingSnapshot:{...price,privatePayload:"private"}},{pricingSnapshot:{...price,rates:{...price.rates,input:1}}},{mode:"legacy",source:"legacy-config",pricingSnapshot:price}]){
+  const f=fixture("codex"),selection={...f.selection,...patch} as ExecutionSelection;
+  await expect(f.adapter.start({runId:"r",workspacePath:"/work",executionSelection:selection})).rejects.toMatchObject({code:"PRICE_EVIDENCE_INVALID"});expect(f.start).not.toHaveBeenCalled();
+ }
+});
+
 it.each(["codex","opencode"] as const)("preserves pre-snapshot %s data without guessing its missing choice or legacy shape",async provider=>{
   const f=fixture(provider,"current"),base:AdapterSession={id:"historical",runId:"r",profileId:"p",backendId:f.selection.backendId,workspacePath:"/work",state:"COMPLETED",providerSessionId:"native",createdAt:"then",updatedAt:"then"};
   f.store.save(base);await expect(f.adapter.send(base.id,"historical continuation")).rejects.toMatchObject({code:"MODEL_SNAPSHOT_UNKNOWN"});expect(f.store.load(base.id)).toEqual(base);expect(f.start).not.toHaveBeenCalled();

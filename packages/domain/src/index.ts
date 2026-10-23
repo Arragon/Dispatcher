@@ -3,6 +3,7 @@ export * from "./native-session-view.js";
 export * from "./legacy-pricing.js";
 export * from "./decimal.js";
 export * from "./metering.js";
+export * from "./pricing-admission.js";
 export * from "./native-drift.js";
 export * from "./legacy-usage.js";
 export * from "./session-interaction.js";

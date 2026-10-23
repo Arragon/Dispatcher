@@ -1,5 +1,6 @@
 import type {ScmDeliverySelection} from "./delivery.js";
 import type { ModelRoutingDecision } from "./model-routing.js";
+import type {PricingSnapshotV1} from "./metering.js";
 export type NativeParameter = string | number | boolean;
 export interface ExecutionSelection {
   version: 1;
@@ -11,6 +12,8 @@ export interface ExecutionSelection {
   nativeParameters: Record<string, NativeParameter>;
   catalogRevision?: string; contextFingerprint: string; configRevision: number; selectedAt: string;
   routingDecision?: ModelRoutingDecision;
+  /** Owning native price evidence frozen with this reviewed explicit choice. */
+  pricingSnapshot?:PricingSnapshotV1;
 }
 export interface PublishDraftV1 {
   schemaVersion: 1; clientDraftId: string; title?: string; description: string;
@@ -52,13 +55,14 @@ export interface ModelCatalogContext {
   profileId: string; runnerId: string; repositoryId: string; executionContextRef: string;
   reason: "open" | "selection-change" | "preflight" | "before-start" | "manual-refresh";
 }
+export interface NativeModelPricingV1 {version:1;basis:"native-account-model";nativeParameters:Record<string,NativeParameter>;snapshot:PricingSnapshotV1}
 export interface AccountModelCatalog {
   profileId: string; runnerId: string; providerId: string; backendId: string;
   contextFingerprint: string; revision: string; fetchedAt: string;
   freshness: "native-fresh" | "native-cache" | "unverified";
   source: "cli-query" | "native-rpc" | "account-api";
   selectionSupport: "explicit" | "native-default-only" | "unsupported";
-  entries: Array<{id:string;displayName:string;kind:"model"|"tier"|"native-auto";selectable:boolean;unsupportedReason?:string;access:"account-listed"|"unconfirmed"|"denied";parameterOptions:Record<string,NativeParameter[]>;parameterDefaults?:Record<string,NativeParameter>;billing?:{mode:"unknown"|"subscription"|"metered"}}>;
+  entries: Array<{id:string;displayName:string;kind:"model"|"tier"|"native-auto";selectable:boolean;unsupportedReason?:string;access:"account-listed"|"unconfirmed"|"denied";parameterOptions:Record<string,NativeParameter[]>;parameterDefaults?:Record<string,NativeParameter>;billing?:{mode:"unknown"|"subscription"|"metered";pricing?:NativeModelPricingV1}}>;
   failure?: {code:string;message:string};
 }
 

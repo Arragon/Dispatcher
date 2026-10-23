@@ -2930,12 +2930,99 @@ account result. No repeated-until-success loop, deadline extension or inferred
 balance was used. Real quota qualification remains open; continue independent
 price/usage/native integration units with this error state visible.
 
-Quota source was committed as1f3a87f after the167/1743 final gate. The subsequent
-INH-1923 save_comment/readback attempt hit the MCP HTTP transport failure again;
-do not assume that final commit/lifecycle correction was synchronized. The last
-confirmed umbrella comment remains645361e7-20c6-490d-8628-18211cbc3b35 (it covers
-the quota167/1742 checkpoint before the extra cleanup assertion). Retry by reading
-current comments first, then append the1f3a87f/1743 result and retained real-read
-limits. Official quota read also became unavailable at this checkpoint; its last
-successful reading during this continuation was11% used, ordinary usage allowed.
-This is an unavailable current read, not a new stop threshold or remaining0% claim.
+Quota source was committed as1f3a87f after the167/1743 final gate. MCP HTTP
+transport initially blocked the final synchronization. During the CV-07 unit,
+INH-1923 was read first, then the1f3a87f/1743 evidence and retained real-read limits
+were saved and read back: comment aca14007-7dea-424d-ac91-6a024a36357a. The older
+umbrella comment645361e7-20c6-490d-8628-18211cbc3b35 covers the earlier167/1742
+checkpoint. A fresh official quota read now reports21% used with ordinary usage
+allowed; the intervening unavailable reads were never interpreted as remaining0%.
+
+## CV-07 frozen native price and canonical Run estimate composition
+
+Base5b542be in the same protected isolated worktree. This unit extends the
+approved C1/C2 path and reuses the already ported exact decimal engine; no price
+SDK, dependency, alternate ledger or public/static price table is introduced.
+
+An owning fresh catalog can provide explicitly classified native-account-model
+price evidence for the exact model/parameter choice. Private/unknown fields,
+numeric rates, unmatched parameters, inventory basis, cached/unverified data and
+native-default with no concrete model cannot acquire a price. Capture uses
+canonical decimal strings and bounded public fields. Built-in adapters without
+qualified account price producers continue returning no rate.
+
+The admitted snapshot is inside the existing ExecutionSelection: preview exposes
+it, reviewHash covers it, and Run/AdapterSession persistence protects it as one
+immutable selection. Pre-start refresh compares terms even when catalog revision
+does not change. An identical quote with a newer collectedAt preserves the
+original reviewed snapshot; different rates require fresh review before native
+start. Exact account/model/parameter scope remains the same execution authority.
+No old Run or legacy selection receives a backfilled price.
+
+Strict native protocol admits the bounded optional snapshot. New owning Runners
+advertise native-model-pricing-v1, and Controller refuses a priced request to a
+peer without that capability. Runner also revalidates native price terms before
+creation and persists the same snapshot. Price metadata does not create another
+native input or a Controller-local replacement for remote work.
+
+Saved per-Run usage now projects through estimateCost using that Run's frozen
+price and canonical observations, checking profile/session/generation/attempt/
+native identity. BillingTimes derive only from admitted producer-origin native
+occurrence, never observedAt/collectedAt. Current catalog updates cannot change
+historical estimates. Actual cost metrics remain in their own unit; resources,
+account quota and Run state are untouched by the read. Filtered observation
+ranges mark complete results partial rather than claiming whole-Run coverage.
+Usage UI preserves exact amount strings and shows formula, effective input IDs,
+price, completeness, missing reason and rounding; publication review shows the
+price before the existing confirmation action.
+
+Additive schema11/frozen_native_pricing_writer_protocol raises writer7 because
+writer6 cannot honor startup price review, even though whole-selection immutability
+already protects its JSON. Migrations1–10 are byte-identical to5b542be (catalog
+entries body SHA25645539329ff89610c2a3a4b5f7d6387adeb1a85c4a03e6d47762c7fac01da825c).
+Already-open writer6/raw connections are rejected; inner and outer failed upgrade
+restore schema10/writer6/trigger SQL. Source/archive schema10 bytes and writer6
+stay intact while only a restored copy upgrades behind its restore barrier.
+Existing doctor/backup/upgrade fixtures now test current11 and future12; the
+usage-origin gate tests explicitly retain their schema10 catalog assertions.
+
+Observed behavioral RED→GREEN: Adapter allowed malformed/legacy prices; strict
+remote catalog and protocol rejected the valid new price field; preview omitted
+its reviewed snapshot; saved usage still returned fixed unavailable; cost UI
+omitted the amount/reason; and writer6 startup writes were not fenced. New pure
+feature tests first failed missing-module import separately. After implementation,
+transport/Adapter targets3 files/23 tests, domain/Runner/usage3 files/51 tests,
+persistence/doctor/service recovery17 files/129 tests, publication price targets2
+cases and existing usage UI5 cases pass. These target selections are not summed
+as independent full-suite evidence.
+
+Default `mise exec -- pnpm check` passes build/workspace typechecks/ESLint/
+boundaries and170 test files/1762 tests (84.28s). Log:
+/tmp/dispatcher-pricing-full-check-20261022.log. All price producers in these
+positive tests are scoped protocol/backend fixtures. No real native account
+price, service activation, installed-data migration, GUI or release Gate is
+claimed. Conditional-free/rate-interval producer admission is still a code path
+to complete; the pure engine retains its source assertions but cannot invent
+those facts for Controller. This was the pre-review full gate.
+
+Independent review reproduced an Important completeness defect: accepted complete
+usage could still show a complete estimate after an unresolved native collection
+error. New regressions first reproduced the error, then cover saved partial
+amounts for read failures, unavailable amounts for identity/event/source conflicts,
+pending reads, source-change precedence and recovery. A real Controller HTTP
+fixture additionally reproduced generic USAGE_PARTIAL and later read exceptions
+overwriting USAGE_EVENT_CONFLICT. Both writes now preserve the integrity failure
+until an admitted recovery. The specific conflict → read exception → valid replay
+regression was observed RED then GREEN. UI explains collection failures while
+retaining exact saved amounts only as partial. Focused re-review reports no
+remaining actionable findings. Final post-fix default `mise exec -- pnpm check`
+passes build, workspace typechecks, ESLint, boundaries and170 files/1767 tests
+(87.46s), exit0. Log /tmp/dispatcher-pricing-full-check-final-20261022.log.
+`git diff --check` also passes. The earlier3-file/97-test target passed before
+the extra retry branch assertion and is not a substitute for this final gate.
+
+MCP HTTP transport recovered. INH-1924 checkpoint comment
+72a9f2e3-8843-4d44-bd1f-33eba3167ea9 was saved and read back with the pre-review
+170/1762 result and the code/real-provider gaps. The quota final evidence is now
+also confirmed synchronized as described above. Append the final pricing commit
+and post-review gate after verification; do not mark the whole CV-07 card Done.

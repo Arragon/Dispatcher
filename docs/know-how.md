@@ -921,3 +921,15 @@
   Expire observed windows at their native reset without assuming a renewed limit.
   HTTP timeout/cancellation is not native reader termination; retain the pending
   handle and configuration barrier until owned cleanup actually settles.
+- A catalog revision alone does not prove stable account/model prices. Compare
+  reviewed price terms again before startup, while treating an unchanged quote's
+  later collection timestamp as freshness evidence rather than a new price.
+  Freeze the original reviewed snapshot; historical cost reads use it without a
+  current catalog lookup. Writer6 preserves that JSON but cannot enforce the new
+  startup rule, so schema11 requires writer7 and preserves migrations1–10.
+
+- A complete saved usage snapshot cannot prove current collection completeness.
+  Project pending/unknown reader state and unresolved collection errors into cost
+  availability. Preserve an event/identity conflict through generic partial reads
+  and later read exceptions until admitted recovery; a transport error does not
+  reconcile conflicting native facts. Keep accepted observations immutable.

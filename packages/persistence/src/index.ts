@@ -6,6 +6,7 @@ import { InteractionStoreError, migrateNativeInteractions } from "./interaction-
 import { assertDatabaseLocationOperational, assertDatabaseOperational, assertDatabaseSchema, CONVERGENCE_SCHEMA_NAME, CONTROL_RUNTIME_SCHEMA_NAME, GUARDED_START_SCHEMA_NAME, databaseWriterProtocol, installWriterGate, upgradeConvergenceWriterGate, upgradeControlRuntimeWriterGate, upgradeGuardedStartWriterGate } from "./database-compatibility.js";
 import { AUTOMATIC_VERIFICATION_SCHEMA_NAME, upgradeAutomaticVerificationWriterGate } from "./database-compatibility.js";
 import { USAGE_ORIGIN_SCHEMA_NAME, upgradeUsageOriginWriterGate } from "./database-compatibility.js";
+import {PRICING_ADMISSION_SCHEMA_NAME,upgradePricingAdmissionWriterGate} from "./database-compatibility.js";
 
 export * from "./interaction-store.js";
 export * from "./database-compatibility.js";
@@ -309,6 +310,12 @@ export const migrations: readonly Migration[] = [
     sql: "",
     afterApply: database => upgradeUsageOriginWriterGate(database.handle),
   },
+  {
+    version: 11,
+    name: PRICING_ADMISSION_SCHEMA_NAME,
+    sql: "",
+    afterApply: database => upgradePricingAdmissionWriterGate(database.handle),
+  },
 ] as const;
 
 export class MigrationError extends Error {
@@ -460,6 +467,7 @@ export class DispatcherDatabase {
           if(migration.version===8&&migration.name===GUARDED_START_SCHEMA_NAME)this.writerProtocol=4;
           if(migration.version===9&&migration.name===AUTOMATIC_VERIFICATION_SCHEMA_NAME)this.writerProtocol=5;
           if(migration.version===10&&migration.name===USAGE_ORIGIN_SCHEMA_NAME)this.writerProtocol=6;
+          if(migration.version===11&&migration.name===PRICING_ADMISSION_SCHEMA_NAME)this.writerProtocol=7;
           this.handle.exec(migration.sql);
           migration.afterApply?.(this);
           this.handle

@@ -2,10 +2,10 @@ import { createHash, randomUUID } from "node:crypto";
 import { join,resolve } from "node:path";
 import {nativePrivatePaths,type AdapterSession,type AgentAdapter,type SessionStore} from "@dispatcher/adapters";
 import { ConfigurationEngine, repositoryRunnerId, type AgentProfileConfig, type DispatcherConfig, type RepositoryConfig } from "@dispatcher/config";
-import type { AccountModelCatalog, ExecutionSelection, GitPushResult, LocalCommitResult, ModelCatalogContext } from "@dispatcher/domain";
+import {admitCatalogPricing,samePricingTerms,type AccountModelCatalog,type ExecutionSelection,type GitPushResult,type LocalCommitResult,type ModelCatalogContext} from "@dispatcher/domain";
 import { redactValue } from "@dispatcher/observability";
 import { DispatcherDatabase, type JsonValue } from "@dispatcher/persistence";
-import { NATIVE_EXECUTION_CAPABILITY,NATIVE_GIT_DELIVERY_CAPABILITY,parseEnvelope, type CommandPayload, type NativeDeliveryIntent, type NativeStartDescriptor, type NativeWorkspacePlan, type ProtocolEnvelope } from "@dispatcher/protocol";
+import { NATIVE_EXECUTION_CAPABILITY,NATIVE_GIT_DELIVERY_CAPABILITY,NATIVE_MODEL_PRICING_CAPABILITY,parseEnvelope, type CommandPayload, type NativeDeliveryIntent, type NativeStartDescriptor, type NativeWorkspacePlan, type ProtocolEnvelope } from "@dispatcher/protocol";
 import { RepositoryRegistry, WorkspaceManager, type WorkspaceHandle } from "@dispatcher/workspace";
 import { LeaseFenceError, RunnerLeaseAuthority, type RunnerLease } from "./lease.js";
 import { LocalGitDelivery, LocalGitDeliveryError } from "./local-git-delivery.js";
@@ -162,7 +162,7 @@ export class NativeRunnerRuntime {
       },
     };
   }
-  capabilities():string[]{return this.adapters.size?[NATIVE_EXECUTION_CAPABILITY,NATIVE_GIT_DELIVERY_CAPABILITY]:[];}
+  capabilities():string[]{return this.adapters.size?[NATIVE_EXECUTION_CAPABILITY,NATIVE_GIT_DELIVERY_CAPABILITY,NATIVE_MODEL_PRICING_CAPABILITY]:[];}
   profileInventory(): string[] { return [...this.adapters.keys()].sort(); }
   capacity(): number { return this.config.runners.find(r => r.id === this.options.runnerId)?.capacity ?? 0; }
   registerHandlers(client: { register(type: CommandPayload["type"], handler: (payload: CommandPayload, envelope: ProtocolEnvelope<CommandPayload>) => Promise<unknown>): unknown }): void {
@@ -382,6 +382,7 @@ export class NativeRunnerRuntime {
     const entry = catalog.entries.find(e => e.id === selection.requestedModel);
     if (catalog.failure || catalog.freshness !== "native-fresh" || catalog.selectionSupport !== "explicit" || catalog.revision !== selection.catalogRevision || !entry?.selectable || entry.access === "denied" || selection.mode === "policy-auto" && entry.kind !== "model") throw new NativeRunnerError("SELECTION_CHANGED", "Reviewed native model is no longer available");
     for (const [key, value] of Object.entries(selection.nativeParameters)) if (!entry.parameterOptions[key]?.includes(value)) throw new NativeRunnerError("INVALID_NATIVE_PARAMETERS", "Native parameter is not supported by this model");
+    if(selection.pricingSnapshot){const price=admitCatalogPricing(catalog,selection.requestedModel!,selection.nativeParameters,this.now().toISOString());if(price.status!=="available"||!samePricingTerms(selection.pricingSnapshot,price.snapshot))throw new NativeRunnerError("PRICE_CHANGED","Reviewed native account/model price changed before start");}
   }
   private async start(runId: string, execution: NativeStartDescriptor, envelope: ProtocolEnvelope<CommandPayload>): Promise<AdapterSession> {
     const record = this.require(runId); this.fence(record, envelope);

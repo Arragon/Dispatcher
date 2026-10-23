@@ -1,5 +1,5 @@
 import {isDeepStrictEqual} from "node:util";
-import type {ExecutionSelection} from "@dispatcher/domain";
+import {capturePricingSnapshot,type ExecutionSelection} from "@dispatcher/domain";
 import {AdapterContractError,type AdapterSession} from "./contracts.js";
 
 const text=(value:unknown):value is string=>typeof value==="string"&&value.length>0&&value.length<=240&&!Array.from(value).some(character=>character.charCodeAt(0)<32||character.charCodeAt(0)===127);
@@ -15,6 +15,7 @@ export function freezeExecutionSelection(value:ExecutionSelection|undefined,owne
   if(explicit? !text(value.requestedModel)||source==="native-default" : value.requestedModel!==undefined||Object.keys(value.nativeParameters).length>0||!["native-default","legacy-config"].includes(source))return fail("EXECUTION_SELECTION_INVALID","Model choice contradicts native-default semantics");
   if(explicit&&!owner.selection&&!(value.mode==="legacy"&&owner.legacyModel))return fail("UNSUPPORTED_MODEL_SELECTION","This native backend cannot submit a model choice");
   if(Object.entries(value.nativeParameters).some(([key,value])=>!owner.reasoning||key!=="reasoningEffort"||!text(value)))return fail("UNSUPPORTED_NATIVE_PARAMETERS","This native backend cannot submit the requested parameters");
+  if(value.pricingSnapshot!==undefined){try{if(!explicit||value.mode==="legacy")throw Error();capturePricingSnapshot(value.pricingSnapshot);}catch{return fail("PRICE_EVIDENCE_INVALID","Price requires a qualified explicit native model choice");}}
   return structuredClone(value);
 }
 

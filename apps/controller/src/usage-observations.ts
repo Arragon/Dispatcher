@@ -1,4 +1,4 @@
-import {decimalAmount as amount,decimalString as decimal,usageAggregationTime,type UsageObservationV1} from "@dispatcher/domain";
+import {decimalAmount as amount,decimalString as decimal,usageAggregationTime,capturePricingSnapshot,estimateCost,type CostEstimateProjection,type Run,type UsageObservationV1} from "@dispatcher/domain";
 import type {DispatcherDatabase,JsonValue} from "@dispatcher/persistence";
 import {contentHash} from "./task-publications.js";
 export type UsageContext={profileId:string;runId:string;sessionId:string;nativeSessionId?:string;
@@ -38,6 +38,27 @@ const originHash=(record:UsageObservationV1)=>contentHash({...record,eventId:und
 interface UsageOriginAlias {canonicalId:string;recordHash:string;eventId:string;source:UsageObservationV1["source"];observedAt:string}
 export class UsageObservations {
  constructor(private readonly db:DispatcherDatabase,private readonly now:()=>Date=()=>new Date()){}
+ private estimation(observations:UsageObservationV1[],filter:{runId?:string;profileId?:string;sessionId?:string;from?:string;to?:string}):CostEstimateProjection {
+  if(!filter.runId)return {status:"unavailable",reasonCode:"BILLING_BASELINE_MISSING"};
+  const run=this.db.getEntity<JsonValue>("run",filter.runId) as unknown as Run|undefined,selection=run?.executionSelection;
+  if(!run)return {status:"unavailable",reasonCode:"RUN_CONTEXT_UNAVAILABLE"};
+  if(filter.profileId&&filter.profileId!==run.profileId||filter.sessionId&&filter.sessionId!==run.sessionId||observations.some(value=>value.scope!=="account-period"&&(value.profileId!==run.profileId||value.sessionId!==run.sessionId||value.generation!==run.generation||value.attempt!==undefined&&value.attempt!==run.attempt||value.nativeSessionId!==undefined&&value.nativeSessionId!==run.providerSessionId)))return {status:"unavailable",reasonCode:"RUN_USAGE_CONTEXT_MISMATCH"};
+  if(!selection?.pricingSnapshot)return {status:"unavailable",reasonCode:"BILLING_BASELINE_MISSING"};
+  if(!["manual","policy-auto"].includes(selection.mode)||selection.selectionType!=="explicit-model"||!selection.requestedModel||selection.profileId!==run.profileId||selection.providerId!==run.providerId||selection.runnerId!==run.runnerId)return {status:"unavailable",reasonCode:"PRICE_CONTEXT_UNPROVEN"};
+  let pricing;try{pricing=capturePricingSnapshot(selection.pricingSnapshot);}catch{return {status:"unavailable",reasonCode:"PRICE_EVIDENCE_INVALID"};}
+  const error=this.db.getEntity<JsonValue>("usage-error",run.id) as {status?:string;reasonCode?:string}|undefined;
+  const read=this.db.getEntity<JsonValue>("usage-read-state",run.id) as {state?:string;reasonCode?:string}|undefined;
+  const errorReason=error?.status==="unknown"?(error.reasonCode??"USAGE_UNAVAILABLE"):undefined;
+  const readReason=read?.state==="pending"?"USAGE_READ_PENDING":read?.state==="unknown"?(read.reasonCode??"USAGE_UNAVAILABLE"):undefined;
+  const integrityReason=[errorReason,readReason].find(reason=>reason&&["USAGE_INVALID","USAGE_EVENT_CONFLICT","USAGE_SOURCE_CHANGED"].includes(reason));
+  if(integrityReason)return {status:"unavailable",reasonCode:integrityReason};
+  const collectionReason=errorReason??readReason;
+  const billingTimes=observations.flatMap(value=>value.producerOrigin&&value.occurredAt&&value.sessionId?[{eventId:value.eventId,profileId:value.profileId,sessionId:value.sessionId,occurredAt:value.occurredAt,source:value.producerOrigin.producerId}]:[]);
+  let estimate=estimateCost({runId:run.id,observations,pricing,calculatedAt:this.now().toISOString(),...(billingTimes.length?{billingTimes}:{})});
+  if(estimate.completeness==="complete"&&(filter.from||filter.to))estimate={...estimate,completeness:"partial",reason:"OBSERVATION_RANGE_FILTERED"};
+  if(collectionReason&&estimate.completeness!=="unavailable")estimate={...estimate,completeness:"partial",reason:collectionReason};
+  return {status:estimate.completeness==="complete"?"available":estimate.completeness,...(estimate.reason?{reasonCode:estimate.reason}:{}),estimate};
+ }
  record(input:unknown,context:UsageContext):number{
   if(!Array.isArray(input)||input.length>1000)return fail("Usage observation batch is invalid");const records=input.map(value=>normalize(value,context,this.now().toISOString()));
   return this.db.transaction(()=>{let inserted=0;for(const record of records){
@@ -73,6 +94,6 @@ export class UsageObservations {
   const sums=new Map<string,{profileId:string;scope:UsageObservationV1["scope"];name:string;unit:string;value:bigint;period?:UsageObservationV1["period"];producerId?:string}>();
   for(const entries of groups.values()){const first=entries[0]!,latest=snapshots.get(contentHash(scopeKey(first.record))),snapshot=entries.find(entry=>entry.record===latest),deltas=entries.filter(entry=>entry.record.mode==="delta"&&(!latest||usageAggregationTime(entry.record)!>usageAggregationTime(latest)!));if(!snapshot&&!deltas.length)continue;
    const producerId=first.record.producerOrigin?.producerId,key=contentHash({profileId:first.record.profileId,scope:first.record.scope,name:first.metric.name,unit:first.metric.unit,period:first.record.period,producerId}),sum=sums.get(key)??{profileId:first.record.profileId,scope:first.record.scope,name:first.metric.name,unit:first.metric.unit,value:0n,...(first.record.period?{period:first.record.period}:{}),...(producerId?{producerId}:{})};sum.value+=snapshot?amount(snapshot.metric.value):0n;for(const entry of deltas)sum.value+=amount(entry.metric.value);sums.set(key,sum);}
-  return {observations,totals:orderUnproven?[]:[...sums.values()].map(value=>({...value,value:decimal(value.value)})),rangeBasis:"observation-time" as const,estimation:{status:"unavailable",reasonCode:orderUnproven?"USAGE_ORDER_UNPROVEN":"BILLING_BASELINE_MISSING"}};
+  return {observations,totals:orderUnproven?[]:[...sums.values()].map(value=>({...value,value:decimal(value.value)})),rangeBasis:"observation-time" as const,estimation:orderUnproven?{status:"unavailable" as const,reasonCode:"USAGE_ORDER_UNPROVEN"}:this.estimation(observations,filter)};
  }
 }

@@ -63,6 +63,13 @@ it("requires applied owning registrations, plans without mutation, executes and 
   expect(await f.call({ type: "native.run_files", runId: "run" })).toEqual(["result.txt"]);
   expect(await f.call({ type: "native.run", runId: "run", action: "result" })).toMatchObject({ state: "COMPLETED", summary: "done" });
 });
+it("preserves the reviewed native price and rejects changed terms before owned native creation",async()=>{
+ for(const changed of [false,true]){
+  const f=fixture();f.apply();const snapshot={version:1 as const,id:"price",source:"native/account-model",collectedAt:f.selection.selectedAt,unit:"credits",rates:{per:"1000",input:"0.1",includesMultiplier:true}};
+  f.catalog.entries[0]!.billing={mode:"metered",pricing:{version:1,basis:"native-account-model",nativeParameters:{},snapshot:structuredClone(snapshot)}};f.selection.pricingSnapshot=structuredClone(snapshot);await f.prepare();
+  expect(f.runtime.capabilities()).toContain("native-model-pricing-v1");if(changed){f.catalog.entries[0]!.billing!.pricing!.snapshot.rates!.input="0.2";await expect(f.start()).rejects.toMatchObject({code:"PRICE_CHANGED"});expect(f.starts()).toBe(0);}else{expect(await f.start()).toMatchObject({executionSelection:{pricingSnapshot:snapshot}});expect(f.starts()).toBe(1);}
+ }
+});
 
 it("rejects native probe evidence when the owning registration changes during the read",async()=>{
   const f=fixture();f.runtime.close();const entered=Promise.withResolvers<void>(),gate=Promise.withResolvers<void>();

@@ -21,6 +21,7 @@ export interface CostEstimateV1 {
  conditionEvidence?:CostEstimateInput["conditionEvidence"];billingTimes?:BillingTimeEvidence[];cacheInclusion?:CacheInclusionEvidence[];
  segments?:Array<{startsAt:string;endsAt?:string;source:string;pricingSnapshot:PricingSnapshotV1;eventIds:string[];value:string}>;
 }
+export interface CostEstimateProjection {status:"available"|"partial"|"unavailable";reasonCode?:string;estimate?:CostEstimateV1}
 const dimensions=["input","output","cacheRead","cacheWrite"] as const;
 const names={input:"input",output:"output",cacheRead:"cachedInput",cacheWrite:"cacheWrite"} as const;
 const text=(v:unknown):v is string=>typeof v==="string"&&v.length>0&&v.length<=500&&!Array.from(v).some(c=>c.charCodeAt(0)<32||c.charCodeAt(0)===127);

@@ -11,6 +11,11 @@ it("preserves unconfirmed access and unsupported native evidence without manufac
   const unavailable = { ...good, entries: [], freshness: "unverified", selectionSupport: "unsupported", failure: { code: "NATIVE_AUTH_REQUIRED", message: "Native login required" } };
   expect(remoteCatalog(unavailable, identity)).toEqual(unavailable);
 });
+it("preserves only bounded native account/model price evidence from the owning Runner",()=>{
+ const good=catalog(),pricing={version:1,basis:"native-account-model",nativeParameters:{reasoningEffort:"low"},snapshot:{version:1,id:"price",source:"native/account-model",collectedAt:new Date().toISOString(),unit:"credits",rates:{per:"1000",input:"0.1",includesMultiplier:true}}};
+ const value={...good,entries:[{...good.entries[0],billing:{mode:"metered",pricing}}]};expect(remoteCatalog(value,identity)).toEqual(value);
+ expect(()=>remoteCatalog({...value,entries:[{...value.entries[0],billing:{mode:"metered",pricing:{...pricing,snapshot:{...pricing.snapshot,privatePayload:"private"}}}}]},identity)).toThrow(expect.objectContaining({code:"REMOTE_RESULT_INVALID"}));
+});
 
 it("rejects malformed or contradictory native ownership inventory",()=>{
   const row={runnerId:"remote",profileId:"p",runId:"run",state:"RUNNING",attached:true,resultAvailable:false,generation:1,leaseId:"lease",startCommandHash:"a".repeat(64),lease:{runnerId:"remote",runId:"run",leaseId:"lease",generation:1,expiresAt:"2026-10-16T12:00:00Z"}};

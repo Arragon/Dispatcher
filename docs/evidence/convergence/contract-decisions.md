@@ -88,3 +88,37 @@ explicitly unproven native event equivalence. It must not be sent directly to
 the canonical writer or counted alongside v3 observations. Preserve raw source
 records and reconcile event origin/attempt/time before producing canonical
 UsageObservationV1; collection time cannot stand in for missing billing time.
+
+## CV-07 frozen native price admission
+
+The approved C1/C2 price requirement extends the current catalog/selection path:
+an owning catalog may attach explicit native-account-model price evidence for an
+exact parameter set. Fresh account/model/backend/context and parameter identity
+must match the reviewed choice; model inventory costs and subscription labels are
+not rates. Native-default without a proved model keeps price unavailable.
+
+The admitted `PricingSnapshotV1` is one optional fact inside the existing immutable
+ExecutionSelection. It is never another RunModelSelection or a live price lookup
+for historical Runs. Preview exposes it, confirmation covers it, pre-start
+rechecks terms while retaining the original collection timestamp, and persistence
+protects the full selection JSON. The existing immutable-selection checks protect
+price edits, but an old writer6 does not revalidate price before startup. Additive
+schema11/writer7 therefore rejects those old connections. Migrations1–10 remain
+unchanged; schema10 archives retain writer6 and only restored copies upgrade.
+
+The strict native execution protocol must preserve/validate this optional field.
+Owning Runners advertise price-snapshot support; a priced request cannot be sent
+to a peer that lacks it. A newer catalog cannot rewrite an existing Run's price.
+Estimation consumes the canonical ledger, with billing time only from admitted
+native occurrence, and returns formula/input/price/rounding/completeness evidence.
+Account quota, resource truth and native actual cost remain independent.
+Unresolved collection/read gaps make any retained saved amount partial. Unresolved
+identity/event/source conflicts make it unavailable, including through subsequent
+read exceptions. A valid admitted recovery may restore collection completeness;
+no read failure rewrites the immutable accepted observations.
+
+Implementation sequence: pure admission + source math regressions; catalog,
+publication/Adapter/Runner propagation with immutability and revalidation tests;
+canonical Run estimate projection; current usage UI and complete pnpm check.
+Positive cases use scoped fixture price producers. Built-in providers without
+qualified price reads keep unavailable; fixture results cannot qualify real prices.

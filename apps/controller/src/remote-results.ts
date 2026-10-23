@@ -1,4 +1,4 @@
-import {isGitDeliveryTarget,type GitDeliveryTarget} from "@dispatcher/domain";
+import {isGitDeliveryTarget,isNativeModelPricingV1,type GitDeliveryTarget} from "@dispatcher/domain";
 import { AdapterContractError } from "@dispatcher/adapters";
 import type { AccountModelCatalog,LocalCommitResult,RepositoryRefs,RunGitDelivery } from "@dispatcher/domain";
 import type { RunnerLease, RunnerRunSnapshot } from "@dispatcher/runner";
@@ -29,7 +29,7 @@ export function remoteCatalog(value: unknown, expected: { profileId: string; run
     const options = entry.parameterOptions;
     if (entry.unsupportedReason !== undefined && !text(entry.unsupportedReason, 4000)) return invalid();
     if (entry.parameterDefaults !== undefined && (!object(entry.parameterDefaults) || !Object.entries(entry.parameterDefaults).every(([key, value]) => Array.isArray(options[key]) && options[key].includes(value)))) return invalid();
-    if (entry.billing !== undefined && (!object(entry.billing) || !keys(entry.billing, ["mode"]) || !["unknown", "subscription", "metered"].includes(String(entry.billing.mode)))) return invalid();
+    if (entry.billing !== undefined && (!object(entry.billing) || !keys(entry.billing, ["mode","pricing"]) || !["unknown", "subscription", "metered"].includes(String(entry.billing.mode))||entry.billing.pricing!==undefined&&!isNativeModelPricingV1(entry.billing.pricing))) return invalid();
   }
   return structuredClone(value) as unknown as AccountModelCatalog;
 }
