@@ -8,6 +8,11 @@
   keep actual provider context and normalize PWD separately. Redacting output
   cannot revoke an authority credential already inherited by a process.
 
+- A native stdio root can exit while its background child keeps stdout/stderr
+  open. Reject pending RPC waits on the root's exit event, then drain only local
+  handles; waiting for `close` conflates root lifetime with inherited pipe life.
+  Root-only cleanup cannot establish background-tool or native-writer release.
+
 - Fastify hijacked dashboard SSE responses must be ended before awaiting
   `app.close()`. Waiting for server close first leaves an open browser holding
   graceful shutdown. Own each response cleanup once, including its timer and

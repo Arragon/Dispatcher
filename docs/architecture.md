@@ -1227,6 +1227,21 @@ The exact source is available through the owning runtime, but live Controller
 source registration and real native capability qualification remain separate
 requirements before a complete Pi task loop can be enabled.
 
+## Internal Codex App Server transport
+
+The preserved Codex stdio transport is internal to adapters and remains pinned to
+its source protocol version. It does not register a backend, open a session or
+qualify a native capability by being present. Physical home/workspace identity is
+captured before an owned, bounded version probe and checked again before the
+app-server child starts. Both children use the shared execution environment.
+
+The transport retains bounded UTF-8 JSON framing, correlated requests and original
+live callback ownership. A root exit rejects pending requests independently of
+inherited pipe closure. Local disconnect stops only that captured root and drains
+local pipes; background tools and native writer release remain unknown. Provider
+binding, history and guarded execution belong to the separate backend/runtime
+composition and do not come from the transport's cleanup receipt.
+
 ## Diagnostic reads and registered checks
 
 The diagnostics snapshot combines saved account evidence, current transport

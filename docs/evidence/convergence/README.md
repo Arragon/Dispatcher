@@ -3159,3 +3159,106 @@ continues. No default timeout, assertion, worker setting or existing test was
 weakened. Linear INH-1923 progress save db7b687b-57cd-4175-8485-2b4858307e79
 records the exact scoped passes, full failures and open Gates; its current latest
 comment was read back successfully with the same id and body.
+
+## R-020 timing investigation and CV-09 transport continuation 2026-10-23
+
+Quota source checkpoint d5b6871 is saved with the failed full-regression evidence
+above. INH-1923 commit receipt d2aaf130-0ee4-4805-aaff-d78148627a6c was read back;
+INH-1927 R-020 receipt ef80d94c-aa30-4fcf-8746-0685370a7fcb was also read back.
+The quota tool currently returns unavailable; this is not a zero-usage reading.
+
+A temporary event trace of the existing version reader observed spawn returning
+and its spawn event in approximately1ms. The first2 selected Pi fixture outputs
+arrived at2582/2636ms; close/drain followed within2ms. Another complete Pi target
+with that trace passes2 files/80 tests (35.36s), with first outputs725/778ms.
+The full default-worker test command with tracing passes172 files/1782 tests
+(79.31s). Expected TERM-resistant and aborted probes retain their physical stop
+behavior. No unexpected first-probe timeout was reproduced in this diagnostic,
+so it neither establishes root cause nor replaces the required uninstrumented
+full check. The reader was restored byte-for-byte to committed content, SHA256
+88355a1ab778f6231e717ab5886abbf188f74a0482f1d5bfff07a72f634e82c4,
+with no remaining diff. All original failed logs remain. Raw /tmp diagnostics:
+dispatcher-pi-probe-timing-20261023.jsonl, dispatcher-pi-probe-trace-run-20261023.log,
+dispatcher-pi-probe-trace-full-target-20261023.log and
+dispatcher-pi-probe-trace-full-suite-20261023.log. R-020 remains unresolved.
+
+Next independent approved CV-09 unit: preserve the committed a499d84 owned Codex
+stdio transport as an internal module, without activating a native backend.
+Retain exact pinned version/physical home-workspace identity, bounded framing,
+request correlation, original-connection callback ownership and local root-only
+disconnect semantics. Preserve the two source owned-stdio assertions, three
+source native-process disconnect assertions and both version-probe replacement
+assertions, with explicit source-to-target mapping. Use the existing owned version
+reader and childExecutionEnvironment to meet the target physical cleanup and
+Controller authority boundary. Add regression evidence for that adaptation.
+Backend/Controller composition follows separately; no registered capability or
+real installed Codex qualification is inferred by the internal transport port.
+This reuses repository-owned source, adds no external code/package/license and
+does not change schema or live account/service/data. Verify RED, focused target,
+full uninstrumented pnpm check and independent review before qualification.
+
+The transport subset is now present. Source assertion mapping: a499d84
+codex-app-server.test.ts's2 owned-stdio and2 version-probe directory cases plus
+codex-native-process.test.ts's3 local disconnect cases map to the new
+codex-app-server-transport.test.ts. Remaining backend tests are retained in the
+source commit and are not silently disabled in this target. Nine additional cases
+cover native authority/context, resistant probe cleanup, root exit with inherited
+pipes, response ordering/split UTF-8, callback ownership/consumption/resolution,
+unowned callback rejection, pending bounds, oversized frames and version refusal.
+
+RED against literal source transport: fake authority canaries inherited by both
+children and version cwd/PWD from Controller; TERM-resistant execFile version
+probe still pending after6500ms; pending thread read still waiting after owned
+root exited with inherited pipes. Target fixes use shared childExecutionEnvironment
+and readOwnedNativeVersion, and fail pending RPC on root exit. No shared helper
+semantics or existing deadline changed. Target16/16 passes (6.02s). The initial
+full check passed build/types then stopped at one unused test import in ESLint;
+the import was removed without suppression or behavioral expectation edits.
+The uninstrumented default full check and independent read-only review follow.
+Logs /tmp/dispatcher-cv09-transport-{authority-red,context-red,lifecycle-red,
+green,target-final,check,check-final}-20261023.log preserve actual outcomes.
+Linear INH-1926 get/save attempts currently fail MCP HTTP transport; this CV-09
+delta has no confirmed remote receipt yet. Earlier CV-06/R-020 readback receipts
+above remain confirmed. Continue implementation with local evidence pending sync.
+
+The final uninstrumented default `mise exec -- pnpm check` is terminal exit0:
+build, workspace typechecks, ESLint and boundaries pass;173 files/1798 tests pass
+(68.52s). This covers the saved owning-Runner quota code and the new internal
+transport. The earlier failed gates and diagnostic-only passes remain retained;
+R-020 is an unresolved intermittency/root-cause follow-up rather than a current
+red-gate claim. No probe helper/deadline/assertion/worker default changed.
+Independent transport review is finishing; no additional broad rerun is required
+without a new change or finding. Official quota now reads30% used/70% remaining,
+ordinaryUsageAllowed true; it supersedes the unavailable reads, without consuming
+any reset. Linear recovered: CV-09 receipt0d985620-eda0-4a02-b897-3742037e1844 and
+CV-06 full-gate receipt571b2f4f-d4f3-4581-81c2-b85c760c1ab1 were both saved and
+read back with identical ids/bodies. Both issues and the overall goal remain
+In Progress for the listed production/native/runtime Gates.
+
+Independent transport review identified one Important local lifecycle finding:
+after root exit rejects pending reads, inherited stdout/stderr still left two
+local PipeWrap handles until an explicit caller close. The owning backend may
+only mark itself disconnected, so that implicit dependency could retain handles
+across terminal hosts. A new assertion before explicit disconnect reproduced
+5 versus3 baseline PipeWrap handles. Terminal fail now destroys all three local
+pipes immediately while retaining the same root-only TERM/KILL and exit receipt;
+no detached group/child is signalled and backgroundTools remains unknown.
+The16-case target passes again (15.44s), including detached child still alive.
+Logs /tmp/dispatcher-cv09-transport-review-pipes-red-20261023.log and
+/tmp/dispatcher-cv09-transport-review-green-20261023.log. Final post-fix full check
+is now running at /tmp/dispatcher-cv09-transport-review-check-20261023.log.
+
+The same review seat's focused recheck confirms the local-pipe P2 is addressed,
+with no residual scoped code finding. The final post-fix full check is RED,
+exit1: build/typechecks/ESLint/boundaries pass;169/173 files and1792/1798 tests
+pass (85.37s). All6 failures are Pi version-probe admission, now also occurring
+mid-file: PiAdapter injected-backend selection; exec-no-proof successful-code
+refusal; client final-guard directory recheck; client inherited-close cleanup;
+read detached handle identity; read queued-send file recheck. New Codex16 cases
+pass in that run. This refines R-020 from first-probe-only to intermittent native
+version startup; it does not identify a causal explanation or make the previous
+green command disappear. This development checkpoint is not merge-ready until
+required regression is qualified. No repeat-until-green gate, deadline extension,
+worker-default change, native helper weakening or unrelated host action follows.
+The post-review Linear save currently failed MCP HTTP transport, so its new
+pipe-fix/result delta is pending synchronization rather than assumed delivered.
