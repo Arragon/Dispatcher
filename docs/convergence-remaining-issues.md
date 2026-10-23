@@ -99,8 +99,18 @@ Final default check passes185 files/2424 tests (87.92s), plus non-test gates;11
 source/test/architecture/knowledge Git blobs match its captured source manifest.
 The earlier compatibility RED and lint failure remain separate retained evidence.
 
-Next: canonical OpenCode catalog identity/capture, retained Controller runtime/
-service and their20 original cases, explicit ConfigPlan registration, other native providers, then actual
+Canonical OpenCode catalog0208bff is independently approved:31 source safety
+groups map to current AccountModelCatalog/immutable selection, with71 new cases.
+Actual backend identity, original resolver/physical/account capture, eligible
+default membership and post-cleanup fences pass186 files/2495 tests (91.05s,
+wall101.969s) and non-test gates. All10 final Git payload hashes match the gate;
+all21 retained run logs/210 source payload hashes match their saved manifests.
+Relative native account metadata locations reject before I/O rather than reading
+different accounts under parent/child cwd. Root-loss EPERM remains disclosed
+cleanup-unknown, with no claimed deterministic native cleanup or R-020 resolution.
+
+Next: retained Controller runtime/service and their20 original cases, explicit
+ConfigPlan registration, other native providers, then actual
 provider/GUI/writer/service/release qualification. The
 current integration used fixtures only; no real account/config/service activation
 or persisted-format/dependency change occurred. CV-09 and the full goal remain

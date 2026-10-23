@@ -3862,3 +3862,96 @@ No dependency/persisted-format or real account/native/service activation occurre
 CV-09 and goal remain incomplete. Official last quota79% used/21% remaining,
 ordinaryUsageAllowed=true and2 reset credits unused. Linear fix source receipt
 fec84563-dac7-4922-804c-1eb5ecfa485c saved; final reviewed receipts follow.
+
+
+### 2026-10-23 canonical OpenCode catalog (locally complete)
+
+Source0208bffab9805d7321acf6958246ee39d7620baa preserves the current canonical
+AccountModelCatalog/ExecutionSelection boundary and actual backend identity for
+standalone and explicit internal server injection. All31 source safety groups
+are mapped below;71 new owned fixture cases augment unchanged CLI/selection
+assertions. Reader captures original method/receiver/profile/context/signal and
+sanitized native account environment before awaits; physical workspace/account
+before resolution, executable physical target/alias/stamp before spawn. It pins
+PID/version/native project, safe selectors/eligible defaults and final context
+after actual group/stream cleanup. Native project identity stays separate from
+canonical repository identity, no native reasoning/access/prices are invented.
+Relative effective account locations reject before I/O rather than choosing a
+different parent/child account. Optional native project strings preserve512 range;
+canonical model/composite selectors remain240. Existing material label/config
+revision, enabled filtering and native2.0.26 catalog schema pin remain explicit.
+
+Final default mise exec -- pnpm check exits0:186 files/2495 tests91.05s,
+wall101.969s, build/typecheck/lint/boundaries pass. Root verifies all10 committed
+source/test/docs/tooling Git hashes equal final manifest and raw log SHA256
+7047cb3001f22b3605f7e22afdf9179c57e3a04324bd03580f1c756c34921fd5. Final report:
+.superpowers/sdd/2026-10-23-opencode-catalog-port/task-1-report.md. Saved evidence:
+/tmp/dispatcher-opencode-catalog-task1-logs/full-gate-final{.log,.manifest.json,
+.sources/}; all21 run logs and210 saved source payload hashes verified. Earlier
+payloads reconstructed from recorded edit commands match original per-run hashes;
+this is historical integrity evidence, not independent native qualification.
+
+Preserve initial36fail/19pass RED, getter single-capture RED, native-project512
+range RED, relative-account-path RED, real root-loss EPERM diagnostic and4 lint
+errors separately. No existing assertion/timeout/worker is weakened. The first
+complete186/2495 pass precedes a real disabled-default fixture strengthening:
+that ID now exists in raw inventory but is ineligible. Focused2files/90 passes,
+then the distinct final full gate verifies this final test payload. No production
+change or unchanged-code retry was used between those successful full checks.
+
+Independent report /tmp/dispatcher-opencode-catalog-review-20261023.md approves
+spec and quality with no Critical/Important/Minor findings, no suite rerun.
+Cannot-verify items resolved as explicit other units/Gates or evidence limits:
+actual provider/account/GUI/Controller/writer/service/P4/release are not promoted;
+deterministic unmocked root-exit success is not claimed. Controlled cleanupunknown
+and known socket-loss fixtures prove their exact rejection paths. Shared owner
+was unchanged; root-loss uncertainty and R-020 remain separate. Original source31
+bodies/invariant inventory were read by root; final current assertions reviewed.
+
+CV09 reviewed receipt0a21c720-a16b-4361-8fcd-796fec135aa9 saved; final coordinated
+readback follows. Previous owned final CV09 receipt6c15965b-0ff4-4bdc-87dd-55ae680b2ecd
+and umbrella48dd5fe5-7c66-46dd-83aa-8ac8b3d3baab are saved/read back. Latest official
+quota89% used/11% remaining, ordinaryUsageAllowed=true,2 reset credits unused;
+authorized continuous execution continues. Source list remains503 frozen rows.
+Next is scoped runtime12/service8, explicit registration and Controller/restart
+composition, then remaining native/UI/retention/delivery units. Whole-branch
+review/integration stays parentCV14; no server profile/native account/service
+activation, dependency or persisted-format change in this increment.
+
+#### Source31 durable assertion disposition
+
+Source is `a499d84:packages/adapters/test/opencode-catalog.test.ts`, with IDs/line groups from `/tmp/dispatcher-opencode-config-catalog-composition-20261023.md` section 1. C denotes new `packages/adapters/test/opencode-catalog.test.ts`; CLI denotes unchanged `cli-catalog.test.ts`; ES denotes unchanged `execution-selection.test.ts`. IDs describe invariant groups, not a claim that obsolete DTOs or 31 one-to-one test titles were restored.
+
+| ID | Source invariant | Current assertion/disposition |
+| --- | --- | --- |
+| 1 | Composite selector / safe fields / native default effort | C safe-only fields exact entry assertion; slash-containing native/model preserved; CLI existing enabled-text test retained. Empty options/unknown billing, no manufactured native-default reasoning. |
+| 2 | Time/order/labels/backend/default revision | C time/order fixed-fingerprint test; labels intentionally material; actual backend normalizer+reader tests and native default identity material test. Raw configuration order stays material. |
+| 3 | Empty model list | C malformed table `empty`, reader empty-bound test. |
+| 4 | Duplicate model | C malformed `duplicate` plus unchanged CLI duplicate assertion. |
+| 5 | Disabled-only model list | C malformed `disabled-only`; C exact safe-field mixed-enabled test plus unchanged CLI filtering preserve current mixed-disabled policy. |
+| 6 | Empty native model ID | C malformed `empty id`. |
+| 7 | Provider ID containing `/` | C malformed `provider slash`. |
+| 8 | Native model ID containing `#variant` | C malformed `model variant`, plus provider `#` rejection; slash within model ID remains valid. |
+| 9 | Invalid modality array | C malformed `modality array` and `modality value`. |
+| 10 | More than 4000 models | C malformed `4001` and exact permitted 4000 test. |
+| 11 | Nontext filtering/default membership/absence | C nontext-only rejection and mixed filtering; native default missing/disabled/variant rejection (disabled ID is explicitly present in raw inventory but filtered from eligible entries); absent undefined/null accepted with no public isDefault. |
+| 12 | Fresh readonly host/exact backend/project/cleanup before success | C owned cwd/PWD/route/query/auth assertions, two backend fingerprints, exact owning Adapter pair, cleanup marker before returned success; unchanged CLI real-host cleanup test. |
+| 13 | Startup/read failures cleaned/redacted | C malformed-handshake, spawn-permission, bad JSON/native HTTP error and filesystem failures with exact safe messages/cleanup; unchanged CLI cleanup/version assertions. |
+| 14 | Version unsupported | C 2.0.22 catalog rejection and dropped credential-table schema rejection as NATIVE_VERSION_UNSUPPORTED; unchanged future-version CLI fixture. Execution version support is not copied. |
+| 15 | Catalog not ready | C thirty-empty-read count, safe unavailable, confirmed cleanup; bound not expanded. |
+| 16 | Model catalog changed | C double-read changed-model response rejects NATIVE_CONTEXT_CHANGED with cleanup. |
+| 17 | Location mismatch | C wrong location, foreign model/default project and changed supplied project directory tests; final native project change test. Uses current safe/context errors. |
+| 18 | Server identity changed | C wrong initial PID and late PID change final handshake; version checked at both handshakes. Owned process handles, not API PID, retain cleanup authority. |
+| 19 | Native schema invalid | C bad JSON/model shape/modality, unsafe selector and account-schema cases; safe current categories replace obsolete source aliases. |
+| 20 | Local connection closed | C real socket-loss generic unavailable+cleanup, admitted stalled-read exact cancellation+cleanup, controlled root-loss uncertain-cleanup case; unchanged CLI stalled-read fixture. |
+| 21 | Reconciliation required | C controlled root-loss asserts one PID/one model read, exact cleanup-unknown and no candidate; original-signal cancellation before spawn and during cleanup cannot return late success. No replacement host path exists. |
+| 22 | Unknown native code never published | C unknown HTTP native code, plain resolver error and actual AdapterContractError unknown-code cases map to static generic unavailable, with private text absent. |
+| 23 | Duck-typed known code untrusted | C Error with code=NATIVE_VERSION_UNSUPPORTED remains generic unavailable; actual known own instance keeps only safe allowlisted category/message. |
+| 24 | Usable read + unknown cleanup rejected | C cleanup uncertainty `success` executes real drain, then controlled unknown rejects exact MODEL_CATALOG_CLEANUP_UNKNOWN. |
+| 25 | Unknown cleanup overrides known failure | C cleanup uncertainty `known failure` after unsupported native version; exact cleanup category wins. |
+| 26 | Physical context before executable resolution | C resolver replaces physical workspace and gets NATIVE_CONTEXT_CHANGED without host; C physical executable vs alias argv check and cleanup alias retarget rejection. |
+| 27 | Logical scope frozen across resolution | C reader receiver/context/profile/backend/path/signal/environment mutation test, executable getter read-once RED/GREEN, Adapter definition resolver receiver+cloned-profile test, account metadata change during resolution rejection. |
+| 28 | Account-only/invalid project context no executable query | C relative-account-location regression asserts zero metadata prepare/resolver/host I/O; six invalid-context/backend variants reject NATIVE_CONTEXT_CHANGED before resolver and requests; canonical repository/execution context fields remain mandatory. |
+| 29 | Typed backend-specific catalog/selection / standalone retained | C actual OpenCodeAdapter standalone/server pair asserts actual manifest/backend, supportsExecutionSelection, safe canonical entries; direct normalizer/reader default remains standalone. CLI/ES preserve standalone selection behavior. |
+| 30 | Requested model captured before delayed read | C request inputs captured before async resolver; ES freezes OpenCode selection before caller/store callback and rejects stored replacement during awaited prior result; unchanged CLI per-session concurrent/continuation selection tests. Removed modelInfo API remains removed. |
+| 31 | Physical replacement during cleanup rejected | C three confirmed-cleanup replacements (workspace/executable/account) and caller alias retargeting reject NATIVE_CONTEXT_CHANGED; late cancellation is also rejected. |
