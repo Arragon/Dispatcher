@@ -62,6 +62,18 @@ data or installed service was upgraded. Conditional-free/rate-interval producer
 admission and real native rate evidence remain required; unqualified rates stay
 unavailable, with no static/public price fallback.
 
+Current2026-10-23 Codex checkpoint: canonical backend and internal per-execution
+host contracts are locally verified after scoped review and RED/GREEN fixes.
+The final uninstrumented default check passes176 files/1956 tests (82.21s) and
+all non-test gates, including backend92 and runtime39. The host fixes preserve
+physical home/workspace identity, immutable selection, exact durable source,
+synchronous callback authority and post-lookup shutdown fencing. Earlier R-020
+failures remain unresolved evidence, rather than the current gate result.
+Next: ConfigPlan/native-profile/catalog-backend context and Controller/Runner
+registration/source/shutdown composition, then qualified native observation and
+actual provider/GUI/service/release evidence. No configuration or service was
+activated by this internal port; the full goal and CV-09 remain incomplete.
+
 ## Historical checkpoint 2026-10-22: stopped at remaining 0%
 
 The user changed the stop threshold from10% to0%. Official quota now reports
@@ -144,7 +156,7 @@ active-query measurement. Root cause/current idle/slow-client/soak remain open.
 
 | R-014 | INH-1924 / CV-07 | frozen price/projection locally verified; native producer qualification pending | Canonical decimal BigInt cost engine and shared ledger decimal primitives pass 125/1321. Twelve math/provenance cases preserve source a499d84 rate/multiplier/missing/free/segmentation semantics and add exact precision/cache-write/conflict boundaries. Explicit read-only legacy price/precision bridge and lossless old-number projection now pass 126/1328, retaining unproven price admission. Scoped native catalog price admission, reviewed immutable selection, owning-Runner transport/startup revalidation and per-Run API/UI estimates now pass170/1767 locally after review fixes. Conditional-free/rate-interval producer admission and real-account rate qualification remain open; providers without qualified rates stay unavailable. |
 
-| R-015 | INH-1926 / CV-09; INH-1928 / CV-11 | native entry validator ported; composition pending | Exact a499d84 resolver/security suite passes 24 cases and default127/1352. No launch or native account calls. Read-only scoped Run/Task projection now passes131/1367 with zero native/SQL side effects and mutation disabled. Internal Codex stdio transport subset is now ported with original7 mapped assertions and9 additional regressions (target16/16); source backend/runtime and canonical composition remain pending, with initial default full check173/1798 passing. Review P2 local-pipe retention was fixed and target16/16 passed again; focused recheck found no residual issue. The following canonical observer increment adds exact allocated-thread persistence with pre/post-synchronous admission, no historical identity adoption and late-state rejection. Helper27 plus selection14 pass; independent focused review has no residual findings; current full174/1825 passes. Earlier6 Pi probe failures remain R-020 follow-up, with no causal-resolution claim. Native drivers, selected-source registration, qualified history and write UI remain open; exact session links require ui-roundtrip-qualified evidence. Smoke CPU10.02% is cold informational, not idle Gate. |
+| R-015 | INH-1926 / CV-09; INH-1928 / CV-11 | backend and host locally verified; activation and qualification pending | Exact a499d84 resolver/security suite passes 24 cases and default127/1352. No launch or native account calls. Read-only scoped Run/Task projection now passes131/1367 with zero native/SQL side effects and mutation disabled. Internal Codex stdio transport subset is now ported with original7 mapped assertions and9 additional regressions (target16/16); source backend/runtime and canonical composition were pending at that checkpoint, with initial default full check173/1798 passing. Review P2 local-pipe retention was fixed and target16/16 passed again; focused recheck found no residual issue. The following canonical observer increment adds exact allocated-thread persistence with pre/post-synchronous admission, no historical identity adoption and late-state rejection. Helper27 plus selection14 pass; independent focused review has no residual findings; current full174/1825 passes. Earlier6 Pi probe failures remain R-020 follow-up, with no causal-resolution claim. Codex internal backend/host now pass reviewed176/1956; ConfigPlan/Controller activation, other native drivers, selected-source registration, qualified history and write UI remain open; exact session links require ui-roundtrip-qualified evidence. Smoke CPU10.02% is cold informational, not idle Gate. |
 
 | R-016 | INH-1929 / CV-12; INH-1385 | local review/API/UI and real revalidation verified; formal Gates pending | Canonical local verification/acceptance with candidate/context/control fences, retired lease identity, durable non-replay receipts and atomic Task acceptance passes133/1382. Canonical result/verification/accept/cancel and v3 review UI are now mounted, with explicit consent, persistent original requests and owned shutdown; default135/1389 passes. Registered commands use matching managed source, with retained immutable content; this is not hermetic or native quiescence proof. Unknown verification process/restart outcome remains blocked for reconciliation. Backed-up real candidate reverified on restart, changed content invalidated proof, exact restoration matched, zero native starts; browser shows REVIEW/unchecked consent/disabled accept. Real human acceptance and hermetic/native qualification stay open. MAC-01j closes owned SSE during stop; MAC-01p adds transport backpressure and bounded drain. Formal service acceptance still needs host evidence. |
 
@@ -205,3 +217,8 @@ the intermittent evidence beyond Pi. Do not retry to green or weaken deadlines.
 Task2 and the whole branch remain pending final regression qualification;
 continue independent runtime/ConfigPlan/native-source units with those safety
 boundaries intact. No backend registration, actual account or service activation.
+
+Latest reviewed runtime post-fix default check is green at176 files/1956 tests
+(82.21s), including all non-test gates and the unchanged Task2 backend. R-020
+root cause stays unresolved; previous failed logs remain. This qualifies local
+backend/host increments only, without activation or real provider Gate promotion.

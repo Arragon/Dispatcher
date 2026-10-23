@@ -3465,3 +3465,76 @@ retry-to-green. Preserve full3's175/1916 as pre-final-correction evidence only.
 Task2 has scoped implementation/review evidence but remains unqualified by its
 required final full gate. Save an explicit development checkpoint and proceed
 with independent parent-plan work; no merge/service/provider promotion.
+
+Task2 development source is saved at7c6e4bd. CV-09 receipt
+72dfb630-66fa-4519-aa37-b31d06e89823, umbrella6705637c-a3f4-421b-b5a5-d2d10f95f496
+and R-020/Pi7d1527c4-c00d-48d0-8cd3-32b517179324 are saved and read back.
+Official quota40% used/60% remaining; no reset consumed. Task2's final required
+whole-branch regression remains unqualified at this checkpoint.
+
+### CV-09 internal per-execution host port
+
+Plan2026-10-23-codex-runtime-host-port reuses a499d84's CodexExecutionRuntime,
+current NativeRuntimeHosts and the canonical backend. All24 original host cases
+are migrated, supplying the current selection/reference/guard/event callbacks
+and explicit absolute fake executable without a real native process. The missing
+module first fails suite loading RED; source port with those fixtures passes24/24.
+The package index now exports only the backend/types consumed by the actual
+internal host; no profile/config/Controller registration or capability promotion.
+
+Ten new cases reproduce selection mutation, async owner/prompt guards, directory
+replacement, stale durable binding and known-unsent cleanup gaps. A fixture
+diagnostic was fixed before implementation: Chai's failed object display calls
+the backend's public inspect method as custom inspection, causing2 artificial
+unhandled rejections. Assert the same undefined-source boolean without formatting
+the backend; the corrected RED is10 failed/24 passed with zero unhandled errors.
+Physical home and workspace now capture path/dev/ino; scope fingerprints include
+the same canonical reference/physical identity. Runtime selection is cloned and
+must remain identical on reuse. Source lookup checks the exact durable binding
+and physical scope before/after the owning lookup.
+
+Known-unsent cleanup uses the actual backend receipt. The first cleanup fixture
+incorrectly expected a transport disconnect despite transport never being opened;
+it now checks the backend cleanup and absence of RPC acquisition. An additional
+unknown-root receipt case proves the host barrier remains. Another RED shows a
+Promise-returning original mutation authority was hidden by its wrapper; the
+wrapper now reuses assertAdapterWriteAdmission. A separate factory foreign-store
+RED requires the host's exact binding scope before durable projection or prompt.
+Current37 runtime cases pass, preserving24 source plus13 new cases. Combined
+runtime/Pi/backend/NativeRuntimeHosts target passes4 files/172 tests. Controller
+build and scoped lint pass (build before the last factory-binding addition);
+the current default full check and independent read-only review are pending.
+
+Logs: /tmp/dispatcher-codex-runtime-{missing-red,source-port,canonical-red,
+canonical-red2,canonical-green,canonical-green2,authority-red,factory-red,
+targets,targets2,build,build2,lint,lint2,full}-20261023.log. No production account,
+GUI, data or service operation. CV-09 progress0f58b684-c938-4ac2-a29b-214bebeab4fd
+is saved; readback follows. R-020 retains every previous failed probe and its
+unchanged deadlines; this internal host does not resolve the OS startup cause.
+
+Progress0f58b684-c938-4ac2-a29b-214bebeab4fd is read back. The first exact runtime
+full check terminates exit0 with176 files/1954 tests (81.93s), including all
+non-test gates. No deadlines or worker settings changed. Quota43% used/57%
+remaining; no reset consumed. Linear78b6c64b-6e14-486e-bfae-b1fa58e58a8d records
+that pre-review-correction result without promoting it to final acceptance.
+
+Independent scoped review found one Important post-lookup race: bindingFor could
+synchronously begin shutdown and return the exact binding, while source still
+returned its port and request metadata could reach the sink. Two RED cases
+reproduce it. Source now captures the input binding and rechecks closed state,
+current map entry, registered/persisted identity and physical directories after
+the injected lookup. Focused4 files/174 tests pass, including runtime39 cases
+(24 original plus15 regressions). Same-seat inspection reports no remaining
+finding; final post-fix default full2 is running. The earlier176/1954 full check
+does not cover this final correction. Controller/profile activation and all
+actual native/GUI/service/release Gates remain outside this unit.
+
+Final post-review full2 terminates exit0: build/typecheck/lint/boundaries pass;
+176 files/1956 tests pass (82.21s), including runtime39, backend92 and all Pi
+cases. This exact source includes the source-lookup shutdown correction and
+the clean same-seat recheck. The completed local backend/host contracts do not
+complete CV-09: native-profile/ConfigPlan/catalog context, Controller/Runner
+activation, selected-source/history qualification and real native/GUI/service/
+release Gates remain. R-020 retains its prior intermittent failures; the current
+gate is green without an OS-root-cause resolution claim. No additional full
+rerun is needed without a new code change, failure or material concern.

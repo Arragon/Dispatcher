@@ -1,7 +1,7 @@
 path,sourceSet,kind,v3Blob,continuationBlob,decision,owner,verification
 apps/controller/package.json,v3-only,production-or-build,5284508ce76af0e637b674b66db3abd1ae0a1041,39cddf284235173b907f678838d1d76d2e59428f,retain-v3,CV-13,retained-source; target acceptance pending
 apps/controller/src/cli.ts,continuation-only,production-or-build,7c36f921364ca71782116f8b056a445f076f6a8f,1d8a9249169a327d0fe92c1b2b097d92a6bc7ab5,port-legacy-with-v3-contract-adaptation,CV-13,retained-source; target acceptance pending
-apps/controller/src/codex-runtime.ts,continuation-only,production-or-build,,f035b0850879eae0635701a0429b6581d93863fa,port-legacy-with-v3-contract-adaptation,CV-09,retained-source; target acceptance pending
+apps/controller/src/codex-runtime.ts,continuation-only,production-or-build,,f035b0850879eae0635701a0429b6581d93863fa,port-legacy-with-v3-contract-adaptation,CV-09,internal per-execution host ported with canonical physical and callback guards; reviewed full176/1956 passes; ConfigPlan Controller activation separate
 apps/controller/src/config-edits.ts,v3-only,production-or-build,34f6a7def429a8ff5688ba8effb641aa5a1a0296,,retain-v3,CV-13,retained-source; target acceptance pending
 apps/controller/src/console-projection.ts,both,production-or-build,774310d9988129924b01968ad7e381c5817f531c,c1f6e9f7d535db352b80be2746bde7f641d4aa75,retain-v3-and-adapt-legacy-in-owning-boundary,CV-13,retained-source; target acceptance pending
 apps/controller/src/control-auth.ts,both,production-or-build,acfbbf2aefd55aa11bfb2b23d4eceadb60fe3c8c,acfbbf2aefd55aa11bfb2b23d4eceadb60fe3c8c,retain-v3-and-adapt-legacy-in-owning-boundary,CV-12,retained-source; target acceptance pending
@@ -44,7 +44,7 @@ apps/controller/src/usage-observations.ts,v3-only,production-or-build,67cee8f878
 apps/controller/test/adapter-lifecycle.test.ts,v3-only,test,a17fca90a9aaedcbe23f3e5d4c752bf9c286d1ff,,retain-v3,CV-13,retained-source; target acceptance pending
 apps/controller/test/backup-restore.test.ts,continuation-only,test,,082579856f9634472962a9729b6ec41607b9113e,port-legacy-with-v3-contract-adaptation,CV-13,retained-source; target acceptance pending
 apps/controller/test/codex-runtime-service.test.ts,continuation-only,test,,fe5379044cd2dedb871d33ffa49c36705cd84f02,port-legacy-with-v3-contract-adaptation,CV-09,retained-source; target acceptance pending
-apps/controller/test/codex-runtime.test.ts,continuation-only,test,,d90c4abaf8a38d4853d97830a8f8684050606ed3,port-legacy-with-v3-contract-adaptation,CV-09,retained-source; target acceptance pending
+apps/controller/test/codex-runtime.test.ts,continuation-only,test,,d90c4abaf8a38d4853d97830a8f8684050606ed3,port-legacy-with-v3-contract-adaptation,CV-09,all24 source cases ported with canonical fixture adaptation plus15 regressions; target39 passes; reviewed full176/1956 passes
 apps/controller/test/config-edits.test.ts,v3-only,test,ad23ea6000ab424ae33ed2acd4df11090e4dfd97,,retain-v3,CV-13,retained-source; target acceptance pending
 apps/controller/test/console-projection.test.ts,both,test,bb5d904087912809b5ae69b3b2094025479c815b,2a908bb29f00bcfab6227c0437eee177a49c6e9c,retain-v3-and-adapt-legacy-in-owning-boundary,CV-13,retained-source; target acceptance pending
 apps/controller/test/controller.test.ts,both,test,26137c457cc1ea43f18b32726864bf3d37f4d594,1b28fb312a79a29a5c2c7afb3b440f4c6f37e5fb,retain-v3-and-adapt-legacy-in-owning-boundary,CV-13,retained-source; target acceptance pending

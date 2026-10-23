@@ -48,8 +48,8 @@
 - [x] Port source read/cancellation/directory/producer/disconnect cases with explicit canonical fixture adaptation. Document the already migrated7 transport cases and retain every remaining source assertion or named prerequisite; do not skip failures.
 - [x] Observe RED for missing backend/Adapter behavior; add wrong or absent selection/reference and asynchronous-guard cases.
 - [x] Reuse source backend behavior, adapting only current DTOs and actual lifecycle boundaries. Keep unsupported native token events, release/reclaim and UI surfaces unknown.
-- [ ] Run migrated Codex/backend/observer targets and existing exec/catalog/quota/selection tests, then full `mise exec -- pnpm check`; preserve all failures and source mappings.
-- [ ] Independent scoped review, fix proven findings with RED/GREEN, update evidence and Linear with readback, checkpoint. No activation is implied.
+- [x] Run migrated Codex/backend/observer targets and existing exec/catalog/quota/selection tests, then full `mise exec -- pnpm check`; preserve all failures and source mappings.
+- [x] Independent scoped review, fix proven findings with RED/GREEN, update evidence and Linear with readback, checkpoint. No activation is implied.
 
 ## Parent-plan follow-up outside this increment
 
@@ -62,3 +62,7 @@ fixtures. OpenCode is a separate following backend unit.
 ## Self-review
 
 Tasks1/2 cover only the next canonical Codex contract increment, preserving the source transport checkpoint. Parent-plan activation is explicitly outside this increment. No source behavior is silently removed, no public/persisted format change is assumed, and all uncertain actual-provider facts stay unqualified.
+
+Task2 local contract verification was completed by the following reviewed runtime
+snapshot: default176 files/1956 tests pass82.21s, including the unchanged backend92
+cases. Earlier failed logs remain retained. The parent activation/Gates remain open.

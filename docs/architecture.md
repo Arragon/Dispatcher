@@ -1267,6 +1267,22 @@ without revoking already admitted callback work; the existing bounded shutdown
 reports callbacks unknown if that work has not drained, independently of root
 exit. Neither callback completion nor local cleanup proves native writer release.
 
+The Codex execution host composes that backend per managed execution through
+NativeRuntimeHosts. It captures the original selection/reference, explicit
+executable and physical home/workspace identity; cached sources require the same
+durable binding and unchanged directories. Owner, prompt and mutation-authority
+callbacks remain synchronous across wrappers. A foreign factory binding is
+rejected before durable projection. Cold continuation stays closed; the internal
+source continuation retains its original backend policy and binding.
+Source lookup captures its binding and rechecks closure, registered ownership
+and physical identity after the injected durable-binding lookup, which can itself
+start shutdown synchronously.
+
+The host has no aggregate interaction port. Known-unsent acquisition cleanup
+clears a local host barrier only with a closed/not-created/drained receipt;
+uncertain roots remain retained. Controller configuration/registration and actual
+installed-protocol/account qualification are separate from this host contract.
+
 ## Diagnostic reads and registered checks
 
 The diagnostics snapshot combines saved account evidence, current transport
