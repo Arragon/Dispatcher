@@ -12,7 +12,7 @@ import { CredentialContext } from "./credential-context.js";
 import {DirectorySelections,type DirectoryPicker} from "./local-directories.js";
 import {RunInputReceipts,InputReceiptError,type RunInputIdentity} from "./run-inputs.js";
 import {UsageObservations,UsageObservationError,type UsageContext} from "./usage-observations.js";
-import {AccountQuotas} from "./account-quotas.js";
+import {AccountQuotas} from "@dispatcher/runner";
 import {buildDiagnostics,diagnosticChecks} from "./diagnostics.js";
 import type { ProfileConsoleView,NativeSessionConsoleView,RepositoryConsoleContext,RepositoryRefs,DeliveryEvidence,LocalVerificationRequest,LocalAcceptanceRequest } from "@dispatcher/domain";
 import { applyConfigEdits, consoleConfig,exportConsoleConfig, consoleConfigPlan } from "./config-edits.js";
@@ -20,7 +20,7 @@ import {qualifyRoutingPolicy,type PolicyConfigEvidence} from "./policy-config.js
 import {TaskClassifier} from "./task-classifier.js";
 import { remoteCatalog, remoteRunInventory,remoteRepositoryRefs,remoteCommitResult,remoteDeliveryTarget,remotePushResult } from "./remote-results.js";
 import { RemoteNativeAdapter } from "./remote-adapter.js";
-import { NATIVE_EXECUTION_CAPABILITY,NATIVE_GIT_DELIVERY_CAPABILITY,NATIVE_MODEL_PRICING_CAPABILITY,requiresNativeGitDelivery,requiresNativeModelPricing, type CommandPayload } from "@dispatcher/protocol";
+import { NATIVE_EXECUTION_CAPABILITY,NATIVE_GIT_DELIVERY_CAPABILITY,NATIVE_MODEL_PRICING_CAPABILITY,NATIVE_ACCOUNT_QUOTA_CAPABILITY,requiresNativeGitDelivery,requiresNativeModelPricing, type CommandPayload } from "@dispatcher/protocol";
 import {admitCatalogPricing,samePricingTerms} from "@dispatcher/domain";
 import { ModelRoutingService } from "./model-routing.js";
 import type { WorkspaceHandle } from "@dispatcher/workspace";
@@ -2363,6 +2363,7 @@ export class ControllerService {
     if(!configured||!runner||!["ONLINE","DEGRADED","DRAINING"].includes(runner.state)||!runner.capabilities.includes(NATIVE_EXECUTION_CAPABILITY)||!this.remoteRunnerServer.isConnected(runnerId))throw new AdapterContractError("REMOTE_EXECUTION_UNAVAILABLE","Owning Runner is offline or has no qualified native execution capability");
     if(requiresNativeGitDelivery(payload)&&!runner.capabilities.includes(NATIVE_GIT_DELIVERY_CAPABILITY))throw new AdapterContractError("REMOTE_DELIVERY_UNAVAILABLE","Owning Runner must advertise native Git delivery support");
     if(requiresNativeModelPricing(payload)&&!runner.capabilities.includes(NATIVE_MODEL_PRICING_CAPABILITY))throw new AdapterContractError("REMOTE_PRICING_UNAVAILABLE","Owning Runner must preserve frozen native model pricing");
+    if(payload.type==="native.account_quota"&&!runner.capabilities.includes(NATIVE_ACCOUNT_QUOTA_CAPABILITY))throw new AdapterContractError("REMOTE_QUOTA_UNAVAILABLE","Owning Runner has no qualified account quota projection");
     const credential = this.runnerCredentialContext(runnerId);
     if (!credential.usable) throw new AdapterContractError("REMOTE_CREDENTIAL_CHANGED", "Owning Runner authorization is revoked");
     const response=await this.remoteRunnerServer.sendCommand(runnerId,payload,{...(run?{leaseId:run.leaseId,generation:run.generation,...(run.leaseExpiresAt?{leaseExpiresAt:run.leaseExpiresAt}:{})}:{}),...(messageId?{messageId}:{})});

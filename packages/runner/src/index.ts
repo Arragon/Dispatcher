@@ -241,3 +241,5 @@ export * from "./native-event-reconcile.js";
 export * from "./native-quiescence.js";
 export * from "./native-stop.js";
 export * from "./native-reclaim.js";
+
+export * from "./account-quotas.js";

@@ -1,6 +1,7 @@
 import { isDeepStrictEqual } from "node:util";
 import { AdapterContractError,assertAdapterWriteAdmission,turnExecutionResource, type AdapterEvent, type AdapterManifest, type AdapterResult, type AdapterSession, type AgentAdapter } from "@dispatcher/adapters";
-import type { ExecutionSelection, Run } from "@dispatcher/domain";
+import type { AccountQuotaState,ExecutionSelection, Run } from "@dispatcher/domain";
+import {remoteAccountQuota} from "./remote-results.js";
 import type { CommandPayload } from "@dispatcher/protocol";
 import { remoteCommandHash } from "@dispatcher/runner";
 import { contentHash } from "./task-publications.js";
@@ -8,7 +9,7 @@ import { contentHash } from "./task-publications.js";
 interface RemoteNativeAdapterOptions {
   profileId: string; runnerId: string; manifest: AdapterManifest;
   run(runId: string): Run | undefined; sessionRun(sessionId: string): Run | undefined;
-  request(payload: CommandPayload, run: Run, messageId?: string): Promise<unknown>;
+  request(payload: CommandPayload, run?: Run, messageId?: string): Promise<unknown>;
   saveSession(session: AdapterSession): void;
   reserveStart(run: Run, commandHash: string): void;
   active(): boolean;
@@ -24,6 +25,17 @@ export class RemoteNativeAdapter implements AgentAdapter {
   readonly manifest: AdapterManifest;
   constructor(private readonly options: RemoteNativeAdapterOptions) { this.manifest = structuredClone(options.manifest); }
   hasActiveOperations(): boolean { return this.options.active(); }
+  async accountQuotaState(signal?:AbortSignal):Promise<AccountQuotaState> {
+    signal?.throwIfAborted();
+    try{
+      const value=await this.options.request({type:"native.account_quota",profileId:this.options.profileId,action:"refresh"});signal?.throwIfAborted();
+      return remoteAccountQuota(value,{profileId:this.options.profileId,runnerId:this.options.runnerId,providerId:this.manifest.id});
+    }catch(error){
+      if(error instanceof AdapterContractError&&error.code==="REMOTE_QUOTA_UNAVAILABLE")return {profileId:this.options.profileId,status:"unsupported",reasonCode:error.code};
+      if(error instanceof AdapterContractError&&["QUOTA_CONTEXT_CHANGED","PROFILE_UNAVAILABLE"].includes(error.code))return {profileId:this.options.profileId,status:"stale",reasonCode:"QUOTA_CONTEXT_CHANGED"};
+      throw error;
+    }
+  }
   private run(id: string, session = false): Run {
     const run = session ? this.options.sessionRun(id) : this.options.run(id);
     if (!run || run.profileId !== this.options.profileId || run.runnerId !== this.options.runnerId || !run.worktree || !run.leaseExpiresAt) throw new AdapterContractError("RUN_AUTHORITY_MISMATCH", "No matching canonical remote Run authority");

@@ -1,24 +1,9 @@
 import type {AgentAdapter} from "@dispatcher/adapters";
-import {decimalAmount,decimalString,type AccountQuotaSnapshot,type AccountQuotaState} from "@dispatcher/domain";
+import {captureAccountQuotaSnapshot,captureAccountQuotaState,type AccountQuotaState} from "@dispatcher/domain";
 import type {DispatcherDatabase,JsonValue} from "@dispatcher/persistence";
 
 const json=(value:unknown):JsonValue=>JSON.parse(JSON.stringify(value)) as JsonValue;
-const text=(value:unknown):value is string=>typeof value==="string"&&value.length>0&&value.length<=240&&!Array.from(value).some(c=>c.charCodeAt(0)<32||c.charCodeAt(0)===127);
-const time=(value:unknown):value is string=>typeof value==="string"&&/^\d{4}-\d{2}-\d{2}T/u.test(value)&&/(?:Z|[+-]\d{2}:\d{2})$/u.test(value)&&Number.isFinite(Date.parse(value));
 class AccountQuotaError extends Error {constructor(readonly code:string){super(code);this.name="AccountQuotaError";}}
-const invalid=():never=>{throw new AccountQuotaError("INVALID_ACCOUNT_QUOTA");};
-function normalizedQuota(value:AccountQuotaSnapshot,profileId:string):AccountQuotaSnapshot {
- if(!value||value.version!==1||value.profileId!==profileId||!text(value.source)||!time(value.collectedAt)||!Array.isArray(value.periods)||value.periods.length>300)return invalid();
- const ids=new Set<string>();
- const periods=value.periods.map(period=>{
-  if(!period||!text(period.id)||!text(period.unit)||ids.has(period.id)||period.startsAt!==undefined&&!time(period.startsAt)||period.resetsAt!==undefined&&!time(period.resetsAt)||period.windowDurationMins!==undefined&&(!Number.isSafeInteger(period.windowDurationMins)||period.windowDurationMins<=0)||period.unlimited!==undefined&&typeof period.unlimited!=="boolean")return invalid();
-  if(period.startsAt&&period.resetsAt&&Date.parse(period.startsAt)>Date.parse(period.resetsAt))return invalid();ids.add(period.id);
-  const quantities:Pick<typeof period,"used"|"remaining"|"total">={};
-  for(const key of ["used","remaining","total"] as const)if(period[key]!==undefined){try{if(typeof period[key]!=="string")return invalid();quantities[key]=decimalString(decimalAmount(period[key]));}catch{return invalid();}}
-  return {id:period.id,unit:period.unit,...quantities,...(period.startsAt?{startsAt:period.startsAt}:{}),...(period.resetsAt?{resetsAt:period.resetsAt}:{}),...(period.windowDurationMins!==undefined?{windowDurationMins:period.windowDurationMins}:{}),...(period.unlimited!==undefined?{unlimited:period.unlimited}:{})};
- });
- return {version:1,profileId,source:value.source,collectedAt:value.collectedAt,periods};
-}
 interface PendingQuota {scope:string;adapter:AgentAdapter;abort:AbortController;closeRead:()=>void;settled:Promise<void>;result:Promise<AccountQuotaState>}
 
 /** Account-only reads, separated from Run advancement, resources and usage quantities. */
@@ -30,11 +15,11 @@ export class AccountQuotas {
  constructor(private readonly database:DispatcherDatabase,private readonly adapters:ReadonlyMap<string,AgentAdapter>,private readonly scope:(profileId:string)=>string|undefined,private readonly publish:(type:string,id:string,data:JsonValue)=>void=()=>{},private readonly now:()=>Date=()=>new Date(),private readonly onError:(error:unknown)=>void=()=>{}){
   for(const value of database.listEntities<JsonValue>("account-quota-lifecycle")){const record=value as {profileId?:string;contextFingerprint?:string;status?:string};if(record.status==="unknown"&&typeof record.profileId==="string")this.uncertain.set(record.profileId,{scope:record.contextFingerprint??"unproven"});}
  }
- hasPending(profileId:string):boolean{return this.pending.has(profileId)||this.uncertain.has(profileId);}
+ hasPending(profileId?:string):boolean{return profileId===undefined?Boolean(this.pending.size||this.uncertain.size):this.pending.has(profileId)||this.uncertain.has(profileId);}
  state(profileId:string):AccountQuotaState {
   const saved=this.database.getEntity<JsonValue>("account-quota",profileId) as unknown as AccountQuotaState|undefined;
   if(this.uncertain.has(profileId)){const current=this.scope(profileId);return {profileId,status:"error",...(saved&&current&&saved.contextFingerprint===current?{contextFingerprint:current,...(saved.snapshot?{snapshot:saved.snapshot}:{}),...(saved.lastSuccessAt?{lastSuccessAt:saved.lastSuccessAt}:{})}:{}),error:{code:"QUOTA_CLEANUP_UNKNOWN"}};}
-  if(!this.adapters.get(profileId)?.accountQuota)return {profileId,status:"unsupported"};
+  if(!this.adapters.get(profileId)?.accountQuota&&!this.adapters.get(profileId)?.accountQuotaState)return {profileId,status:"unsupported"};
   if(!saved)return {profileId,status:"missing"};
   const current=this.scope(profileId);
   if(!current||saved.contextFingerprint!==current)return {profileId,status:"stale",reasonCode:"QUOTA_CONTEXT_CHANGED"};
@@ -47,10 +32,10 @@ export class AccountQuotas {
   if(this.uncertain.has(profileId))return Promise.resolve({...this.state(profileId),status:"error",error:{code:"QUOTA_CLEANUP_UNKNOWN"}});
   if(this.pending.size>=4)return Promise.resolve({...this.state(profileId),reasonCode:"QUOTA_QUERY_CAPACITY"});
   const adapter=this.adapters.get(profileId),scope=this.scope(profileId);
-  if(this.closed||!adapter?.accountQuota||!scope)return Promise.resolve(this.state(profileId));
+  if(this.closed||!adapter||!adapter.accountQuota&&!adapter.accountQuotaState||!scope)return Promise.resolve(this.state(profileId));
   const abort=new AbortController(),prior=this.database.getEntity<JsonValue>("account-quota",profileId) as unknown as AccountQuotaState|undefined;
   const current=()=>!this.closed&&this.adapters.get(profileId)===adapter&&this.scope(profileId)===scope;
-  const native=Promise.resolve().then(()=>adapter.accountQuota!(abort.signal)).catch(error=>{
+  const native=Promise.resolve().then(async()=>adapter.accountQuotaState?await adapter.accountQuotaState(abort.signal):await adapter.accountQuota!(abort.signal)).catch(error=>{
    if((error as {code?:unknown})?.code==="MODEL_CATALOG_CLEANUP_UNKNOWN"){
     this.uncertain.set(profileId,{scope});
     if(!this.closed)this.database.saveEntity("account-quota-lifecycle",profileId,{profileId,contextFingerprint:scope,status:"unknown",reasonCode:"QUOTA_CLEANUP_UNKNOWN",observedAt:this.now().toISOString()});
@@ -64,20 +49,29 @@ export class AccountQuotas {
   const timeout=new Promise<never>((_,reject)=>{closeRead=()=>reject(new AccountQuotaError("QUOTA_QUERY_CLOSED"));timer=setTimeout(()=>{reject(new AccountQuotaError("QUOTA_QUERY_TIMEOUT"));abort.abort();},31_000);});
   const result=Promise.race([native,timeout]).then(value=>{
    if(!current())return this.state(profileId);
-   const snapshot=normalizedQuota(value,profileId),at=this.now().toISOString();
-   if(Date.parse(snapshot.collectedAt)>this.now().getTime()+5_000)invalid();
-   const state:AccountQuotaState={profileId,status:"fresh",contextFingerprint:scope,snapshot,checkedAt:at,lastSuccessAt:at};
+   const at=this.now().toISOString();let state:AccountQuotaState;
+   try{
+    if(adapter.accountQuotaState){
+     const source=captureAccountQuotaState(value,profileId);
+     if([source.snapshot?.collectedAt,source.checkedAt,source.lastSuccessAt].some(time=>time&&Date.parse(time)>this.now().getTime()+5_000))throw Error();
+     state={...source,contextFingerprint:scope};
+    }else{
+     const snapshot=captureAccountQuotaSnapshot(value,profileId);
+     if(Date.parse(snapshot.collectedAt)>this.now().getTime()+5_000)throw Error();
+     state={profileId,status:"fresh",contextFingerprint:scope,snapshot,checkedAt:at,lastSuccessAt:at};
+    }
+   }catch{throw new AccountQuotaError("INVALID_ACCOUNT_QUOTA");}
    this.database.saveEntity("account-quota",profileId,json(state),at);this.publish("quota.changed",profileId,{profileId});this.nextQuery.set(profileId,{scope,at:this.now().getTime()+5*60_000});return this.state(profileId);
   }).catch(error=>{
    if(!current())return this.state(profileId);
-   const at=this.now().toISOString(),state:AccountQuotaState={profileId,status:"error",contextFingerprint:scope,...(prior?.contextFingerprint===scope&&prior.snapshot?{snapshot:prior.snapshot,...(prior.lastSuccessAt?{lastSuccessAt:prior.lastSuccessAt}:{})}:{}),checkedAt:at,error:{code:error instanceof AccountQuotaError?error.code:"QUOTA_QUERY_FAILED"}};
+   const at=this.now().toISOString(),state:AccountQuotaState={profileId,status:"error",contextFingerprint:scope,...(prior?.contextFingerprint===scope?{...(prior.snapshot?{snapshot:prior.snapshot,...(prior.lastSuccessAt?{lastSuccessAt:prior.lastSuccessAt}:{})}:{}),...(prior.sourceContextFingerprint?{sourceContextFingerprint:prior.sourceContextFingerprint}:{})}:{}),checkedAt:at,error:{code:error instanceof AccountQuotaError?error.code:"QUOTA_QUERY_FAILED"}};
    this.database.saveEntity("account-quota",profileId,json(state),at);this.publish("quota.changed",profileId,{profileId});this.nextQuery.set(profileId,{scope,at:this.now().getTime()+5*60_000});return state;
   }).finally(()=>clearTimeout(timer));
   Object.assign(entry,{scope,adapter,abort,closeRead:closeRead!,settled,result});this.pending.set(profileId,entry);return result;
  }
  kick(profileIds:readonly string[]):void {
   if(this.closed)return;
-  for(const id of profileIds){if(this.pending.size>=4)break;const next=this.nextQuery.get(id),scope=this.scope(id);if(this.adapters.get(id)?.accountQuota&&!this.hasPending(id)&&(next?.scope!==scope||(next?.at??0)<=this.now().getTime()))void this.refresh(id).catch(this.onError);}
+  for(const id of profileIds){if(this.pending.size>=4)break;const next=this.nextQuery.get(id),scope=this.scope(id);if((this.adapters.get(id)?.accountQuota||this.adapters.get(id)?.accountQuotaState)&&!this.hasPending(id)&&(next?.scope!==scope||(next?.at??0)<=this.now().getTime()))void this.refresh(id).catch(this.onError);}
  }
  beginShutdown():void {this.closed=true;for(const read of this.pending.values()){read.closeRead();read.abort.abort();}}
  close():Promise<void>{

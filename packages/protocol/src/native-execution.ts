@@ -4,6 +4,7 @@ import type {ExecutionSelection,GitDeliveryTarget,ModelCatalogContext} from "@di
 export const NATIVE_EXECUTION_CAPABILITY="native-execution-v1";
 export const NATIVE_GIT_DELIVERY_CAPABILITY="native-git-delivery-v1";
 export const NATIVE_MODEL_PRICING_CAPABILITY="native-model-pricing-v1";
+export const NATIVE_ACCOUNT_QUOTA_CAPABILITY="native-account-quota-v1";
 export interface NativeWorkspacePlan {
   repositoryId:string;taskId:string;runId:string;attempt:number;baseRef:string;scopePaths:string[];baseCommit?:string;targetBranch?:string;
 }
@@ -18,6 +19,7 @@ export type NativeCommandPayload=
   |{type:"native.workspace_prepare";runId:string;profileId:string;plan:NativeWorkspacePlan;verificationCommandIds:string[];delivery?:NativeDeliveryIntent}
   |{type:"native.model_catalog";profileId:string;repositoryId:string;runId?:string;reason:ModelCatalogContext["reason"]}
   |{type:"native.profile_probe";profileId:string;repositoryId?:string}
+  |{type:"native.account_quota";profileId:string;action:"read"|"refresh"}
   |{type:"native.run";runId:string;action:NativeRunAction;message?:string}
   |{type:"native.run_verify";runId:string}
   |{type:"native.run_push";runId:string}
@@ -51,6 +53,7 @@ export function validateNativeExecutionCommand(payload:Record<string,unknown>,au
     case "native.workspace_prepare":return keys(payload,["type","runId","profileId","plan","verificationCommandIds"],["delivery"])&&id(payload.runId)&&id(payload.profileId)&&workspace(payload.plan)&&payload.plan.runId===payload.runId&&ids(payload.verificationCommandIds)&&(payload.delivery===undefined||delivery(payload.delivery))&&fenced();
     case "native.model_catalog":return keys(payload,["type","profileId","repositoryId","reason"],["runId"])&&id(payload.profileId)&&id(payload.repositoryId)&&["open","selection-change","preflight","before-start","manual-refresh"].includes(String(payload.reason))&&(payload.runId===undefined||id(payload.runId)&&fenced());
     case "native.profile_probe":return keys(payload,["type","profileId"],["repositoryId"])&&id(payload.profileId)&&(payload.repositoryId===undefined||id(payload.repositoryId));
+    case "native.account_quota":return keys(payload,["type","profileId","action"])&&id(payload.profileId)&&["read","refresh"].includes(String(payload.action))&&authority.leaseId===undefined&&authority.generation===undefined;
     case "native.run":return keys(payload,["type","runId","action"],payload.action==="send"?["message"]:[])&&id(payload.runId)&&["status","result","usage","diagnostics","send","pause","resume","cancel"].includes(String(payload.action))&&(payload.action!=="send"||typeof payload.message==="string"&&payload.message.length>0&&payload.message.length<=20000)&&fenced();
     case "native.run_push":case "native.run_commit":case "native.run_verify":case "native.run_files":case "native.run_finalize":return keys(payload,["type","runId"])&&id(payload.runId)&&fenced();
     case "run.start":{

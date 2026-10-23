@@ -3053,3 +3053,109 @@ Qualification requires protocol negatives, malformed/foreign response rejection,
 capability/offline checks, pending-context/shutdown regressions, cached GET no
 provider traffic, restart preservation, and final pnpm check. Actual remote/native
 account evidence remains distinct from those controlled integration tests.
+
+## CV-06 owning-Runner account quota
+
+Base95b4081. The pending254f866 final pricing synchronization subsequently
+succeeded after read-before-write: INH-1924 comment
+e58c4c90-ddff-4d23-ad22-3ff5338e6ff9 was saved and read back. Umbrella INH-1917
+comment59519e3f-1432-4646-a627-3a6a84ada85d was also saved/read back, recording
+1f3a87f/1743,254f866/1767 and the new uncommitted remote quota checkpoint.
+
+The existing AccountQuotas implementation is moved from Controller to
+packages/runner, with the existing test infrastructure/decimal normalization
+reused. Strict public capture helpers are in domain; no third-party dependency,
+second Run ledger, static account values or new migration is added. Local-only
+execution fingerprints preserve their prior metadata via nativeProfileEpoch in
+config; a remote physical owner alone reads its own native-file metadata.
+
+Native account read/refresh uses native-account-quota-v1 and carries only profile
+identity/action, never Run/lease/workspace authority or Controller-native paths.
+Runner uses the shared bounded/coalesced/TTL/reset/last-success/timeout/cleanup
+coordinator and durable generic cache. Controller's existing worker is the one
+periodic scheduler. Owner cached reads perform no provider request. The remote
+facade validates bounded public state, exact decimal periods and owner/profile/
+provider/source context. It preserves native source time, last success and
+stale/error state, binding those facts to current Controller registration and
+credential context. A successful owner response hiding another context's balance
+cannot resurrect the previous Controller snapshot. A wire failure retains a
+matching historical snapshot only as error, including its original source scope.
+
+Physical pending/cleanup-unknown readers retain profile replacement and storage
+barriers even after a wire wait/deadline ends. Runner registration/native-file
+scope is checked before and after await; native account changes hide cached facts
+and reject late results. Shutdown/close quiesce admission before preserving an
+undrained database, so a failed close is not an open RPC service. A closing Runner
+cannot return a prior fresh projection as a successful refresh. Native reads
+never enter the canonical Run serialization lane; a held loopback quota query
+does not block canonical cancellation.
+
+RED→GREEN evidence: the strict protocol initially rejected the new account-only
+command; domain capture and remote result/facade were missing; the prior
+Controller cache returned unsupported for owner-state sources. An old peer then
+accepted the new command before capability checks were added. Further regressions
+reproduced registration removal hashing undefined instead of its busy error,
+transport failure losing the retained source fingerprint, and shutdown returning
+an earlier fresh owner state. The last close-admission case reproduced another
+RPC accepted after storage close refusal, then passed after admission quiescence.
+No suppression, skipped assertion or relaxed native deadline was added.
+
+The 9-file/91-test targeted set passes, plus the additional held-quota canonical
+cancellation case (selected1 test). First full default check completed build,
+workspace typechecks, ESLint and boundaries, but172 files/1781 tests had2 failing
+unchanged Pi first version probes (PI_RPC_RUNTIME_UNAVAILABLE after3s):
+pi-rpc-client final synchronous cancellation and pi-rpc-read idle projection.
+A two-file isolated default-worker rerun reproduced the same2 failures/78 passes.
+Serial diagnostic with the exact same tests/deadlines passes2 files/80 tests
+(60.84s). Four fresh /tmp-only owned/synchronous version probes all returned1.2.0
+in505–612ms with confirmed exit; this does not prove a causal explanation for the
+concurrent failures. Native helpers, test deadlines, worker defaults and unrelated
+host processes were not modified. The latest close refinement postdates that
+first gate; final default check and independent review are now in progress.
+Logs: /tmp/dispatcher-remote-quota-full-check-20261022.log,
+/tmp/dispatcher-remote-quota-pi-probe-diagnostic-20261022.log,
+/tmp/dispatcher-remote-quota-pi-serial-diagnostic-20261022.log,
+/tmp/dispatcher-pi-bootstrap-results-20261022.json.
+
+No real native account read or actual remote service was activated in this unit.
+Positive sources are controlled backend/loopback fixtures; real-account/provider,
+production legacy-origin cutover and native/GUI/release Gates remain open. The
+INH-1923 detailed interim save/readback again hit MCP HTTP transport errors; its
+new remote-quota delta remains unconfirmed on that issue. Continue source work
+and read current comments before the next synchronization attempt.
+
+A subsequent default full check repeated the same2 Pi first-probe failures:
+170/172 files and1780/1782 tests passed (61.79s), with all non-test gates passing.
+This includes the added stale+error domain regression but its package capture
+refinement requires a fresh build for cross-package consumers. The strict state
+capture now preserves the existing legitimate stale+error combination after a
+retained period resets; fresh+error remains rejected. The domain case was observed
+RED then GREEN. A complete serial check using the existing --maxWorkers=1 option
+is running with unchanged assertions/deadlines; it is not assumed green merely
+because the isolated serial Pi diagnostic passed. No repeated-until-success loop
+or provider/test weakening is used. These full failures remain an open regression
+verification item while independently verified development continues.
+
+The complete serial check is terminal, exit1: build/workspace typechecks/ESLint/
+boundaries pass;171 of172 files and1781 of1782 tests pass (224.87s). The only
+failure is unchanged pi-rpc-read.test.ts idle projection's first3s version probe.
+Serial execution is therefore diagnostic, not a passing replacement full gate.
+Current cross-package owner-state target (domain quota, Controller remote results,
+shared coordinator) passes3 files/19 tests, including legitimate stale+error
+preservation and retained exact source provenance. The earlier target9/91 and
+selected close/cancellation cases remain individually scoped evidence; full
+regression acceptance is unresolved and the overall goal/CV-06 stay In Progress.
+Log /tmp/dispatcher-remote-quota-full-check-serial-20261022.log. All failures are
+retained for unified Pi/version-probe follow-up; no causal claim is made merely
+because these Pi files are unchanged by the quota increment.
+
+Independent scoped code review is complete for the CV-06 owning-Runner quota
+delta, including untracked modules and final stale/error capture refinement.
+No concrete Critical/Important/Minor findings were identified. Review explicitly
+withholds merge readiness because the required full check is red, and does not
+qualify real providers/services, production origins or native/GUI/release Gates.
+This delta is retained as a development checkpoint while R-020 investigation
+continues. No default timeout, assertion, worker setting or existing test was
+weakened. Linear INH-1923 progress save db7b687b-57cd-4175-8485-2b4858307e79
+records the exact scoped passes, full failures and open Gates; its current latest
+comment was read back successfully with the same id and body.

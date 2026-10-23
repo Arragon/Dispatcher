@@ -1,7 +1,13 @@
 import { expect, it } from "vitest";
-import { remoteCatalog, remoteRunInventory,remoteCommitResult,remoteDeliveryTarget,remotePushResult } from "../src/remote-results.js";
+import { remoteCatalog, remoteRunInventory,remoteCommitResult,remoteDeliveryTarget,remotePushResult,remoteAccountQuota } from "../src/remote-results.js";
 const identity = { profileId: "p", runnerId: "remote", providerId: "codex" };
 function catalog() { return { ...identity, backendId: "codex-exec-json", contextFingerprint: "context", revision: "catalog", fetchedAt: new Date().toISOString(), freshness: "native-fresh", source: "native-rpc", selectionSupport: "explicit", entries: [{ id: "model", displayName: "Model", kind: "model", selectable: true, access: "unconfirmed", parameterOptions: { reasoningEffort: ["low"] }, parameterDefaults: { reasoningEffort: "low" } }] }; }
+it("admits exact owning quota state and rejects foreign or private account payloads",()=>{
+ const scopeFingerprint="a".repeat(64),at="2026-10-22T12:00:00Z",snapshot={version:1,profileId:"p",source:"native/quota",collectedAt:at,periods:[{id:"credit",unit:"credits",remaining:"9007199254740993.123456789012345678"}]},state={profileId:"p",status:"fresh",contextFingerprint:scopeFingerprint,snapshot,checkedAt:at,lastSuccessAt:at},value={version:1,...identity,scopeFingerprint,state};
+ expect(remoteAccountQuota(value,identity)).toEqual({...state,sourceContextFingerprint:scopeFingerprint});
+ expect(remoteAccountQuota({...value,state:{...state,status:"stale",reasonCode:"QUOTA_PERIOD_RESET",error:{code:"QUOTA_QUERY_FAILED"}}},identity)).toMatchObject({status:"stale",reasonCode:"QUOTA_PERIOD_RESET",error:{code:"QUOTA_QUERY_FAILED"},snapshot:{periods:[{remaining:"9007199254740993.123456789012345678"}]}});
+ for(const invalid of [{...value,runnerId:"other"},{...value,providerId:"qoder"},{...value,profileId:"other"},{...value,privatePath:"/native"},{...value,state:{...state,contextFingerprint:"b".repeat(64)}},{...value,state:{...state,sourceContextFingerprint:"nested-owner"}},{...value,state:{...state,snapshot:{...snapshot,apiKey:"private"}}}])expect(()=>remoteAccountQuota(invalid,identity)).toThrow(expect.objectContaining({code:"REMOTE_RESULT_INVALID"}));
+});
 it("rejects a foreign catalog identity, duplicate model identities and unknown provider payload fields", () => {
   const good = catalog();
   for (const invalid of [{ ...good, runnerId: "other" }, { ...good, profileId: "other" }, { ...good, entries: [...good.entries, ...good.entries] }, { ...good, nativePayload: { arbitrary: true } }, { ...good, entries: [{ ...good.entries[0], parameterDefaults: { reasoningEffort: "unsupported" } }] }]) expect(() => remoteCatalog(invalid, identity)).toThrow(expect.objectContaining({ code: "REMOTE_RESULT_INVALID" }));

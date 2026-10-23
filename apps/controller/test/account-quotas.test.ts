@@ -1,7 +1,7 @@
 import {afterEach,expect,it,vi} from "vitest";
 import type {AgentAdapter} from "@dispatcher/adapters";
 import {DispatcherDatabase} from "@dispatcher/persistence";
-import {AccountQuotas} from "../src/account-quotas.js";
+import {AccountQuotas} from "@dispatcher/runner";
 
 afterEach(()=>vi.useRealTimers());
 const at="2026-10-22T12:00:00.000Z",snapshot={version:1 as const,profileId:"p",source:"native/quota",collectedAt:at,periods:[{id:"week",unit:"percent",remaining:"0"},{id:"credits",unit:"credits",remaining:"9007199254740993.123456789012345678"}]};
@@ -37,4 +37,13 @@ it("keeps native cleanup uncertainty durable after the reader promise rejects",a
   expect(await f.store.refresh("p")).toMatchObject({status:"error",error:{code:"QUOTA_CLEANUP_UNKNOWN"}});expect(f.store.hasPending("p")).toBe(true);await f.store.refresh("p");expect(f.accountQuota).toHaveBeenCalledOnce();await expect(f.store.close()).rejects.toMatchObject({code:"QUOTA_CLEANUP_UNKNOWN"});
   const restarted=new AccountQuotas(f.database,f.adapters,()=>"scope-a",f.publish,()=>new Date(at));expect(restarted.hasPending("p")).toBe(true);await restarted.refresh("p");expect(f.accountQuota).toHaveBeenCalledOnce();await expect(restarted.close()).rejects.toMatchObject({code:"QUOTA_CLEANUP_UNKNOWN"});
  }finally{await f.store.close().catch(()=>undefined);f.database.close();}
+});
+it("preserves an owning Runner's error, context isolation and source age instead of freshening its projection",async()=>{
+ const f=fixture(),remote=vi.fn(async()=>({profileId:"p",status:"fresh",contextFingerprint:"owner-a",sourceContextFingerprint:"owner-a",snapshot,checkedAt:at,lastSuccessAt:at}));delete f.adapter.accountQuota;Object.assign(f.adapter,{accountQuotaState:remote});
+ try{expect(await f.store.refresh("p")).toMatchObject({status:"fresh",contextFingerprint:"scope-a",sourceContextFingerprint:"owner-a",snapshot,lastSuccessAt:at});
+  remote.mockRejectedValueOnce(Error("wire unavailable"));expect(await f.store.refresh("p")).toMatchObject({status:"error",sourceContextFingerprint:"owner-a",snapshot,lastSuccessAt:at});
+  remote.mockResolvedValueOnce({profileId:"p",status:"stale",reasonCode:"QUOTA_CONTEXT_CHANGED",sourceContextFingerprint:"owner-b"} as never);expect(await f.store.refresh("p")).toMatchObject({status:"stale",reasonCode:"QUOTA_CONTEXT_CHANGED"});expect(f.store.state("p")).not.toHaveProperty("snapshot");
+  f.time("2026-10-22T12:11:00Z");expect(await f.store.refresh("p")).toMatchObject({status:"stale",reasonCode:"QUOTA_EVIDENCE_EXPIRED",lastSuccessAt:at});
+  remote.mockResolvedValueOnce({profileId:"p",status:"error",contextFingerprint:"owner-b",sourceContextFingerprint:"owner-b",checkedAt:"2026-10-22T12:11:00Z",error:{code:"QUOTA_QUERY_FAILED"}} as never);expect(await f.store.refresh("p")).toMatchObject({status:"error",error:{code:"QUOTA_QUERY_FAILED"}});expect(f.store.state("p")).not.toHaveProperty("snapshot");expect(f.database.listEntities("run")).toEqual([]);
+ }finally{await f.store.close();f.database.close();}
 });

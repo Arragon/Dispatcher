@@ -933,3 +933,11 @@
   availability. Preserve an event/identity conflict through generic partial reads
   and later read exceptions until admitted recovery; a transport error does not
   reconcile conflicting native facts. Keep accepted observations immutable.
+
+- Preserve owning-cache quota state across remote transport: source freshness,
+  last success and account context are evidence, not a new Controller read time.
+  A successful response hiding a changed owner's balance must replace the old
+  projection; only a wire failure can retain that matching historical snapshot
+  as error. A timed-out wire request does not release the physical reader's
+  registration or database guard. Quiesce RPC admission even when storage close
+  fails; holding the database open alone does not stop new commands.

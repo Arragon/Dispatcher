@@ -16,6 +16,12 @@ it("checks continuation authority before entering the existing remote transport"
  await expect(f.adapter.send("session","next",rejected)).rejects.toMatchObject({dispatch:"not-sent",code:"STALE_CONTROL_REVISION"});
  await expect(f.adapter.resume("session",rejected)).rejects.toMatchObject({dispatch:"not-sent",code:"STALE_CONTROL_REVISION"});expect(f.request).not.toHaveBeenCalled();
 });
+it("reads an owning quota projection without requiring a canonical Run or using its lease",async()=>{
+ const f=fixture(),scopeFingerprint="a".repeat(64);f.request.mockResolvedValue({version:1,runnerId:"remote",profileId:"p",providerId:"codex",scopeFingerprint,state:{profileId:"p",status:"error",contextFingerprint:scopeFingerprint,error:{code:"QUOTA_QUERY_FAILED"}}});
+ expect(await f.adapter.accountQuotaState()).toEqual({profileId:"p",status:"error",contextFingerprint:scopeFingerprint,sourceContextFingerprint:scopeFingerprint,error:{code:"QUOTA_QUERY_FAILED"}});expect(f.request.mock.calls[0]).toEqual([{type:"native.account_quota",profileId:"p",action:"refresh"}]);expect(f.save).not.toHaveBeenCalled();expect(f.reserve).not.toHaveBeenCalled();
+ f.request.mockRejectedValueOnce(new AdapterContractError("QUOTA_CONTEXT_CHANGED","source changed"));expect(await f.adapter.accountQuotaState()).toEqual({profileId:"p",status:"stale",reasonCode:"QUOTA_CONTEXT_CHANGED"});
+ f.request.mockRejectedValueOnce(new AdapterContractError("REMOTE_QUOTA_UNAVAILABLE","old peer"));expect(await f.adapter.accountQuotaState()).toEqual({profileId:"p",status:"unsupported",reasonCode:"REMOTE_QUOTA_UNAVAILABLE"});
+});
 it("starts only a reserved canonical Run with its frozen model and owning workspace", async () => {
   const f = fixture();
   await expect(f.adapter.start({ runId: "missing", workspacePath: f.run.worktree!, executionSelection: f.selection })).rejects.toMatchObject({ code: "RUN_AUTHORITY_MISMATCH" });

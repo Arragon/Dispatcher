@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync,mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
@@ -62,6 +62,32 @@ it("requires applied owning registrations, plans without mutation, executes and 
   expect(await f.call({ type: "native.run_verify", runId: "run" })).toMatchObject([{ commandId: "check", status: "passed" }]);
   expect(await f.call({ type: "native.run_files", runId: "run" })).toEqual(["result.txt"]);
   expect(await f.call({ type: "native.run", runId: "run", action: "result" })).toMatchObject({ state: "COMPLETED", summary: "done" });
+});
+it("keeps account quota reads on the owning Runner with no execution reservation and cached reads survive restart",async()=>{
+ const f=fixture();f.apply();const snapshot={version:1 as const,profileId:"p",source:"fixture/native-quota",collectedAt:"2026-10-16T12:00:00Z",periods:[{id:"week",unit:"percent",remaining:"0"},{id:"credit",unit:"credits",remaining:"9007199254740993.123456789012345678"}]},read=vi.fn(async()=>snapshot);f.runtime["adapters"].get("p")!.accountQuota=read;
+ const quota=(runtime:NativeRunnerRuntime,action:"read"|"refresh")=>{const payload={type:"native.account_quota",profileId:"p",action} as CommandPayload;return runtime.handle(payload,createEnvelope({kind:"command",runnerId:"remote",traceId:"q",messageId:action,sequence:1,payload}));};
+ expect(await quota(f.runtime,"read")).toMatchObject({runnerId:"remote",profileId:"p",providerId:"codex",state:{status:"missing"}});expect(read).not.toHaveBeenCalled();
+ expect(await quota(f.runtime,"refresh")).toMatchObject({scopeFingerprint:expect.stringMatching(/^[a-f0-9]{64}$/),state:{status:"fresh",snapshot}});expect(read).toHaveBeenCalledOnce();expect(f.runtime.database.listEntities("native-execution")).toEqual([]);expect(f.runtime.database.listEntities("usage-observation")).toEqual([]);expect(f.starts()).toBe(0);expect(f.runtime.capabilities()).toContain("native-account-quota-v1");
+ f.runtime.close();const restored=new NativeRunnerRuntime(f.options);cleanups.push(()=>restored.close());expect(await quota(restored,"read")).toMatchObject({state:{status:"fresh",snapshot}});expect(f.starts()).toBe(0);
+});
+it("retains physical quota reader ownership across deadlines and refuses registration replacement and undrained storage close",async()=>{
+ vi.useFakeTimers();const f=fixture();f.apply();const entered=Promise.withResolvers<void>(),ready=Promise.withResolvers<{version:1;profileId:string;source:string;collectedAt:string;periods:[]}>(),read=vi.fn(async()=>{entered.resolve();return ready.promise;});f.runtime["adapters"].get("p")!.accountQuota=read;
+ const payload={type:"native.account_quota",profileId:"p",action:"refresh"} as CommandPayload,send=()=>f.runtime.handle(payload,createEnvelope({kind:"command",runnerId:"remote",traceId:"q",messageId:"q",sequence:1,payload}));const first=send(),second=send();await entered.promise;
+ try{
+  const changed=structuredClone(f.config);changed.agentProfiles=[];expect(()=>f.runtime.configuration.applyPlan(f.runtime.configuration.buildPlan(changed,"fixture","cli").id,{confirmed:true})).toThrow(expect.objectContaining({cause:expect.objectContaining({code:"RUNNER_CONFIGURATION_BUSY"})}));
+  await vi.advanceTimersByTimeAsync(31_000);expect(await first).toMatchObject({state:{status:"error",error:{code:"QUOTA_QUERY_TIMEOUT"}}});await second;expect(read).toHaveBeenCalledOnce();expect(()=>f.runtime.close()).toThrow(expect.objectContaining({code:"QUOTA_CLEANUP_UNKNOWN"}));expect(f.runtime.database.handle.prepare("SELECT 1 AS open").get()).toEqual({open:1});await expect(send()).rejects.toMatchObject({code:"RUNNER_CLOSED"});
+  const closing=f.runtime.shutdown().then(()=>undefined,error=>error);await vi.advanceTimersByTimeAsync(3_000);expect(await closing).toMatchObject({code:"QUOTA_CLEANUP_UNKNOWN"});expect(f.runtime.database.getEntity("account-quota-lifecycle","p")).toMatchObject({status:"unknown"});ready.resolve({version:1,profileId:"p",source:"native/quota",collectedAt:"2026-10-16T12:00:00Z",periods:[]});await vi.advanceTimersByTimeAsync(0);expect(f.runtime.database.getEntity("account-quota","p")).toMatchObject({status:"error",error:{code:"QUOTA_QUERY_TIMEOUT"}});
+ }finally{ready.resolve({version:1,profileId:"p",source:"native/quota",collectedAt:"2026-10-16T12:00:00Z",periods:[]});await vi.advanceTimersByTimeAsync(0);vi.useRealTimers();}
+});
+it("fences cached and pending quota when the owning native account file changes",async()=>{
+ const f=fixture();f.apply();const home=join(f.directory,"native-account");mkdirSync(home);writeFileSync(join(home,"auth.json"),"fixture-before");const snapshot={version:1 as const,profileId:"p",source:"fixture/quota",collectedAt:"2026-10-16T12:00:00Z",periods:[]},read=vi.fn(async()=>snapshot);f.runtime["adapters"].get("p")!.accountQuota=read;
+ const send=(action:"read"|"refresh")=>{const payload={type:"native.account_quota",profileId:"p",action} as CommandPayload;return f.runtime.handle(payload,createEnvelope({kind:"command",runnerId:"remote",traceId:"q",messageId:action,sequence:1,payload}));};await send("refresh");writeFileSync(join(home,"auth.json"),"fixture-different-account");expect(await send("read")).toMatchObject({state:{status:"stale",reasonCode:"QUOTA_CONTEXT_CHANGED"}});expect((await send("read") as {state:unknown}).state).not.toHaveProperty("snapshot");expect(read).toHaveBeenCalledOnce();
+ const entered=Promise.withResolvers<void>(),ready=Promise.withResolvers<typeof snapshot>();read.mockImplementation(async()=>{entered.resolve();return ready.promise;});const pending=send("refresh"),rejected=expect(pending).rejects.toMatchObject({code:"QUOTA_CONTEXT_CHANGED"});await entered.promise;writeFileSync(join(home,"auth.json"),"fixture-third-account");ready.resolve(snapshot);await rejected;expect(f.starts()).toBe(0);
+});
+it("does not return a prior fresh quota projection as a successful refresh during owning shutdown",async()=>{
+ vi.useFakeTimers();const f=fixture();f.apply();const snapshot={version:1 as const,profileId:"p",source:"native/quota",collectedAt:"2026-10-16T12:00:00Z",periods:[]},adapter=f.runtime["adapters"].get("p")!;adapter.accountQuota=async()=>snapshot;
+ const payload={type:"native.account_quota",profileId:"p",action:"refresh"} as CommandPayload,send=()=>f.runtime.handle(payload,createEnvelope({kind:"command",runnerId:"remote",traceId:"q",messageId:"q",sequence:1,payload}));await send();const entered=Promise.withResolvers<void>(),ready=Promise.withResolvers<typeof snapshot>();adapter.accountQuota=async()=>{entered.resolve();return ready.promise;};const pending=send();await entered.promise;
+ const closing=f.runtime.shutdown().then(()=>undefined,error=>error);try{await expect(pending).rejects.toMatchObject({code:"RUNNER_CLOSED"});await vi.advanceTimersByTimeAsync(3_000);expect(await closing).toMatchObject({code:"QUOTA_CLEANUP_UNKNOWN"});}finally{ready.resolve(snapshot);await vi.advanceTimersByTimeAsync(3_000);await closing;vi.useRealTimers();}
 });
 it("preserves the reviewed native price and rejects changed terms before owned native creation",async()=>{
  for(const changed of [false,true]){

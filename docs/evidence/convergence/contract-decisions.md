@@ -122,3 +122,28 @@ publication/Adapter/Runner propagation with immutability and revalidation tests;
 canonical Run estimate projection; current usage UI and complete pnpm check.
 Positive cases use scoped fixture price producers. Built-in providers without
 qualified price reads keep unavailable; fixture results cannot qualify real prices.
+
+## CV-06 owning-Runner quota projection
+
+Ruling: share the existing account-only quota coordinator in packages/runner —
+Controller and owning Runner both need its coalescing, deadlines, context guards,
+TTL/reset and durable cleanup ownership — copying only the successful read would
+lose those safeguards. Physical native reads return snapshots; the remote facade
+returns a validated owning-cache state, preserving source status/last success and
+an opaque source context fingerprint. Controller transport failure may retain its
+last matching success as error, but a successful owner response with a new context
+must not resurrect an older snapshot or restamp its time. If wrong, one shared
+coordinator can affect both owners; retain its existing regressions and add proxy
+state, pending registration/shutdown and strict transport cases before admission.
+
+Account commands are profile-only read/refresh, with a separate additive capability
+and no Run/lease/workspace authority. The owning Runner validates registration and
+native-file epoch before and after waits. Pending or cleanup-unknown reads fence
+physical registration replacement and storage closure even if a remote wait ends.
+No native inference, Run/resource change or Controller native path is involved.
+
+Ruling: keep periodic quota scheduling in the existing Controller background
+worker — the owning Runner supplies physical collection/cache/cleanup, while one
+scheduler avoids independent duplicate polls — a disconnected Controller leaves
+retained source facts to expire under the existing TTL until reconnection or
+explicit collection. Native read and refresh remain distinct RPC actions.

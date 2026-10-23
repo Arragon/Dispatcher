@@ -1161,7 +1161,8 @@ applied account environment and cancellation. Native integer percentages and
 credit decimal strings retain exact values, independent periods and missing
 fields. No inference is started by this read.
 
-Controller coalesces one read per profile, bounds admitted account reads to four,
+The shared AccountQuotas coordinator in packages/runner coalesces one read per profile,
+bounds admitted account reads to four,
 and collects from the background worker independently of dashboard connections.
 Its five-minute retry schedule and ten-minute source/last-success TTL are scoped
 to the existing account/credential/native-file fingerprint. A native period reset
@@ -1175,8 +1176,30 @@ database when an owning reader remains unconfirmed.
 Account/model screens use cached GET projections; only explicit refresh invokes
 the native reader. They display source time, failure/staleness, actual zero,
 missing dimensions and exact decimals. Legacy Run usage and quota remain separate.
-Remote Runner quota forwarding and real-account qualification require their own
-integration evidence; unsupported providers return an explicit unsupported state.
+Remote account read/refresh commands use the additive native-account-quota-v1
+capability without a Run, lease or workspace. NativeRunnerRuntime owns the same
+quota cache and lifecycle; Controller's existing background worker owns the
+periodic schedule and the explicit refresh route owns manual requests. A cached
+owning read invokes no provider. Physical profile registration and its local
+native-file metadata epoch are checked before and after awaits. The shared
+metadata helper preserves Controller's existing local fingerprint while remote
+paths are read only by their physical owner.
+
+The remote facade returns a strictly validated owner-state projection, including
+its opaque source context, source time, last success and stale/error state.
+Controller binds it to its own current registration/credential context without
+restamping source freshness. An owner response that hides a changed account's
+snapshot replaces the old projection; a transport failure may retain the last
+matching snapshot only as error. Unknown/private fields and numeric quantities
+are rejected at this boundary. The existing generic cache DTO adds only optional
+sourceContextFingerprint; no schema migration or historical backfill is needed.
+
+Runner-side pending/cleanup-unknown quota ownership blocks physical account
+replacement and storage closure after a Controller wait has ended. Shutdown
+stops RPC admission before draining, retains its writer/database on uncertainty,
+and fences late responses. Account reads do not occupy the canonical Run lane,
+so cancellation remains independent. Unsupported peers/providers stay explicit;
+real remote/native account qualification requires separate evidence.
 
 ## Managed Pi RPC runtime
 

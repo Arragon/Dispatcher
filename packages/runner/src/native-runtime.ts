@@ -1,11 +1,12 @@
 import { createHash, randomUUID } from "node:crypto";
 import { join,resolve } from "node:path";
 import {nativePrivatePaths,type AdapterSession,type AgentAdapter,type SessionStore} from "@dispatcher/adapters";
-import { ConfigurationEngine, repositoryRunnerId, type AgentProfileConfig, type DispatcherConfig, type RepositoryConfig } from "@dispatcher/config";
+import { ConfigurationEngine, repositoryRunnerId,nativeProfileEpoch, type AgentProfileConfig, type DispatcherConfig, type RepositoryConfig } from "@dispatcher/config";
 import {admitCatalogPricing,samePricingTerms,type AccountModelCatalog,type ExecutionSelection,type GitPushResult,type LocalCommitResult,type ModelCatalogContext} from "@dispatcher/domain";
 import { redactValue } from "@dispatcher/observability";
 import { DispatcherDatabase, type JsonValue } from "@dispatcher/persistence";
-import { NATIVE_EXECUTION_CAPABILITY,NATIVE_GIT_DELIVERY_CAPABILITY,NATIVE_MODEL_PRICING_CAPABILITY,parseEnvelope, type CommandPayload, type NativeDeliveryIntent, type NativeStartDescriptor, type NativeWorkspacePlan, type ProtocolEnvelope } from "@dispatcher/protocol";
+import { NATIVE_EXECUTION_CAPABILITY,NATIVE_GIT_DELIVERY_CAPABILITY,NATIVE_MODEL_PRICING_CAPABILITY,NATIVE_ACCOUNT_QUOTA_CAPABILITY,parseEnvelope, type CommandPayload, type NativeDeliveryIntent, type NativeStartDescriptor, type NativeWorkspacePlan, type ProtocolEnvelope } from "@dispatcher/protocol";
+import {AccountQuotas} from "./account-quotas.js";
 import { RepositoryRegistry, WorkspaceManager, type WorkspaceHandle } from "@dispatcher/workspace";
 import { LeaseFenceError, RunnerLeaseAuthority, type RunnerLease } from "./lease.js";
 import { LocalGitDelivery, LocalGitDeliveryError } from "./local-git-delivery.js";
@@ -73,6 +74,7 @@ export class NativeRunnerRuntime {
   private shutdownPromise?: Promise<void>;
   private readonly writerToken = randomUUID();
   private writerClaimed = false;
+  private readonly accountQuotas:AccountQuotas;
 
   constructor(private readonly options: NativeRunnerRuntimeOptions) {
     this.gitProcesses=new ProcessManager(join(options.dataDirectory,"git-logs"));
@@ -80,6 +82,7 @@ export class NativeRunnerRuntime {
     this.database = new DispatcherDatabase(join(options.dataDirectory, "native-execution.sqlite"));
     try {
       this.claimWriter();
+      this.accountQuotas=new AccountQuotas(this.database,this.adapters,id=>this.quotaScope(id),undefined,this.now);
       for (const value of this.database.listEntities<JsonValue>("native-execution")) {
         const record = value as unknown as ExecutionRecord;
         // A stored PID is evidence, never proof that this process owns a live handle.
@@ -121,6 +124,7 @@ export class NativeRunnerRuntime {
   private registration(profile: AgentProfileConfig, repository: RepositoryConfig): string { return hash({ profile, repository }); }
   private applyRegistrations(config: DispatcherConfig): void {
     const profiles = config.agentProfiles.filter(profile => profile.runnerId === this.options.runnerId && profile.enabled !== false);
+    for(const profile of [...(this.config?.agentProfiles??[]),...profiles])if(this.accountQuotas.hasPending(profile.id)&&hash(this.config?.agentProfiles.find(p=>p.id===profile.id)??null)!==hash(profiles.find(p=>p.id===profile.id)??null))throw new NativeRunnerError("RUNNER_CONFIGURATION_BUSY","An account quota reader still owns this registration");
     for (const record of this.records.values()) {
       if (!occupies(record) && !this.ownedCommandAborts.has(record.runId)) continue;
       const profile = profiles.find(p => p.id === record.profileId), repository = config.repositories.find(r => r.id === record.plan.repositoryId && repositoryRunnerId(config, r) === this.options.runnerId);
@@ -137,7 +141,7 @@ export class NativeRunnerRuntime {
       if (created) next.set(profile.id, created);
     }
     this.config = structuredClone(config);
-    this.adapters = next;
+    this.adapters.clear();for(const [id,adapter] of next)this.adapters.set(id,adapter);
     this.privatePaths=privatePaths;
     this.workspaces = new WorkspaceManager(registry, join(this.options.dataDirectory, "worktrees"),()=>this.privatePaths);
     this.gitDelivery=new LocalGitDelivery(this.database,this.gitProcesses,this.workspaces);
@@ -162,11 +166,11 @@ export class NativeRunnerRuntime {
       },
     };
   }
-  capabilities():string[]{return this.adapters.size?[NATIVE_EXECUTION_CAPABILITY,NATIVE_GIT_DELIVERY_CAPABILITY,NATIVE_MODEL_PRICING_CAPABILITY]:[];}
+  capabilities():string[]{return this.adapters.size?[NATIVE_EXECUTION_CAPABILITY,NATIVE_GIT_DELIVERY_CAPABILITY,NATIVE_MODEL_PRICING_CAPABILITY,NATIVE_ACCOUNT_QUOTA_CAPABILITY]:[];}
   profileInventory(): string[] { return [...this.adapters.keys()].sort(); }
   capacity(): number { return this.config.runners.find(r => r.id === this.options.runnerId)?.capacity ?? 0; }
   registerHandlers(client: { register(type: CommandPayload["type"], handler: (payload: CommandPayload, envelope: ProtocolEnvelope<CommandPayload>) => Promise<unknown>): unknown }): void {
-    const commands: CommandPayload["type"][] = ["native.repository", "native.repository_refs", "native.repository_delivery", "native.workspace_plan", "native.workspace_prepare", "native.model_catalog", "native.profile_probe", "native.run", "native.run_verify", "native.run_commit", "native.run_push", "native.run_files", "native.run_finalize", "run.start", "runner.reconcile", "lease.renew", "lease.revoke"];
+    const commands: CommandPayload["type"][] = ["native.repository", "native.repository_refs", "native.repository_delivery", "native.workspace_plan", "native.workspace_prepare", "native.model_catalog", "native.profile_probe", "native.account_quota", "native.run", "native.run_verify", "native.run_commit", "native.run_push", "native.run_files", "native.run_finalize", "run.start", "runner.reconcile", "lease.renew", "lease.revoke"];
     for (const type of commands) client.register(type, (payload, envelope) => this.handle(payload, envelope));
   }
   private profile(id: string): { profile: AgentProfileConfig; adapter: AgentAdapter } {
@@ -223,6 +227,13 @@ export class NativeRunnerRuntime {
     }
     if (payload.type === "runner.reconcile") return this.reconcile();
     if (payload.type === "lease.renew" || payload.type === "lease.revoke") return this.updateLease(payload);
+    if(payload.type==="native.account_quota"){
+      const {profile}=this.profile(payload.profileId),scopeFingerprint=this.quotaScope(profile.id);
+      const state=payload.action==="refresh"?await this.accountQuotas.refresh(profile.id):this.accountQuotas.state(profile.id);
+      if(this.closed||this.shuttingDown)throw new NativeRunnerError("RUNNER_CLOSED","Runner stopped admitting quota responses");
+      if(this.quotaScope(profile.id)!==scopeFingerprint)throw new NativeRunnerError("QUOTA_CONTEXT_CHANGED","Owning account changed during quota collection");
+      return {version:1,profileId:profile.id,runnerId:this.options.runnerId,providerId:profile.provider,scopeFingerprint,state};
+    }
     const runId = "runId" in payload ? payload.runId : payload.type === "native.workspace_plan" ? payload.plan.runId : undefined;
     return this.serialize(runId ?? "registration-reads", async () => {
       if(payload.type==="native.repository_delivery"){this.repository(payload.repositoryId);return this.workspaces.deliveryTarget(payload.repositoryId);}
@@ -342,6 +353,9 @@ export class NativeRunnerRuntime {
     if (this.registration(this.profile(profileId).profile, this.repository(repositoryId)) !== registration) throw new NativeRunnerError("SELECTION_CHANGED", "Runner registration changed during catalog query");
     if (catalog.profileId !== profileId || catalog.runnerId !== this.options.runnerId || catalog.providerId !== profile.provider) throw new NativeRunnerError("CATALOG_CONTEXT_MISMATCH", "Native catalog does not belong to this Runner registration");
     return catalog;
+  }
+  private quotaScope(profileId:string):string|undefined {
+    try{const {profile}=this.profile(profileId);return hash({profile,runnerId:this.options.runnerId,nativeEpoch:nativeProfileEpoch(profile)});}catch{return;}
   }
   private async prepare(payload: Extract<CommandPayload, { type: "native.workspace_prepare" }>, envelope: ProtocolEnvelope<CommandPayload>): Promise<WorkspaceHandle> {
     const { profile, repository } = this.validatePlan(payload.profileId, payload.plan);
@@ -467,12 +481,13 @@ export class NativeRunnerRuntime {
   private async performShutdown(): Promise<void> {
     if (this.closed) return;
     this.shuttingDown=true;
+    this.accountQuotas.beginShutdown();const quotaClosed=this.accountQuotas.close().then(()=>undefined,error=>error as unknown);
     const admitted=[...this.records.values()].filter(record=>occupies(record)||this.ownedCommandAborts.has(record.runId));
     for(const record of admitted)if(!record.lease.revokedAt)record.lease=this.authority.revoke(record.runId,record.lease.leaseId,record.lease.generation,"runner shutdown",this.now().toISOString());
     for(const record of admitted)try{this.save(record);}catch{/* In-memory revocation still fences pending native spawns. */}
     await Promise.allSettled(admitted.map(record=>this.stopOwned(record)));
-    await Promise.allSettled([...this.locks.values()]);await this.gitProcesses.shutdown(); this.close();
+    await Promise.allSettled([...this.locks.values()]);await this.gitProcesses.shutdown();const quotaError=await quotaClosed;if(quotaError)throw quotaError;this.close();
   }
   /** Closes storage after shutdown, or simulates abrupt process loss in recovery tests. */
-  close(): void { if (this.closed) return; this.closed = true; if (this.timer) clearInterval(this.timer); this.releaseWriter(); this.database.close(); }
+  close(): void { if (this.closed) return;this.shuttingDown=true;if(this.timer)clearInterval(this.timer);this.accountQuotas.beginShutdown();if(this.accountQuotas.hasPending())throw new NativeRunnerError("QUOTA_CLEANUP_UNKNOWN","Owning quota read is not drained");this.closed = true;this.releaseWriter();this.database.close(); }
 }

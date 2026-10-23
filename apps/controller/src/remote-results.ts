@@ -1,4 +1,4 @@
-import {isGitDeliveryTarget,isNativeModelPricingV1,type GitDeliveryTarget} from "@dispatcher/domain";
+import {isGitDeliveryTarget,isNativeModelPricingV1,captureAccountQuotaState,type AccountQuotaState,type GitDeliveryTarget} from "@dispatcher/domain";
 import { AdapterContractError } from "@dispatcher/adapters";
 import type { AccountModelCatalog,LocalCommitResult,RepositoryRefs,RunGitDelivery } from "@dispatcher/domain";
 import type { RunnerLease, RunnerRunSnapshot } from "@dispatcher/runner";
@@ -6,6 +6,13 @@ const object = (value: unknown): value is Record<string, unknown> => Boolean(val
 const text = (value: unknown, max = 200): value is string => typeof value === "string" && value.length > 0 && value.length <= max;
 const parameter = (value: unknown) => typeof value === "boolean" || typeof value === "number" && Number.isFinite(value) || typeof value === "string" && value.length <= 4000;
 const keys = (value: Record<string, unknown>, allowed: string[]) => Object.keys(value).every(key => allowed.includes(key));
+export function remoteAccountQuota(value:unknown,expected:{profileId:string;runnerId:string;providerId:string}):AccountQuotaState {
+ const invalid=():never=>{throw new AdapterContractError("REMOTE_RESULT_INVALID","Owning Runner returned invalid or foreign account quota evidence");};
+ if(!object(value)||!keys(value,["version","profileId","runnerId","providerId","scopeFingerprint","state"])||value.version!==1||Object.entries(expected).some(([key,expected])=>value[key]!==expected)||typeof value.scopeFingerprint!=="string"||!/^[a-f0-9]{64}$/u.test(value.scopeFingerprint))return invalid();
+ let state;try{state=captureAccountQuotaState(value.state,expected.profileId);}catch{return invalid();}
+ if(state.sourceContextFingerprint!==undefined||state.contextFingerprint!==undefined&&state.contextFingerprint!==value.scopeFingerprint)return invalid();
+ return {...state,sourceContextFingerprint:value.scopeFingerprint};
+}
 export function remoteRepositoryRefs(value:unknown,offset:number,limit:number):RepositoryRefs{
   const invalid=():never=>{throw new AdapterContractError("REMOTE_RESULT_INVALID","Owning Runner returned invalid repository references");};
   if(!object(value)||!keys(value,["offset","limit","nextOffset","truncated","refs"])||value.offset!==offset||value.limit!==limit||value.nextOffset!==undefined&&(value.nextOffset!==offset+limit||offset+limit>10_000)||value.truncated!==undefined&&typeof value.truncated!=="boolean"||value.truncated===true&&value.nextOffset!==undefined||!Array.isArray(value.refs)||value.refs.length>limit)return invalid();
