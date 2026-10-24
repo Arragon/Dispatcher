@@ -423,6 +423,8 @@ server profile。owned host/producer及精确分配observer随后保存105ef8b�
 
 **2026-10-24 当前工程回执**：Pi Task1保存76b7839，测试/fixture限定增量恢复G1/G3/G4/G5与无dispatch配置重启，新增15service例；7文件/196聚焦及默认189文件/2893例通过，独立spec/quality Approved无Critical/Important。三个Git输入及真实pre/post证据匹配；Task2随后保存fc4685e并独立审查通过：真实raw guard/readiness/producer寿命由现有屏障消费，新增10例，聚焦7/399和默认189/2903通过，5Git字节匹配；早期证据捕获限制与错误优先级修正保留。Task3随后保存e526609并独立审查通过：显式Pi UUID只读证书、两个消费者、44corrupt+5positive；Pi72、聚焦5/380、默认189/2952通过。共享OpenCode测试helper精确抽取，5Git与3470post匹配。Pi三单元局部开发完毕，继续native ownership prerequisite和其他backend；不升级native读取/工具/自动推进资格。其他backend与CopilotWIP仍依后续单元，CV-10未完成。
 
+**Ownership验收补记**：组合候选56db4b5保留为non-green WIP，默认gate非测试门禁通过、2999例中19fail；独立审查不批准。三处真实group清理post-exit EPERM与16处独立quota fixture shutdown UNKNOWN分开记录，OS/具体清理分支均未溯明，R020独立。两fixture用既有reader seam窄修e062118，4文件202例与lint通过，复审待完成。按独立审查建议新增root-owned-probe-delivery计划：恢复84cde57原group/Codex字节，仅独立交付root/sourcecase4/probe500ms自然关闭，需新默认gate；原组合Task1及group1/2/3/5/6和Generic/Runner/catalog/Codex共同安全仍待完成，不能据拆分宣称已修复。继续root-only provider等独立开发，不引入策略开关、重试成功捷径或放宽测试。
+
 ### CV-11 · 将计量与原生会话视图接入v3现有交互
 
 - **映射/架构**：M17.2；原票 INH-1469、INH-1485、INH-1525、INH-1526、INH-1527、INH-1528、INH-1529、INH-1530、INH-1844；沿用D1–D3和相应C1–C6。

@@ -4478,3 +4478,54 @@ SDD evidence remains retained. Goal/CV10, other providers/UI/retention/delivery 
 original account/GUI/native writer/service/release Gates stay open. Next ownership
 plan has preparation/preflight only; no native/account activation, dependency,
 migration, deletion, push or merge occurred.
+
+### 2026-10-24 ownership candidate rejected; independent delivery partition
+
+WIP `56db4b540ed86a8a66fd1e896269670127c7f41e`, BASE `84cde57`, preserves
+the nine-file group/root/Codex candidate. First default attempt stopped at four
+lint defects after build/typecheck; cause/type-import fixes have direct RED and
+scoped lint evidence. A subsequent sticky-error cause regression corrected lost
+diagnostic cause without changing policy. Earlier two actual owned-drain failures
+remain causally unresolved despite a later changed-payload diagnostic pass.
+
+Final changed-payload `mise exec -- pnpm check` exits1, wall127.729430167s:
+build/typecheck/lint/boundaries pass;191files/2999tests,186files/2980pass and
+5files/19fail. Evidence `/tmp/dispatcher-native-ownership-evidence/final-default-gate-lint-fix-v2`;
+logSHA256 `3809d4168462ab4a4c3fbdbcd2a05c2a4cb9143d28429b6e3338cca50a7d0c22`.
+Root audit `/tmp/dispatcher-native-ownership-root-payload-audit-20261024.json`
+checks9Git inputs/4567finalpost,23runs/105010pre+105014post actual copies and
+92digested records; zero hash/current-byte differences. Runtime/tool identities
+are recorded; third-party node_modules/runtime binary bytes are excluded. This
+audit links retained bytes to a **failed** gate; it is not acceptance.
+
+Independent `/tmp/dispatcher-native-ownership-task1-review-20261024.md` reports
+spec incomplete/quality Needs fixes. Three actual subprocess paths (Controller
+adapter lifecycle, Generic owned cancellation and Runner lifecycle) preserve
+post-exit `kill(-pid,0)` EPERM; the new mandated sticky unknown prevents later
+probe/signal. Review found no fixture-injected EPERM on those paths. OS reason,
+numerical reuse, zombie/reaping hypothesis and relation to R020 are unproven.
+The other16 QUOTA_CLEANUP_UNKNOWN afterEach failures cannot establish the native
+reader's pending-vs-uncertain branch or a shared OS cause.
+
+Fixture-only fix `e0621180011d32bd3b2ed1d3415bcd95c02478ff` injects the existing
+independent codexNativeReader seam into two otherwise mocked Controller fixtures.
+Two new regressions first fail on missing seam, then check real quota normalization,
+exact pre-abort reason and unexpected-method rejection. Required four files/202
+tests pass18.154624333s; scoped ESLint passes1.063980750s. All original body/stop
+assertions and dedicated account-quotas/real codex-catalog files are retained.
+Full gate was deliberately not retried while group conflict remains open.
+Fix evidence `/tmp/dispatcher-native-ownership-evidence/fix1-handoff.json`;
+independent scoped re-review pending. A failed payload audit caught root-owned
+plan metadata; its result is preserved and the corrected audit excludes only
+those two named plans. No tests were repeated for that metadata correction.
+
+The review's dated follow-up supports an independent root-only partition under
+`docs/superpowers/plans/2026-10-24-root-owned-probe-delivery.md`. It restores exact
+baseline group/Codex behavior, retains root/probe/sourcecase4 tests and requires
+fresh shared/default full acceptance. Original combined Task1 is **not complete**;
+WIP/history/all failures and group sourcecases1/2/3/5/6 remain open for Generic,
+Runner, catalogs/default probes, Codex and all other group consumers. No policy
+toggle/fallback/duplicate owner, test deadline/worker/cache relaxation or native
+release assertion is authorized. Later root-only providers must prove actual
+detached:false/root construction, explicit root probe and independent500ms natural
+close on every relevant path. ParentCV14 and all formal Gates remain open.

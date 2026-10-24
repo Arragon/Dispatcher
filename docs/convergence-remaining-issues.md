@@ -184,9 +184,29 @@ Root verifies5Git/3470post/668livegenerated/16buildinfo,12runs with41541pre/4154
 actual copies. All three Pi source-gap units complete locally; original155-case
 dispositions remain static, and native qualification stays unknown.
 
-Next: saved native ownership prerequisite, remaining native providers, then actual
-provider/GUI/writer/service/release qualification. The
-current integration used fixtures only; no real account/config/service activation
+Native ownership candidate56db4b5 is preserved non-green WIP: the final default
+gate passed build/typecheck/lint/boundaries but failed19/2999 cases in5files.
+Three real subprocess group-drain paths preserve post-exit kill signal0 EPERM;
+the new sticky uncertainty cannot retry those observations. Exact OS cause and
+relation to independent R020 remain unproven. Sixteen other failures traverse an
+independent unisolated quota reader in two mocked Controller fixtures, with
+pending-vs-uncertain cause unknown. Fixture-only e062118 supplies the existing
+reader seam; focused4/202 and scoped lint pass, independent fix review pending.
+No original body/stop or dedicated quota/native-reader assertions were weakened.
+
+Original combined ownership Task1 remains incomplete. A reviewed plan partition
+now specifies independent root-only delivery in
+`docs/superpowers/plans/2026-10-24-root-owned-probe-delivery.md`: restore exact
+pre-WIP group/Codex behavior, retain root owner/explicit probe500ms natural-close
+gate, and require fresh unchanged default full acceptance. WIP/failures and all
+group source cases1/2/3/5/6 remain outstanding for every shared group consumer,
+including Generic, Runner, catalogs/default probes and Codex. Root sourcecase4
+does not depend on the proposed group hardening. This is no runtime toggle or
+claim that original six-case acceptance passed.
+
+Next: independent root-only unit, remaining native providers, unresolved shared
+group safety and original provider/GUI/writer/service/release qualification.
+Current integration uses fixtures only; no real account/config/service activation
 or persisted-format/dependency change occurred. CV-09 and the full goal remain
 incomplete.
 

@@ -10,6 +10,42 @@
 
 **Spec:** The binding interfaces, global constraints and six-source assertion map in this document, checked against frozen `a499d84e88c9f4ff1d01c89cc20304f236fe2bbd`. Prior expert audit: `/tmp/dispatcher-native-ownership-prerequisite-ruling-20261023.md`; package/provider context: `/tmp/dispatcher-native-protocol-prerequisites-20261023.md`. Their earlier full-helper restoration recommendation is superseded by the concrete two-owner decision recorded here; no package incorporation belongs to this task.
 
+## Execution ruling — 2026-10-24
+
+The original combined Task1 remains **incomplete**. Candidate `56db4b5` is
+recoverable non-green WIP: the default gate passed build/typecheck/lint/boundaries
+but failed19 of2999 cases. Three actual group-drain paths preserve post-exit
+`kill(-pid,0)` EPERM, conflicting with the required sticky identity uncertainty;
+16 other failures exposed two Controller fixtures' independent native-quota reader
+boundary. Their underlying causes remain unproven and R020 remains separate.
+The independent review and dated partition assessment are retained at
+`/tmp/dispatcher-native-ownership-task1-review-20261024.md`.
+
+Proceed with the separately specified
+`2026-10-24-root-owned-probe-delivery.md` unit. Restore group/Codex candidate
+portions to the exact pre-WIP `84cde57` behavior while delivering and verifying
+only the independent root owner/probe capability. Preserve the WIP, failed logs,
+all five group source scenarios1/2/3/5/6 and actual-drain acceptance as outstanding
+work; source case4 belongs to the independent root unit. This split does not
+approve Task1, waive its original full gate, diagnose EPERM or satisfy the full
+six-case map. No runtime toggle, duplicate owner or relaxed unknown policy is
+authorized. Shared group safety remains open for **every** group consumer,
+including Generic, Runner, catalogs/default probes and Codex. Root-only provider
+delivery does not depend on the proposed group hardening, and must prove that
+independence at each actual spawn/probe/cleanup path.
+
+Separately, fix round1 allows only the two named Controller fixtures to use the
+existing `codexNativeReader` seam with valid bounded deterministic quota data,
+abort checks and unexpected-method rejection. Preserve all body/shutdown tests
+and dedicated real-reader/cleanup-unknown acceptance. Passing fixtures do not
+retroactively establish the original16 failure causes.
+
+Ruling: the user's explicit instruction to keep making progress through viable
+alternatives authorizes independent root delivery while the combined unit stays
+open. This corrects a plan dependency, not an early acceptance or parking of a
+review finding. Cost if wrong: dependent root-only integration must be revised;
+all original group requirements and the parent final review remain enforceable.
+
 ## Global constraints
 
 - Worktree: `/Users/wangdongxin/.codex/worktrees/dispatcher-plan-completion/dispatcher`; ownership source re-read at `aba80e7abd84d06f2701dccc2e89c16d513287b2` while Controller C1 alone implements in other paths; source assertions: `a499d84e88c9f4ff1d01c89cc20304f236fe2bbd`.
