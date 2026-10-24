@@ -30,3 +30,5 @@ export * from "./opencode-owned-server.js";
 export * from "./opencode-execution.js";
 
 export {freezeExecutionSelection} from "./execution-selection.js";
+
+export {DevinLocalAcpExecutionBackend,type DevinLocalAcpExecutionScope} from "./devin-acp-execution.js";
