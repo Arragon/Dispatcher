@@ -213,7 +213,21 @@ retained wrapper-failure records and exact baseline/restored root-test hunks.
 First mixed source/stale-dist focused failure is retained; building changed its
 runtime inputs before the passing focused run. Original OS cause remains open.
 
-Next: internal Devin Local ACP client, remaining native providers, unresolved shared
+Internal Devin Local ACP client e53ceb2 is now spec compliant/quality Approved:
+91source cases plus22direct regressions, focused5/271 and default192/3098 pass
+(wall133.826532834s). OfficialSDK1.8.0/Zod4.6.7 exactSRI/license/graph and actual
+isolated production attribution pass;28unrelated resolved-audit advisories remain
+open forCV13. Root verifies496tracked/fullgateprepost and source assertion parity,
+14runs/64226pre+64230post actual copies; only2ignored ledgerMarkdown drifts.
+No publicindex/producer/catalog/runtime/config/Controller registration is implied.
+
+One controlled self-exiting freshgroup probe reproduces present→EPERM→ESRCH with
+signal0 only, but its laterps snapshot cannot establish zombie state or original
+failure cause. Pinned officialXNU reference is not matched to this Darwin27 host;
+group finding andR020 remain open, with no unchanged diagnostic repeat/policy fix.
+
+Next: Devin Local producer/Adapter canonical binding and async observer work,
+remaining native providers, unresolved shared
 group safety and original provider/GUI/writer/service/release qualification.
 Current integration uses fixtures only; no real account/config/service activation
 or persisted-format/dependency change occurred. CV-09 and the full goal remain

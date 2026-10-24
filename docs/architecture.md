@@ -1290,6 +1290,23 @@ The exact source is available through the owning runtime, but live Controller
 source registration and real native capability qualification remain separate
 requirements before a complete Pi task loop can be enabled.
 
+## Internal Devin Local ACP client
+
+The internal Adapter client uses the official ACP SDK for one owned local stdio
+connection. It captures physical executable/workspace/native homes, checks
+creation authority before the version probe and again before literal ACP spawn,
+and removes Dispatcher authority variables from both child environments. Exact
+protocol/version, bounded ingress, projected metadata and guarded SDK writes
+remain local qualification requirements. Only canonical ExecutionSelection may
+choose the explicit model; binding persistence precedes model change or prompt.
+
+Local disconnect uses root-only ownership and independent bounded exit/callback
+confirmation. Denied cleanup and unsettled forbidden callbacks remain unknown
+in the cached receipt, with the original captured PID. Cancellation submission
+cannot establish the prompt terminal, background tool absence or writer release.
+This internal client has no public registration or Controller source and grants
+no native approval, history or continuation qualification.
+
 ## Internal Codex App Server contracts
 
 The preserved Codex stdio transport is internal to adapters and remains pinned to

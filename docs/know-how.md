@@ -654,6 +654,15 @@
   cross-package acceptance. Preserve a mixed source/dist failure and actual input
   hashes; a subsequent build changes runtime inputs, it does not explain an
   earlier OS failure on a fully built candidate.
+- ACP requests and notifications share the SDK writer queue. Keep a stale unsent
+  cancellation's permit until that notification's own write settles; deleting it
+  early can consume the next prompt's permit. Request terminal settlement and
+  notification submission are separate facts. Preserve original callback/option
+  capture, final scope/authority/deadline checks and cached unknown cleanup.
+- Isolated pnpm deploy layouts may place dependencies in sibling packages under
+  .pnpm. Resolve from the actual owning package with Node module resolution when
+  checking attribution; do not assume an Adapter-local node_modules directory.
+  Inspect the same artifact after an inspection error rather than redeploy it.
 - Releasing a catalog HTTP request is not evidence that its native reader closed.
   Track the underlying read separately through bounded shutdown, keep late writes
   fenced and retain UNKNOWN cleanup evidence across subsequent clean stops.

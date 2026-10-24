@@ -81,11 +81,11 @@ new regressions), current packages/adapters/package.json and pnpm-lock.yaml.
 Root later updates docs/dependencies.md/architecture/know-how/source503/evidence;
 worker provides exact facts and license artifacts, does not edit coordinateddocs.
 
-- [ ] Fresh-read code, scoped AGENTS and relevant architecture/knowledge; inspect
+- [x] Fresh-read code, scoped AGENTS and relevant architecture/knowledge; inspect
   existing selection, version/root helpers and module exports before editing.
   Map each original client case to target assertion, method or justified canonical
   substitution. Preserve native Unicode U2028/U2029 IDs and all source assertions.
-- [ ] Re-evaluate exact official registry/tarballs for @agentclientprotocol/sdk1.8.0
+- [x] Re-evaluate exact official registry/tarballs for @agentclientprotocol/sdk1.8.0
   Apache2.0 and explicit zod4.6.7 MIT peer before incorporation. Existing prior
   SRI/license/peer evidence is /tmp/dispatcher-native-protocol-prerequisites-20261023.md;
   primary security refresh pointers are
@@ -95,17 +95,17 @@ worker provides exact facts and license artifacts, does not edit coordinateddocs
   resolved audit. No upstream source copying/vendoring. Report any incompatible
   license/security/dependency change before incorporation; choose no speculative
   upgrades. Retain @dispatcher/shared/domain and all existing lock entries.
-- [ ] Add exactly SDK1.8.0 and direct Zod4.6.7 to current Adapter manifest using
+- [x] Add exactly SDK1.8.0 and direct Zod4.6.7 to current Adapter manifest using
   project pnpm tooling, merge only necessary lock graph. No JSONRPC until Copilot.
   Verify install lifecycle scope; no native CLI execution/account/networkauth.
-- [ ] Start with source-preserved client tests importing this internal module,
+- [x] Start with source-preserved client tests importing this internal module,
   substitute complete current ExecutionSelection fixtures using the existing
   freezeExecutionSelection boundary for obsolete ModelSelection data. Retain all signal/
   error/native frame/cancellation/receipt assertions and original time limits.
   Run meaningful RED; missingimport alone is not behavior proof for new guard/
   cleanup regressions. Preserve source fixture tests as port evidence, not proof
   of a pre-existing current product defect.
-- [ ] Extract class/types/helpers only. Add captured optional open options
+- [x] Extract class/types/helpers only. Add captured optional open options
   {signal?:AbortSignal;beforeCreate?:()=>void}, matching current Pi admission
   pattern: reject pre-abort and forbidden syncguard result before version spawn,
   then recheck captured admission/scope after await immediately before ACP spawn.
@@ -115,17 +115,17 @@ worker provides exact facts and license artifacts, does not edit coordinateddocs
   cleanup receipt; do not invent a global callback registry/public error field.
   Existing client Guard/onUpdate work is tracked exactly once so cached disconnect
   cannot claim drained; no personal executable used by tests.
-- [ ] Add direct regressions: token/key env absent in both spawned children;
+- [x] Add direct regressions: token/key env absent in both spawned children;
   revoked/aborted/async creation guard before probe and after version produces no
   unauthorized spawn; original option mutation cannot replace authority;
   current canonical owner/context/model/parameters/legacy conflicts reject before
   new/load/model/prompt; root cleanup denial/false result never becomes exited/
   not-created and original PID stays exact. Validate legitimate async onBinding
   wait/unknown behavior and preserved sync onUpdate/Guard constraints separately.
-- [ ] Self-review actual module/call paths: one root per fresh spawn; explicit
+- [x] Self-review actual module/call paths: one root per fresh spawn; explicit
   root probe; no swallowed cleanup denial. Existing error sanitization, exact
   projected facts and local-only receipt meaning must survive port.
-- [ ] Build current workspace after implementation before cross-package tests.
+- [x] Build current workspace after implementation before cross-package tests.
   Focused `mise exec -- pnpm vitest run packages/adapters/test/devin-acp.test.ts packages/adapters/test/owned-root-process.test.ts packages/adapters/test/native-version-probe.test.ts packages/adapters/test/pi-rpc-client.test.ts packages/adapters/test/codex-app-server.test.ts`.
   Derive exact commands from package.json; no benchmark/native qualification or
   unrelated broad repetition. Run current resolved license list and security audit
@@ -133,7 +133,7 @@ worker provides exact facts and license artifacts, does not edit coordinateddocs
   risks before incorporation. Retain unrelated existing audit issues for CV13; no
   broad dependency upgrades, audit suppression or security claims from an empty
   maintainer index.
-- [ ] Verify actual SDK+Zod attribution in an isolated production deploy before
+- [x] Verify actual SDK+Zod attribution in an isolated production deploy before
   claiming dependency gate. Reuse scripts/stage-controller.mjs exported
   copyStageWorkspace with tracked+exactnewpayload source and live compileddist;
   use the same existing isolated deploy options (inject-workspace-packages=true,
@@ -141,7 +141,7 @@ worker provides exact facts and license artifacts, does not edit coordinateddocs
   lockfiles and SDK/Zod package manifests+actual license texts/hashes and prove
   source dependency state unchanged. No stage-controller main/smoke/service/host
   activation or release qualification is part of this license-only artifact.
-- [ ] One final unchanged default `mise exec -- pnpm check` on finalpayload;
+- [x] One final unchanged default `mise exec -- pnpm check` on finalpayload;
   commit only scoped code/tests/manifest/lock after selfreview and required checks.
   Record actual changed Git blobs and finalcommand pre/post copies. Report local
   verified scope, noise, license/security/deploy limits and all unresolved formal
@@ -153,3 +153,5 @@ runtime28+real raw-work drainage, atomic native-profile/schema/factory/config17,
 then Controller source-undefined/composition/shutdown/read-only cold restart30.
 No old service/config/lock wholesale replacement, no legacy public authority,
 account/profilemodel setting, native capability promotion or v3 Devin merge.
+
+LocalTask1 complete e53ceb2 after independent spec/quality Approved and root source/byte/license/artifact audit; focused5/271/default192/3098. Full audit28existing unrelated advisories retained forCV13; original group/R020/formalGates and all later integration units remainopen.

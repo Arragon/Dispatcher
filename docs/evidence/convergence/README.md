@@ -4579,3 +4579,42 @@ account/GUI/writer/service/release Gates and parentCV14 remain open. Official
 quota62%used38%remaining,2resetcredits unused. Next internal ACP client uses exact
 SDK/peer artifact/security/license verification and canonical ExecutionSelection;
 producer/catalog/runtime/config/Controller registration follow separately.
+
+### 2026-10-24 internal Devin Local ACP client locally complete
+
+Sourcee53ceb21b43602aef9e49b0c1c987495513688da, BASEf3dac4b, adds only the
+internal client/tests and exact SDK1.8.0/Zod4.6.7 Adapter/lock entries. Current
+canonical explicit model/owner/reference, captured creation Guard/scope/options,
+root-only cleanup, original PID and cached unknown receipts replace obsolete
+ModelSelection/ProcessCancellation without public registration. All66definitions/
+91expanded source client cases retain assertion/budget bytes after named canonical
+substitutions;22direct regressions cover actual current authority/cleanup gaps.
+Source producer32/catalog30/runtime28/config17/Controller30 remain queued.
+
+Meaningful directRED12fail/8pass precedes fixes; current client113 and focused
+5/271 pass after build. Sole unchanged default check passes non-test gates and
+192/3098 (Vitest115.57s, wall133.826532834s), UTC14:36:56.436570Z→14:39:10.263391Z.
+Final logSHA4b5e2a8e4d014dbaffd686c0211829f1c082ab880abadae965a5b806042aac03;
+evidence /tmp/dispatcher-devin-acp-client-evidence-20261024/final-check.
+Root /tmp/dispatcher-devin-acp-client-root-audit-20261024.json independently checks
+496trackedGit/fullgateprepost,14runs/64226pre+64230post copies,56digests/6external
+scripts,4590finalpost/676liveDist/16buildinfo and frozen-source assertion parity.
+Only2ignoredSDDprogressMarkdown change during fullgate, recorded separately;
+code/tests/config/lock/generated inputs remain exact. No hermetic binary claim.
+
+Exact official tarballSRI/licenses/peer graph match fresh registry and actual
+deployed package manifests/LICENSE; source/staged/deployed lock and dependency
+state checked. Production deploy exits0; first inspection fails on pnpm-layout
+assumption, corrected on the same artifact without redeploy. Existing isolated
+node-pty lifecycle scripts are retained; no new-package install hooks. GitHub
+advisoryAPI403 and audit exit1 are retained. Resolved audit28unrelated advisories
+(6low17moderate5high) remainCV13; no SDK/Zod entry, unrelated upgrades or suppression.
+This artifact proves attribution only, no service/native-account/release Gate.
+
+Independent /tmp/dispatcher-devin-acp-client-task1-review-20261024.md: speccompliant/
+qualityApproved,0Critical/Important,1Minor fullgate fixture-noise finding deferred
+CV14; focused output clean. Reviewer inspects real SDK writer/notification close,
+canonical selection and root/probe boundaries. Root resolves source/byte/artifact
+audits without repeating tests. Source503 keeps immutable identity/decision/owner.
+Formal group/R020/provider/account/GUI/writer/service/release and parentCV14 remain
+open. Quota70%used30%remaining/reset2unused; continue independent development.
