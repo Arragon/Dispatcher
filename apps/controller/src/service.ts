@@ -864,8 +864,13 @@ export class ControllerService {
   private allNativeRuntimes():Array<{profileId:string;backendId:"pi-rpc"|"codex-app-server"|"opencode-server-v2";runtime:OwnedNativeRuntime}> {return [...[...this.piRuntimes].map(([profileId,runtime])=>({profileId,backendId:"pi-rpc" as const,runtime})),...[...this.codexRuntimes].map(([profileId,runtime])=>({profileId,backendId:"codex-app-server" as const,runtime})),...[...this.opencodeRuntimes].map(([profileId,runtime])=>({profileId,backendId:"opencode-server-v2" as const,runtime}))];}
 
   private nativePort(binding:NativeBinding):NativeInteractionPort|undefined {
-    const runtime=this.nativeRuntime(binding.profileId);
-    if(runtime)return this.nativeRuntimeAdapters.get(runtime)===this.agentAdapters.get(binding.profileId)?runtime.source(binding):undefined;
+    const profileId=binding.profileId,runtime=this.nativeRuntime(profileId);
+    if(runtime){
+      const adapter=this.nativeRuntimeAdapters.get(runtime);
+      if(!adapter||this.agentAdapters.get(profileId)!==adapter)return undefined;
+      const source=runtime.source(binding);
+      return this.nativeRuntime(profileId)===runtime&&this.agentAdapters.get(profileId)===adapter&&this.nativeRuntimeAdapters.get(runtime)===adapter?source:undefined;
+    }
     if(binding.backendId==="opencode-server-v2")return undefined;
     return this.agentAdapters.get(binding.profileId)?.interaction;
   }

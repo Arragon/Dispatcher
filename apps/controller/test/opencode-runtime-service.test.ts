@@ -137,3 +137,24 @@ it("refuses native-default before factory work",async()=>{
 });
 it("fences a canonical cancelled Run before producer allocation",async()=>{const f=await fixture(),run=await f.create("cancelled");const runtime=f.service["opencodeRuntimes"].get("p")!,start=runtime.start.bind(runtime);vi.spyOn(runtime,"start").mockImplementation(input=>{f.service["cancelledRunIds"].add(run.id);return start(input);});await expect(f.start(run)).rejects.toMatchObject({creationOutcome:"not-created"});expect(f.factory).not.toHaveBeenCalled();});
 it("refuses admission after Controller shutdown begins",async()=>{const f=await fixture(),run=await f.create("shutdown"),adapter=registry(f.service).get("p")!,closing=f.service.stop();await expect(adapter.start({runId:run.id,sessionId:run.sessionId,workspacePath:run.worktree,prompt:"fixture",beforeCreate:()=>{},beforeSend:()=>{},backendId:"opencode-server-v2",executionRef:run.executionRef,executionSelection:run.executionSelection,execution:{generation:1,attempt:1,leaseId:run.leaseId}})).rejects.toThrow();expect(f.factory).not.toHaveBeenCalled();await closing;f.holder.manualClose=true;});
+// I1: the real producer resolves its source through this synchronous port callback.
+it.each(["stable","runtime-removed","runtime-replaced","adapter-replaced","association-removed","association-replaced"] as const)("rechecks Controller ownership after nested source callback: %s",async drift=>{
+ const f=await fixture(),run=await f.create("source-callback"),session=await f.start(run),adapter=registry(f.service).get("p")!,runtime=f.service["opencodeRuntimes"].get("p")!,leaf=f.ports[0]!,binding=session.nativeBinding!;
+ await adapter.result(session.id);const posts=[...leaf.posts],readHandle=leaf.port.readHandle.bind(leaf.port),replacement={interaction:leaf.port} as AgentAdapter;
+ const nested=vi.spyOn(leaf.port,"readHandle").mockImplementation(ref=>{const handle=readHandle(ref);
+  if(drift==="runtime-removed")f.service["opencodeRuntimes"].delete("p");
+  if(drift==="runtime-replaced")f.service["opencodeRuntimes"].set("p",new OpenCodeExecutionRuntime({profile:{id:"p",alias:"P",executable:f.executable},runnerId:"local",assertInput:()=>{},bindingFor:()=>undefined,factory:f.factory}));
+  if(drift==="adapter-replaced")registry(f.service).set("p",replacement);
+  if(drift==="association-removed")f.service["nativeRuntimeAdapters"].delete(runtime);
+  if(drift==="association-replaced")f.service["nativeRuntimeAdapters"].set(runtime,replacement);
+  return handle;
+ });
+ try{const source=f.service["nativePort"](binding);expect(drift==="stable"?source===leaf.port:source===undefined).toBe(true);expect(nested).toHaveBeenCalledOnce();expect(f.factory).toHaveBeenCalledTimes(1);expect(f.ports).toHaveLength(1);expect(leaf.posts).toEqual(posts);}
+ finally{nested.mockRestore();f.service["opencodeRuntimes"].set("p",runtime);registry(f.service).set("p",adapter);f.service["nativeRuntimeAdapters"].set(runtime,adapter);}
+});
+it("requires a defined saved owner before entering the native source callback",async()=>{
+ const f=await fixture(),run=await f.create("missing-owner"),session=await f.start(run),adapter=registry(f.service).get("p")!,runtime=f.service["opencodeRuntimes"].get("p")!,leaf=f.ports[0]!;
+ await adapter.result(session.id);const posts=[...leaf.posts],nested=vi.spyOn(leaf.port,"readHandle");f.service["nativeRuntimeAdapters"].delete(runtime);registry(f.service).delete("p");
+ try{expect(f.service["nativePort"](session.nativeBinding!)===undefined).toBe(true);expect(nested).not.toHaveBeenCalled();expect(f.factory).toHaveBeenCalledTimes(1);expect(f.ports).toHaveLength(1);expect(leaf.posts).toEqual(posts);}
+ finally{nested.mockRestore();registry(f.service).set("p",adapter);f.service["nativeRuntimeAdapters"].set(runtime,adapter);}
+});
