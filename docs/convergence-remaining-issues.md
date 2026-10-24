@@ -136,8 +136,17 @@ pre-byte copies across the three fix runs. The original C1 runs retain hash/log
 evidence only; no historical bytes were reconstructed. Callback source returns
 now recheck Controller registry/Adapter ownership, including defined ownership.
 
-Next: serviceS6-S8, raw-operation profile/SQLite barriers, durable drain/shutdown
-and OpenCode read-only restart regressions, other native providers, then actual
+Controller C2 db9744e is independently spec compliant/quality Approved with no
+Critical/Important findings. SourceS6-S8, exact raw-operation profile/SQLite
+barriers, atomic durable-only receipt retry and three-provider failure isolation
+pass final focused5/239 and default189files/2787tests (88.99s, wall106.570s).
+Root verifies2 Git inputs,1090post/668generated,52320 live byte copies across48
+run records, and42712 relocated evidence files. The first gate failed at lint
+when historical TS snapshots entered its scan; those bytes/failure remain intact
+outside checkout, and rules are unchanged. Pi capability narrowing preserves its
+real existing interface; its separate raw-status/guard-work audit remains open.
+
+Next: OpenCode read-only restart regressions, other native providers, then actual
 provider/GUI/writer/service/release qualification. The
 current integration used fixtures only; no real account/config/service activation
 or persisted-format/dependency change occurred. CV-09 and the full goal remain

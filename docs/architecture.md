@@ -78,9 +78,10 @@ distinct from Run and start-journal identity. OpenCode uses the existing observe
 bridge without Codex native-request capabilities. Exact source lookup captures a
 defined runtime/Adapter owner and rechecks the registry, current Adapter and saved
 association after source callbacks return. A missing server registry cannot borrow
-an aggregate port. Pi's separate start predicate remains unchanged. Exhaustive
-raw-operation retention/shutdown, OpenCode read-only restart reconciliation and
-actual native capability qualification remain separate work.
+an aggregate port. Pi's separate start predicate remains unchanged. Exact Codex
+and OpenCode raw runtime activity participates in profile replacement and the
+final SQLite-close barrier, independently of public Adapter state and local host
+receipts. OpenCode read-only restart and actual native qualification remain open.
 
 Controller retains unchanged profile adapters of every provider across ConfigPlan applies,
 bound to the profile and owning Runner execution identity. Replacement/removal
@@ -1361,10 +1362,13 @@ persists normalized cleanup plus an unknown observation/read barrier. Failed
 persistence retains the closed host; retry writes its cached receipt without
 another physical disconnect. Changing an idle profile requires confirmed durable
 local cleanup; an active canonical Run still blocks replacement. Shutdown attempts
-both native registries and records each actual backend even if another disconnect
-or receipt write fails, then closes HTTP and preserves storage when cleanup is
-uncertain. Local cleanup never deletes native sessions or proves background writer
-release.
+all three Pi/Codex/OpenCode registries and records each actual backend even if
+another disconnect or receipt write fails, then closes HTTP/events and preserves
+storage when host cleanup or exposed raw work remains uncertain. Pi currently
+retains its host/receipt contract without a raw-status method. Local-review,
+runtime and cleanup-uncertainty failures share the final error collection, so
+simultaneous failures remain visible. Local cleanup never deletes native sessions
+or proves background writer release.
 
 Restart accepts only consistent bound canonical managed Codex metadata for read
 and receipt reconciliation. It invalidates prior observations, retains the exact

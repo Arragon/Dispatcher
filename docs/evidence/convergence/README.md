@@ -4194,3 +4194,56 @@ The later one-task native ownership prerequisite plan is now saved at
 `docs/superpowers/plans/2026-10-24-native-ownership-prerequisite.md`, carrying the
 existing expert two-owner ruling and all6 original cancellation assertions. It is
 queued after reviewed OpenCode/Pi work, not implementation or native qualification.
+
+### 2026-10-24 Controller OpenCode C2 (locally complete)
+
+Source `db9744e4e3aad0d121c7147537396be2e2f5d03c` (BASE `99bcd32`) changes
+only service.ts and OpenCode service tests. Exact registered Codex/OpenCode raw
+activity now participates in the existing profile guard and final SQLite barrier.
+The common stop tail preserves concurrent local-review/native/raw-uncertainty
+errors, retaining single error identity and aggregating multiple failures. Pi has
+no raw-status method; capability narrowing preserves its actual host/receipt
+contract without treating absence as drain proof. Codex/Pi tests and Pi runtime
+remain byte-identical to BASE.
+
+| Source/new boundary | Current decisive local assertion |
+| --- | --- |
+| S6 idle versus ACTIVE | Terminal Run/Task plus completed Adapter still requires explicit durable cleanup before profile replacement; ACTIVE Run blocks after cleanup. |
+| S7 storage lifetime | Receipt and unknown observation precede actual SQLite close; read-only reopen retains binding/session and ACTIVE Run. Unknown connection/root/callbacks and independent raw work retain storage. |
+| S8 persistence retry | Local receipt/read-barrier fault rolls back all observations; exact closed runtime/source withdrawal retained; durable-only retry never repeats physical disconnect. |
+| Raw activity | Terminal Run, durable local receipt, false Adapter activity and false host barrier isolate actual raw admission/callback status; profile change remains blocked. |
+| Three registries | Each singleton provider disconnect/receipt fault attempts peer cleanup, closes HTTP/events and retains DB. Multiple provider/local-review/raw failures preserve every error. Real OpenCode runtime/producer/port is used for its own path. |
+| Late work/start journal | Rejected/never-opened acquisition uses normalized not-created proof; unresolved acquisition/observer retains cached unknown cleanup and original UNKNOWN start/invocation without create/prompt replay or source reacquisition. |
+
+Final focused5files/239tests passes (`final-scoped-pi-contract`, command19.530890875s).
+Final default `mise exec -- pnpm check` passes build/typecheck/lint/boundaries and
+189files/2787tests (Vitest88.99s, command106.569717292s). Evidence:
+`/tmp/dispatcher-c2-evidence-new-runs-20261024/final-default-check-external-v2`.
+Log SHA256 `5e9d4920f0074667621b3cae34a3aa2f3a8bfb59f20fa5c4700e42e388fb4a31`.
+Root audit `/tmp/dispatcher-opencode-controller-c2-root-payload-audit-20261024.json`
+verifies2 committed Git blobs,1090post values/668generated,48run metadata and52320
+actual saved pre-byte copies, plus42712 migrated archive files, without mismatch.
+No root test rerun was needed for coordinated documentation.
+
+The first default gate exited1 at lint after109.909466s: historical TS snapshots
+inside ignored `.superpowers` were still scanned by ESLint and had10 unused imports.
+Build/typecheck passed; boundaries/full tests were not reached. After all writers
+closed, the whole old evidence tree moved byte-for-byte to
+`/tmp/dispatcher-c2-evidence-20261024`; matching before/after relative SHA inventories
+are under the new root's `migration-preserve`. Old location retains MOVED.md only.
+No old JSON/log/bytes or lint/boundary rules changed. The separately labeled final
+gate follows both the actual Pi-double payload correction and this evidence-layout
+correction, not an unchanged blind retry. All future live byte snapshots are outside
+checkout. Earlier fixture handling/spy/acquisition assumptions, real raw-barrier/
+aggregation REDs and introduced Pi6/6 interface failure remain distinct evidence.
+
+Independent `/tmp/dispatcher-opencode-controller-c2-review-20261024.md`: spec
+compliant, quality Approved,0 Critical/Important and1 Minor expected fixture log
+noise deferred to parentCV14. Root resolves unchanged prerequisite items via reviewed
+catalog/runtime/registration/C1 evidence, verified ancestry and the exact two-file
+diff; it independently verifies the migration and final input bytes. OpenCode suite
+is now84 cases,29 added in C2. All original sourceS1-S8 now have current local
+composition/retention assertions. C3 restart, other native providers, Pi raw-status
+audit and original provider/account/GUI/writer/service/release Gates remain open.
+CV09/CV14 and the overall goal are not complete. No native account/session deletion,
+real configuration/service activation, dependency/migration, push or merge occurred.

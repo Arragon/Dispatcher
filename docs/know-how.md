@@ -1037,3 +1037,16 @@
   call, then recheck registry, current Adapter and saved association afterward.
   The runtime's own binding/physical-entry checks cannot prove that the outer
   Controller still owns the same handle after a callback reenters configuration.
+
+- A public Adapter start can reject while native executable admission or a forbidden
+  async guard still owns work. Profile replacement and SQLite close must consult
+  the exact runtime's raw status as well as canonical Runs and durable host
+  receipts. Narrow against the real provider interface: Pi currently has no raw
+  status method; do not add a noop double or infer drain from its absence.
+- Preserve multiple shutdown failures in the existing terminal error collection.
+  A local-review failure or successful empty host receipt cannot mask a different
+  native failure or unsettled raw callback; close HTTP/events and retain storage.
+- Keep live test-source byte snapshots outside the checkout. Git-ignored TypeScript
+  under `.superpowers` is still input to the current `eslint .` configuration.
+  Preserve historical failing bytes/logs with relative-path SHA inventories when
+  relocating evidence; do not weaken lint rules to exclude a mistaken layout.
