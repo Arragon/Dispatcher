@@ -335,3 +335,18 @@ it.each(["adapter","runtime","generation","lease","selection","reference","shutd
 it("keeps an authorized terminal Run history readable without acquiring execution authority",async()=>{
  const f=await fixture({nativeReads:true}),run=await f.create("terminal-history");await f.start(run);await endFixtureRun(f,run);const response=await f.service.app.inject({url:`/api/runs/${run.id}/history`,headers:{authorization:"Bearer fixture-owner"}});expect(response.statusCode,response.body).toBe(200);expect(response.json()).toMatchObject({source:"native",page:{state:"available",entries:[]}});expect(f.ports[0]!.calls.filter(method=>method==="turn/start")).toHaveLength(1);expect(f.ports[0]!.calls).not.toContain("thread/resume");expect(f.service.database.getEntity("run",run.id)).toMatchObject({state:"FAILED"});
 });
+// C1 paired shared-predicate regressions: invocation identity is independent of Run identity.
+it("admits the reserved Codex invocation independently of Run and native-start journal IDs",async()=>{
+ const f=await fixture(),p=await publication(f),runtime=f.service["codexRuntimes"].get("p")!,start=runtime.start.bind(runtime);
+ const observed=vi.spyOn(runtime,"start").mockImplementation(input=>{const run=f.service.database.getEntity("run",f.service.workspaces.get(input.workspacePath)!.runId) as unknown as Run;expect(input.commandId).toBeTruthy();expect(input.commandId).not.toBe(run.id);expect(input.commandId).not.toBe(f.service["nativeInteractions"].startForRun(run.id)!.id);expect(f.service.database.getEntity("adapter-session",run.sessionId)).toMatchObject({id:run.sessionId,runId:run.id,nativeInvocationId:input.commandId});return start(input);});
+ const response=await f.service.app.inject(p.request);expect(response.statusCode,response.body).toBe(200);const run=publishedRun(f,response.json());expect(observed).toHaveBeenCalledOnce();expect(new InteractionStore(f.service.database).binding(run.sessionId)?.executionRefId).toBe(run.executionRef!.id);expect(f.ports[0]!.calls.filter(method=>method==="turn/start")).toHaveLength(1);
+});
+it.each(["invocation","reserved-session","selection","reference","generation","attempt","lease"] as const)("keeps Codex %s drift refused after shared authority extraction",async drift=>{
+ const f=await fixture(),run=await f.create("paired"),runtime=f.service["codexRuntimes"].get("p")!,start=runtime.start.bind(runtime);
+ vi.spyOn(runtime,"start").mockImplementation(input=>{
+  if(drift==="invocation")input.commandId="stale-invocation";
+  else {const kind=drift==="reserved-session"?"adapter-session":"run",id=kind==="run"?run.id:run.sessionId,path=drift==="reserved-session"?"id":drift==="selection"?"executionSelection.selectedAt":drift==="reference"?"executionRef.pathRef":drift==="lease"?"leaseId":drift;const value=drift==="generation"||drift==="attempt"?2:"changed";
+   f.service.database.handle.prepare("UPDATE entities SET document_json=json_set(document_json,?,json(?)) WHERE kind=? AND id=?").run("$."+path,JSON.stringify(value),kind,id);
+  }return start(input);
+ });await expect(f.start(run)).rejects.toMatchObject({creationOutcome:"not-created"});expect(f.factory).not.toHaveBeenCalled();
+});

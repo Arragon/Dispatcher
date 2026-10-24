@@ -1,11 +1,12 @@
 import {CanonicalLocalResults} from "./local-results.js";
 import {CodexExecutionRuntime} from "./codex-runtime.js";
+import {OpenCodeExecutionRuntime} from "./opencode-runtime.js";
 import {PiExecutionRuntime} from "./pi-runtime.js";
 import {NativeHistoryService,NativeHistoryError} from "./native-history.js";
 import {nativeSessionView} from "./native-session-view.js";
 import {isGuardedControllerStart,isReadableManagedCodexRun} from "./start-recovery.js";
 import {parseNativeModelDefaultReview,qualifyNativeModelDefault,readNativeModelDefaultEvidence} from "./model-defaults.js";
-import {isExecutionContextRef,type NativeBinding,type InteractionCapabilities,type NativeResponse,type RunGitDelivery,type ScmDeliverySelection,type MutationFence} from "@dispatcher/domain";
+import {isExecutionContextRef,type NativeBinding,type InteractionCapabilities,type NativeResponse,type RunGitDelivery,type ScmDeliverySelection,type MutationFence,type ExecutionContextRef} from "@dispatcher/domain";
 import {NativeInteractions,InteractionGuardError,type ControllerInteractionOperation,type InteractionPrincipal} from "./native-interactions.js";
 import {AdapterAdmissionError,assertAdapterWriteAdmission,type AdapterStartOutcome} from "@dispatcher/adapters";
 import { resolveProfileExecutionContext } from "./execution-context.js";
@@ -84,6 +85,7 @@ import {
   type CliAgentBackend,
   type CliAgentProfile,
   type CliStartInput,
+  type OpenCodeV2OwnedScope, type OpenCodeV2ExecutionBackend,
   type NativeCliProvider,
   type DevinBackend,
   type DevinProfileConfig,
@@ -194,6 +196,7 @@ export interface ControllerOptions {
   integrationFetch?: (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
   gitTransport?: GitTransport;
   codexNativeReader?: (input:CodexReadRequest)=>Promise<unknown>;
+  opencodeExecutionFactory?: (scope:OpenCodeV2OwnedScope,executionRef:ExecutionContextRef)=>OpenCodeV2ExecutionBackend;
   codexAppServerFactory?: (scope:CodexAppServerScope,authority?:CodexNativeAuthority)=>CodexAppServerBackend;
   codexBackendFactory?: (profile: CodexProfileConfig) => CodexBackend;
   qoderBackendFactory?: (profile: QoderProfileConfig) => QoderBackend;
@@ -219,7 +222,7 @@ export interface BackgroundWorkerOptions {
   runMaxDelayMs?: number;
 }
 
-type OwnedNativeRuntime=PiExecutionRuntime|CodexExecutionRuntime;
+type OwnedNativeRuntime=PiExecutionRuntime|CodexExecutionRuntime|OpenCodeExecutionRuntime;
 type TaskDispatchResult = { run: Run; routing: { explanation: string; eligible: unknown[]; rejected: unknown[] } };
 class TaskDispatchError extends Error {
   constructor(readonly code: string, readonly statusCode: number, message: string) { super(message); }
@@ -491,6 +494,7 @@ export class ControllerService {
   readonly tasks: CanonicalTaskService;
   private readonly nativeInteractions:NativeInteractions;
   private readonly codexRuntimes=new Map<string,CodexExecutionRuntime>();
+  private readonly opencodeRuntimes=new Map<string,OpenCodeExecutionRuntime>();
   private readonly nativeRuntimeAdapters=new WeakMap<OwnedNativeRuntime,AgentAdapter>();
   private readonly nativeDisconnects=new WeakMap<OwnedNativeRuntime,Promise<RuntimeLocalDisconnectResult[]>>();
   private readonly durableNativeDisconnects=new WeakSet<OwnedNativeRuntime>();
@@ -856,12 +860,13 @@ export class ControllerService {
     return this.stopping;
   }
 
-  private nativeRuntime(profileId:string):OwnedNativeRuntime|undefined {return this.codexRuntimes.get(profileId)??this.piRuntimes.get(profileId);}
-  private allNativeRuntimes():Array<{profileId:string;backendId:"pi-rpc"|"codex-app-server";runtime:OwnedNativeRuntime}> {return [...[...this.piRuntimes].map(([profileId,runtime])=>({profileId,backendId:"pi-rpc" as const,runtime})),...[...this.codexRuntimes].map(([profileId,runtime])=>({profileId,backendId:"codex-app-server" as const,runtime}))];}
+  private nativeRuntime(profileId:string):OwnedNativeRuntime|undefined {return this.codexRuntimes.get(profileId)??this.piRuntimes.get(profileId)??this.opencodeRuntimes.get(profileId);}
+  private allNativeRuntimes():Array<{profileId:string;backendId:"pi-rpc"|"codex-app-server"|"opencode-server-v2";runtime:OwnedNativeRuntime}> {return [...[...this.piRuntimes].map(([profileId,runtime])=>({profileId,backendId:"pi-rpc" as const,runtime})),...[...this.codexRuntimes].map(([profileId,runtime])=>({profileId,backendId:"codex-app-server" as const,runtime})),...[...this.opencodeRuntimes].map(([profileId,runtime])=>({profileId,backendId:"opencode-server-v2" as const,runtime}))];}
 
   private nativePort(binding:NativeBinding):NativeInteractionPort|undefined {
     const runtime=this.nativeRuntime(binding.profileId);
     if(runtime)return this.nativeRuntimeAdapters.get(runtime)===this.agentAdapters.get(binding.profileId)?runtime.source(binding):undefined;
+    if(binding.backendId==="opencode-server-v2")return undefined;
     return this.agentAdapters.get(binding.profileId)?.interaction;
   }
 
@@ -1381,6 +1386,7 @@ export class ControllerService {
 
     this.agentAdapters.clear();
     for(const id of this.codexRuntimes.keys())if(!retainedAdapters.has(id))this.codexRuntimes.delete(id);
+    for(const id of this.opencodeRuntimes.keys())if(!retainedAdapters.has(id))this.opencodeRuntimes.delete(id);
     for(const id of this.piRuntimes.keys())if(!retainedAdapters.has(id))this.piRuntimes.delete(id);
     for (const [id, adapter] of retainedAdapters) this.agentAdapters.set(id, adapter);
     for (const id of this.profileAdapterConfigurations.keys()) {
@@ -1410,9 +1416,16 @@ export class ControllerService {
     const resolveProviderCredential = (reference: string): Promise<string> => this.secrets.resolve(reference, { principal: "controller", purpose: "provider" });
     for (const profile of enabledProfiles) {
       if (retainedAdapters.has(profile.id)) continue;
-      let piRuntime:PiExecutionRuntime|undefined,codexRuntime:CodexExecutionRuntime|undefined;
+      let piRuntime:PiExecutionRuntime|undefined,codexRuntime:CodexExecutionRuntime|undefined,opencodeRuntime:OpenCodeExecutionRuntime|undefined;
       if(profile.nativeInteraction?.backendId==="codex-app-server"){
         codexRuntime=new CodexExecutionRuntime({profile:{id:profile.id,alias:profile.alias,executable:stringSetting(profile.settings?.executable)!,codexHome:stringSetting(profile.settings?.codexHome)!,...(stringSetting(profile.settings?.model)?{model:stringSetting(profile.settings?.model)!}:{})},runnerId:profile.runnerId,assertInput:input=>this.assertManagedCodexInput(profile.id,input),bindingFor:id=>this.persistedNativeBinding(profile.id,id),authorityFor:scope=>this.codexNativeAuthority(scope),...(this.options.codexAppServerFactory?{factory:this.options.codexAppServerFactory}:{})});this.codexRuntimes.set(profile.id,codexRuntime);
+      }
+      if(profile.nativeInteraction?.backendId==="opencode-server-v2"){
+        opencodeRuntime=new OpenCodeExecutionRuntime({profile:{id:profile.id,alias:profile.alias,executable:stringSetting(profile.settings?.executable)!,...(stringSetting(profile.settings?.model)?{model:stringSetting(profile.settings?.model)!}:{}),approveTools:false},runnerId:profile.runnerId,assertInput:input=>{
+          if(!opencodeRuntime||this.opencodeRuntimes.get(profile.id)!==opencodeRuntime||this.nativeRuntimeAdapters.get(opencodeRuntime)!==this.agentAdapters.get(profile.id))throw new InteractionGuardError("EXECUTION_CONTEXT_DRIFT");
+          this.assertManagedOpenCodeInput(profile.id,input);
+        },bindingFor:id=>this.persistedNativeBinding(profile.id,id),...(this.options.opencodeExecutionFactory?{factory:this.options.opencodeExecutionFactory}:{})});
+        this.opencodeRuntimes.set(profile.id,opencodeRuntime);
       }
       if(profile.nativeInteraction?.backendId==="pi-rpc"){
         piRuntime=new PiExecutionRuntime({profile:{id:profile.id,alias:profile.alias,executable:stringSetting(profile.settings?.executable)!,model:stringSetting(profile.settings?.model)!},agentDirectory:stringSetting(profile.settings?.agentDirectory)!,sessionDirectory:stringSetting(profile.settings?.sessionDirectory)!,runnerId:profile.runnerId,assertInput:input=>this.assertManagedPiInput(profile.id,input),bindingFor:id=>this.persistedNativeBinding(profile.id,id)});
@@ -1422,10 +1435,10 @@ export class ControllerService {
         store, resolveCredential: resolveProviderCredential,
         ...(codexRuntime?{codexBackendFactory:()=>codexRuntime!}:this.options.codexBackendFactory ? { codexBackendFactory: this.options.codexBackendFactory } : {}),
         ...(this.options.codexNativeReader ? { codexNativeReader: this.options.codexNativeReader } : {}),
-        ...(piRuntime?{cliBackendFactory:()=>piRuntime!}:this.options.cliBackendFactory ? { cliBackendFactory: this.options.cliBackendFactory } : {}),
+        ...(opencodeRuntime?{cliBackendFactory:()=>opencodeRuntime!}:piRuntime?{cliBackendFactory:()=>piRuntime!}:this.options.cliBackendFactory ? { cliBackendFactory: this.options.cliBackendFactory } : {}),
       });
       if (adapter) {
-        const runtime=codexRuntime??piRuntime;if(runtime)this.nativeRuntimeAdapters.set(runtime,adapter);
+        const runtime=codexRuntime??piRuntime??opencodeRuntime;if(runtime)this.nativeRuntimeAdapters.set(runtime,adapter);
         codexRuntime?.setNativeRequestSink(event=>{
           if(this.stopping||this.agentAdapters.get(profile.id)!==adapter)throw new InteractionGuardError("NATIVE_REQUEST_CONNECTION_CHANGED");
           const port=event.binding.profileId===profile.id?this.nativePort(event.binding):undefined;if(!port)throw new InteractionGuardError("SESSION_OWNER_MISMATCH");
@@ -2077,13 +2090,26 @@ export class ControllerService {
   }
 
   private assertManagedCodexInput(profileId:string,input:Pick<CodexStartInput,"executionRef"|"workspacePath"|"executionSelection"|"commandId">):void {
+    if(!input.executionRef||!input.executionSelection||!input.commandId)throw new InteractionGuardError("EXECUTION_CONTEXT_DRIFT");
+    this.assertManagedNativeInput(profileId,{providerId:"codex",backendId:"codex-app-server"},{executionRef:input.executionRef,workspacePath:input.workspacePath,executionSelection:input.executionSelection,commandId:input.commandId});
+  }
+
+  private assertManagedOpenCodeInput(profileId:string,input:CliStartInput):void {
+    const identity=input.nativeInput;
+    if(!input.executionRef||!identity||identity.version!==1||identity.profileId!==profileId||identity.backendId!=="opencode-server-v2"||!identity.executionSelection||!identity.commandId)throw new InteractionGuardError("EXECUTION_CONTEXT_DRIFT");
+    const run=this.assertManagedNativeInput(profileId,{providerId:"opencode",backendId:"opencode-server-v2"},{executionRef:input.executionRef,workspacePath:input.workspacePath,executionSelection:identity.executionSelection,commandId:identity.commandId});
+    if(identity.runId!==run.id||identity.sessionId!==run.sessionId)throw new InteractionGuardError("EXECUTION_CONTEXT_DRIFT");
+  }
+
+  private assertManagedNativeInput(profileId:string,owner:{providerId:"codex";backendId:"codex-app-server"}|{providerId:"opencode";backendId:"opencode-server-v2"},input:{executionRef:ExecutionContextRef;workspacePath:string;executionSelection:ExecutionSelection;commandId:string}):Run {
     const ref=input.executionRef,workspace=this.workspaces.get(input.workspacePath);
     if(this.stopping||!isExecutionContextRef(ref)||ref.kind!=="managed-worktree"||this.embeddedRunner?.runner.id!==ref.runnerId||!workspace)throw new InteractionGuardError("EXECUTION_CONTEXT_DRIFT");
     const run=this.database.getEntity<JsonValue>("run",workspace.runId) as unknown as Run|undefined;
     const task=run?this.database.getCanonicalTask<JsonValue>(run.taskId)?.document as unknown as Task|undefined:undefined;
     const session=run?this.database.getEntity<JsonValue>("adapter-session",run.sessionId) as unknown as AdapterSession|undefined:undefined;
-    if(!run||!session||run.profileId!==profileId||run.providerId!=="codex"||run.runnerId!==ref.runnerId||isTerminalRunState(run.state)||task?.currentRunId!==run.id||!isDeepStrictEqual(run.executionRef,ref)||!isDeepStrictEqual(run.executionSelection,input.executionSelection)||!isDeepStrictEqual(session.executionSelection,run.executionSelection)||!isDeepStrictEqual(session.executionRef,ref)||session.id!==run.sessionId||session.runId!==run.id||session.profileId!==profileId||session.backendId!=="codex-app-server"||!input.commandId||session.nativeInvocationId!==input.commandId||!isDeepStrictEqual(session.execution,{generation:run.generation,attempt:run.attempt,leaseId:run.leaseId})||run.worktree!==input.workspacePath||ref.workspaceId!==run.id||workspace.repositoryId!==ref.repositoryId||workspace.branch!==ref.branch||workspace.baseRevision!==ref.baseRevision)throw new InteractionGuardError("EXECUTION_CONTEXT_DRIFT");
-    this.fenceNativeSpawn(run.id,profileId);
+    if(!run||!session||run.profileId!==profileId||run.providerId!==owner.providerId||run.runnerId!==ref.runnerId||isTerminalRunState(run.state)||task?.currentRunId!==run.id||!isDeepStrictEqual(run.executionRef,ref)||!isDeepStrictEqual(run.executionSelection,input.executionSelection)||!isDeepStrictEqual(session.executionSelection,run.executionSelection)||!isDeepStrictEqual(session.executionRef,ref)||session.id!==run.sessionId||session.runId!==run.id||session.profileId!==profileId||session.backendId!==owner.backendId||!input.commandId||session.nativeInvocationId!==input.commandId||!isDeepStrictEqual(session.execution,{generation:run.generation,attempt:run.attempt,leaseId:run.leaseId})||run.worktree!==input.workspacePath||ref.workspaceId!==run.id||workspace.repositoryId!==ref.repositoryId||workspace.branch!==ref.branch||workspace.baseRevision!==ref.baseRevision)throw new InteractionGuardError("EXECUTION_CONTEXT_DRIFT");
+    try{this.fenceNativeSpawn(run.id,profileId);}catch{throw new InteractionGuardError("EXECUTION_CONTEXT_DRIFT");}
+    return run;
   }
 
   private assertManagedPiInput(profileId:string,input:CliStartInput):void {
