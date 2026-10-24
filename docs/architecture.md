@@ -71,8 +71,16 @@ executable/model/approveTools:false settings without physical/native I/O; omitte
 model and approval stay omitted. The adapter factory requires the matching owning
 backend and explicit opt-in, rejects foreign or implicit server injection, and
 returns disabled profiles before factory work. Standalone and other providers
-retain their settings. Controller service composition and actual capability
-qualification remain separate work.
+retain their settings. Controller composes that runtime only for the applied local
+registration, through a shared required-field Codex/OpenCode start predicate. It
+derives Run authority from the registered workspace; the Adapter invocation is
+distinct from Run and start-journal identity. OpenCode uses the existing observer
+bridge without Codex native-request capabilities. Exact source lookup captures a
+defined runtime/Adapter owner and rechecks the registry, current Adapter and saved
+association after source callbacks return. A missing server registry cannot borrow
+an aggregate port. Pi's separate start predicate remains unchanged. Exhaustive
+raw-operation retention/shutdown, OpenCode read-only restart reconciliation and
+actual native capability qualification remain separate work.
 
 Controller retains unchanged profile adapters of every provider across ConfigPlan applies,
 bound to the profile and owning Runner execution identity. Replacement/removal

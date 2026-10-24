@@ -4114,3 +4114,83 @@ three-registry source/lifecycle composition, raw-operation profile/SQLite barrie
 and explicit read-only OpenCode restart consistency. Pi's authority path stays
 unchanged in this task. No real configuration, service, account, dependency,
 persisted format, push or merge changed; CV09 and the overall goal remain incomplete.
+
+
+### 2026-10-24 Controller OpenCode C1 (locally complete)
+
+Source809c315 plus callback-currentness fixbc3e252 composes the reviewed runtime
+for applied enabled local server profiles. One required-field Codex/OpenCode helper
+retains the existing workspace-derived Run/currentTask/reserved Session/selection/
+reference/invocation/generation-attempt-lease/repository-branch-base/spawn fences.
+The native invocation is distinct from both Run and native-start journal identity.
+Pi's start predicate is unchanged. The common registry/source/pruning/shutdown
+enumeration includes OpenCode; exact runtime and current Adapter are associated.
+Only existing observer durability is connected, with no Codex native-request or
+native capability promotion. Missing OpenCode registry refuses aggregate fallback.
+
+Historical `a499d84:apps/controller/test/opencode-runtime-service.test.ts` S1-S5
+are preserved with canonical fixtures: two exact physical worktrees/bindings/native
+sessions and no standalone argv; currentRun, reserved session, provider/selection
+and lease authority refuse before allocation. Current OpenCode55 includes50 added
+canonical/physical/callback/source regressions; current Codex98 retains59 source,
+15 composition and16 history cases plus8 shared-authority regressions. S6-S8 are
+explicitly later C2 drain/retention/receipt acceptance, not declared complete here.
+
+| C1 preserved or new boundary | Decisive assertion |
+| --- | --- |
+| S1 / lazy exact composition | No factory at apply; two distinct managed worktrees/native sessions; persisted exact bindings and server model/backend; no aggregate source or standalone argv. |
+| S2 / currentRun | Pre-create currentRun drift has zero factory; awaited binding/observer revocation has one create but zero prompt. |
+| S3 / session/invocation | Typed Run/session and reserved Adapter session/id/run/profile/backend/native invocation match; drift refuses before factory. |
+| S4 / canonical ownership | Profile/provider/Runner/full selection/reference/native-default drift rejects; publication uses actual canonical server catalog identity. |
+| S5 / spawn fencing | Generation/attempt/lease and registered repository/branch/base remain authoritative; cancellation/terminal/shutdown refuse before factory. |
+| Existing-provider preservation | Eight paired Codex cases include valid invocation unequal to Run/journal; Pi predicate, activity predicate and start-recovery byte-match C1 BASE. |
+| Exact source callbacks | Runtime removal/replacement, Adapter/association removal/replacement and missing defined owner reject stale return; stable owner returns exact port with no new factory/host/create/prompt. |
+
+Independent initial review found I1: nativePort checked Controller ownership only
+before runtime.source. Runtime→producer→port.readHandle can synchronously change
+outer registry/Adapter ownership, which inner entry/binding/physical checks cannot
+prove. The real nested-source RED6failed/1stablepass drove the fix. Common source
+lookup now captures original profile key and a defined saved owner, then rechecks
+runtime registry/current Adapter/WeakMap after resolution. Non-runtime fallback
+and existing missing-registry refusal are preserved. Scoped fix-round1 review
+`/tmp/dispatcher-opencode-controller-c1-fix1-review-20261024.md` closes I1 with no
+new breakage; the earlier full review is
+`/tmp/dispatcher-opencode-controller-c1-review-20261024.md`.
+
+Final focused six files/334 tests and unmodified default189files/2758tests pass,
+exit0; Vitest89.34s, command-only full wall107.792753708s. Exact full command is
+`mise exec -- pnpm check`; build/typecheck/lint/boundaries pass. Fix artifacts are
+`.superpowers/sdd/2026-10-23-opencode-controller-port/evidence-c1-fix-1/` with
+per-run pre-bytes/pre.json/post.json/start.json/result.json/output.log. Root audit
+`/tmp/dispatcher-opencode-controller-c1-fix1-root-payload-audit-20261024.json`
+matches3 committed Git/pre/post payloads, all1090current post hashes including668
+generated values, and3270 actual pre-byte copies across3 fix runs plus metadata/
+log digests. No tracked delta; only3 generated service artifacts changed in build.
+Final full log SHA256:
+`3eb0c594d38a5b376c852578de22737ab792a8a13cee5f940c14128ccaa3462f`.
+
+Earlier C1 has9 hash-manifest/log/result runs, not saved source-byte copies or
+per-run HEAD/UTC metadata; this limitation is retained, never reconstructed.
+Root links its final809c315 Git payload to2751-test hash/log evidence, but does not
+claim recovery of historical RED bytes. The real I1 source/test change justifies
+the later default2758 gate with live bytes/full metadata, not an unchanged retry.
+Initial33failures/3passes included physical tests masked by missing runtime;
+those were tightened before GREEN. Later fixture timing/source-loss/tags errors,
+non-exported normalizer diagnostic, and live-port formatter inspect errors remain
+separate from real missing-registry and post-source-owner defects. Final focused
+and full gates have no unhandled Vitest errors. CLI name filtering is recorded as
+diagnostic deselection, not permanent skip or test-setting relaxation.
+
+Minor M1 expected fixture request/background warn/error logging is deferred for
+parentCV14 triage; results are not claimed warning-free. Root read both complete
+reviews, verified the unchanged Pi/activity/start-recovery bytes, and retains prior
+catalog/runtime/registration reviews. C2 raw-operation profile/SQLite barriers and
+S6-S8, C3 read-only restart, other providers, original native/account/GUI/writer/
+release Gates and the overall goal remain open. Cold OpenCode restart is still
+conservatively refused. No real profile/account/config/service or persisted format,
+dependency, push or merge changed. Coordinated metadata follows the tested source.
+
+The later one-task native ownership prerequisite plan is now saved at
+`docs/superpowers/plans/2026-10-24-native-ownership-prerequisite.md`, carrying the
+existing expert two-owner ruling and all6 original cancellation assertions. It is
+queued after reviewed OpenCode/Pi work, not implementation or native qualification.

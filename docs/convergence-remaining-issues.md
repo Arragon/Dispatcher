@@ -127,8 +127,17 @@ final test strengthening, and the intentional Unicode regex RED stays distinct.
 The gate rebuilt eight generated artifacts; a root-only next-plan document also
 changed during it, without changing any owned code/test input.
 
-Next: the eight original Controller service assertions and current lifecycle/restart
-regressions, other native providers, then actual
+Controller C1 source809c315 plus callback-owner fixbc3e252 now has independent
+scoped review and clean fix-round1 re-review. Original serviceS1-S5 map to the
+current canonical path; new OpenCode suite55 and eight paired Codex regressions
+pass focused6/334 and final default189files/2758tests (89.34s, command wall107.793s).
+Root verified3 Git inputs,1090post hashes including668 generated, and3270 live
+pre-byte copies across the three fix runs. The original C1 runs retain hash/log
+evidence only; no historical bytes were reconstructed. Callback source returns
+now recheck Controller registry/Adapter ownership, including defined ownership.
+
+Next: serviceS6-S8, raw-operation profile/SQLite barriers, durable drain/shutdown
+and OpenCode read-only restart regressions, other native providers, then actual
 provider/GUI/writer/service/release qualification. The
 current integration used fixtures only; no real account/config/service activation
 or persisted-format/dependency change occurred. CV-09 and the full goal remain

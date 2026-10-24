@@ -1031,3 +1031,9 @@
   admission helper before rejecting synchronously. Resolving the original thenable
   twice can execute its then method twice; public rejection/shutdown is not proof
   that its entered work settled.
+
+- A runtime's source lookup can synchronously enter its producer/port readHandle.
+  Capture a defined Controller runtime/Adapter owner and its lookup key before that
+  call, then recheck registry, current Adapter and saved association afterward.
+  The runtime's own binding/physical-entry checks cannot prove that the outer
+  Controller still owns the same handle after a callback reenters configuration.
