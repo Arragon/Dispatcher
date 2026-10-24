@@ -21,7 +21,7 @@ function fixture(mode = "normal") {
   const script = [
     "#!" + process.execPath,
     "const fs=require('node:fs'),root=" + JSON.stringify(root) + ",mode=" + JSON.stringify(mode) + ";fs.appendFileSync(root+'/pids',process.pid+'\\n');",
-    "if(process.argv.includes('--version')){if(mode==='probe-held-pipe'){const child=require('node:child_process').spawn(process.execPath,['-e','setTimeout(()=>{},2500)'],{stdio:['ignore',process.stdout,process.stderr]});fs.writeFileSync(root+'/descendant',String(child.pid));setInterval(()=>{},1000);}else if(mode==='probe-hang')setInterval(()=>{},1000);else{if(mode==='probe-drift'){fs.renameSync(process.env.XDG_DATA_HOME,process.env.XDG_DATA_HOME+'-old');fs.mkdirSync(process.env.XDG_DATA_HOME);}process.stdout.write(mode==='wrong-version'?'devin 9.9.9':'devin 3000.11.3 (9c803229faa4)');process.exit(0);}return;}",
+    "if(process.argv.includes('--version')){if(mode.startsWith('probe-stderr-')){const payload=mode==='probe-stderr-huge'?Buffer.alloc(1048577,120):mode==='probe-stderr-invalid-utf8'?Buffer.from([255]):mode==='probe-stderr-boundary'?Buffer.alloc(1048576,120):Buffer.from('cog-private diagnostic €');process.stdout.write('devin 3000.11.3 (9c803229faa4)');process.stderr.write(payload,()=>process.exit(0));return;}if(mode==='probe-held-pipe'){const child=require('node:child_process').spawn(process.execPath,['-e','setTimeout(()=>{},2500)'],{stdio:['ignore',process.stdout,process.stderr]});fs.writeFileSync(root+'/descendant',String(child.pid));setInterval(()=>{},1000);}else if(mode==='probe-hang')setInterval(()=>{},1000);else{if(mode==='probe-drift'){fs.renameSync(process.env.XDG_DATA_HOME,process.env.XDG_DATA_HOME+'-old');fs.mkdirSync(process.env.XDG_DATA_HOME);}process.stdout.write(mode==='wrong-version'?'devin 9.9.9':'devin 3000.11.3 (9c803229faa4)');process.exit(0);}return;}",
     "fs.writeFileSync(root+'/command',JSON.stringify({args:process.argv.slice(2),cwd:process.cwd(),pwd:process.env.PWD,data:process.env.XDG_DATA_HOME,config:process.env.XDG_CONFIG_HOME}));",
     `if(mode==='stderr-huge'){process.stderr.write('x'.repeat(1048577));setInterval(()=>{},1000);}else if(mode==='bad-utf8'){process.stdout.write(Buffer.from([255]));}else if(mode==='stderr-utf8'){process.stderr.write(Buffer.from([255]));process.stdout.write(JSON.stringify(${JSON.stringify(inventory())}));}else if(mode==='model-held-pipe'){const child=require('node:child_process').spawn(process.execPath,['-e','setTimeout(()=>{},2500)'],{stdio:['ignore',process.stdout,process.stderr]});fs.writeFileSync(root+'/descendant',String(child.pid));process.stdout.write(JSON.stringify(${JSON.stringify(inventory())}));process.exit(0);}else if(mode==='hang')setInterval(()=>{},1000);else if(mode==='exit-error'){process.stderr.write('cog-private-diagnostic');process.exit(1);}else if(mode==='huge'){process.stdout.write('x'.repeat(1048577));setInterval(()=>{},1000);}else if(mode==='bad-json'){process.stdout.write('cog-secret-invalid');}else if(mode==='read-drift'){fs.renameSync(process.env.XDG_CONFIG_HOME,process.env.XDG_CONFIG_HOME+'-old');fs.mkdirSync(process.env.XDG_CONFIG_HOME);process.stdout.write(JSON.stringify(${JSON.stringify(inventory())}));}else process.stdout.write(JSON.stringify(${JSON.stringify(inventory())}));`,
   ].join("\n"); writeFileSync(executable, script, { mode: 0o700 });
@@ -191,4 +191,16 @@ it("keeps distinct Unicode IDs exact and revision stable across collation ties",
   const reversed = structuredClone(raw); reversed.families[0]!.variants.reverse();
   const a = adapters.normalizeDevinLocalCatalog(raw, options), b = adapters.normalizeDevinLocalCatalog(reversed, { ...options, fetchedAt: "2026-10-14T00:00:00.000Z" });
   expect(a.revision).toBe(b.revision); expect(a.entries.map(entry => entry.id)).toEqual(["e\u0301", "\u00e9"]); expect(b.entries.map(entry => entry.id)).toEqual(["e\u0301", "\u00e9"]);
+});
+
+
+it.each(["probe-stderr-huge", "probe-stderr-invalid-utf8"])("rejects exact-version %s before model admission with sanitized errors and original-root cleanup", async mode => {
+  const f = fixture(mode); let failure: unknown;
+  try { await f.read(); } catch (error) { failure = error; }
+  expect(failure).toMatchObject({ code: "MODEL_CATALOG_UNAVAILABLE" }); expect(String(failure)).not.toMatch(/cog-|native-data|native-config|255/);
+  expect(existsSync(join(f.root, "command"))).toBe(false); expect(f.pids()).toHaveLength(1); for (const pid of f.pids()) expect(() => process.kill(pid, 0)).toThrow();
+});
+it.each(["probe-stderr-boundary", "probe-stderr-valid-utf8"])("admits exact-version %s only after bounded validated probe closure", async mode => {
+  const f = fixture(mode); expect(await f.read()).toMatchObject({ freshness: "native-fresh", selectionSupport: "explicit" });
+  expect(f.pids()).toHaveLength(2); for (const pid of f.pids()) expect(() => process.kill(pid, 0)).toThrow();
 });

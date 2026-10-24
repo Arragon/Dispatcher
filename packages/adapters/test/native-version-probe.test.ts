@@ -58,3 +58,32 @@ it.runIf(process.platform!=="win32")("drains a successful default group with the
 it("rejects missing root exit and close even after successful SIGKILL delivery",async()=>{
  const child=fixture(),pending=observe(readOwnedNativeVersion(input({ownsGroup:false,timeoutMs:1})));child.stdout.write("valid 1.2");await vi.advanceTimersByTimeAsync(2501);await expect(pending).rejects.toThrow("exit-unconfirmed");expect(child.kill.mock.calls).toEqual([["SIGTERM"],["SIGKILL"]]);
 });
+
+
+it.each([1_048_576,1_048_577])("strict mode independently bounds stderr at %s bytes",async size=>{
+ const child=fixture(),pending=observe(readOwnedNativeVersion(input({ownsGroup:false,strictOutput:{stderrMaxBytes:1_048_576}})));child.stdout.write("valid 1.2");child.stderr.write(Buffer.alloc(size,120));natural(child);
+ if(size===1_048_576)expect(await pending).toBe("valid 1.2");else await expect(pending).rejects.toThrow("unavailable");
+});
+it.each(["stdout","stderr"] as const)("strict mode rejects invalid %s UTF8 after owned drain",async stream=>{
+ const child=fixture(),pending=observe(readOwnedNativeVersion(input({ownsGroup:false,strictOutput:{stderrMaxBytes:1_048_576}})));child.stdout.write("valid 1.2");child[stream].write(Buffer.from([255]));natural(child);await expect(pending).rejects.toThrow("unavailable");
+});
+it("strict mode accepts valid UTF8 split across both stream chunks",async()=>{
+ const child=fixture(),pending=readOwnedNativeVersion(input({ownsGroup:false,strictOutput:{stderrMaxBytes:4}}));child.stdout.write(Buffer.from([116,111,111,108,32,226]));child.stdout.write(Buffer.from([130,172]));child.stderr.write(Buffer.from([207]));child.stderr.write(Buffer.from([128]));natural(child);expect(await pending).toBe("tool €");
+});
+it.each([null,{},[[]],{stderrMaxBytes:0},{stderrMaxBytes:-1},{stderrMaxBytes:NaN},{stderrMaxBytes:Infinity},{stderrMaxBytes:1.5},{stderrMaxBytes:1_048_577},{stderrMaxBytes:"1048576"},{stderrMaxBytes:1,ignoreErrors:true}])("rejects malformed strict output option %j before spawn",async strictOutput=>{
+ const child=fixture(),pending=observe(readOwnedNativeVersion(input({ownsGroup:false,strictOutput:strictOutput as {stderrMaxBytes:number}})));child.stdout.write("valid");natural(child);await expect(pending).rejects.toThrow("unavailable");expect(spawn).not.toHaveBeenCalled();
+});
+it("captures the strict stderr limit before asynchronous probe settlement",async()=>{
+ const child=fixture(),strictOutput={stderrMaxBytes:1},pending=observe(readOwnedNativeVersion(input({ownsGroup:false,strictOutput})));strictOutput.stderrMaxBytes=1_048_576;child.stdout.write("valid");child.stderr.write("xx");natural(child);await expect(pending).rejects.toThrow("unavailable");
+});
+it.each([16_384,16_385])("strict mode retains the existing %s-byte stdout boundary",async size=>{
+ const child=fixture(),pending=observe(readOwnedNativeVersion(input({ownsGroup:false,strictOutput:{stderrMaxBytes:1}})));child.stdout.write(Buffer.alloc(size,120));child.stderr.write("x");natural(child);if(size===16_384)expect(await pending).toBe("x".repeat(size));else await expect(pending).rejects.toThrow("unavailable");
+});
+it.each(["pipe-error","denied-stop","open-pipe"])("strict invalid output preserves %s cleanup uncertainty",async mode=>{
+ const child=fixture(),pending=observe(readOwnedNativeVersion(input({ownsGroup:false,timeoutMs:1,strictOutput:{stderrMaxBytes:1}})));child.stdout.write("valid");child.stderr.write(Buffer.from([255,255]));
+ if(mode==="pipe-error"){child.stderr.emit("error",Error("pipe failed"));natural(child);}else if(mode==="denied-stop"){child.kill.mockImplementation(()=>{throw Error("denied");});}else child.emit("exit",0);
+ await vi.advanceTimersByTimeAsync(501);await expect(pending).rejects.toThrow("exit-unconfirmed");if(mode==="open-pipe")child.emit("close",0);
+});
+it("legacy mode keeps its existing discarded-stderr and replacement-decoding contract",async()=>{
+ const child=fixture(),pending=readOwnedNativeVersion(input({ownsGroup:false}));child.stdout.write(Buffer.from([116,111,111,108,32,255]));child.stderr.write(Buffer.alloc(1_048_577,255));natural(child);expect(await pending).toBe("tool \ufffd");
+});

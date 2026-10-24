@@ -58,7 +58,7 @@ export async function readDevinLocalCatalog(original: { profileId: string; scope
   guard();
   const env = childExecutionEnvironment(process.env, { PWD: paths[1]!.path, XDG_DATA_HOME: paths[2]!.path, XDG_CONFIG_HOME: paths[3]!.path });
   let version: string;
-  try { version = await readOwnedNativeVersion({ executable: paths[0]!.path, workspacePath: paths[1]!.path, environment: env, ownsGroup: false, ...(signal ? { signal } : {}), timeoutMs: Math.max(1, Math.min(3000, deadline - performance.now())), failure: code => fail(code === "exit-unconfirmed" ? "MODEL_CATALOG_CLEANUP_UNKNOWN" : "MODEL_CATALOG_UNAVAILABLE") }); }
+  try { version = await readOwnedNativeVersion({ executable: paths[0]!.path, workspacePath: paths[1]!.path, environment: env, ownsGroup: false, strictOutput: { stderrMaxBytes: 1_048_576 }, ...(signal ? { signal } : {}), timeoutMs: Math.max(1, Math.min(3000, deadline - performance.now())), failure: code => fail(code === "exit-unconfirmed" ? "MODEL_CATALOG_CLEANUP_UNKNOWN" : "MODEL_CATALOG_UNAVAILABLE") }); }
   catch (error) { if (error instanceof AdapterContractError && error.code === "MODEL_CATALOG_CLEANUP_UNKNOWN") throw error; guard(); throw error; }
   guard();
   if (version !== devinLocalAcpCliVersion) throw fail("MODEL_CATALOG_VERSION_UNSUPPORTED");
