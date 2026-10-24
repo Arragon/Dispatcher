@@ -51,13 +51,13 @@
 
 **Interfaces:** Add real `PiExecutionRuntime.hasActiveOperations():boolean` and `PiRpcExecutionBackend.hasActiveOperations():boolean` only backed by actual pending work. Reuse existing callback tracking/cleanup in the producer and a small private Promise set in the runtime where necessary; do not export a generic lifecycle abstraction. Keep beginShutdown/disconnectLocal signatures, cached receipt semantics, existing PI_RPC_* error contracts and no-aggregate-source behavior.
 
-- [ ] Re-read actual runtime validate/beforePrompt and producer guard/callback/work/cleanup code. Current runtime and producer consume forbidden async guard results without tracking them; production Controller guards are synchronous. Distinguish an executable adversarial callback test from an observed default-production failure.
-- [ ] Write focused tests holding an async assertInput/beforePrompt result before any host exists and during admitted startup. Establish public synchronous rejection plus still-entered work, and verify current false drain/status behavior before implementing. Include custom thenable getter/then once, rejection consumption, late settlement and no second native prompt/source acquisition.
-- [ ] Track each normalized raw Promise before rejecting synchronous admission; retain the exact same Promise for consumption rather than resolving the original thenable twice. Producer uses its existing callbacks set so local cleanup reports callbacks unknown while work is unresolved, including rejection before native acquisition. Exposed status includes actual pending acquisition/turn/callback work, independent of public failure or cached cleanup.
-- [ ] Runtime status consumes real producer status and independently entered runtime guard/acquisition work. Never infer native quiescence or upgrade a cached unknown cleanup after late settlement. No noop method or unrelated provider API expansion.
-- [ ] Add service regression using the real registered Pi runtime, terminal canonical Run and durable local receipt, with public Adapter/host state independently inactive. Pending raw guard work blocks profile replacement and final SQLite close; HTTP/events close, exact closed registration/storage survive, and late callback settlement cannot obtain source or replay.
-- [ ] Preserve duplicate cancellation, actual child ownership, all old Pi cleanup and C2 three-provider behavior. If a test double must specialize the new real producer contract, give it faithful state rather than unconditional false status.
-- [ ] Run focused Pi runtime/producer/service and existing OpenCode/Codex shutdown regressions, self-review, then one default gate. Commit tested files and report concrete RED/GREEN plus scope/remaining limits for root review.
+- [x] Re-read actual runtime validate/beforePrompt and producer guard/callback/work/cleanup code. Current runtime and producer consume forbidden async guard results without tracking them; production Controller guards are synchronous. Distinguish an executable adversarial callback test from an observed default-production failure.
+- [x] Write focused tests holding an async assertInput/beforePrompt result before any host exists and during admitted startup. Establish public synchronous rejection plus still-entered work, and verify current false drain/status behavior before implementing. Include custom thenable getter/then once, rejection consumption, late settlement and no second native prompt/source acquisition.
+- [x] Track each normalized raw Promise before rejecting synchronous admission; retain the exact same Promise for consumption rather than resolving the original thenable twice. Producer uses its existing callbacks set so local cleanup reports callbacks unknown while work is unresolved, including rejection before native acquisition. Exposed status includes actual pending acquisition/turn/callback work, independent of public failure or cached cleanup.
+- [x] Runtime status consumes real producer status and independently entered runtime guard/acquisition work. Never infer native quiescence or upgrade a cached unknown cleanup after late settlement. No noop method or unrelated provider API expansion.
+- [x] Add service regression using the real registered Pi runtime, terminal canonical Run and durable local receipt, with public Adapter/host state independently inactive. Pending raw guard work blocks profile replacement and final SQLite close; HTTP/events close, exact closed registration/storage survive, and late callback settlement cannot obtain source or replay.
+- [x] Preserve duplicate cancellation, actual child ownership, all old Pi cleanup and C2 three-provider behavior. If a test double must specialize the new real producer contract, give it faithful state rather than unconditional false status.
+- [x] Run focused Pi runtime/producer/service and existing OpenCode/Codex shutdown regressions, self-review, then one default gate. Commit tested files and report concrete RED/GREEN plus scope/remaining limits for root review.
 
 ## Task 3: Read-only Pi saved-binding restart qualification (bound G2)
 
@@ -88,3 +88,16 @@ FAILED Run/Task transitions; separate ACTIVE case always blocks after drain.
 No new Pi factory seam for tests: synchronous guard/source-order and zero effect
 proof is explicit. Task2raw andTask3bound restart still pending; actual native Gates
 and parentCV14 stay open. No architecture/production/format/capability changes.
+
+## Task2 reviewed receipt 2026-10-24
+
+Sourcefc4685e31b6c440fa8dad0e2e298f698005e6f53 adds actual raw runtime/producer
+work status and once-normalized guard tracking; existing consumers unchanged.
+MeaningfulRED false drainage/profile replacement/SQLite close fixed;10newcases,
+focused7/399 and default189/2903 pass (95.05s/112.797663709s). Independent spec
+compliant/quality Approved,0Critical/Important,Minorlogs deferredCV14. Root5Git/
+3453post/668generated,28runs/74331pre/post bytes/7scripts/28harnesses match.
+Bootstrap/earlypartialgenerated/script limits retained without reconstruction.
+Open rawACTIVE vs closed unknownhost earlierNATIVE precedence corrected and
+asserted; rawfalse never upgrades cached unknown. Task3 remains next; actual Gates
+and goal open. No service/schema/generic API/recovery/capability change.

@@ -144,7 +144,8 @@ Root verifies2 Git inputs,1090post/668generated,52320 live byte copies across48
 run records, and42712 relocated evidence files. The first gate failed at lint
 when historical TS snapshots entered its scan; those bytes/failure remain intact
 outside checkout, and rules are unchanged. Pi capability narrowing preserves its
-real existing interface; its separate raw-status/guard-work audit remains open.
+real existing interface at that checkpoint; the following PiTask2 now closes
+that raw-status/guard-work engineering gap.
 
 Controller C3 c82af5c is now independently spec compliant/quality Approved with
 no Critical/Important findings. Private checked-storage consistency preserves
@@ -165,8 +166,16 @@ default189/2893 pass (94.78s,wall112.287602875s). Root verifies3Git blobs,
 3451post/668livegenerated and86275pre+86275post actual copies across25runs.
 Fixture/projection corrections and bootstrap limitations remain disclosed.
 
-Next: Pi first-demonstrated raw lifetime and explicit read-only bound restart,
-remaining native providers, then actual
+Pi raw lifetime Task2 fc4685e is independently spec compliant/quality Approved
+with no Critical/Important findings. Real runtime/producer raw status now feeds
+existing Controller consumers; meaningful RED showed false callback drainage,
+premature profile replacement and SQLite close. Final7/399 and default189/2903
+pass (95.05s,wall112.797663709s). Root verifies5Git/3453post/668generated,
+28runs/74331pre+74331post actual copies,7external scripts and28harnesses.
+Early partial-generated/script/bootstrap evidence limits remain disclosed; final
+complete byte capture is exact. No service/schema/generic API/capability change.
+
+Next: Pi explicit read-only bound restart, remaining native providers, then actual
 provider/GUI/writer/service/release qualification. The
 current integration used fixtures only; no real account/config/service activation
 or persisted-format/dependency change occurred. CV-09 and the full goal remain
@@ -176,8 +185,8 @@ The completed read-only source audits also identify these later development
 units; their static mapping counts are not test results or release evidence:
 
 - Pi155 source assertions retain their static source map. Reviewed Task1 restores
-  G1/G3/G4/G5 direct assertions and saved-config G2; bound cold restart G2 and
-  source-inspected raw guard-work G6 remain queued. Existing exact source routing
+  G1/G3/G4/G5 direct assertions and saved-config G2; G6raw lifetime now has
+  reviewed behavioral RED/GREEN. Bound cold restart G2 remains queued. Exact source routing
   is present; capability/quiescence is unqualified.
 - Retention/delivery49 source assertions:6 adapted,4 composed,21 partial and18
   missing. Preserve CanonicalLocalResults/LocalGitDelivery and existing journals;

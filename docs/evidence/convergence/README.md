@@ -4359,3 +4359,60 @@ other providers and original account/GUI/native writer/service/release Gates rem
 open. The frozen155-case inventory is static mapping, not a new test total. No
 actual Pi/account/native activation, deletion, push or merge occurred. Architecture
 and know-how need no change for this test-only increment.
+
+### 2026-10-24 Pi raw-work lifetime (Task2 locally complete)
+
+Source `fc4685e31b6c440fa8dad0e2e298f698005e6f53`, BASE `10887c8`, changes
+Pi runtime/producer and their three directly affected tests. Real hasActiveOperations
+combines entered runtime guard/admission/readiness work with producer acquisition/
+turn/callback state. Forbidden guard results normalize once into the same tracked
+and consumed Promise. Producer reuses its callbacks set so initial rejection can
+no longer falsely report drained callbacks. Current raw status is distinct from
+immutable cached cleanup. Existing Controller consumers need no source change.
+
+| Requirement | Decisive local regression |
+| --- | --- |
+| Initial/admitted forbidden guards | Held thenable stays tracked despite synchronous rejection/public failure; actual cleanup callbacks unknown with root not-created, no RPC/prompt/source. Existing admitted client error remap retained. |
+| Acquisition/readiness | Existing AcquiringTurn.ready Promise remains one lifetime including onFailure cleanup; beginShutdown does not erase pending readiness. |
+| Assimilation/rejection | Getter/then each run once, throwing getter and late rejection consumed, current raw status clears only on actual settlement. |
+| Producer/raw composition | Actual producer acquisition/turn/callback status consumed by runtime; public terminal state and cached receipt never fabricate drain. |
+| Controller lifetime | Terminal canonical fixture, completed Adapter, durable drained local receipt and inactive host/producer isolate held runtime work. Profile refuses; stop closes HTTP/events and retains exact registration/SQLite. Resolve/reject late cannot regain source/replay or change original binding/wire. |
+| Precedence/cached unknown | Open pending callback yields ACTIVE_AGENT_PROFILE. Closed+unknown host yields earlier NATIVE_RUNTIME_DRAIN_REQUIRED even rawtrue; late rawfalse never upgrades cached unknown. Closed+durably drained hosts+independent raw still reaches ACTIVE. |
+
+10 added cases (runtime5/producer3/service2). Finalfocused7files/399tests pass
+(Vitest26.54s/command26.936818375s); one default `mise exec -- pnpm check` passes
+all non-test gates and189files/2903tests (95.05s/112.797663709s). Actual command UTC
+2026-10-24T13:20:48.493016Z→13:22:41.291055Z. Full log SHA256
+`1401a495736af95df9836e905a7694265655601e5847917363f9e378738a43c3`; evidence
+`/tmp/dispatcher-pi-gap-task2-evidence-20261024/24-final-default-gate`.
+Root audit `/tmp/dispatcher-pi-gap-task2-root-payload-audit-20261024.json` verifies
+5Git inputs,3453post/668livegenerated,28runs with74331pre+74331post real copies,
+7external scripts and28actual harness versions. All match, including final output/
+manifest digests. Run-indexSHAf2f7a4eb1a644d260aa322207a28e1d9d41a4ed5dae978ccf6026dbbb44db872.
+
+Meaningful RED06/08/12 shows false callbacksdrained, profile replacement and
+premature successful SQLite close. Supplemental missing-method TypeErrors are not
+that behavioral proof. A test-finally DB close initially masked an assertion and
+was corrected with its failure retained. FirstGREEN95pass/2fail reflected requested
+raw precedence; later369pass/2fail overextended that expectation after disconnect.
+Root's earlier ruling was too broad and is explicitly corrected by actual source
+order; only the second expectation returned to original drain code. No service
+error behavior changed. All failed attempts/afterEach rejection output retained.
+
+Capture limits: read-only bootstrap preceded helper; runs01–06 have tracked inputs
+and only Controller/adapters/domain/protocol dist, and add_tests.py05 lacks its
+execution-time copy/hash. Runs07 onward add all dist+external scripts;10 onward
+also includes ignored lint inputs. These limitations remain, never reconstructed.
+Finalfocused22/default24 have full actual expanded pre/post capture. Local default
+Controller guards are synchronous; adversarial callback regressions are not a
+claim of an observed real-provider failure.
+
+Independent `/tmp/dispatcher-pi-gap-task2-review-20261024.md`: spec compliant,
+quality Approved,0Critical/Important,1Minor expected fixture log noise deferredCV14.
+Reviewer checks readiness lifetime, common consumers/precedence and existing async
+client open/error remap. Root retains reviewed Task1 transition/observer boundaries,
+exact unchanged service/recovery source, and evidence limits. PiTask3cold readonly
+restart remains; false current raw status still does not prove native quiescence,
+tool/approval absence, automatic advancement, native writer release or GUI/account
+qualification. No session deletion, real activation, dependency/migration, push or
+merge. ParentCV14/full goal and original Gates remain open.

@@ -78,8 +78,8 @@ distinct from Run and start-journal identity. OpenCode uses the existing observe
 bridge without Codex native-request capabilities. Exact source lookup captures a
 defined runtime/Adapter owner and rechecks the registry, current Adapter and saved
 association after source callbacks return. A missing server registry cannot borrow
-an aggregate port. Pi's separate start predicate remains unchanged. Exact Codex
-and OpenCode raw runtime activity participates in profile replacement and the
+an aggregate port. Pi's separate start predicate remains unchanged. Exact Pi,
+Codex and OpenCode raw runtime activity participates in profile replacement and the
 final SQLite-close barrier, independently of public Adapter state and local host
 receipts. Read-only restart uses explicit Codex/OpenCode storage qualifiers; actual
 native qualification remains separate.
@@ -1365,8 +1365,10 @@ another physical disconnect. Changing an idle profile requires confirmed durable
 local cleanup; an active canonical Run still blocks replacement. Shutdown attempts
 all three Pi/Codex/OpenCode registries and records each actual backend even if
 another disconnect or receipt write fails, then closes HTTP/events and preserves
-storage when host cleanup or exposed raw work remains uncertain. Pi currently
-retains its host/receipt contract without a raw-status method. Local-review,
+storage when host cleanup or exposed raw work remains uncertain. Pi tracks raw
+guard results and admission/readiness alongside producer acquisition/turn/callback
+work; public failure or a cached local receipt cannot erase that lifetime. Current
+raw activity can settle while a cached unknown cleanup remains unknown. Local-review,
 runtime and cleanup-uncertainty failures share the final error collection, so
 simultaneous failures remain visible. Local cleanup never deletes native sessions
 or proves background writer release.

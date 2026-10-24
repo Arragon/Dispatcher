@@ -421,7 +421,7 @@ server profile。owned host/producer及精确分配observer随后保存105ef8b�
 
 **失败/停止/回退**：若迁入要求新云端/付费/原生登录或修复原计划外功能，记录到原票并保持该backend关闭；不扩大范围。
 
-**2026-10-24 当前工程回执**：Pi Task1保存76b7839，测试/fixture限定增量恢复G1/G3/G4/G5与无dispatch配置重启，新增15service例；7文件/196聚焦及默认189文件/2893例通过，独立spec/quality Approved无Critical/Important。三个Git输入及真实pre/post证据匹配；Task2 raw工作寿命和Task3 bound只读重启继续，不升级native读取/工具/自动推进资格。其他backend与CopilotWIP仍依后续单元，CV-10未完成。
+**2026-10-24 当前工程回执**：Pi Task1保存76b7839，测试/fixture限定增量恢复G1/G3/G4/G5与无dispatch配置重启，新增15service例；7文件/196聚焦及默认189文件/2893例通过，独立spec/quality Approved无Critical/Important。三个Git输入及真实pre/post证据匹配；Task2随后保存fc4685e并独立审查通过：真实raw guard/readiness/producer寿命由现有屏障消费，新增10例，聚焦7/399和默认189/2903通过，5Git字节匹配；早期证据捕获限制与错误优先级修正保留。Task3 bound只读重启继续，不升级native读取/工具/自动推进资格。其他backend与CopilotWIP仍依后续单元，CV-10未完成。
 
 ### CV-11 · 将计量与原生会话视图接入v3现有交互
 

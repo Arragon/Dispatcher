@@ -1041,8 +1041,9 @@
 - A public Adapter start can reject while native executable admission or a forbidden
   async guard still owns work. Profile replacement and SQLite close must consult
   the exact runtime's raw status as well as canonical Runs and durable host
-  receipts. Narrow against the real provider interface: Pi currently has no raw
-  status method; do not add a noop double or infer drain from its absence.
+  receipts. Consume the real provider interface and actual entered work; never add
+  a noop double or infer drain from method absence. Pi now has real runtime/producer
+  status rather than an invented inactive implementation.
 - Preserve multiple shutdown failures in the existing terminal error collection.
   A local-review failure or successful empty host receipt cannot mask a different
   native failure or unsettled raw callback; close HTTP/events and retain storage.
@@ -1066,3 +1067,9 @@
   Tasks to WAITING_USER. A provider-specific readable certificate must preserve
   those shared transitions and cannot silently turn storage readability into
   continuation, live-source or writer authority.
+
+- Preserve existing ConfigPlan barrier order when adding raw activity. A closed
+  runtime with missing durable or unknown host cleanup fails the earlier drain
+  guard, even while raw work is pending. An open runtime, or a closed runtime with
+  durably drained hosts, reaches the active-work guard. Assert raw status and
+  immutable cleanup independently; one rejection code does not describe all phases.
