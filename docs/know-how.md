@@ -1053,7 +1053,9 @@
   relocating evidence; do not weaken lint rules to exclude a mistaken layout.
 
 - Read-only restart qualification checks persisted agreement, not a live executable
-  or native account. Keep executable admission in enabled runtime construction.
+  or native account. Keep provider-specific physical checks at the existing enabled
+  runtime construction/admission boundary; do not infer identical filesystem checks
+  across providers from a shared stored-data certificate.
   Explicit provider wrappers may share checked records, but must preserve their
   own product/backend/region/session/thread/parent restrictions. Wholly consistent
   opaque session/store rewrites cannot prove external provenance.

@@ -175,7 +175,16 @@ pass (95.05s,wall112.797663709s). Root verifies5Git/3453post/668generated,
 Early partial-generated/script/bootstrap evidence limits remain disclosed; final
 complete byte capture is exact. No service/schema/generic API/capability change.
 
-Next: Pi explicit read-only bound restart, remaining native providers, then actual
+Pi readonly restart Task3 e526609 is independently spec compliant/quality Approved
+with no Critical/Important findings. Explicit UUID/pi-rpc storage qualification and
+two existing consumers preserve unknown/manual recovery without native source.
+49 new Pi cases (44corrupt+5positive) plus exact shared OpenCode test-helper extraction
+pass Pi72/required5/380 and default189/2952 (103.18s,wall121.206177750s).
+Root verifies5Git/3470post/668livegenerated/16buildinfo,12runs with41541pre/41542post
+actual copies. All three Pi source-gap units complete locally; original155-case
+dispositions remain static, and native qualification stays unknown.
+
+Next: saved native ownership prerequisite, remaining native providers, then actual
 provider/GUI/writer/service/release qualification. The
 current integration used fixtures only; no real account/config/service activation
 or persisted-format/dependency change occurred. CV-09 and the full goal remain
@@ -186,8 +195,9 @@ units; their static mapping counts are not test results or release evidence:
 
 - Pi155 source assertions retain their static source map. Reviewed Task1 restores
   G1/G3/G4/G5 direct assertions and saved-config G2; G6raw lifetime now has
-  reviewed behavioral RED/GREEN. Bound cold restart G2 remains queued. Exact source routing
-  is present; capability/quiescence is unqualified.
+  reviewed behavioral RED/GREEN. Task3 now restores bound cold restart G2.
+  Every frozen case retains a disposition; exact source routing exists, while
+  capability/quiescence remains unqualified.
 - Retention/delivery49 source assertions:6 adapted,4 composed,21 partial and18
   missing. Preserve CanonicalLocalResults/LocalGitDelivery and existing journals;
   do not restore a parallel NativeDeliveryCandidates stack.

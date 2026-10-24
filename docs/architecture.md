@@ -81,7 +81,7 @@ association after source callbacks return. A missing server registry cannot borr
 an aggregate port. Pi's separate start predicate remains unchanged. Exact Pi,
 Codex and OpenCode raw runtime activity participates in profile replacement and the
 final SQLite-close barrier, independently of public Adapter state and local host
-receipts. Read-only restart uses explicit Codex/OpenCode storage qualifiers; actual
+receipts. Read-only restart uses explicit Codex/OpenCode/Pi storage qualifiers; actual
 native qualification remains separate.
 
 Controller retains unchanged profile adapters of every provider across ConfigPlan applies,
@@ -1373,13 +1373,15 @@ runtime and cleanup-uncertainty failures share the final error collection, so
 simultaneous failures remain visible. Local cleanup never deletes native sessions
 or proves background writer release.
 
-Restart accepts only consistent bound canonical managed Codex/OpenCode metadata
+Restart accepts only consistent bound canonical managed Codex/OpenCode/Pi metadata
 for read and receipt reconciliation. A private checked-storage helper preserves
 Run/Task/Session/Adapter/selection/reference/binding agreement, frozen repository/
 base and unique SQL/document control ownership. Explicit provider wrappers retain
-Codex thread identity and OpenCode global server identity, safe ses session grammar
-(maximum512) with no thread/parent. Qualification performs no writes or physical/
-account/native reads; enabled runtime construction separately checks its executable.
+Codex thread identity, OpenCode global server identity and safe ses session grammar
+(maximum512), and Pi global RPC identity with an exact36-character UUID; OpenCode/
+Pi forbid thread/parent fields. Qualification performs no writes or physical/
+account/native reads; physical checks stay at each provider's existing enabled
+runtime construction/admission boundary.
 Restart invalidates prior observations, retains exact identity and marks execution
 ownership unknown/manual, preserving existing Task recovery transitions; it never
 opens a native connection, replays startup or grants cold continuation. Corrupt or

@@ -4416,3 +4416,65 @@ restart remains; false current raw status still does not prove native quiescence
 tool/approval absence, automatic advancement, native writer release or GUI/account
 qualification. No session deletion, real activation, dependency/migration, push or
 merge. ParentCV14/full goal and original Gates remain open.
+
+### 2026-10-24 Pi readonly saved-binding restart (Task3 locally complete)
+
+Source `e526609c56b319519e8acf096397feed21f32d68`, BASE `0348c04`, changes
+only explicit isReadableManagedPiRun, the import/two existing readonly consumers
+and adjacent accurate comment, Pi tests, and a17-line shared test storage utility
+extracted exactly from OpenCode. Generic/private checked predicate and existing
+Codex/OpenCode qualifiers are byte-preserved. Pi provider/product/backend/global,
+exact36-character case-insensitive UUID and no thread/parent rules are explicit.
+No native source/reattach/replay/continuation/writer is granted.
+
+49 added cases (44negative+5positive), Pi suite72. Genuine synthetic start/bind/
+result/drain/reopen verifies both Task transitions and original Run/Session/
+Adapter invocation/binding/selection/reference/tuple/worktree identity, receipt
+projection, unknown observation/new barrier, no live port/runtime entry or new
+native trace and denied actions. Direct qualifier total_changes stays unchanged
+after removing executable/native directories/worktree; actual Pi construction
+still rejects missing directories, preserving its own filesystem contract.
+Corruption covers every listed category, SQL owner/row/document disagreements,
+consistent-copy provider shape and malformed UUIDs. Uppercase UUID and opaque
+consistent store rewrite prove only storage agreement. OpenCode matrix/helper
+extraction is exact and retains every existing row/assertion; no suite side effects.
+
+PiGREEN72 (43.70s/44.088244250s) and required5files/380tests
+(43.94s/44.333191792s) pass. Sole default `mise exec -- pnpm check` passes
+non-test gates and189files/2952tests (103.18s/121.206177750s). Actual command
+UTC2026-10-24T13:31:45.304632Z→13:33:46.511089Z; evidence
+`/tmp/dispatcher-pi-gap-task3-evidence-20261024/08-final-default-gate`.
+LogSHA256 `bc684bc779cd0fcb296a16e492b797052a9600fca50ad99c4a600257ecfb533f`.
+Root audit `/tmp/dispatcher-pi-gap-task3-root-payload-audit-20261024.json` verifies
+5Git inputs,3470post,12runs with41541pre+41542post copies,5scripts/12harnesses.
+The3470 final inputs include668live dist outputs and16tsbuildinfo;1667total
+dist-named paths also include999 historical ignored lint snapshots, not1667
+live outputs. All hashes match; root does not duplicate the passing suite.
+Run-indexSHA5a6a44be85b085478238c859e6738241714227eee537766934351f6c4afd93d3.
+
+01 retained setup failure used invalidateObservation incorrectly; corrected
+unknown barrier plus saved prior idle/readable observation is artificial storage
+input. ActualRED02 then fails both constructors at existing native preflight.
+Initial read-only/bootstrap/inline test edits were tool-observed outside harness;
+first verification onward has actual complete tested source/dist/lint bytes.
+Before the build gate, future capture adds ignored tsbuildinfo compiler inputs;
+no historical copies/times were reconstructed.
+
+Independent `/tmp/dispatcher-pi-gap-task3-review-20261024.md` gives spec compliant/
+quality Approved,0Critical/Important,1Minor expected log noise deferredCV14. It
+checks the unchanged private storage seam and retained evidence. Root independently
+confirms runtime/producer untouched and exact permitted test extraction. One prose
+rationale in implementer/review text incorrectly attributed newline refusal to
+length preventing JavaScript end-anchor behavior; root target-node probe rejects
+LF/CR/U2028/U2029 for both non-multiline regexes already. Reviewer appends a dated
+factual correction, preserving original text; explicit length36/newline negative
+remain valid. No new OpenCode defect/code change or rerun is inferred.
+
+All3 local Pi tasks have clean scoped reviews; G1–G5/boundG2 and addedG6 have
+current direct/composed/replaced assertion mappings. Frozen155 is a source map,
+not an added passing-test count or native qualification. Pi idle/completed/zero
+pending still cannot advance automatically. ParentCV14 owns broad review and all
+SDD evidence remains retained. Goal/CV10, other providers/UI/retention/delivery and
+original account/GUI/native writer/service/release Gates stay open. Next ownership
+plan has preparation/preflight only; no native/account activation, dependency,
+migration, deletion, push or merge occurred.

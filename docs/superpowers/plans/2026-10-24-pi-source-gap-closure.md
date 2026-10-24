@@ -65,11 +65,11 @@
 
 **Interfaces:** Export `isReadableManagedPiRun(database:DispatcherDatabase,run:Run):boolean`. Reuse the private checked-storage consistency seam from reviewed OpenCode C3; explicit provider wrapper enforces `pi`/`pi-rpc`/`global`, UUID grammar `^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$` case insensitive, no nativeThreadId or parentSessionId. No arbitrary provider admission export or generic guarded-start widening.
 
-- [ ] Start/bind/drain a real synthetic Pi fixture, reopen saved DB and demonstrate the existing conservative preflight refusal. Add direct qualifier tests with `total_changes()` proving zero writes and no physical/native/account read required by stored qualification.
-- [ ] Implement the explicit Pi wrapper and both read-only service branches. Preserve exact Run/session/binding/invocation, mark ownership unknown/manual with existing Task transitions, invalidate prior observation/read barrier, perform zero new native launch/probe/prompt/resume/replay and return no live source.
-- [ ] Cover Run/session/selection/ref/frozen-contract/Adapter tuple/invocation/diagnostics/binding/control ownership corruption and SQL row/document conflicts. Invalid records fail preflight with zero native work and unchanged original Run. Consistently replace every binding copy for wrong product/backend/region/thread/parent/UUID cases so provider checks are decisive; test actual opaque-value disagreements without claiming external provenance.
-- [ ] Preserve current generic guarded-start, Codex/OpenCode storage qualification, C1 source owner fences, C2 shutdown and Task 2 raw-status safeguards. No new readable native capability or automatic advancement.
-- [ ] Run `mise exec -- pnpm vitest run apps/controller/test/pi-runtime-service.test.ts apps/controller/test/codex-runtime-service.test.ts apps/controller/test/opencode-runtime-service.test.ts apps/controller/test/native-recovery-preflight.test.ts apps/controller/test/native-start-intent.test.ts`, self-review, then one final default gate. Commit tested paths and report exact bytes/results/source dispositions for root review.
+- [x] Start/bind/drain a real synthetic Pi fixture, reopen saved DB and demonstrate the existing conservative preflight refusal. Add direct qualifier tests with `total_changes()` proving zero writes and no physical/native/account read required by stored qualification.
+- [x] Implement the explicit Pi wrapper and both read-only service branches. Preserve exact Run/session/binding/invocation, mark ownership unknown/manual with existing Task transitions, invalidate prior observation/read barrier, perform zero new native launch/probe/prompt/resume/replay and return no live source.
+- [x] Cover Run/session/selection/ref/frozen-contract/Adapter tuple/invocation/diagnostics/binding/control ownership corruption and SQL row/document conflicts. Invalid records fail preflight with zero native work and unchanged original Run. Consistently replace every binding copy for wrong product/backend/region/thread/parent/UUID cases so provider checks are decisive; test actual opaque-value disagreements without claiming external provenance.
+- [x] Preserve current generic guarded-start, Codex/OpenCode storage qualification, C1 source owner fences, C2 shutdown and Task 2 raw-status safeguards. No new readable native capability or automatic advancement.
+- [x] Run `mise exec -- pnpm vitest run apps/controller/test/pi-runtime-service.test.ts apps/controller/test/codex-runtime-service.test.ts apps/controller/test/opencode-runtime-service.test.ts apps/controller/test/native-recovery-preflight.test.ts apps/controller/test/native-start-intent.test.ts`, self-review, then one final default gate. Commit tested paths and report exact bytes/results/source dispositions for root review.
 
 ## Root preparation receipt
 
@@ -101,3 +101,16 @@ Bootstrap/earlypartialgenerated/script limits retained without reconstruction.
 Open rawACTIVE vs closed unknownhost earlierNATIVE precedence corrected and
 asserted; rawfalse never upgrades cached unknown. Task3 remains next; actual Gates
 and goal open. No service/schema/generic API/recovery/capability change.
+
+## Task3 reviewed receipt 2026-10-24
+
+Sourcee526609c56b319519e8acf096397feed21f32d68 explicit Pi readonly wrapper/two
+consumers with unchanged shared predicate/raw lifecycle.49newcases(44corrupt+5positive),
+Pi72/focused5/380/default189/2952 pass (103.18s/121.206177750s). Root5Git/3470post/
+668livegenerated/16buildinfo,12runs/41541pre+41542post actualbytes match. Approved
+17line shared test-helper extraction from OpenCode preserves all rows/assertions.
+Independent spec compliant/quality Approved,0Critical/Important; Minorlogs deferred
+CV14. Initial bootstrap/inlineedit capture limits disclosed; firstverification
+actualbytes complete, finalbuildinfo included without reconstruction. Report/review
+JSanchor rationale corrected by actual target-node probe; no code/verdict change.
+All3 Pi units complete locally; actual Gates/CV10/goal and parentCV14 remainopen.
