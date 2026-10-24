@@ -4670,3 +4670,51 @@ later Controllerconsumer, runtime28, atomicconfig/factory17 and Controller30.
 Source503 immutable identities/decisions retained; formal group/EPERM/R020,
 CV13audit28/native/account/GUI/writer/service/release and parentCV14 remain open.
 Officialquota84%used16%remaining ordinaryUsageAllowedtrue/reset2unused.
+
+
+### 2026-10-24 canonical Devin Local catalog locally complete
+
+TaskBASEe956907, sourcea10a2c1 and I1fix13389134a320d6226e655e34082e07a17269e8f9.
+Five task paths, four fix paths. Internal AccountModelCatalog reader/normalizer and
+scoped Adapter override preserve explicit physical homes, literal command and
+canonical owner, exact selectors/unknown billing/unconfirmed access. Independent
+bounds/fatalUTF8/wholedeadline and unconditional rootstop/naturalclose500ms guard
+all completion paths. Binary exact Unicode ordering closes a reproduced content
+revision defect without normalizing distinct IDs. Source30=29direct+oneobsolete
+modelInfo lookup pending realController routing trial, currentcatalog65.
+
+Initial task review found ImportantI1: shared version helper discarded stderr.
+Root explicitly expanded directlyaffected scope, originalimplementer fixround1
+adds actualcaller strictOutput option and additive helper tests. Strict mode keeps
+16384stdoutcap, independentstderr<=1048576/fatalbothstreams afterdrain; legacy
+callers retain prior contract. Realexactversion oversized/invalidstderr REDs and
+positivecontrols verified. Scoped re-review I1ADDRESSED/no newCriticalImportant;
+/tmp/dispatcher-devin-acp-catalog-task1-fix1-review-20261024.md. Original expected
+fullsuite diagnostic-noise Minor remainsCV14. No output suppression or pristineclaim.
+
+Finalfix1/full-check-i1 `mise exec -- pnpm check`:194files3263tests and
+build/typecheck/lint/boundaries pass; Vitest132.92s wall151.382018375s,
+UTC2026-10-24T15:53:54.148224Z→15:56:25.530474Z, logSHA
+a36fba389d3a181cf88fe3b8c37d736de712e20de64f8bcd5a41aef687ccd9f2.
+Focus4files283tests pass; earlier7/308 preceded Unicodefix, notfinalpayload claim.
+Setup missingmodule/parse/unimplementedstub, firstI1newtesttimer/table errors,
+meaningful cleanup/pipe/Unicode/stderr REDs and superseded complete gates retained;
+no unchanged retry or timeout/worker/cache/lint/assertion weakening.
+
+Root /tmp/dispatcher-devin-acp-catalog-fix1-root-audit-20261024.json verifies
+35actualrecords161631pre+161635post/140digests/5externalscripts,503trackedGit
+matchingfinalprepost/live and4620inputs/684liveDist/16buildinfo,zeroerrors.
+AssignedignoredreportMarkdown finalizedaftergate onlyliveinputdrift, primary
+HEAD/status unchanged. FrozenGit source matches,29bodies exactafterlistedcanonical
+substitutions, priorcatalog61bodies exact, oldhelper23(notmistaken28)prefix/bodies
+exact; currenthelper46. Client113/producer59/ACPfixture andowningroot/drain bytes
+unchanged; approvedhelper-source exception explicit. RootseparatemapSHA
+170286e491d9fa025295a3bbefdef8a3c10856f88db659f42b3d9cf4aacdb7d8.
+Pre-I1audit preserved separately; runtime/node_modules exclusions mean nohermeticclaim.
+
+LinearCV10a1db2978-f23b-48da-a82e-fc4d1c4f06e2/CV05cb3939aa-0b7c-4a5a-a933-5810c33d626b
+saved/readback, states unchanged. Next runtime28, atomicfactory/config17 and
+Controller30+lookup1; no publicprofile/account/service activation. Source503
+immutable identities/decisions retained. Group/EPERM/R020/CV13audit28/native/
+account/GUI/writer/release/parentCV14 remainopen. Quota92used8remaining,allowed,
+reset2unused; continuing latestgoal.

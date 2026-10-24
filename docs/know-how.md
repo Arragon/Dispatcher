@@ -1104,3 +1104,12 @@
 - Enforce a callback capacity limit before invoking the owning callback. Checking
   only while storing its returned Promise can start one untracked operation at
   the limit. Cached unknown cleanup does not become confirmed after late settlement.
+
+
+- Validate every subprocess phase before admitting a bounded catalog. Discarded
+  version diagnostics cannot satisfy byte/encoding requirements of the whole query;
+  the shared helper has a strict output option for callers with that contract.
+  Complete owned drain before output validation and keep cleanup uncertainty first.
+- Opaque Unicode selectors need a deterministic total order for content hashes.
+  Locale collation can equate distinct composed/decomposed strings; binary string
+  ordering preserves exact identities and revision stability without normalization.

@@ -234,8 +234,16 @@ fixture extraction, no final drift. Explicit Devin allocation, awaited durable
 facts and raw work lifetime remain internal. Full-suite fixture-noise Minor
 staysCV14; public catalog/runtime/config/Controller registration remains pending.
 
-Next: canonical Devin Local catalog29direct/one exact-ID case through later real
-Controller composition, runtime28, atomic config/factory17, Controller30,
+Canonical catalog a10a2c1+1338913 is locally complete after I1fix/re-review:
+29source semantic cases and one explicit laterController lookup pending;
+currentcatalog65/helper46, focus4/283 and finaldefault194/3263 pass. Version
+stderr strict validation closes reviewed admission gap while preserving existing
+callers. Root35captures/161631pre+161635post/503trackedGit and source/fixture
+maps pass, onlypostgateignoredreportMarkdown differs. Native qualification is
+not established; originalM1diagnosticnoise remainsCV14.
+
+Next: Devin Local runtime28, atomic config/factory17, Controller30 and the
+pending exact-ID/no-Session case through real canonical routing trial,
 remaining native providers, unresolved shared group safety and original
 provider/GUI/writer/service/release qualification.
 Current native integration uses fixtures only; no real account/config/service activation

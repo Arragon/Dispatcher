@@ -1754,3 +1754,19 @@ status; the Adapter turn wrapper alone cannot establish drain. Unknown disconnec
 receipts remain immutable after later settlement. This internal Adapter is not
 registered in the profile factory or Controller and grants no continuation,
 history, background-tool or writer-release qualification.
+
+
+## Internal Devin Local catalog
+
+The internal scoped Adapter queries only the literal local models inventory and
+projects current AccountModelCatalog fields. Its opaque fingerprint binds captured
+canonical ownership and physical roots; exact selectors, unknown billing and
+unconfirmed access do not imply account qualification. Canonical variants use
+native-auto for adaptive and no inferred default, alias or parameter capability.
+
+Both version admission and model output use owned roots and natural-close proof.
+The catalog opts into the shared version probe's strict output validation; the
+probe retains its existing stdout cap, independently bounds stderr and validates
+UTF-8 after drain. The model query has independent 1MiB stream bounds and a whole
+query deadline. Cleanup uncertainty wins over usable data, cancellation or timeout.
+This catalog is internal until explicit runtime/profile/Controller composition.

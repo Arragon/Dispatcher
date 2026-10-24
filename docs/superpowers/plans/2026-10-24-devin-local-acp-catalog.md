@@ -114,29 +114,29 @@ this port. Source counts are inventories, not target passing totals.
 
 **Steps and acceptance**
 
-- [ ] Inspect current contracts/root/probe/producer/canonical catalog patterns and
+- [x] Inspect current contracts/root/probe/producer/canonical catalog patterns and
   frozen source; record all30 case dispositions and exact substitutions before code.
-- [ ] Port29 direct cases first. Missing-module RED is port evidence only. Add
+- [x] Port29 direct cases first. Missing-module RED is port evidence only. Add
   meaningful loadable RED for unconditional success drain/denied stop/inherited
   pipe unknown precedence, stdout/stderr/invalid UTF-8 bounds, captured signal and
   physical alias drift, current owner/context validation and scoped/unscoped Adapter.
   Use real production reader/Adapter with local fixtures; narrow spies may model an
   OS denial but cannot supply a fake success or replace owning callbacks.
-- [ ] Implement pure canonical projection and owned reader, reusing shared helpers.
+- [x] Implement pure canonical projection and owned reader, reusing shared helpers.
   Validate all family/variant bounds and normalized bytes, stable identity, captured
   ownership and pinned version before model command. Every completion drains the
   original root and pipes before returning data/error; no stop-failure masking.
-- [ ] Wire only the existing internal Adapter override and captured physical scope.
+- [x] Wire only the existing internal Adapter override and captured physical scope.
   Preserve prior client/producer/body maps and all old provider behavior; no public
   registration or obsolete manifest/API restoration.
-- [ ] Self-review final diff and named callers before freezing. Build with
+- [x] Self-review final diff and named callers before freezing. Build with
   `mise exec -- pnpm build`, targeted lint for changed files, then focus:
-  `mise exec -- pnpm vitest run packages/adapters/test/devin-catalog.test.ts packages/adapters/test/devin-acp.test.ts packages/adapters/test/devin-acp-execution.test.ts packages/adapters/test/owned-root-process.test.ts packages/adapters/test/owned-native-probe.test.ts packages/adapters/test/execution-selection.test.ts packages/adapters/test/native-profile.test.ts`.
+  `mise exec -- pnpm vitest run packages/adapters/test/devin-catalog.test.ts packages/adapters/test/devin-acp.test.ts packages/adapters/test/devin-acp-execution.test.ts packages/adapters/test/owned-root-process.test.ts packages/adapters/test/native-version-probe.test.ts packages/adapters/test/execution-selection.test.ts packages/adapters/test/native-profile.test.ts`.
   Derive tools from package configuration. No unchanged repeat after passing.
-- [ ] Run one unchanged default `mise exec -- pnpm check` on final payload, all
+- [x] Run one unchanged default `mise exec -- pnpm check` on final payload, all
   build/typecheck/lint/boundaries/tests required. Preserve any failure/actual input
   drift and report concrete blockers; do not silently amend tests/policy or rerun.
-- [ ] Commit only scoped source/tests; verify Git blobs against actual final gate
+- [x] Commit only scoped source/tests; verify Git blobs against actual final gate
   pre/post input bytes, source29 assertions/adaptations and unchanged client/producer.
   Write full assigned report with RED/GREEN, commands/UTC/exits/wall/log hashes,
   scope/count mapping, self-review/noise/limitations. No subagents/docs/Linear/push/
@@ -145,3 +145,19 @@ this port. Source counts are inventories, not target passing totals.
 **Handoff:** Runtime28 consumes real producer raw status; atomic config/factory17
 then Controller30 and the pending exact-ID catalog case follow separately. This
 unit establishes local fixture behavior only, no native qualification/activation.
+
+
+## Reviewed I1 scope addition and acceptance
+
+Original three-path unit a10a2c1 passed local gates but review found version
+stderr admission missing. Root ruled before fix to extend native-version-probe.ts
+and its additive tests with strictOutput:{stderrMaxBytes:1048576} for this actual
+catalog caller. Strict mode preserves16384stdoutcap and validates both streams
+fatally after owned drain; existing callers retain their earlier contract. No new
+reader/cancellation or public API was created. Actual old helper count is23,
+including conditional group case, not28; all old bodies/budgets retained.
+
+Fix1338913, scoped I1 re-review ADDRESSED/no new Critical/Important; final194/3263
+and root complete-input/source audit pass. Original source29+one realController
+lookup pending remains. Unicode exact binary sort supplements the source stability
+purpose. Prior RED/setup failures and superseded gates retained; no weakening.

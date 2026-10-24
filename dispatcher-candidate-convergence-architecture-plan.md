@@ -593,3 +593,6 @@ server profile。owned host/producer及精确分配observer随后保存105ef8b�
 
 
 **ACP producer回执**：2631e36仅内部执行层及显式分配身份，原32producer断言与27新增回归、client113不变；最终193文件3175例及全部非测试门禁通过。独立spec/quality Approved、零Critical/Important；root核验35次真实捕获161111pre/161116post、500Git和最终全部输入无漂移，共享fixture除声明外精确迁移，主工作区未改动。异步observer有单次/整体500ms确认并保留原始工作存续，后续runtime必须消费该状态。下一独立canonical catalog29直接案例+1真实后续Controller exact-ID组合，再runtime28、原子factory/config17、Controller30。过时ModelInfo/manifest字段不恢复；group/EPERM/R020、CV13audit28、正式Gates和CV14仍开放。
+
+
+**ACP catalog回执**：a10a2c1+1338913完成内部canonical目录29直接源例，1过时modelInfo exact-ID/no-Session留真实后续Controller组合。独立审查I1版本stderr缺口经共享helper严格选项窄修/回归/范围复审确认解决；当前目录65、helper46，最终194文件3263例及所有非测试门禁通过，root35次输入捕获/503Git/source fixture映射核验通过。旧helper实际23例全保留，Unicode精确排序修复已留RED。下一runtime28、原子config/factory17、Controller30+lookup1；未激活真实profile/account/service，正式Gates/CV13/CV14保持开放。
