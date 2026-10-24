@@ -115,11 +115,19 @@ the final default187 files/2608 tests (104.11s, wall118.173s) and non-test gates
 All21 tracked Git inputs and16 generated inputs match the final manifest; all808
 saved payload hashes across25 runs match. The prior review attempt failed at the
 service usage limit without producing a report; the fresh2026-10-24 independent
-review is spec compliant/quality Approved with no Critical/Important findings. This local runtime slice remains unregistered. Its earlier
+review is spec compliant/quality Approved with no Critical/Important findings. This local runtime slice remains outside default Controller composition. Its earlier
 2603-test gate, thenable/getter REDs, fixture errors and R-020 remain distinct.
 
-Next: atomic ConfigPlan/factory registration, the
-eight original Controller service assertions and current lifecycle/restart
+Atomic ConfigPlan/factory registration394a33d is now independently spec compliant
+and quality Approved with no Critical/Important. Both narrow backend unions,
+server-only structural settings and exact factory ownership/opt-in guards land
+together. Final owned focused2/94 and default188files/2695tests (90.23s,
+wall102.482s) pass; four Git payloads match the final gate. Earlier8/279 predates
+final test strengthening, and the intentional Unicode regex RED stays distinct.
+The gate rebuilt eight generated artifacts; a root-only next-plan document also
+changed during it, without changing any owned code/test input.
+
+Next: the eight original Controller service assertions and current lifecycle/restart
 regressions, other native providers, then actual
 provider/GUI/writer/service/release qualification. The
 current integration used fixtures only; no real account/config/service activation

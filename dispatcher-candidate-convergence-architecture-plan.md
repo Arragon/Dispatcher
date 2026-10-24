@@ -396,7 +396,7 @@ server profile。owned host/producer及精确分配observer随后保存105ef8b�
 持久化失败继续保守处理。canonical catalog0208bff随后通过独立审查，31项来源安全
 断言映射为当前AccountModelCatalog/immutable selection，新增71例，最终186文件/
 2495例和非测试门禁通过；实际backend、读取前捕获与清理后复核已补齐。
-内部runtime随后保存761dddd：保留12原始用例并新增99回归，host既有23例外再补两处actual-spawn守卫；最终默认187文件/2608例及非测试门禁通过。独立spec/quality审查通过，无Critical/Important，21个Git输入与16个生成输入均匹配最终manifest。下一ConfigPlan/factory注册按preflight合为原子单元，避免schema单独放行后误落standalone；Controller八项原service断言、生命周期/重启及原真实Gates继续，未激活真实profile/账号/服务。
+内部runtime随后保存761dddd：保留12原始用例并新增99回归，host既有23例外再补两处actual-spawn守卫；最终默认187文件/2608例及非测试门禁通过。独立spec/quality审查通过，无Critical/Important，21个Git输入与16个生成输入均匹配最终manifest。下一ConfigPlan/factory注册按preflight合为原子单元，避免schema单独放行后误落standalone；原子注册随后保存394a33d并独立审查通过：最终focused2/94与默认188文件/2695例通过，四份Git payload精确匹配；结构schema无物理I/O，禁用profile不调用工厂，server必须精确owning backend且显式opt-in。Controller八项原service断言、生命周期/重启及原真实Gates继续，未激活真实profile/账号/服务。
 
 ### CV-10 · 保留其他本地Harness增量与Copilot未提交工作
 

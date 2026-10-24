@@ -60,8 +60,8 @@ Root owns architecture, know-how, convergence records and Linear after review. I
 - Produces `AgentProfileConfig.nativeInteraction.backendId` union `"pi-rpc" | "codex-app-server" | "opencode-server-v2"`. No new public configuration field or engine API.
 - Server settings: required string executable is absolute on the current validation host, length 1..4096, without C0/DEL. Optional model is an exact provider/model selector, bounded to the current canonical selection/catalog composite-selector limit (240), with nonempty provider and model, no C0/DEL or `#`, provider has no `/`; model may contain `/`. The producer also invokes freezeExecutionSelection, whose requestedModel text bound is240; its earlier512 identifier precheck is not the effective public selector limit. Existing standalone settings are unaffected.
 
-- [ ] Re-read current schema, Codex/Pi native config tests and config engine after catalog/runtime commits. Confirm nested rules and no other owner is editing schema/native-profile.
-- [ ] Create `opencode-native-interaction.test.ts` with these named groups and concrete assertions:
+- [x] Re-read current schema, Codex/Pi native config tests and config engine after catalog/runtime commits. Confirm nested rules and no other owner is editing schema/native-profile.
+- [x] Create `opencode-native-interaction.test.ts` with these named groups and concrete assertions:
   - `round-trips explicit server configuration without probing`: a nonexistent absolute `/native/bin/opencode` validates, omitted model/approval remain omitted, input stays unchanged.
   - `preserves omitted native interaction as standalone`: executable `opencode` with existing standalone settings is still structurally valid.
   - `rejects unsupported interaction fields`: parameterize mode native-session/native-gui/control, backend standalone/arbitrary, locations cloud/self-hosted, surface desktop/tui, enabled true and top-level nativeInteraction enablement. All reject; none create a ConfigPlan.
@@ -73,10 +73,10 @@ Root owns architecture, know-how, convergence records and Linear after review. I
   - `keeps OpenCode native login outside credential storage`: credentialRef rejects with current native-login semantics.
   - `retains disabled structural registration without activation`: valid disabled server profile validates; invalid executable shape or forbidden settings reject even when disabled.
   - `reviews activation and removal through sensitive ConfigPlan`: before is standalone; unconfirmed apply rejects `CONFIG_CONFIRMATION_REQUIRED` with current config/revision unchanged; confirmed apply preserves exact registration. Removing/changing it produces concrete agentProfiles diff and requires confirmation.
-- [ ] Run only this new file and record the expected missing-union/validation failures before code changes. Do not treat a test failing for a malformed fixture as a useful red test.
-- [ ] Extend both union/schema enum entries and replace the binary backend/provider/path branch with explicit handling for the three existing allowed variants. Keep Codex/Pi validation and error meanings intact; add server-only allowlist/model/approveTools checks. No host filesystem/process access in schema or ConfigPlan validation.
-- [ ] Run `mise exec -- pnpm vitest run packages/config/test/opencode-native-interaction.test.ts packages/config/test/codex-native-interaction.test.ts packages/config/test/pi-native-interaction.test.ts packages/config/test/config.test.ts`.
-- [ ] Review the R1 diff before continuing R2 in this same task; no intermediate R1 commit or activation. Passing means all listed structural/ConfigPlan groups pass without native reads; no change to engine risk policy is needed.
+- [x] Run only this new file and record the expected missing-union/validation failures before code changes. Do not treat a test failing for a malformed fixture as a useful red test.
+- [x] Extend both union/schema enum entries and replace the binary backend/provider/path branch with explicit handling for the three existing allowed variants. Keep Codex/Pi validation and error meanings intact; add server-only allowlist/model/approveTools checks. No host filesystem/process access in schema or ConfigPlan validation.
+- [x] Run `mise exec -- pnpm vitest run packages/config/test/opencode-native-interaction.test.ts packages/config/test/codex-native-interaction.test.ts packages/config/test/pi-native-interaction.test.ts packages/config/test/config.test.ts`.
+- [x] Review the R1 diff before continuing R2 in this same task; no intermediate R1 commit or activation. Passing means all listed structural/ConfigPlan groups pass without native reads; no change to engine risk policy is needed.
 
 ### Phase R2: Owning factory guards without server activation
 
@@ -88,7 +88,7 @@ Root owns architecture, know-how, convergence records and Linear after review. I
 - Preserve `cliBackendFactory(provider, profile): CliAgentBackend | undefined`; server identity is returned backend's exact `backendId`. No additional generic factory framework.
 - Extend only NativeProfileRegistration's backend union. The configured server must receive an existing owning factory result; this task creates no runtime itself.
 
-- [ ] Add OpenCode analogues beside the four Codex guard tests in native-profile.test.ts:
+- [x] Add OpenCode analogues beside the four Codex guard tests in native-profile.test.ts:
   - Configured server and absent factory/undefined result reject `OPENCODE_RUNTIME_UNAVAILABLE` (choose this narrow new own code; do not reuse catalog errors), with no native backend.start.
   - Profile configured for server with provider codex/pi/cursor/unsupported rejects `BACKEND_MISMATCH` before any codex/CLI factory callback. A valid OpenCode profile configured for pi-rpc/codex-app-server also rejects before callback.
   - Valid configured OpenCode whose factory returns standalone/foreign backend rejects `BACKEND_MISMATCH` before start.
@@ -97,11 +97,11 @@ Root owns architecture, know-how, convergence records and Linear after review. I
   - Disabled profile returns undefined before any factory call, including a nonexistent physical absolute executable. Structural validation remains R1's responsibility.
   - Omitted interaction preserves default standalone manifest and existing broad CLI factory behavior. Preserve all current Codex/Pi/other CLI tests.
   - Effective XDG OpenCode directory remains in nativePrivatePaths. Assert process env fixture restoration; do not create/read real native data.
-- [ ] Run the focused file and confirm failures occur at the intended missing server guards.
-- [ ] Add a narrow pre-factory check for configured server ownership, then matching result/unconfigured-injected checks at the existing CLI factory boundary. Preserve disabled early return and existing Codex guards. Do not restore obsolete Controller-specific OpenCodeAdapter construction.
-- [ ] Run `mise exec -- pnpm vitest run packages/adapters/test/native-profile.test.ts packages/adapters/test/native-cli.test.ts packages/adapters/test/cli-catalog.test.ts packages/config/test/opencode-native-interaction.test.ts` (plus the reviewed new canonical catalog file if one was created).
-- [ ] Self-review the combined four-path payload and source-group mapping, then run the one final default `mise exec -- pnpm check` required by this task execution contract. It includes typecheck/build, lint, boundaries and tests; record exact logs/source/result manifests. Do not duplicate these broad checks beforehand without a concrete independent need.
-- [ ] Commit only the combined four code/test paths and own plan receipt after verification; write the assigned SDD report for root independent spec/quality review. Root updates the explicit registration architecture boundary afterward. Do not claim Controller activation or any real provider qualification from these tests.
+- [x] Run the focused file and confirm failures occur at the intended missing server guards.
+- [x] Add a narrow pre-factory check for configured server ownership, then matching result/unconfigured-injected checks at the existing CLI factory boundary. Preserve disabled early return and existing Codex guards. Do not restore obsolete Controller-specific OpenCodeAdapter construction.
+- [x] Run `mise exec -- pnpm vitest run packages/adapters/test/native-profile.test.ts packages/adapters/test/native-cli.test.ts packages/adapters/test/cli-catalog.test.ts packages/config/test/opencode-native-interaction.test.ts` (plus the reviewed new canonical catalog file if one was created).
+- [x] Self-review the combined four-path payload and source-group mapping, then run the one final default `mise exec -- pnpm check` required by this task execution contract. It includes typecheck/build, lint, boundaries and tests; record exact logs/source/result manifests. Do not duplicate these broad checks beforehand without a concrete independent need.
+- [x] Commit only the combined four code/test paths and own plan receipt after verification; write the assigned SDD report for root independent spec/quality review. Root updates the explicit registration architecture boundary afterward. Do not claim Controller activation or any real provider qualification from these tests.
 
 ## Historical source test disposition
 
@@ -123,3 +123,7 @@ Current applicable config tests are **real** Codex/Pi native-interaction groups 
 - The reviewed runtime must export the concrete factory and lifecycle contract documented in the Controller plan before that plan is implemented. No active catalog WIP or inferred runtime API is an accepted dependency.
 
 Root preflight amendment records the atomic task boundary; the original R1/R2 requirement groups and historical source dispositions are retained above. Confirm current BASE and re-read all four implementation paths after runtime review before dispatch; historical line numbers are navigation hints, not authority.
+
+## Reviewed implementation receipt 2026-10-24
+
+Atomic source394a33dc5532023ee4d079ec854fb05f9a47caae changes exactly four code/test paths. R1 original RED44/16 and R2 RED20/12 demonstrate missing enum/guards. Earlier8/279 GREEN precedes final assertion strengthening; final2/94 shares all four final payloads, followed by default188files/2695tests exit0, Vitest90.23s/wall102.482469541s. The U+2028 RED is an explicitly intentional restoration of an intermediate regex, not the initial natural RED. Root verifies all4 Git/pre/post/source hashes,11530 saved payloads across10 snapshots and668 generated post values; gate rebuilt8 generated artifacts and root next-controller-plan doc changed separately during the run. No owned payload changed. Independent /tmp/dispatcher-opencode-registration-review-20261024.md returns spec compliant/quality Approved without Critical/Important. Inherited fixture logging is an optional separate hygiene observation. Root resolves cannot-verify by linking reviewed runtime761dddd physical-admission evidence; default Controller composition, actual native/account/provider qualification and parentCV14 remain open. Coordinated docs follow this source gate; no real configuration activated, schema migration/dependency/secret change, push or merge occurred.

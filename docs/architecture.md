@@ -64,8 +64,15 @@ producer factory is a trusted boundary, not proof of this default spawn composit
 Exact persisted binding and current physical/entry authority select each source;
 no aggregate source or cold reattachment is provided. Public shutdown/cancellation
 does not erase raw admission or callback settlement, and cached unknown cleanup
-cannot become confirmed through a late result. ConfigPlan/profile/service wiring
-and actual capability qualification remain separate work.
+cannot become confirmed through a late result. Explicit ConfigPlan/native-profile
+registration admits only compatible opencode-server-v2 on an embedded managed
+worktree profile. Schema validation checks executable shape and the narrow
+executable/model/approveTools:false settings without physical/native I/O; omitted
+model and approval stay omitted. The adapter factory requires the matching owning
+backend and explicit opt-in, rejects foreign or implicit server injection, and
+returns disabled profiles before factory work. Standalone and other providers
+retain their settings. Controller service composition and actual capability
+qualification remain separate work.
 
 Controller retains unchanged profile adapters of every provider across ConfigPlan applies,
 bound to the profile and owning Runner execution identity. Replacement/removal

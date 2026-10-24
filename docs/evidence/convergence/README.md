@@ -4046,3 +4046,71 @@ Controller/source/retention/shutdown/restart, the other native providers, audite
 Pi and retention/delivery gaps, and the overall goal remain incomplete. No real
 profile/config/account/service was activated, no dependency/persisted format changed,
 and no push/merge/release occurred.
+
+
+### 2026-10-24 atomic OpenCode registration (locally complete)
+
+Source `394a33dc5532023ee4d079ec854fb05f9a47caae` changes exactly schema.ts,
+native-profile.ts and their two owned test files. Both structural backend unions
+admit only the explicit compatible/opencode-server-v2/managed-worktree variant
+on the owning embedded OpenCode profile. Server settings are executable, optional
+exact model and optional approveTools:false; path validation is structural only,
+selector240 uses canonical safe-text/first-slash rules, and omitted values stay
+omitted. Disabled invalid shapes still fail validation; valid disabled registration
+returns before factory work. Existing Codex/Pi/standalone contracts are retained.
+
+The existing factory boundary rejects foreign configured ownership before any
+callback, requires an owning result, checks its exact backend, and rejects server
+injection without opt-in or into foreign CLI providers. No default Controller
+runtime composition, executable existence/probe, native account operation or
+capability qualification is added by this registration unit. ConfigPlan remains
+the sole mutation/review boundary, with unchanged sensitive agentProfiles policy.
+
+There is no original a499d84 OpenCode-specific config test file. The four historical
+native-interaction-config.test.ts groups have these explicit current dispositions:
+
+| Historical group | Current assertion / contract decision |
+| --- | --- |
+| Omitted config and disabled profile | New structural omitted/disabled cases and factory disabled-zero-callback case; invalid disabled settings still reject. |
+| Confirmed arbitrary backend/GUI and cloud rejection | Sensitive concrete agentProfiles addition is confirmed through real ConfigurationEngine/SQLite; arbitrary/global/GUI/cloud shapes intentionally reject under the narrow current contract. |
+| GUI surface and disabled HUMAN protection | Surface/global fields reject; unchanged interaction-guard tests retain HUMAN mutation protection. No config-time GUI path is restored. |
+| Optional global removal diff | Per-profile nativeInteraction removal/settings change appears in sensitive /agentProfiles diff and unconfirmed apply preserves current config/revision. |
+
+New config62 plus native-profile32 (existing7+25 new) produce the final focused
+`mise exec -- pnpm vitest run packages/adapters/test/native-profile.test.ts
+packages/config/test/opencode-native-interaction.test.ts`:2files/94tests, exit0,
+0.797s wall. Earlier8files/279tests used the same final production but both tests
+were later strengthened; it remains earlier-payload evidence. R1 RED44failed/16pass
+and R2 RED20failed/12pass prove missing enum and factory guards. The U+2028 RED
+1failed/61pass intentionally restored an intermediate regex to demonstrate the
+regression; it is not described as the first natural failing implementation.
+Final2/94 shares all four final hashes; subsequent default `mise exec -- pnpm check`
+passes build/typecheck, lint, boundaries and188files/2695tests, exit0, Vitest90.23s,
+wall102.482469541s. No unchanged retry, deadline/worker/skip/assertion/cache change.
+
+Evidence root `/tmp/dispatcher-opencode-task1-evidence/` contains each actual
+pre.json/source copies/output.log/result.json. Root audit
+`/tmp/dispatcher-opencode-registration-root-payload-audit-20261024.json` matches
+all4 owned committed Git/pre/post/source hashes,11530 saved payload hashes across
+10 snapshots and668 generated post values. The full gate legitimately rebuilt8
+generated schema/native-profile artifacts; the sole tracked pre/post delta was
+root-owned next-Controller-plan documentation. The four owned inputs were stable;
+the entire repository pre/post set was not identical. Full log SHA256 is
+`b8e0550cae02a6c5879cb83db95c0ce5d6ca1caa63907ab14a61e2af9cd31bc9`.
+Generated outputs and reports are not committed; root coordinated metadata follows.
+
+Independent `/tmp/dispatcher-opencode-registration-review-20261024.md` returns
+spec compliant/quality Approved with no Critical/Important. It independently
+confirms the final-payload chronology, canonical selector/approval contract and
+unchanged XDG exclusion; inherited fixture warn/error log noise is an optional
+separate hygiene follow-up. Root resolves cannot-verify with reviewed runtime761dddd
+physical admission, while Controller activation, actual provider/account/native
+qualification and parentCV14 remain open. Source inventory retains503 rows and
+original objects/decisions, with four verification descriptions updated; the new
+config test is not invented as an additional historical source row.
+
+Next Controller C1/C2/C3 plan is preflighted: one shared exact Codex/OpenCode helper,
+three-registry source/lifecycle composition, raw-operation profile/SQLite barriers,
+and explicit read-only OpenCode restart consistency. Pi's authority path stays
+unchanged in this task. No real configuration, service, account, dependency,
+persisted format, push or merge changed; CV09 and the overall goal remain incomplete.
