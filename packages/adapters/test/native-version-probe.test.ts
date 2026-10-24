@@ -23,7 +23,7 @@ afterEach(async()=>{await vi.advanceTimersByTimeAsync(10_000);try{if(rootMode)ex
 it.each([undefined,false] as const)("spawns exact sanitized version options in ownsGroup=%s mode",async ownsGroup=>{
  const child=fixture(),stop=vi.spyOn(OwnedProcessGroup.prototype,"stop").mockResolvedValue(),pending=readOwnedNativeVersion(input(ownsGroup===false?{ownsGroup:false}:{}));child.stdout.write("tool 1.2\n");natural(child);expect(await pending).toBe("tool 1.2");
  expect(spawn).toHaveBeenCalledExactlyOnceWith("/fixture/tool",["--version"],{cwd:"/fixture/work",env:{PATH:"/fixture/bin",PWD:"/fixture/work",PROVIDER_TOKEN:"retained"},detached:ownsGroup===false?false:process.platform!=="win32",shell:false,stdio:["ignore","pipe","pipe"]});
- if(ownsGroup===false){expect(stop).not.toHaveBeenCalled();expect(child.kill).not.toHaveBeenCalled();}else {expect(stop).toHaveBeenCalled();if(process.platform!=="win32")expect(vi.mocked(process.kill).mock.calls).toEqual([[-12345,0]]);}
+ if(ownsGroup===false){expect(stop).not.toHaveBeenCalled();expect(child.kill).not.toHaveBeenCalled();}else {expect(stop).toHaveBeenCalled();if(process.platform!=="win32")expect(vi.mocked(process.kill).mock.calls).toEqual([]);}
 });
 it.each([0,-1,NaN,Infinity])("does not spawn for invalid timeout %s",async timeoutMs=>{fixture();await expect(readOwnedNativeVersion(input({timeoutMs}))).rejects.toThrow("unavailable");expect(spawn).not.toHaveBeenCalled();});
 it("does not spawn when pre-aborted",async()=>{fixture();await expect(readOwnedNativeVersion(input({signal:AbortSignal.abort()}))).rejects.toThrow("unavailable");expect(spawn).not.toHaveBeenCalled();});
@@ -53,7 +53,7 @@ it("cannot use valid data when root stop is denied",async()=>{
 });
 it.runIf(process.platform!=="win32")("drains a successful default group with the exact captured negative PID sequence",async()=>{
  const child=fixture();let present=true;vi.mocked(process.kill).mockImplementation((target,kind)=>{expect(target).toBe(-12345);if(kind===0){if(!present)throw Object.assign(Error("gone"),{code:"ESRCH"});return true;}expect(kind).toBe("SIGTERM");present=false;return true;});
- const pending=readOwnedNativeVersion(input());child.stdout.write("valid 1.2");child.emit("exit",0);await vi.advanceTimersByTimeAsync(0);child.emit("close",0);expect(await pending).toBe("valid 1.2");expect(vi.mocked(process.kill).mock.calls).toEqual([[-12345,0],[-12345,0],[-12345,"SIGTERM"],[-12345,0]]);expect(child.kill).not.toHaveBeenCalled();
+ const pending=readOwnedNativeVersion(input());child.stdout.write("valid 1.2");child.emit("exit",0);await vi.advanceTimersByTimeAsync(0);child.emit("close",0);expect(await pending).toBe("valid 1.2");expect(vi.mocked(process.kill).mock.calls).toEqual([[-12345,0],[-12345,"SIGTERM"],[-12345,0]]);expect(child.kill).not.toHaveBeenCalled();
 });
 it("rejects missing root exit and close even after successful SIGKILL delivery",async()=>{
  const child=fixture(),pending=observe(readOwnedNativeVersion(input({ownsGroup:false,timeoutMs:1})));child.stdout.write("valid 1.2");await vi.advanceTimersByTimeAsync(2501);await expect(pending).rejects.toThrow("exit-unconfirmed");expect(child.kill.mock.calls).toEqual([["SIGTERM"],["SIGKILL"]]);

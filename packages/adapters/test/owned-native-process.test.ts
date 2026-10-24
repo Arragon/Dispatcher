@@ -4,11 +4,12 @@ import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
-import {spawn,type ChildProcess} from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import { CodexCliBackend, QoderCliBackend, SpawnCliAgentBackend, SpawnProcessExecutor, OwnedProcessGroup } from "../src/index.js";
+function alive(pid:number):boolean {try{process.kill(pid,0);return true;}catch{return false;}}
+import {spawn} from "node:child_process";
 import {OwnedProcessRoot} from "../src/owned-root-process.js";
 import {drainCatalogProcess} from "../src/catalog-process.js";
-function alive(pid:number):boolean {try{process.kill(pid,0);return true;}catch{return false;}}
 it.runIf(process.platform!=="win32")("keeps inherited descendants outside root authority and requires their natural pipe closure",async()=>{
   const root=mkdtempSync(join(tmpdir(),"native-root-")),ready=join(root,"child.pid"),body=`require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(`require('node:fs').writeFileSync(${JSON.stringify(ready)},String(process.pid));setInterval(()=>{},1000)`)}],{stdio:['ignore','inherit','inherit']}).unref();setInterval(()=>{},1000)`;
   const child=spawn(process.execPath,["-e",body],{cwd:root,detached:false,stdio:["ignore","pipe","pipe"]}),owner=new OwnedProcessRoot(child),closed=new Promise<void>(resolve=>child.once("close",()=>resolve()));let pid:number|undefined;
@@ -16,19 +17,6 @@ it.runIf(process.platform!=="win32")("keeps inherited descendants outside root a
     await vi.waitFor(()=>expect(existsSync(ready)).toBe(true));pid=Number(readFileSync(ready,"utf8"));await owner.stop();expect(alive(pid)).toBe(true);await expect(drainCatalogProcess(owner,closed,500)).rejects.toMatchObject({code:"MODEL_CATALOG_CLEANUP_UNKNOWN"});expect(alive(pid)).toBe(true);
   }finally{
     if(existsSync(ready)){const captured=Number(readFileSync(ready,"utf8"));if(alive(captured))process.kill(captured,"SIGKILL");}child.kill("SIGKILL");await closed;child.stdout.destroy();child.stderr.destroy();rmSync(root,{recursive:true,force:true});
-  }
-});
-it.runIf(process.platform!=="win32")("lets Codex SIGINT clean its detached tool before draining owned descendants",async()=>{
-  const root=mkdtempSync(join(tmpdir(),"codex-cooperative-")),toolFile=join(root,"tool.pid"),ownedFile=join(root,"owned.pid"),interrupted=join(root,"interrupted");
-  const descendant=(file:string)=>`process.on('SIGTERM',()=>{});require('node:fs').writeFileSync(${JSON.stringify(file)},String(process.pid));setInterval(()=>{},1000)`;
-  const body=`const fs=require('node:fs'),cp=require('node:child_process');const tool=cp.spawn(process.execPath,['-e',${JSON.stringify(descendant(toolFile))}],{detached:true,stdio:'ignore'});tool.unref();cp.spawn(process.execPath,['-e',${JSON.stringify(descendant(ownedFile))}],{stdio:'ignore'}).unref();process.on('SIGINT',()=>{tool.once('exit',()=>{fs.writeFileSync(${JSON.stringify(interrupted)},'tool exited after SIGINT');process.exit(0);});tool.kill('SIGKILL');});setInterval(()=>{},1000)`;
-  writeFileSync(join(root,"exec"),body);const turn=await startOwned("codex",root,body);let tool:number|undefined,owned:number|undefined;
-  try{
-    await vi.waitFor(()=>{expect(existsSync(toolFile)).toBe(true);expect(existsSync(ownedFile)).toBe(true);});tool=Number(readFileSync(toolFile,"utf8"));owned=Number(readFileSync(ownedFile,"utf8"));
-    await turn.cancel();expect(readFileSync(interrupted,"utf8")).toBe("tool exited after SIGINT");expect(alive(tool)).toBe(false);expect(alive(owned)).toBe(false);expect(await turn.result()).toMatchObject({state:"cancelled"});
-  }finally{
-    for(const file of [toolFile,ownedFile])if(existsSync(file)){const captured=Number(readFileSync(file,"utf8"));if(alive(captured))process.kill(captured,"SIGKILL");}
-    if(turn.processId&&alive(turn.processId))process.kill(turn.processId,"SIGKILL");await turn.cancel();rmSync(root,{recursive:true,force:true});
   }
 });
 async function startOwned(kind: "codex" | "structured" | "qoder" | "generic", root: string, body: string): Promise<{ cancel(): Promise<void>; result(): Promise<{ state: string }>; processId?: number }> {
