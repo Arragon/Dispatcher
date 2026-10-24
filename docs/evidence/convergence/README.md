@@ -4247,3 +4247,63 @@ composition/retention assertions. C3 restart, other native providers, Pi raw-sta
 audit and original provider/account/GUI/writer/service/release Gates remain open.
 CV09/CV14 and the overall goal are not complete. No native account/session deletion,
 real configuration/service activation, dependency/migration, push or merge occurred.
+
+### 2026-10-24 Controller OpenCode C3 (locally complete)
+
+Source `c82af5c188880ca7b9902123a5fbf6b53833f26b`, BASE `3c1a565`, changes
+start-recovery, its service import/two consumers, OpenCode tests and one existing
+Codex test's assertions. Private checkedManagedRun preserves persisted canonical
+agreement and unique control ownership; explicit Codex/OpenCode wrappers enforce
+their own provider/backend/product/region/thread/parent/session rules. OpenCode
+session uses exact `^ses[A-Za-z0-9_-]+$`, maximum512. Both constructor preflight
+and journal reconciliation accept only consistent read-only records, invalidate
+observation/read barrier and retain original identity as unavailable/unknown/manual.
+No source/reattach/native replay/continuation/writer or account provenance is granted.
+Existing QUEUED→WAITING_RESOURCE and RUNNING→WAITING_USER transitions remain intact.
+
+| Requirement | Current local assertion |
+| --- | --- |
+| Positive restart | Two canonical Task states retain exact Run/Session/Adapter/binding/invocation; unchanged original factory/transport counts, no source/mutation/advance/continue, fresh unknown barrier and retained receipt projection. |
+| Read-only storage | SQLite total_changes before/after unchanged. Removing executable does not affect stored qualification; enabled-runtime construction rejects it separately. Codex reciprocal provider/zero-write assertions remain. |
+| Corruption | 86 isolated cases cover canonical/selection/reference/contract/Adapter/invocation/diagnostics/binding/control and SQL row/document/duplicate ownership conflicts. Constructor refuses before new host and retains original Run. Consistent copy replacement makes provider-specific shape decisive. |
+| Boundary/provenance | 512-character safe session accepted,513 refused; consistent opaque store accepted as storage agreement only. No external provenance oracle invented. |
+
+91 added OpenCode cases (86negative+5positive) bring that suite to175. Codex
+extends an existing case and does not add a case to totals. Focused required
+5files/318tests pass (Vitest26.94s/command27.352209333s); final default
+`mise exec -- pnpm check` passes189files/2878tests and all non-test gates
+(Vitest95.52s/command115.460641375s). Final actual command UTC
+2026-10-24T12:57:53.193605Z→12:59:48.654847Z. Log SHA256
+`022ac4c5cceec7f5ea5cacbafb62b47208710a1cbbca972008a0dbdaf0bf9e39`.
+Evidence `/tmp/dispatcher-opencode-controller-c3-evidence-20261024/014-final-default`;
+full implementer report `.superpowers/sdd/2026-10-23-opencode-controller-port/task-3-report.md`.
+
+Root final audit `/tmp/dispatcher-opencode-controller-c3-root-payload-audit-final-20261024.json`
+verifies4Git blobs,3451finalpost files/668livegenerated and32258pre+32258post
+actual copies across16recorded runs. All hashes match at audit. Root's future Pi/
+ownership plan metadata is separately excluded from the source commit; later
+coordinated documentation changes do not alter tested source/test inputs. No
+root suite rerun for metadata. The source owner/start/profile/stop functions
+compare byte-identical to C3 BASE and prerequisites are verified ancestors.
+
+RED008 establishes two real prior preflight failures. GREEN009 had306pass/4new
+fixture failures: error nesting, missing referenced Session/foreign-key construction
+and an incorrectly assumed invalid `session_other` spelling. Corrected fixture
+logic retains the exact grammar and production foreign keys; focused012 then
+passes318. Earlier inspection glob failure is separate. Bootstrap read-only
+commands preceded the recorder, so no byte capture is claimed for them. Runs001–012
+UTC timestamps bound capture/command execution; exact command timestamps were
+not invented later. Future records013 onward separate capture/actual command UTC
+and include output/manifest digests. Final014 contains all real bytes, including
+ignored TS/JS/JSON ESLint inputs; earlier metadata remains unchanged.
+
+Independent `/tmp/dispatcher-opencode-controller-c3-review-20261024.md` gives
+spec compliant/quality Approved,0Critical/Important,1Minor expected fixture log
+noise deferredCV14. Reviewer checked delegated domain binding validation for a
+concrete extraction risk. Root resolves unchanged prerequisites through their
+reviewed receipts, exact scope, ancestry and unchanged guard comparison. All
+three OpenCode Controller units now have clean scoped reviews. ParentCV14 owns
+whole-branch review/integration; retained SDD artifacts are evidence, not deleted
+or merged per unit. CV09/the full goal and actual provider/account/GUI/writer/
+service/release Gates remain open. Next: saved Pi source-gap plan, native ownership
+prerequisite and remaining provider/UI/retention/delivery units.

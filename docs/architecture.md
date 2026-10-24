@@ -81,7 +81,8 @@ association after source callbacks return. A missing server registry cannot borr
 an aggregate port. Pi's separate start predicate remains unchanged. Exact Codex
 and OpenCode raw runtime activity participates in profile replacement and the
 final SQLite-close barrier, independently of public Adapter state and local host
-receipts. OpenCode read-only restart and actual native qualification remain open.
+receipts. Read-only restart uses explicit Codex/OpenCode storage qualifiers; actual
+native qualification remains separate.
 
 Controller retains unchanged profile adapters of every provider across ConfigPlan applies,
 bound to the profile and owning Runner execution identity. Replacement/removal
@@ -1370,12 +1371,18 @@ runtime and cleanup-uncertainty failures share the final error collection, so
 simultaneous failures remain visible. Local cleanup never deletes native sessions
 or proves background writer release.
 
-Restart accepts only consistent bound canonical managed Codex metadata for read
-and receipt reconciliation. It invalidates prior observations, retains the exact
-identity and marks execution ownership unknown/manual; it never opens a native
-connection, replays startup or grants cold continuation. Conflicting/partial or
-unsupported native records keep the existing preflight barrier closed. This is
-read-only recovery, not native reattachment or actual-provider qualification.
+Restart accepts only consistent bound canonical managed Codex/OpenCode metadata
+for read and receipt reconciliation. A private checked-storage helper preserves
+Run/Task/Session/Adapter/selection/reference/binding agreement, frozen repository/
+base and unique SQL/document control ownership. Explicit provider wrappers retain
+Codex thread identity and OpenCode global server identity, safe ses session grammar
+(maximum512) with no thread/parent. Qualification performs no writes or physical/
+account/native reads; enabled runtime construction separately checks its executable.
+Restart invalidates prior observations, retains exact identity and marks execution
+ownership unknown/manual, preserving existing Task recovery transitions; it never
+opens a native connection, replays startup or grants cold continuation. Corrupt or
+unsupported records keep preflight closed. Consistent opaque rewrites establish
+storage agreement only, not external native provenance or actual qualification.
 
 Codex catalog reads capture the profile, logical context and actual owning
 backend before asynchronous queries. Exec and App Server keep distinct backend

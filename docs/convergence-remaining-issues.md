@@ -146,7 +146,18 @@ when historical TS snapshots entered its scan; those bytes/failure remain intact
 outside checkout, and rules are unchanged. Pi capability narrowing preserves its
 real existing interface; its separate raw-status/guard-work audit remains open.
 
-Next: OpenCode read-only restart regressions, other native providers, then actual
+Controller C3 c82af5c is now independently spec compliant/quality Approved with
+no Critical/Important findings. Private checked-storage consistency preserves
+Codex rules; explicit OpenCode qualifier enables unknown/manual restart without
+source/replay. Final focused5/318 and default189files/2878tests (95.52s,
+wall115.461s) pass, including91 new OpenCode cases (86corrupt+5positive). Root
+verifies4Git inputs,3451post/668livegenerated and32258pre+32258post actual bytes
+across16runs. Bootstrap/early timestamp limits are disclosed; final gate exact
+command chronology/output/manifest hashes are complete. No historical evidence
+was reconstructed; the current source guards/other runtime bytes are unchanged.
+
+Next: the saved three-unit Pi source-gap plan (direct assertions, first-demonstrated
+raw lifetime and explicit read-only Pi restart), remaining native providers, then actual
 provider/GUI/writer/service/release qualification. The
 current integration used fixtures only; no real account/config/service activation
 or persisted-format/dependency change occurred. CV-09 and the full goal remain

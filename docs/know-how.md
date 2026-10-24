@@ -1050,3 +1050,19 @@
   under `.superpowers` is still input to the current `eslint .` configuration.
   Preserve historical failing bytes/logs with relative-path SHA inventories when
   relocating evidence; do not weaken lint rules to exclude a mistaken layout.
+
+- Read-only restart qualification checks persisted agreement, not a live executable
+  or native account. Keep executable admission in enabled runtime construction.
+  Explicit provider wrappers may share checked records, but must preserve their
+  own product/backend/region/session/thread/parent restrictions. Wholly consistent
+  opaque session/store rewrites cannot prove external provenance.
+- Corruption tests must consistently rewrite all native-binding copies and alias
+  fields when testing a provider-specific grammar; mismatched copies otherwise
+  mask that rule. OpenCode's actual `^ses[A-Za-z0-9_-]+$` grammar accepts
+  `session_other`; use a spelling outside that grammar for rejection. Isolated
+  damaged-DB fixture construction can bypass its foreign keys, without changing
+  production enforcement or confusing a fixture constraint failure with behavior.
+- Existing unknown/manual recovery maps QUEUED Tasks to WAITING_RESOURCE and RUNNING
+  Tasks to WAITING_USER. A provider-specific readable certificate must preserve
+  those shared transitions and cannot silently turn storage readability into
+  continuation, live-source or writer authority.
