@@ -1129,6 +1129,14 @@ HTTP requests when stopping, separately drains native reads for a bounded 3s
 and preserves UNKNOWN cleanup diagnostics; late results cannot write storage.
 All local catalog readers reuse OwnedProcessGroup and also require bounded
 callback closure. Cleanup uncertainty overrides a usable catalog response.
+The bounded version reader additionally accepts explicit `ownsGroup:false` for
+a freshly spawned, non-detached root. It constructs one `OwnedProcessRoot`,
+captures the original PID and bound child signal method, latches exit/close and
+caches one stop operation including failure. Root stop uses TERM, bounded polling
+and KILL; signal delivery alone cannot prove exit. Shared drainage accepts only
+the structural stop capability and requires natural child close separately:
+500ms for explicit root probes, 2000ms for existing group probes. Root cleanup
+cannot prove descendant/tool termination, native quiescence or writer release.
 Default-model ConfigPlans carry optional actor/revision/scope-bound review
 metadata, saved atomically and requalified against fresh native catalog evidence
 on apply. The publication's explicit account-default choice freezes the concrete

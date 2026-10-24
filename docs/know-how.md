@@ -643,6 +643,17 @@
 - Catalog parent-process close alone cannot confirm owned-group absence. Reuse
   OwnedProcessGroup, require drained callbacks and prioritize a cleanup-unknown
   error over usable response data; never signal a group again after absence.
+- A non-detached version probe must explicitly choose root ownership. Capture
+  the freshly returned child's PID and bound kill before awaits; observed exit
+  stays final even if mutable fields change. A resolved stop or successful KILL
+  is not a natural-close receipt. Keep its500ms confirmation distinct from the
+  existing group2000ms gate; inherited pipes can outlive the root. Never infer
+  descendant cleanup or native writer release from either event.
+- Workspace package exports may load compiled dist while focused tests import
+  source directly. After changing an exported implementation, build before
+  cross-package acceptance. Preserve a mixed source/dist failure and actual input
+  hashes; a subsequent build changes runtime inputs, it does not explain an
+  earlier OS failure on a fully built candidate.
 - Releasing a catalog HTTP request is not evidence that its native reader closed.
   Track the underlying read separately through bounded shutdown, keep late writes
   fenced and retain UNKNOWN cleanup evidence across subsequent clean stops.

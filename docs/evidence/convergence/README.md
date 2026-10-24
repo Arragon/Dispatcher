@@ -4529,3 +4529,53 @@ toggle/fallback/duplicate owner, test deadline/worker/cache relaxation or native
 release assertion is authorized. Later root-only providers must prove actual
 detached:false/root construction, explicit root probe and independent500ms natural
 close on every relevant path. ParentCV14 and all formal Gates remain open.
+
+### 2026-10-24 independent root-only delivery locally complete
+
+Source659fc1b489c4829bc02229e6d9726e1b334c5e11, BASE8d43bf1, restores three
+complete group/Codex/status blobs exactly to84cde57, preserves every baseline
+native fixture statement and adds only the retained root inherited-pipe block.
+Candidate root assertion suffix moves unchanged to owned-root-process.test.ts;
+sourcecase4 retains its exact scenario/no-child-kill assertion and strengthens
+mutation-after-exit/global-zero checks. Root/probe/drain implementation bytes stay
+exact56db4b5; only two candidate default-mode mock sequences adapt to the actual
+baseline exit ordering. No existing assertions/budgets/policies are weakened.
+
+First focused attempt passed296/297 with Runner loading candidate dist through
+the package export while source had already restored84cde57. That captured mixed
+state failure stays retained. Actual pnpm build changes ten runtime/declaration/
+map/buildinfo inputs; focused on these changed inputs then passes12/297
+(19.034803125s). Sole unchanged default pnpm check passes build/typecheck/lint/
+boundaries plus191/2985 (Vitest103.12s, wall120.966620875s). UTC actualcommand
+2026-10-24T14:21:17.608237Z→14:23:18.575029Z; evidence
+/tmp/dispatcher-root-owned-probe-evidence-20261024/fullgate-final-payload;
+logSHA256 c2b541354675652f83949d580f934cfbd28840117bc40d5bca873f4e16371447.
+
+An earlier external restoration-audit wrapper fails after output/post capture;
+9158retained files are hashed and missing command completion metadata stays absent.
+It was not reconstructed/retried; final committed-HEAD audit checks new commit
+input. Root /tmp/dispatcher-root-owned-probe-root-audit-20261024.json independently
+verifies493tracked Git/fullgate-pre/post inputs,6normalruns with27462pre+27462post
+actual copies,24recorddigests/1executed external input,4577finalpost/672liveDist/
+16buildinfo and all9158failed-wrapper records; zero errors/live differences.
+Separate root Git checks verify exact native baseline minus additive root block,
+root suffix equality and unchanged publicindex. No native wiring/export or new
+dependency/persisted format/activation occurs. Node_modules/runtime binary bytes
+remain excluded and identity-only; no hermetic claim.
+
+Independent /tmp/dispatcher-root-owned-probe-task1-review-20261024.md gives spec
+compliant/qualityApproved,0Critical/Important,1MinorM1 expected fixture JSON noise
+deferredCV14. Retained implementation/mode/close precedence and all moved root
+assertions checked. Root resolves byte/callsite/WIP/primary/Linear scope items
+without repeating passing tests. Fixe062118 separately has finding2 ADDRESSED in
+/tmp/dispatcher-native-ownership-fix1-review-20261024.md; root verifies2Git blobs,
+13710pre+13710post across3verificationruns/44digests/688unchanged generated inputs.
+Neither result diagnoses the original16quota failures or3sharedgroupEPERM paths.
+
+Only the independent root delivery is complete. Original combined ownership
+Task1/sourcegroup1/2/3/5/6 and every affected group consumer's stronger safety
+remain open, WIP56db4b5 and failed gates stay reachable. R020, later provider/
+account/GUI/writer/service/release Gates and parentCV14 remain open. Official
+quota62%used38%remaining,2resetcredits unused. Next internal ACP client uses exact
+SDK/peer artifact/security/license verification and canonical ExecutionSelection;
+producer/catalog/runtime/config/Controller registration follow separately.

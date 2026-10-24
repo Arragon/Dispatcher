@@ -425,6 +425,8 @@ server profile。owned host/producer及精确分配observer随后保存105ef8b�
 
 **Ownership验收补记**：组合候选56db4b5保留为non-green WIP，默认gate非测试门禁通过、2999例中19fail；独立审查不批准。三处真实group清理post-exit EPERM与16处独立quota fixture shutdown UNKNOWN分开记录，OS/具体清理分支均未溯明，R020独立。两fixture用既有reader seam窄修e062118，4文件202例与lint通过，复审待完成。按独立审查建议新增root-owned-probe-delivery计划：恢复84cde57原group/Codex字节，仅独立交付root/sourcecase4/probe500ms自然关闭，需新默认gate；原组合Task1及group1/2/3/5/6和Generic/Runner/catalog/Codex共同安全仍待完成，不能据拆分宣称已修复。继续root-only provider等独立开发，不引入策略开关、重试成功捷径或放宽测试。
 
+**Root-only交付回执**：659fc1b在精确恢复group/Codex基线后保留root能力/sourcecase4，聚焦12文件297例、默认191文件2985例通过，独立spec/quality Approved、零Critical/Important。源码/完整gate输入与493tracked字节、6次验证27462pre/post、失败wrapper9158记录均核验；先前源/dist混合失败留证，实际build后生成输入变化。该单元局部完成，原组合group任务及其他consumer安全仍未完成；下一独立internal Devin Local ACP client计划先核验精确SDK/Zod许可、安全、实际部署归属文本，再移植原91client断言及canonical authority；其producer/catalog/runtime/config/Controller后续单列。
+
 ### CV-11 · 将计量与原生会话视图接入v3现有交互
 
 - **映射/架构**：M17.2；原票 INH-1469、INH-1485、INH-1525、INH-1526、INH-1527、INH-1528、INH-1529、INH-1530、INH-1844；沿用D1–D3和相应C1–C6。

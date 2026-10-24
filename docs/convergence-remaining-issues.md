@@ -191,7 +191,8 @@ the new sticky uncertainty cannot retry those observations. Exact OS cause and
 relation to independent R020 remain unproven. Sixteen other failures traverse an
 independent unisolated quota reader in two mocked Controller fixtures, with
 pending-vs-uncertain cause unknown. Fixture-only e062118 supplies the existing
-reader seam; focused4/202 and scoped lint pass, independent fix review pending.
+reader seam; focused4/202 and scoped lint pass; scoped re-review closes that
+fixture-boundary finding without new blocking issues.
 No original body/stop or dedicated quota/native-reader assertions were weakened.
 
 Original combined ownership Task1 remains incomplete. A reviewed plan partition
@@ -204,7 +205,15 @@ including Generic, Runner, catalogs/default probes and Codex. Root sourcecase4
 does not depend on the proposed group hardening. This is no runtime toggle or
 claim that original six-case acceptance passed.
 
-Next: independent root-only unit, remaining native providers, unresolved shared
+Independent root-only unit659fc1b is now spec compliant/quality Approved with
+0Critical/Important and1Minor inherited fixture-log finding deferredCV14. Actual
+rebuilt focused12/297 and sole default191/2985 pass (wall120.966620875s).
+Root verifies493Gittracked/fullgate pre/post bytes,6runs/27462pre+27462post,
+retained wrapper-failure records and exact baseline/restored root-test hunks.
+First mixed source/stale-dist focused failure is retained; building changed its
+runtime inputs before the passing focused run. Original OS cause remains open.
+
+Next: internal Devin Local ACP client, remaining native providers, unresolved shared
 group safety and original provider/GUI/writer/service/release qualification.
 Current integration uses fixtures only; no real account/config/service activation
 or persisted-format/dependency change occurred. CV-09 and the full goal remain

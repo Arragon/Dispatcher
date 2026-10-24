@@ -81,36 +81,36 @@ pre-WIP group baseline is `84cde57a9c2f1d40414e0f1dc967befa5de91326`.
 
 **Steps and acceptance**
 
-- [ ] Read current affected code/tests, scoped AGENTS and relevant architecture/
+- [x] Read current affected code/tests, scoped AGENTS and relevant architecture/
   knowledge; verify actual BASE/status and preserve unrelated root metadata.
-- [ ] Record the partition before editing: which complete blobs restore, which
+- [x] Record the partition before editing: which complete blobs restore, which
   root assertions/fixture hunks move and which deferred group cases remain WIP.
   This is extraction/restoration of existing candidate work. Reuse its actual
   root RED evidence at `/tmp/dispatcher-native-ownership-evidence/phase2-red`,
   with explicit byte/history limits; do not invent a new RED by repeating it.
   Any newly discovered behavior defect still needs meaningful regression RED.
-- [ ] Perform the scoped extraction/restoration. Audit complete restored blobs
+- [x] Perform the scoped extraction/restoration. Audit complete restored blobs
   against84cde57 and baseline native fixture prefix/hunks exactly; preserve all
   root tests, including source case4's original scenario/signal assertion.
-- [ ] Verify root identity before/after await, captured method/exit, shared promise/
+- [x] Verify root identity before/after await, captured method/exit, shared promise/
   cached denial, missing PID vs observed spawn failure, TERM/KILL no fabricated
   exit, zero group authority, real inherited descendant survival and natural pipe
   closure failure. Preserve test fixture cleanup only for its freshly owned roots.
-- [ ] Verify explicit/default probe modes, exact environment and stdout/time caps,
+- [x] Verify explicit/default probe modes, exact environment and stdout/time caps,
   abort/error/denied cleanup paths, unconditional drain and natural500/2000ms
   distinction. Default-group assertions must exercise restored actual owner.
-- [ ] Run focused acceptance using existing tooling:
+- [x] Run focused acceptance using existing tooling:
   `mise exec -- pnpm vitest run packages/adapters/test/owned-root-process.test.ts packages/adapters/test/native-version-probe.test.ts packages/adapters/test/owned-process-status.test.ts packages/adapters/test/owned-native-process.test.ts packages/adapters/test/codex.test.ts packages/adapters/test/pi-rpc-client.test.ts packages/adapters/test/codex-app-server.test.ts packages/adapters/test/opencode-owned-server.test.ts packages/adapters/test/codex-catalog.test.ts packages/runner/test/process.test.ts packages/runner/test/native-runtime-lifecycle.test.ts apps/controller/test/adapter-lifecycle.test.ts`.
   No provider executable/account calls. Retain exact failures and report concrete
   defects before any wider edit; no unchanged retry or test budget alteration.
-- [ ] Self-review exact diff/call sites and restored-byte audit. Derive command
+- [x] Self-review exact diff/call sites and restored-byte audit. Derive command
   expansion from current package.json, then run one unchanged default
   `mise exec -- pnpm check` on final payload. Build/typecheck/lint/boundaries/tests
   must pass for this root unit; old focused/gate results do not qualify it.
-- [ ] Commit only the listed payload after verification; never reset/amend/delete
+- [x] Commit only the listed payload after verification; never reset/amend/delete
   WIP/history. Report exact tested/Git bytes, command/result digests, local scope,
   output noise, all unresolved native/group/formal Gates. No push/merge/deploy.
-- [ ] Write full report to assigned task report; return only status/commit/test
+- [x] Write full report to assigned task report; return only status/commit/test
   summary/concerns/report path. Root creates required independent spec/quality
   review package and coordinates metadata afterwards.
 
@@ -121,3 +121,5 @@ confirmation. Importing a helper does not establish these facts, native completi
 background tool absence, Session deletion or writer release. Shared group safety
 remains open for Generic, Runner, catalogs/default probes, Codex and other group
 consumers; a provider retaining one of those paths cannot claim independence.
+
+Local Task1 completed659fc1b after independent spec/quality Approved; focused12/297 and default191/2985. Original combined group Task1 remains open; see original plan/ruling and retained evidence.
