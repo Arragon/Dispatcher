@@ -4,7 +4,7 @@ import {OpenCodeExecutionRuntime} from "./opencode-runtime.js";
 import {PiExecutionRuntime} from "./pi-runtime.js";
 import {NativeHistoryService,NativeHistoryError} from "./native-history.js";
 import {nativeSessionView} from "./native-session-view.js";
-import {isGuardedControllerStart,isReadableManagedCodexRun} from "./start-recovery.js";
+import {isGuardedControllerStart,isReadableManagedCodexRun,isReadableManagedOpenCodeRun} from "./start-recovery.js";
 import {parseNativeModelDefaultReview,qualifyNativeModelDefault,readNativeModelDefaultEvidence} from "./model-defaults.js";
 import {isExecutionContextRef,type NativeBinding,type InteractionCapabilities,type NativeResponse,type RunGitDelivery,type ScmDeliverySelection,type MutationFence,type ExecutionContextRef} from "@dispatcher/domain";
 import {NativeInteractions,InteractionGuardError,type ControllerInteractionOperation,type InteractionPrincipal} from "./native-interactions.js";
@@ -575,7 +575,7 @@ export class ControllerService {
     const persistedRuns=this.database.listEntities<JsonValue>("run") as unknown as Run[];
     const nativeSessions=new Set(this.database.handle.prepare("SELECT session_id FROM native_bindings").all().map(row=>row.session_id));
     const controlledRuns=new Set(this.database.handle.prepare("SELECT active_run_id FROM session_controls").all().map(row=>row.active_run_id));
-    if(persistedRuns.some(run=>!isTerminalRunState(run.state)&&!isReadableManagedCodexRun(this.database,run)&&(run.executionRef||Object.hasOwn(run,"modelSelection")||nativeSessions.has(run.sessionId)||controlledRuns.has(run.id)&&!isGuardedControllerStart(this.database,run)))||[...controlledRuns].some(id=>!persistedRuns.some(run=>run.id===id))){
+    if(persistedRuns.some(run=>!isTerminalRunState(run.state)&&!isReadableManagedCodexRun(this.database,run)&&!isReadableManagedOpenCodeRun(this.database,run)&&(run.executionRef||Object.hasOwn(run,"modelSelection")||nativeSessions.has(run.sessionId)||controlledRuns.has(run.id)&&!isGuardedControllerStart(this.database,run)))||[...controlledRuns].some(id=>!persistedRuns.some(run=>run.id===id))){
       this.database.close();
       throw new TaskDispatchError("NATIVE_CONTROL_RUNTIME_UNAVAILABLE",409,"This database has native execution requiring the control runtime. Keep the original binary/data backup until native control integration is qualified.");
     }
@@ -737,7 +737,7 @@ export class ControllerService {
   private reconcileLocalStartJournals():void {
     for(const value of this.database.listEntities<JsonValue>("run")){
       const run=value as unknown as Run;
-      if(!isTerminalRunState(run.state)&&isReadableManagedCodexRun(this.database,run)){
+      if(!isTerminalRunState(run.state)&&(isReadableManagedCodexRun(this.database,run)||isReadableManagedOpenCodeRun(this.database,run))){
         this.database.transaction(()=>{
           const store=new InteractionStore(this.database),binding=store.binding(run.sessionId)!;
           store.invalidateObservation({sessionId:run.sessionId,readBarrier:randomUUID(),observation:{version:1,id:`restart-read:${randomUUID()}`,nativeSessionId:binding.nativeSessionId,...(binding.nativeThreadId?{nativeThreadId:binding.nativeThreadId}:{}),executionRefId:binding.executionRefId,scopeFingerprint:"unknown",observedAt:this.now().toISOString(),state:"unknown",pendingTools:"unknown",pendingApprovals:"unknown",historyMode:"unknown",readability:"unknown"}});

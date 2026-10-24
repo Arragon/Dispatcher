@@ -7,6 +7,7 @@ import {CodexAdapter,CodexAppServerBackend,codexAppServerProtocolVersion,normali
 import type {Run,MutationFence,HistoryPage} from "@dispatcher/domain";
 import {DispatcherDatabase,InteractionStore,type JsonValue} from "@dispatcher/persistence";
 import {ControllerService} from "../src/service.js";
+import {isReadableManagedCodexRun,isReadableManagedOpenCodeRun} from "../src/start-recovery.js";
 import type {PiExecutionRuntime} from "../src/pi-runtime.js";
 const fixtures:Array<{service:ControllerService;root:string;manualClose?:boolean}>=[];
 afterEach(async()=>{for(const f of fixtures.splice(0)){if(!f.manualClose)await f.service.stop();rmSync(f.root,{recursive:true,force:true});}vi.useRealTimers();});
@@ -284,6 +285,7 @@ it("preserves callback storage and an uncertain receipt when an admitted callbac
 });
 it("restores only unknown metadata after restart without opening a native connection",async()=>{
  const f=await fixture({nativeReads:true,nativeRequests:true}),run=await f.create("restart"),session=await f.start(run),store=new InteractionStore(f.service.database);
+ const writes=f.service.database.handle.prepare("SELECT total_changes() AS count").get();expect(isReadableManagedCodexRun(f.service.database,run)).toBe(true);expect(isReadableManagedOpenCodeRun(f.service.database,run)).toBe(false);expect(f.service.database.handle.prepare("SELECT total_changes() AS count").get()).toEqual(writes);
  store.saveObservation({sessionId:run.sessionId,observerGeneration:1,observerSequence:1,controlEpoch:1,observation:await f.ports[0]!.port.inspect(session.nativeBinding!)});
  await f.service.stop();const restored=new ControllerService({dataDirectory:join(f.root,"data"),ownerToken:"fixture-owner",withRunner:true,codexAppServerFactory:f.factory});
  try{await restored.start({listen:false});expect(f.factory).toHaveBeenCalledOnce();const read=await restored.app.inject({url:`/api/runs/${run.id}`,headers:{authorization:"Bearer fixture-owner"}});expect(read.json()).toMatchObject({run:{id:run.id,sessionId:run.sessionId,state:"RUNNER_UNAVAILABLE",recoveryReason:"NATIVE_OUTCOME_UNKNOWN",resumePolicy:"manual"},nativeSession:{state:"unknown",mutationAvailable:false}});expect(new InteractionStore(restored.database).binding(run.sessionId)).toEqual(session.nativeBinding);expect(new InteractionStore(restored.database).observation(run.sessionId)).toMatchObject({state:"unknown",pendingTools:"unknown",pendingApprovals:"unknown"});const advance=await restored.app.inject({method:"POST",url:`/api/runs/${run.id}/advance`,headers:{authorization:"Bearer fixture-owner"}});expect(advance.statusCode).toBe(409);expect(f.factory).toHaveBeenCalledOnce();}finally{await restored.stop();}

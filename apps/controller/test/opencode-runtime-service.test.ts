@@ -5,13 +5,14 @@ import {join} from "node:path";
 import {afterEach,expect,it,vi} from "vitest";
 import {OpenCodeAdapter,OpenCodeV2ExecutionBackend,OpenCodeV2InteractionPort,type AgentAdapter,type CliStartInput,type LocalRuntimeDisconnect,type OpenCodeV2OwnedScope} from "@dispatcher/adapters";
 import type {ExecutionContextRef,Run} from "@dispatcher/domain";
-import {InteractionStore,type JsonValue} from "@dispatcher/persistence";
+import {DispatcherDatabase,InteractionStore,type JsonValue} from "@dispatcher/persistence";
 import {DatabaseSync} from "node:sqlite";
 import type {PiExecutionRuntime} from "../src/pi-runtime.js";
 import type {CodexExecutionRuntime} from "../src/codex-runtime.js";
 import {ControllerService} from "../src/service.js";
 import {OpenCodeExecutionRuntime} from "../src/opencode-runtime.js";
 import {normalizeOpenCodeCatalog} from "../../../packages/adapters/src/opencode-catalog.js";
+import {isGuardedControllerStart,isReadableManagedCodexRun,isReadableManagedOpenCodeRun} from "../src/start-recovery.js";
 vi.mock("node:fs/promises",async importOriginal=>{const actual=await importOriginal<typeof fsPromises>();return {...actual,access:vi.fn(actual.access)};});
 import * as fsPromises from "node:fs/promises";
 const actualAccess=physicalFs.access;
@@ -71,6 +72,116 @@ function replaceProfile(f:Awaited<ReturnType<typeof fixture>>){
  const changed=structuredClone(f.service.configuration.current().config);changed.agentProfiles[0]!.alias="Changed";
  return ()=>f.service.configuration.applyPlan(f.service.configuration.buildPlan(changed,"owner","fixture").id,{confirmed:true});
 }
+it.each(["QUEUED","RUNNING"] as const)("recovers a consistent %s OpenCode execution as unknown metadata without another native call",async taskState=>{
+ const f=await fixture(),run=await f.create("restart"),session=await f.start(run),store=new InteractionStore(f.service.database);
+ await registry(f.service).get("p")!.result(session.id);
+ const task=f.service.database.getCanonicalTask(run.taskId)!;
+ f.service.database.writeCanonicalTask(run.taskId,task.revision,json({...task.document as object,state:taskState}));
+ const original=f.service.database.getEntity("run",run.id),originalSession=f.service.database.getEntity("session",run.sessionId),originalAdapter=f.service.database.getEntity("adapter-session",run.sessionId);
+ f.service.database.saveEntity("task-dispatch","restart-receipt",json({run:original,routing:{fixture:true}}));
+ store.saveObservation({sessionId:run.sessionId,observerGeneration:1,observerSequence:1,controlEpoch:1,observation:await f.ports[0]!.port.inspect(session.nativeBinding!)});
+ await f.service.stop();f.holder.manualClose=true;
+ const saved=new DispatcherDatabase(join(f.root,"data","dispatcher.sqlite")),oldBarrier=new InteractionStore(saved).nativeReadBarrier(run.sessionId);saved.close();
+ const requests=[...f.ports[0]!.requests],restored=new ControllerService({dataDirectory:join(f.root,"data"),ownerToken:"fixture-owner",withRunner:true,opencodeExecutionFactory:f.factory});
+ try{
+  await restored.start({listen:false});const headers={authorization:"Bearer fixture-owner"},read=await restored.app.inject({url:`/api/runs/${run.id}`,headers}),recovered=restored.database.getEntity("run",run.id);
+  expect(read.statusCode,read.body).toBe(200);expect(read.json()).toMatchObject({run:{id:run.id,sessionId:run.sessionId,state:"RUNNER_UNAVAILABLE",recoveryReason:"NATIVE_OUTCOME_UNKNOWN",resumePolicy:"manual"},nativeSession:{state:"unknown",mutationAvailable:false}});
+  expect(recovered).toEqual({...original as object,state:"RUNNER_UNAVAILABLE",recoveryState:"ACTIVE",recoveryReason:"NATIVE_OUTCOME_UNKNOWN",resumePolicy:"manual"});
+  expect(restored.database.getEntity("session",run.sessionId)).toEqual(originalSession);expect(restored.database.getEntity("adapter-session",run.sessionId)).toEqual(originalAdapter);
+  expect(restored.database.getEntity("task-dispatch","restart-receipt")).toEqual({run:recovered,routing:{fixture:true}});
+  expect(restored.database.getCanonicalTask(run.taskId)?.document).toMatchObject({state:taskState==="QUEUED"?"WAITING_RESOURCE":"WAITING_USER"});
+  const restoredStore=new InteractionStore(restored.database);expect(restoredStore.binding(run.sessionId)).toEqual(session.nativeBinding);expect(restoredStore.nativeReadBarrier(run.sessionId)).not.toBe(oldBarrier);
+  expect(restoredStore.observation(run.sessionId)).toMatchObject({state:"unknown",pendingTools:"unknown",pendingApprovals:"unknown",historyMode:"unknown",readability:"unknown"});
+  expect(restored["nativePort"](session.nativeBinding!)).toBeUndefined();expect(registry(restored).get("p")!.interaction).toBeUndefined();
+  const recoveredRun=recovered as unknown as Run,fence=restored["nativeInteractions"].fenceFor(recoveredRun,"restart-continue");
+  for(const operation of ["continue","steer","approval","verify","deliver"] as const)expect(restored["nativeInteractions"].authorizeInteraction({id:"owner",roles:["operator"],profileId:"p"},operation,fence).allowed).toBe(false);
+  const advance=await restored.app.inject({method:"POST",url:`/api/runs/${run.id}/advance`,headers});expect(advance.statusCode).toBe(409);
+  expect(f.factory).toHaveBeenCalledOnce();expect(f.ports[0]!.requests).toEqual(requests);expect(f.ports[0]!.disconnect).toHaveBeenCalledOnce();
+ }finally{await restored.stop();}
+});
+it("qualifies only stored OpenCode records without writes or a physical executable",async()=>{
+ const f=await fixture(),run=await f.create("readonly"),session=await f.start(run);await registry(f.service).get("p")!.result(session.id);await f.service.stop();f.holder.manualClose=true;rmSync(f.executable);
+ const db=new DispatcherDatabase(join(f.root,"data","dispatcher.sqlite"));
+ try{const stored=db.getEntity("run",run.id) as unknown as Run,before=db.handle.prepare("SELECT total_changes() AS count").get(),requests=[...f.ports[0]!.requests];
+  expect(isReadableManagedOpenCodeRun(db,stored)).toBe(true);expect(isReadableManagedCodexRun(db,stored)).toBe(false);expect(isGuardedControllerStart(db,stored)).toBe(false);expect(db.handle.prepare("SELECT total_changes() AS count").get()).toEqual(before);expect(f.factory).toHaveBeenCalledOnce();expect(f.ports[0]!.requests).toEqual(requests);
+ }finally{db.close();}
+ // Enabled runtime executable admission remains a separate constructor requirement.
+ expect(()=>new ControllerService({dataDirectory:join(f.root,"data"),ownerToken:"fixture-owner",withRunner:true,opencodeExecutionFactory:f.factory})).toThrow(expect.objectContaining({code:"OPENCODE_SCOPE_CHANGED",creationOutcome:"not-created"}));expect(f.factory).toHaveBeenCalledOnce();
+});
+type StoredEdit=readonly [kind:string,path:string,value:unknown];
+const corruptOpenCodeFields:StoredEdit[]=[
+ ["run","providerId",undefined],["run","providerId","codex"],["session","providerId",undefined],["session","providerId","codex"],
+ ["run","executionSelection",undefined],["run","modelSelection",{}],
+ ...["backendId","profileId","runnerId","providerId","contextFingerprint","requestedModel"].map(field=>["run",`executionSelection.${field}`,"other"] as const),
+ ["run","executionRef",undefined],["run","executionRef.kind","provider-cloud"],["run","executionRef.workspaceId","other"],["run","executionRef.pathRef","workspace:other"],["run","worktree",undefined],
+ ["session","id","other"],["session","profileId","other"],["session","executionRef.id","other"],
+ ["run-contract","workspace.repositoryId","other"],["run-contract","workspace.baseCommit","other"],["run-contract","workspace.repositoryId",undefined],["run-contract","workspace.baseCommit",undefined],
+ ...["id","runId","profileId","backendId","workspacePath","nativeIdentityIssue"].map(field=>["adapter-session",field,"other"] as const),
+ ["adapter-session","nativeInvocationId",undefined],["adapter-session","executionSelection.requestedModel","other"],["adapter-session","executionRef.id","other"],
+ ["adapter-session","execution.generation",2],["adapter-session","execution.attempt",2],["adapter-session","execution.leaseId","other"],
+ ["session","nativeBinding",undefined],["adapter-session","nativeBinding",undefined],
+ ["session","nativeBinding.nativeSessionId","ses_other"],["adapter-session","nativeBinding.nativeStoreRef","other"],
+ ["session","nativeSessionId","ses_other"],["adapter-session","providerSessionId","ses_other"],["run","providerSessionId","ses_other"],
+];
+function editStored(db:DispatcherDatabase,run:Run,[kind,path,value]:StoredEdit){
+ const id=kind==="run"||kind==="run-contract"?run.id:run.sessionId,document=db.getEntity(kind,id) as Record<string,unknown>,keys=path.split(".");let target=document;
+ for(const key of keys.slice(0,-1))target=target[key] as Record<string,unknown>;
+ const key=keys.at(-1)!;if(value===undefined)delete target[key];else target[key]=value;
+ db.handle.prepare("UPDATE entities SET document_json=? WHERE kind=? AND id=?").run(JSON.stringify(document),kind,id);
+}
+function replaceBindingCopies(db:DispatcherDatabase,run:Run,field:string,value:unknown){
+ const original=new InteractionStore(db).binding(run.sessionId)!,binding={...original,[field]:value};
+ db.handle.prepare("UPDATE native_bindings SET binding_key=?,document_json=? WHERE session_id=?").run(JSON.stringify([binding.product,binding.region,binding.nativeStoreRef,binding.nativeSessionId,binding.nativeThreadId??""]),JSON.stringify(binding),run.sessionId);
+ for(const kind of ["session","adapter-session"])editStored(db,run,[kind,"nativeBinding",binding]);
+ if(field==="nativeSessionId")for(const [kind,path] of [["run","providerSessionId"],["session","nativeSessionId"],["adapter-session","providerSessionId"]])editStored(db,run,[kind!,path!,value]);
+ if(field==="backendId")for(const [kind,path] of [["run","executionSelection.backendId"],["adapter-session","executionSelection.backendId"],["adapter-session","backendId"]])editStored(db,run,[kind!,path!,value]);
+}
+const corruptOpenCodeRecords=["missing-session","missing-adapter","missing-contract","missing-binding","missing-control","identity-diagnostic","current-run","duplicate-control","control-row-epoch","control-row-revision","control-row-state",
+ ...["version","epoch","revision","state","exclusion","sessionId","activeRunId"].flatMap(field=>[`control-missing:${field}`,`control-invalid:${field}`]),
+ ...["epoch","revision"].flatMap(field=>[`control-fraction:${field}`,`control-string:${field}`]),
+ ...["profileId","runnerId","executionRefId","nativeStoreRef","nativeSessionId"].map(field=>`stored-binding:${field}`),
+ ...["product","region","backendId","nativeThreadId","parentSessionId"].map(field=>`provider-binding:${field}`),
+ "native-id-prefix","native-id-space","native-id-control","native-id-overlong",
+];
+it.each([
+ ...corruptOpenCodeFields.map(edit=>({label:`${edit[0]}.${edit[1]}=${String(edit[2])}`,edit})),
+ ...corruptOpenCodeRecords.map(label=>({label,edit:undefined})),
+])("keeps corrupted OpenCode restart closed for $label without changing the original Run",async({label,edit})=>{
+ const f=await fixture(),run=await f.create("corrupt-restart"),session=await f.start(run);await registry(f.service).get("p")!.result(session.id);await f.service.stop();f.holder.manualClose=true;
+ const path=join(f.root,"data","dispatcher.sqlite"),db=new DispatcherDatabase(path);let closed=false;
+ try{
+  if(edit)editStored(db,run,edit);
+  else if(label.startsWith("missing-")){
+   const kind=label.slice(8);if(["binding","control"].includes(kind))db.handle.prepare(`DELETE FROM ${kind==="binding"?"native_bindings":"session_controls"} WHERE session_id=?`).run(run.sessionId);
+   else {
+    // Simulate damaged on-disk session storage despite the normal foreign-key safeguard.
+    if(kind==="session")db.handle.exec("PRAGMA foreign_keys=OFF");
+    db.handle.prepare("DELETE FROM entities WHERE kind=? AND id=?").run(kind==="adapter"?"adapter-session":kind==="contract"?"run-contract":kind,kind==="contract"?run.id:run.sessionId);
+    if(kind==="session")db.handle.exec("PRAGMA foreign_keys=ON");
+   }
+  }else if(label==="identity-diagnostic")db.handle.prepare("INSERT INTO native_identity_diagnostics(id,session_id,code) VALUES(?,?,?)").run("corrupt",run.sessionId,"NATIVE_BINDING_CONFLICT");
+  else if(label==="current-run"){const task=db.getCanonicalTask(run.taskId)!;db.writeCanonicalTask(run.taskId,task.revision,json({...task.document as object,currentRunId:"other"}));}
+  else if(label==="duplicate-control"){const control=new InteractionStore(db).control(run.sessionId)!;db.saveEntity("session","other-session",{id:"other-session",providerId:"opencode",profileId:"p"});db.handle.prepare("INSERT INTO session_controls(session_id,active_run_id,epoch,revision,state,document_json) VALUES(?,?,?,?,?,?)").run("other-session",run.id,control.epoch,control.revision,control.state,JSON.stringify({...control,sessionId:"other-session"}));}
+  else if(label.startsWith("control-row-")){const column=label.slice(12);db.handle.prepare(`UPDATE session_controls SET ${column}=? WHERE session_id=?`).run(column==="state"?"HUMAN":2,run.sessionId);}
+  else if(label.startsWith("control-")){
+   const [variant,field]=label.split(":"),control=new InteractionStore(db).control(run.sessionId)! as unknown as Record<string,unknown>;
+   if(variant==="control-missing")delete control[field!];else control[field!]=variant==="control-fraction"?1.5:variant==="control-string"?"1":["epoch","revision"].includes(field!)?0:field==="version"?2:"other";
+   db.handle.prepare("UPDATE session_controls SET document_json=? WHERE session_id=?").run(JSON.stringify(control),run.sessionId);
+  }else if(label.startsWith("stored-binding:")){
+   const field=label.split(":")[1]!,binding=new InteractionStore(db).binding(run.sessionId)!;db.handle.prepare("UPDATE native_bindings SET document_json=? WHERE session_id=?").run(JSON.stringify({...binding,[field]:field==="nativeSessionId"?"ses_other":"other"}),run.sessionId);
+  }else if(label.startsWith("provider-binding:")){const field=label.split(":")[1]!;replaceBindingCopies(db,run,field,field==="product"?"codex":field==="backendId"?"codex-app-server":"other");}
+  else replaceBindingCopies(db,run,"nativeSessionId",label==="native-id-prefix"?"native_other":label==="native-id-space"?"ses other":label==="native-id-control"?"ses_\u007f":"ses"+"x".repeat(510));
+  const before=db.getEntity("run",run.id),writes=db.handle.prepare("SELECT total_changes() AS count").get();expect(isReadableManagedOpenCodeRun(db,before as unknown as Run)).toBe(false);expect(db.handle.prepare("SELECT total_changes() AS count").get()).toEqual(writes);db.close();closed=true;
+  const requests=[...f.ports[0]!.requests];let restored:ControllerService|undefined;
+  try{expect(()=>{restored=new ControllerService({dataDirectory:join(f.root,"data"),ownerToken:"fixture-owner",withRunner:true,opencodeExecutionFactory:f.factory});}).toThrow(expect.objectContaining({code:"NATIVE_CONTROL_RUNTIME_UNAVAILABLE"}));}finally{if(restored)await restored.stop();}
+  const checked=new DispatcherDatabase(path);try{expect(checked.getEntity("run",run.id)).toEqual(before);}finally{checked.close();}expect(f.factory).toHaveBeenCalledOnce();expect(f.ports[0]!.requests).toEqual(requests);
+ }finally{if(!closed)db.close();}
+});
+it.each(["bounded-session","opaque-store"] as const)("checks internally consistent %s storage without claiming external provenance",async variant=>{
+ const f=await fixture(),run=await f.create("opaque-storage"),session=await f.start(run);await registry(f.service).get("p")!.result(session.id);await f.service.stop();f.holder.manualClose=true;
+ const db=new DispatcherDatabase(join(f.root,"data","dispatcher.sqlite"));
+ try{replaceBindingCopies(db,run,variant==="bounded-session"?"nativeSessionId":"nativeStoreRef",variant==="bounded-session"?"ses"+"x".repeat(509):"opaque-rewritten-store");const writes=db.handle.prepare("SELECT total_changes() AS count").get();expect(isReadableManagedOpenCodeRun(db,db.getEntity("run",run.id) as unknown as Run)).toBe(true);expect(db.handle.prepare("SELECT total_changes() AS count").get()).toEqual(writes);expect(f.factory).toHaveBeenCalledOnce();}finally{db.close();}
+});
 async function pendingRawWork(f:Awaited<ReturnType<typeof fixture>>,run:Run,phase:"access"|"callback"){
  const held=Promise.withResolvers<void>(),entered=Promise.withResolvers<void>(),runtime=f.service["opencodeRuntimes"].get("p")!;
  if(phase==="access")vi.spyOn(fsPromises,"access").mockImplementation(async(path,mode)=>{if(path===f.executable){entered.resolve();await held.promise;}return actualAccess(path,mode);});
