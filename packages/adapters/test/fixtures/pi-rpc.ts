@@ -15,7 +15,7 @@ if(mode==='slow'){process.stdin.pause();setTimeout(()=>process.stdin.resume(),10
 const emit=value=>process.stdout.write(JSON.stringify(value)+'\\r\\n');
 const reply=(c,data)=>emit({id:c.id,type:'response',command:c.type,success:true,data});
 const inherit=()=>{const child=require('node:child_process').spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:['ignore',1,2]});require('node:fs').writeFileSync(${JSON.stringify(join(root,"descendant-pid"))},String(child.pid));};
-process.stdin.on('data',chunk=>{buffer=Buffer.concat([buffer,chunk]);for(;;){const i=buffer.indexOf(10);if(i<0)break;const line=buffer.subarray(0,i).toString('utf8');buffer=buffer.subarray(i+1);const c=JSON.parse(line);count++;require('node:fs').appendFileSync(${JSON.stringify(join(root,"wire-types"))},c.type+'\\n');
+process.stdin.on('data',chunk=>{buffer=Buffer.concat([buffer,chunk]);for(;;){const i=buffer.indexOf(10);if(i<0)break;const line=buffer.subarray(0,i).toString('utf8');buffer=buffer.subarray(i+1);const c=JSON.parse(line);require('node:fs').appendFileSync(${JSON.stringify(join(root,"child-trace.jsonl"))},JSON.stringify({command:c.type,pid:process.pid,workspace:process.cwd(),agentDirectory:process.env.PI_CODING_AGENT_DIR,args,sessionId:args[args.indexOf('--session-id')+1],message:c.message})+'\\n');count++;require('node:fs').appendFileSync(${JSON.stringify(join(root,"wire-types"))},c.type+'\\n');
  if(mode==='hung')continue;
  if(mode.startsWith('exec-')){
   const sid=args[args.indexOf('--session-id')+1];

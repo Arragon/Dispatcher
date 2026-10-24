@@ -6,6 +6,7 @@ import {MemorySessionStore,PiAdapter,type AdapterStartInput} from "../src/index.
 import * as adapters from "../src/index.js";
 import {PiRpcExecutionBackend} from "../src/pi-rpc-execution.js";
 import {NativeBindingEvents} from "../src/native-binding-events.js";
+import {getInteractionPort} from "../src/interaction-contracts.js";
 import {piRpcFixture} from "./fixtures/pi-rpc.js";
 
 const roots:string[]=[],backends:PiRpcExecutionBackend[]=[];
@@ -22,7 +23,7 @@ function harness(mode="exec-ok"){
  return {...fixture,backend,store,adapter,input,events,sink,revoke:()=>{current=false;},onBegin:()=>()=>current};
 }
 it("selects the injected RPC backend through PiAdapter without enabling continuation or native stop",async()=>{
- const f=harness();expect(f.adapter.legacyInvocationDefaults().backendId).toBe("pi-rpc");
+ const f=harness();expect(f.adapter.legacyInvocationDefaults().backendId).toBe("pi-rpc");expect(getInteractionPort(f.adapter)).toBeUndefined();expect(new PiAdapter({id:"print",alias:"Print"}).manifest.backends.map(backend=>backend.id)).toEqual(["pi-cli-json"]);
  const manifest=f.adapter.manifest.backends.find(value=>value.id==="pi-rpc");expect(manifest?.capabilities).toContain("start");expect(manifest?.capabilities).not.toContain("send");expect(manifest?.capabilities).not.toContain("cancel");expect(f.adapter.manifest.capabilities.resume).toBe(false);expect(f.adapter.manifest.backends.some(backend=>backend.capabilities.includes("cancel")||backend.capabilities.includes("send"))).toBe(false);
  f.adapter.setNativeEventSink(f.sink,f.onBegin);
  const session=await f.adapter.start(f.input);expect(session).toMatchObject({id:"session-1",backendId:"pi-rpc",executionRef,executionSelection:f.input.executionSelection,nativeBinding:{product:"pi",backendId:"pi-rpc",executionRefId:"execution-1"}});
