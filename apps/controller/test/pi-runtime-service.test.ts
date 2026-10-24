@@ -7,6 +7,8 @@ import {assertRunTransition,assertTaskTransition,isTerminalRunState,type Run,typ
 import {DispatcherDatabase,InteractionStore} from "@dispatcher/persistence";
 import {piRpcFixture} from "../../../packages/adapters/test/fixtures/pi-rpc.js";
 import {ControllerService} from "../src/service.js";
+import {isGuardedControllerStart,isReadableManagedCodexRun,isReadableManagedOpenCodeRun,isReadableManagedPiRun} from "../src/start-recovery.js";
+import {editStored,replaceBindingCopies,type StoredEdit} from "./fixtures/managed-restart-storage.js";
 import type {PiExecutionRuntime} from "../src/pi-runtime.js";
 
 const roots:string[]=[],services:ControllerService[]=[];
@@ -215,4 +217,105 @@ it.each(["resolve","reject"] as const)("retains the registered Pi runtime and SQ
   if(settlement==="resolve")held.resolve();else held.reject(Error("late private service guard"));await vi.waitFor(()=>expect(runtime.hasActiveOperations()).toBe(false));
   expect(await f.service.disconnectNativeRuntime("pi")).toEqual(receipts);expect(readFileSync(join(f.root,"wire-types"),"utf8")).toBe(wireBefore);expect(f.service["nativePort"](binding)).toBeUndefined();expect(f.service["piRuntimes"].get("pi")).toBe(runtime);expect(f.service["agentAdapters"].get("pi")).toBe(adapter);expect(new InteractionStore(f.service.database).binding(run.sessionId)).toEqual(binding);expect(databaseClose).not.toHaveBeenCalled();
  }finally{held.resolve();guard?.mockRestore();capture.mockRestore();const index=services.indexOf(f.service);if(index>=0)services.splice(index,1);await f.service.app.close();f.service.events.close();if(databaseClose.mock.calls.length===0)f.service.database.close();}
+});
+
+// Removing the Pi read-only constructor/reconcile admission must fail these assertions.
+it.each(["QUEUED","RUNNING"] as const)("recovers a consistent %s Pi saved binding without new native work",async taskState=>{
+ const f=await fixture(),run=await f.dispatch("restart"),store=new InteractionStore(f.service.database);
+ expect(await f.adapter.result(run.sessionId)).toMatchObject({state:"COMPLETED"});
+ const task=f.service.database.getCanonicalTask(run.taskId)!;
+ f.service.database.writeCanonicalTask(run.taskId,task.revision,JSON.parse(JSON.stringify({...task.document as object,state:taskState})));
+ const original=f.service.database.getEntity("run",run.id),session=f.service.database.getEntity("session",run.sessionId),adapter=f.service.database.getEntity("adapter-session",run.sessionId),binding=store.binding(run.sessionId)!;
+ f.service.database.saveEntity("task-dispatch","restart-receipt",JSON.parse(JSON.stringify({run:original,routing:{fixture:true}})));
+ await f.service.stop();services.splice(services.indexOf(f.service),1);
+ const db=new DispatcherDatabase(join(f.root,"controller","dispatcher.sqlite")),saved=new InteractionStore(db);
+ saved.invalidateObservation({sessionId:run.sessionId,readBarrier:"old-barrier",observation:{version:1,id:"old-observation",nativeSessionId:binding.nativeSessionId,executionRefId:binding.executionRefId,scopeFingerprint:"old-scope",observedAt:new Date().toISOString(),state:"unknown",pendingTools:"unknown",pendingApprovals:"unknown",historyMode:"unknown",readability:"unknown"}});
+ expect(saved.saveObservation({sessionId:run.sessionId,observerGeneration:99,observerSequence:99,controlEpoch:saved.control(run.sessionId)!.epoch,readBarrier:"old-barrier",observation:{version:1,id:"prior-readable",nativeSessionId:binding.nativeSessionId,executionRefId:binding.executionRefId,scopeFingerprint:"old-scope",observedAt:new Date().toISOString(),state:"idle",pendingTools:"none",pendingApprovals:"none",historyMode:"snapshot-only",readability:"readable"}})).toEqual({accepted:true});db.close();
+ const wireBefore=readFileSync(join(f.root,"wire-types"),"utf8"),traceBefore=readFileSync(join(f.root,"child-trace.jsonl"),"utf8"),environmentBefore=readFileSync(join(f.root,"environment.jsonl"),"utf8"),producer=vi.spyOn(PiRpcExecutionBackend.prototype,"start");
+ let restored:ControllerService|undefined;
+ try{
+  expect(()=>{restored=new ControllerService({dataDirectory:join(f.root,"controller"),ownerToken:"fixture-owner",withRunner:true,backgroundWorker:{enabled:false}});}).not.toThrow();
+  await restored!.start({listen:false});const recovered=restored!.database.getEntity("run",run.id),read=await restored!.app.inject({headers,url:`/api/runs/${run.id}`});
+  expect(read.statusCode,read.body).toBe(200);expect(read.json()).toMatchObject({run:{id:run.id,sessionId:run.sessionId,state:"RUNNER_UNAVAILABLE",recoveryReason:"NATIVE_OUTCOME_UNKNOWN",resumePolicy:"manual"},nativeSession:{state:"unknown",mutationAvailable:false}});
+  expect(recovered).toEqual({...original as object,state:"RUNNER_UNAVAILABLE",recoveryState:"ACTIVE",recoveryReason:"NATIVE_OUTCOME_UNKNOWN",resumePolicy:"manual"});
+  expect(restored!.database.getEntity("session",run.sessionId)).toEqual(session);expect(restored!.database.getEntity("adapter-session",run.sessionId)).toEqual(adapter);
+  expect(restored!.database.getEntity("task-dispatch","restart-receipt")).toEqual({run:recovered,routing:{fixture:true}});
+  expect(restored!.database.getCanonicalTask(run.taskId)?.document).toMatchObject({state:taskState==="QUEUED"?"WAITING_RESOURCE":"WAITING_USER"});
+  const restoredStore=new InteractionStore(restored!.database);expect(restoredStore.binding(run.sessionId)).toEqual(binding);expect(restoredStore.nativeReadBarrier(run.sessionId)).not.toBe("old-barrier");expect(restoredStore.observation(run.sessionId)).toMatchObject({state:"unknown",pendingTools:"unknown",pendingApprovals:"unknown",historyMode:"unknown",readability:"unknown"});
+  expect(restored!["nativePort"](binding)).toBeUndefined();expect(restored!["piRuntimes"].get("pi")!["executions"].size).toBe(0);
+  const fence=restored!["nativeInteractions"].fenceFor(recovered as unknown as Run,"restart-continue");
+  for(const operation of ["continue","steer","approval","verify","deliver"] as const)expect(restored!["nativeInteractions"].authorizeInteraction({id:"owner",roles:["operator"],profileId:"pi"},operation,fence).allowed).toBe(false);
+  const advance=await restored!.app.inject({headers,method:"POST",url:`/api/runs/${run.id}/advance`});expect(advance.statusCode).toBe(409);
+  expect(producer).not.toHaveBeenCalled();expect(readFileSync(join(f.root,"wire-types"),"utf8")).toBe(wireBefore);expect(readFileSync(join(f.root,"child-trace.jsonl"),"utf8")).toBe(traceBefore);expect(readFileSync(join(f.root,"environment.jsonl"),"utf8")).toBe(environmentBefore);
+ }finally{producer.mockRestore();await restored?.stop();}
+});
+
+async function savedPiFixture(taskId:string){
+ const f=await fixture(),run=await f.dispatch(taskId);expect(await f.adapter.result(run.sessionId)).toMatchObject({state:"COMPLETED"});
+ await f.service.stop();services.splice(services.indexOf(f.service),1);
+ return {...f,run,path:join(f.root,"controller","dispatcher.sqlite"),nativeBytes:["wire-types","environment.jsonl","child-trace.jsonl"].map(name=>[name,readFileSync(join(f.root,name),"utf8")] as const)};
+}
+it("qualifies only stored Pi ownership with zero writes and no physical/native/account read",async()=>{
+ const f=await savedPiFixture("readonly"),db=new DispatcherDatabase(f.path);
+ // Physical admission remains independent of cold metadata qualification.
+ rmSync(f.scope.executable);rmSync(f.scope.agentDirectory,{recursive:true});rmSync(f.scope.sessionDirectory,{recursive:true});rmSync(f.run.worktree!,{recursive:true});
+ const producer=vi.spyOn(PiRpcExecutionBackend.prototype,"start");
+ try{
+  const stored=db.getEntity("run",f.run.id) as unknown as Run,writes=db.handle.prepare("SELECT total_changes() AS count").get();
+  expect(isReadableManagedPiRun(db,stored)).toBe(true);expect(isReadableManagedCodexRun(db,stored)).toBe(false);expect(isReadableManagedOpenCodeRun(db,stored)).toBe(false);expect(isGuardedControllerStart(db,stored)).toBe(false);
+  expect(db.handle.prepare("SELECT total_changes() AS count").get()).toEqual(writes);expect(producer).not.toHaveBeenCalled();for(const [name,bytes] of f.nativeBytes)expect(readFileSync(join(f.root,name),"utf8")).toBe(bytes);
+ }finally{db.close();producer.mockRestore();}
+ expect(()=>new ControllerService({dataDirectory:join(f.root,"controller"),ownerToken:"fixture-owner",withRunner:true,backgroundWorker:{enabled:false}})).toThrow(expect.objectContaining({code:"PI_RPC_SCOPE_CHANGED",creationOutcome:"not-created"}));
+});
+// The unchanged OpenCode matrix covers all shared checkedManagedRun field guards.
+// These real Pi rows exercise each ownership boundary plus decisive Pi shape checks.
+const corruptPiFields:StoredEdit[]=[
+ ["run","providerId","codex"],["run","modelSelection",{}],["run","executionSelection.contextFingerprint","other"],
+ ["run","executionRef.workspaceId","other"],["run","worktree","/other"],
+ ["session","profileId","other"],["session","executionRef.id","other"],
+ ["run-contract","workspace.repositoryId","other"],["run-contract","workspace.baseCommit","other"],
+ ["adapter-session","runId","other"],["adapter-session","backendId","other"],["adapter-session","workspacePath","/other"],
+ ["adapter-session","nativeInvocationId",undefined],["adapter-session","executionSelection.requestedModel","other"],
+ ["adapter-session","execution.generation",2],["adapter-session","execution.attempt",2],["adapter-session","execution.leaseId","other"],
+ ["adapter-session","nativeIdentityIssue","NATIVE_BINDING_CONFLICT"],
+ ["adapter-session","nativeBinding.nativeStoreRef","opaque-other-store"],["session","nativeSessionId","00000000-0000-4000-8000-000000000000"],
+];
+const corruptPiBindings:readonly (readonly [field:string,value:unknown])[]=[
+ ["product","codex"],["backendId","codex-app-server"],["region","cn"],["nativeThreadId","thread"],["parentSessionId","parent"],
+ ["nativeSessionId",""],["nativeSessionId","00000000-0000-4000-8000-00000000000"],["nativeSessionId","00000000-0000-4000-8000-0000000000000"],
+ ["nativeSessionId","00000000-0000-4000-8000-00000000000g"],["nativeSessionId","00000000000040008000000000000000"],
+ ["nativeSessionId","00000000-0000-4000-8000-000000000000\n"],
+];
+it.each([
+ ...corruptPiFields.map(edit=>({label:`${edit[0]}.${edit[1]}`,edit,binding:undefined})),
+ ...corruptPiBindings.map(binding=>({label:`consistent-binding:${binding[0]}=${JSON.stringify(binding[1])}`,binding,edit:undefined})),
+ ...["missing-session","missing-adapter","missing-contract","missing-binding","missing-control","identity-diagnostic","current-run","duplicate-control","control-row-epoch","control-row-revision","control-row-state","control-document-owner","stored-binding-store"].map(label=>({label,edit:undefined,binding:undefined})),
+])("keeps corrupted Pi restart closed for $label without modifying the original Run",async({label,edit,binding})=>{
+ const f=await savedPiFixture("corrupt"),db=new DispatcherDatabase(f.path);let closed=false;
+ const producer=vi.spyOn(PiRpcExecutionBackend.prototype,"start");
+ try{
+  if(edit)editStored(db,f.run,edit);
+  else if(binding)replaceBindingCopies(db,f.run,...binding);
+  else if(label.startsWith("missing-")){
+   const kind=label.slice(8);if(kind==="binding"||kind==="control")db.handle.prepare(`DELETE FROM ${kind==="binding"?"native_bindings":"session_controls"} WHERE session_id=?`).run(f.run.sessionId);
+   else {if(kind==="session")db.handle.exec("PRAGMA foreign_keys=OFF");db.handle.prepare("DELETE FROM entities WHERE kind=? AND id=?").run(kind==="adapter"?"adapter-session":kind==="contract"?"run-contract":kind,kind==="contract"?f.run.id:f.run.sessionId);if(kind==="session")db.handle.exec("PRAGMA foreign_keys=ON");}
+  }else if(label==="identity-diagnostic")db.handle.prepare("INSERT INTO native_identity_diagnostics(id,session_id,code) VALUES(?,?,?)").run("corrupt",f.run.sessionId,"NATIVE_BINDING_CONFLICT");
+  else if(label==="current-run"){const task=db.getCanonicalTask(f.run.taskId)!;db.writeCanonicalTask(f.run.taskId,task.revision,JSON.parse(JSON.stringify({...task.document as object,currentRunId:"other"})));}
+  else if(label==="duplicate-control"){
+   const control=new InteractionStore(db).control(f.run.sessionId)!;db.saveEntity("session","other-session",{id:"other-session",providerId:"pi",profileId:"pi"});db.handle.prepare("INSERT INTO session_controls(session_id,active_run_id,epoch,revision,state,document_json) VALUES(?,?,?,?,?,?)").run("other-session",f.run.id,control.epoch,control.revision,control.state,JSON.stringify({...control,sessionId:"other-session"}));
+  }else if(label.startsWith("control-row-")){const column=label.slice(12);db.handle.prepare(`UPDATE session_controls SET ${column}=? WHERE session_id=?`).run(column==="state"?"HUMAN":2,f.run.sessionId);}
+  else if(label==="control-document-owner"){const control=new InteractionStore(db).control(f.run.sessionId)!;db.handle.prepare("UPDATE session_controls SET document_json=? WHERE session_id=?").run(JSON.stringify({...control,activeRunId:"other"}),f.run.sessionId);}
+  else {const stored=new InteractionStore(db).binding(f.run.sessionId)!;db.handle.prepare("UPDATE native_bindings SET document_json=? WHERE session_id=?").run(JSON.stringify({...stored,nativeStoreRef:"opaque-other-store"}),f.run.sessionId);}
+  const before=db.getEntity("run",f.run.id),writes=db.handle.prepare("SELECT total_changes() AS count").get();expect(isReadableManagedPiRun(db,before as unknown as Run)).toBe(false);expect(db.handle.prepare("SELECT total_changes() AS count").get()).toEqual(writes);db.close();closed=true;
+  let restored:ControllerService|undefined;try{expect(()=>{restored=new ControllerService({dataDirectory:join(f.root,"controller"),ownerToken:"fixture-owner",withRunner:true,backgroundWorker:{enabled:false}});}).toThrow(expect.objectContaining({code:"NATIVE_CONTROL_RUNTIME_UNAVAILABLE"}));}finally{await restored?.stop();}
+  const checked=new DispatcherDatabase(f.path);try{expect(checked.getEntity("run",f.run.id)).toEqual(before);}finally{checked.close();}
+  expect(producer).not.toHaveBeenCalled();for(const [name,bytes] of f.nativeBytes)expect(readFileSync(join(f.root,name),"utf8")).toBe(bytes);
+ }finally{if(!closed)db.close();producer.mockRestore();}
+});
+it.each([
+ ["nativeSessionId","ABCDEFAB-CDEF-ABCD-EFAB-CDEFABCDEFAB"],
+ ["nativeStoreRef","opaque-rewritten-store"],
+] as const)("accepts consistent opaque Pi %s agreement without claiming external provenance",async(field,value)=>{
+ const f=await savedPiFixture("opaque"),db=new DispatcherDatabase(f.path);
+ try{replaceBindingCopies(db,f.run,field,value);const writes=db.handle.prepare("SELECT total_changes() AS count").get();expect(isReadableManagedPiRun(db,db.getEntity("run",f.run.id) as unknown as Run)).toBe(true);expect(db.handle.prepare("SELECT total_changes() AS count").get()).toEqual(writes);for(const [name,bytes] of f.nativeBytes)expect(readFileSync(join(f.root,name),"utf8")).toBe(bytes);}finally{db.close();}
 });

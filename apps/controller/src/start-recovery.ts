@@ -66,3 +66,13 @@ export function isReadableManagedOpenCodeRun(database:DispatcherDatabase,run:Run
     return binding.product==="opencode"&&binding.region==="global"&&binding.backendId==="opencode-server-v2"&&typeof binding.nativeSessionId==="string"&&binding.nativeSessionId.length<=512&&/^ses[A-Za-z0-9_-]+$/.test(binding.nativeSessionId)&&binding.nativeThreadId===undefined&&binding.parentSessionId===undefined;
   }catch{return false;}
 }
+
+/** Read-only Pi storage qualification never restores a native source or writer. */
+export function isReadableManagedPiRun(database:DispatcherDatabase,run:Run):boolean {
+  try{
+    if(run.providerId!=="pi"||run.executionSelection?.backendId!=="pi-rpc")return false;
+    const checked=checkedManagedRun(database,run);if(!checked)return false;
+    const {binding}=checked;
+    return binding.product==="pi"&&binding.backendId==="pi-rpc"&&binding.region==="global"&&typeof binding.nativeSessionId==="string"&&binding.nativeSessionId.length===36&&/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(binding.nativeSessionId)&&binding.nativeThreadId===undefined&&binding.parentSessionId===undefined;
+  }catch{return false;}
+}

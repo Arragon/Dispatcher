@@ -12,6 +12,7 @@ import type {CodexExecutionRuntime} from "../src/codex-runtime.js";
 import {ControllerService} from "../src/service.js";
 import {OpenCodeExecutionRuntime} from "../src/opencode-runtime.js";
 import {normalizeOpenCodeCatalog} from "../../../packages/adapters/src/opencode-catalog.js";
+import {editStored,replaceBindingCopies,type StoredEdit} from "./fixtures/managed-restart-storage.js";
 import {isGuardedControllerStart,isReadableManagedCodexRun,isReadableManagedOpenCodeRun} from "../src/start-recovery.js";
 vi.mock("node:fs/promises",async importOriginal=>{const actual=await importOriginal<typeof fsPromises>();return {...actual,access:vi.fn(actual.access)};});
 import * as fsPromises from "node:fs/promises";
@@ -108,7 +109,6 @@ it("qualifies only stored OpenCode records without writes or a physical executab
  // Enabled runtime executable admission remains a separate constructor requirement.
  expect(()=>new ControllerService({dataDirectory:join(f.root,"data"),ownerToken:"fixture-owner",withRunner:true,opencodeExecutionFactory:f.factory})).toThrow(expect.objectContaining({code:"OPENCODE_SCOPE_CHANGED",creationOutcome:"not-created"}));expect(f.factory).toHaveBeenCalledOnce();
 });
-type StoredEdit=readonly [kind:string,path:string,value:unknown];
 const corruptOpenCodeFields:StoredEdit[]=[
  ["run","providerId",undefined],["run","providerId","codex"],["session","providerId",undefined],["session","providerId","codex"],
  ["run","executionSelection",undefined],["run","modelSelection",{}],
@@ -123,19 +123,6 @@ const corruptOpenCodeFields:StoredEdit[]=[
  ["session","nativeBinding.nativeSessionId","ses_other"],["adapter-session","nativeBinding.nativeStoreRef","other"],
  ["session","nativeSessionId","ses_other"],["adapter-session","providerSessionId","ses_other"],["run","providerSessionId","ses_other"],
 ];
-function editStored(db:DispatcherDatabase,run:Run,[kind,path,value]:StoredEdit){
- const id=kind==="run"||kind==="run-contract"?run.id:run.sessionId,document=db.getEntity(kind,id) as Record<string,unknown>,keys=path.split(".");let target=document;
- for(const key of keys.slice(0,-1))target=target[key] as Record<string,unknown>;
- const key=keys.at(-1)!;if(value===undefined)delete target[key];else target[key]=value;
- db.handle.prepare("UPDATE entities SET document_json=? WHERE kind=? AND id=?").run(JSON.stringify(document),kind,id);
-}
-function replaceBindingCopies(db:DispatcherDatabase,run:Run,field:string,value:unknown){
- const original=new InteractionStore(db).binding(run.sessionId)!,binding={...original,[field]:value};
- db.handle.prepare("UPDATE native_bindings SET binding_key=?,document_json=? WHERE session_id=?").run(JSON.stringify([binding.product,binding.region,binding.nativeStoreRef,binding.nativeSessionId,binding.nativeThreadId??""]),JSON.stringify(binding),run.sessionId);
- for(const kind of ["session","adapter-session"])editStored(db,run,[kind,"nativeBinding",binding]);
- if(field==="nativeSessionId")for(const [kind,path] of [["run","providerSessionId"],["session","nativeSessionId"],["adapter-session","providerSessionId"]])editStored(db,run,[kind!,path!,value]);
- if(field==="backendId")for(const [kind,path] of [["run","executionSelection.backendId"],["adapter-session","executionSelection.backendId"],["adapter-session","backendId"]])editStored(db,run,[kind!,path!,value]);
-}
 const corruptOpenCodeRecords=["missing-session","missing-adapter","missing-contract","missing-binding","missing-control","identity-diagnostic","current-run","duplicate-control","control-row-epoch","control-row-revision","control-row-state",
  ...["version","epoch","revision","state","exclusion","sessionId","activeRunId"].flatMap(field=>[`control-missing:${field}`,`control-invalid:${field}`]),
  ...["epoch","revision"].flatMap(field=>[`control-fraction:${field}`,`control-string:${field}`]),
