@@ -36,7 +36,7 @@ export interface AgentProfileConfig {
   runnerId: string;
   credentialRef?: string;
   settings?: Record<string, JsonValue>;
-  nativeInteraction?:{mode:"compatible";backendId:"pi-rpc"|"codex-app-server";executionLocation:"managed-worktree";surface?:never};
+  nativeInteraction?:{mode:"compatible";backendId:"pi-rpc"|"codex-app-server"|"opencode-server-v2";executionLocation:"managed-worktree";surface?:never};
 }
 
 export interface RepositoryConfig {
@@ -305,7 +305,7 @@ export const dispatcherConfigSchema = {
           enabled: { type: "boolean" },
           nativeInteraction: {
             type: "object", additionalProperties: false, required: ["mode", "backendId", "executionLocation"],
-            properties: { mode: { const: "compatible" }, backendId: { enum: ["pi-rpc","codex-app-server"] }, executionLocation: { const: "managed-worktree" } },
+            properties: { mode: { const: "compatible" }, backendId: { enum: ["pi-rpc","codex-app-server","opencode-server-v2"] }, executionLocation: { const: "managed-worktree" } },
           },
           credentialRef: integrationSchema.properties.credentialRef,
           settings: { type: "object", additionalProperties: true },
@@ -445,14 +445,27 @@ export function validateConfig(input: unknown): DispatcherConfig {
       throw new ConfigValidationError([`/agentProfiles/${profile.id} references unknown runner ${profile.runnerId}`]);
     }
     if (profile.nativeInteraction) {
-      const pi=profile.nativeInteraction.backendId==="pi-rpc",provider=pi?"pi":"codex",label=pi?"Pi RPC":"Codex App Server";
+      const backendId = profile.nativeInteraction.backendId;
+      let provider: string, label: string, pathKeys: string[];
+      switch (backendId) {
+        case "pi-rpc": provider = "pi"; label = "Pi RPC"; pathKeys = ["executable", "agentDirectory", "sessionDirectory"]; break;
+        case "codex-app-server": provider = "codex"; label = "Codex App Server"; pathKeys = ["executable", "codexHome"]; break;
+        case "opencode-server-v2": provider = "opencode"; label = "OpenCode Server"; pathKeys = ["executable"]; break;
+      }
       if (profile.provider !== provider || config.runners.find(runner => runner.id === profile.runnerId)?.mode !== "embedded") throw new ConfigValidationError([`/agentProfiles/${profile.id}/nativeInteraction requires ${label} on an embedded Runner`]);
-      for (const key of pi?["executable", "agentDirectory", "sessionDirectory"]:["executable","codexHome"]) {
+      for (const key of pathKeys) {
         const path = profile.settings?.[key];
         if (typeof path !== "string" || !isAbsolute(path) || path.length > 4096 || Array.from(path).some(character => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127)) throw new ConfigValidationError([`/agentProfiles/${profile.id}/settings/${key} must be an explicit absolute ${label} path`]);
       }
       const model = profile.settings?.model;
-      if (pi&&(typeof model !== "string" || model.length > 240 || !/^[^\s/]+\/\S+$/u.test(model) || Array.from(model).some(character => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127))) throw new ConfigValidationError([`/agentProfiles/${profile.id}/settings/model must be an explicit Pi RPC provider/model`]);
+      if (backendId === "pi-rpc"&&(typeof model !== "string" || model.length > 240 || !/^[^\s/]+\/\S+$/u.test(model) || Array.from(model).some(character => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127))) throw new ConfigValidationError([`/agentProfiles/${profile.id}/settings/model must be an explicit Pi RPC provider/model`]);
+      if (backendId === "opencode-server-v2") {
+        for (const key of Object.keys(profile.settings ?? {})) {
+          if (!["executable", "model", "approveTools"].includes(key)) throw new ConfigValidationError([`/agentProfiles/${profile.id}/settings/${key} is not supported by OpenCode Server`]);
+        }
+        if (model !== undefined && (typeof model !== "string" || model.length > 240 || model.indexOf("/") < 1 || model.indexOf("/") === model.length - 1 || model.includes("#") || Array.from(model).some(character => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127))) throw new ConfigValidationError([`/agentProfiles/${profile.id}/settings/model must be an exact OpenCode provider/model`]);
+        if (profile.settings?.approveTools !== undefined && profile.settings.approveTools !== false) throw new ConfigValidationError([`/agentProfiles/${profile.id}/settings/approveTools must be false for OpenCode Server`]);
+      }
     }
     if (profile.provider === "codex" && (typeof profile.settings?.codexHome !== "string" || !profile.settings.codexHome)) {
       throw new ConfigValidationError([`/agentProfiles/${profile.id}/settings/codexHome is required for Codex`]);

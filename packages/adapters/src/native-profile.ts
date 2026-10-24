@@ -10,7 +10,7 @@ import {join} from "node:path";
 /** Structural registration contract; adapters do not depend on configuration or persistence. */
 export interface NativeProfileRegistration {
   id: string; alias: string; provider: string; enabled?: boolean; credentialRef?: string; settings?: Record<string, unknown>;
-  nativeInteraction?:{mode:"compatible";backendId:"pi-rpc"|"codex-app-server";executionLocation:"managed-worktree"};
+  nativeInteraction?:{mode:"compatible";backendId:"pi-rpc"|"codex-app-server"|"opencode-server-v2";executionLocation:"managed-worktree"};
 }
 /** Native account locations used by our registered adapters/catalogs; owning host only. */
 export function nativePrivatePaths(profiles:readonly NativeProfileRegistration[]):string[]{
@@ -53,9 +53,10 @@ function cliProfile(profile: NativeProfileRegistration): CliAgentProfile {
 }
 export function createNativeProfileAdapter(profile: NativeProfileRegistration, options: NativeProfileFactoryOptions = {}): AgentAdapter | undefined {
   if (profile.enabled === false) return;
+  const configured = profile.nativeInteraction?.backendId;
+  if ((configured === "opencode-server-v2" && profile.provider !== "opencode") || (profile.provider === "opencode" && configured && configured !== "opencode-server-v2")) throw new AdapterContractError("BACKEND_MISMATCH", "OpenCode Server requires its owning OpenCode profile");
   if (profile.provider === "codex") {
     const native = codexProfile(profile); if (!native) return;
-    const configured=profile.nativeInteraction?.backendId;
     if(configured&&configured!=="codex-app-server")throw new AdapterContractError("BACKEND_MISMATCH","Codex profile selects another provider's native backend");
     const backend=options.codexBackendFactory?.(native);
     if(configured&&!backend)throw new AdapterContractError("CODEX_RUNTIME_UNAVAILABLE","Configured Codex App Server requires its owning execution host");
@@ -65,6 +66,12 @@ export function createNativeProfileAdapter(profile: NativeProfileRegistration, o
   }
   if (profile.provider !== "cursor" && profile.provider !== "kiro" && !isNativeCliProvider(profile.provider)) return;
   const native = cliProfile(profile), backend = options.cliBackendFactory?.(profile.provider, native), store = options.store, resolve = options.resolveCredential;
+  if (configured === "opencode-server-v2" && !backend) throw new AdapterContractError("OPENCODE_RUNTIME_UNAVAILABLE", "Configured OpenCode Server requires its owning execution host");
+  if (configured === "opencode-server-v2" && backend?.backendId !== configured) throw new AdapterContractError("BACKEND_MISMATCH", "Configured OpenCode native host returned a different backend");
+  if (backend?.backendId === "opencode-server-v2") {
+    if (profile.provider !== "opencode") throw new AdapterContractError("BACKEND_MISMATCH", "OpenCode Server cannot serve another provider");
+    if (!configured) throw new AdapterContractError("NATIVE_INTERACTION_REQUIRED", "OpenCode Server requires explicit applied native configuration");
+  }
   switch (profile.provider) {
     case "cursor": return new CursorAdapter(native, backend, store, resolve);
     case "kiro": return new KiroAdapter(native, backend, store, resolve);
