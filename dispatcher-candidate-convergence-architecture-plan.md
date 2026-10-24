@@ -590,3 +590,6 @@ server profile。owned host/producer及精确分配observer随后保存105ef8b�
 | CV-12 | [INH-1929](https://linear.app/inhandy/issue/INH-1929/cv-12-验证整合后owning-runner与nonecommitpr交付不退化) | M6.1 | INH-1922、INH-1923、INH-1925 |
 | CV-13 | [INH-1930](https://linear.app/inhandy/issue/INH-1930/cv-13-完成跨候选回归安全恢复与性能证据) | M6.1 | INH-1920、INH-1928、INH-1929 |
 | CV-14 | [INH-1931](https://linear.app/inhandy/issue/INH-1931/cv-14-形成单一可评审候选及逐能力gate交接) | M6.1 | INH-1930 |
+
+
+**ACP producer回执**：2631e36仅内部执行层及显式分配身份，原32producer断言与27新增回归、client113不变；最终193文件3175例及全部非测试门禁通过。独立spec/quality Approved、零Critical/Important；root核验35次真实捕获161111pre/161116post、500Git和最终全部输入无漂移，共享fixture除声明外精确迁移，主工作区未改动。异步observer有单次/整体500ms确认并保留原始工作存续，后续runtime必须消费该状态。下一独立canonical catalog29直接案例+1真实后续Controller exact-ID组合，再runtime28、原子factory/config17、Controller30。过时ModelInfo/manifest字段不恢复；group/EPERM/R020、CV13audit28、正式Gates和CV14仍开放。

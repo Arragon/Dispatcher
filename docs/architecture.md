@@ -1737,3 +1737,20 @@ The proof labels this basis separately from hermetic/native qualification.
 Verification SENDING/UNKNOWN receipts do not replay; acceptance and its Task DONE
 transition share one database transaction. Historical verification remains
 readable; missing/newly changed proof cannot authorize acceptance.
+
+
+## Internal Devin Local ACP execution
+
+The internal ACP producer admits one managed new Session through canonical
+ExecutionSelection. Its explicit allocated identity mode shares the existing
+STARTING/invocation/save-before-emit observer state machine and requires durable
+binding before native model or prompt writes. Native client updates remain
+synchronous; the producer serializes and acknowledges asynchronous persistence
+with 500ms individual and aggregate checkpoints, then rechecks authority.
+
+Producer activity tracks actual acquisition, work and original callback settlement
+independently of bounded public waits. Runtime composition must consume this raw
+status; the Adapter turn wrapper alone cannot establish drain. Unknown disconnect
+receipts remain immutable after later settlement. This internal Adapter is not
+registered in the profile factory or Controller and grants no continuation,
+history, background-tool or writer-release qualification.

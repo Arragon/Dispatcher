@@ -4618,3 +4618,55 @@ canonical selection and root/probe boundaries. Root resolves source/byte/artifac
 audits without repeating tests. Source503 keeps immutable identity/decision/owner.
 Formal group/R020/provider/account/GUI/writer/service/release and parentCV14 remain
 open. Quota70%used30%remaining/reset2unused; continue independent development.
+
+
+### 2026-10-24 internal Devin Local ACP producer locally complete
+
+Source2631e36d0508a29686c8e3e254e6c609c884dd76, BASE0a1387d, changes eight scoped
+paths. Explicit devin-local-session allocation reuses the current durable owner;
+canonical producer waits for binding and asynchronous fact persistence before
+model/prompt/readiness/terminal publication. Individual and aggregate observation
+checkpoints500ms, raw acquisition/work/Guard/consumer lifetime, pre-invocation64
+callback limit and immutable unknown cleanup preserve authority across awaits.
+Client implementation changes only internal Identity/identity exports. No public
+index, schema, factory, Controller, package/lock or persisted contract changes.
+
+Original20definitions/32expanded producer assertions retain exact bodies after
+listed canonical selection/reservation/observer substitutions;27direct regressions
+cover actual async/raw/ID/deadline defects. Existing client113 bodies match BASE
+and original NativeBindingEvents66 prefix stays exact, plus18new owner cases.
+Shared fixture helper is byte-identical except its declaration/roots parameter:
+7434bytes SHA049e9fc01d8a2bec5573655fcdee30fab603242161af7d14311567cece67ac9d
+becomes7466bytes SHA595163271a77873501ebfc7e32fc4ff7c8adf74560ca2a445f05f20c4c243d3c.
+Source/fixture mapSHAc0d60581cc271a245ec4538c1d37b0051e07f2ac36d5c4c23f7e6e3240f711f3.
+
+Final-v4 `mise exec -- pnpm check` passes build/typecheck/lint/boundaries and
+193files3175tests (Vitest136.26s, wall155.510445s), actualUTC
+2026-10-24T15:11:16.636846Z→15:13:52.147547Z. LogSHA
+359c6013bb0c794bddf4055f869c013be9a5a629553c332aa36bc896dd1fceeb;
+/tmp/dispatcher-devin-acp-producer-evidence-20261024/final-check-observation-pipeline-v4.
+Earlier unused-import lint failure, meaningful native-ID/aggregate-pipeline/
+callback-cap REDs and superseded v2/v3 gates remain retained; no unchanged retry
+or assertion/policy weakening. Final affected3files256pass after actualbuild.
+
+Root /tmp/dispatcher-devin-acp-producer-root-audit-20261024.json independently
+checks35actualcommandcaptures/161111pre+161116post copies/140digests/7external
+scripts,500trackedGit/finalprepost/live,4604finalinputs/680liveDist/16buildinfo;
+zeroerrors and finaldrift, dirty primary preserved. Historical snapshot dist is
+not counted as live. Root verifies actual frozenGit source, reruns only the
+assertion/fixture map into a separate artifact and matches workerJSON. Final
+report-write drift is solely assigned ignored Markdown. Runtime binaries and
+node_modules explicitly excluded; no hermetic execution claim.
+
+Required independent /tmp/dispatcher-devin-acp-producer-task1-review-20261024.md:
+spec compliant/quality Approved,0Critical/Important. One Minor inherited fixture
+warning/error noise deferredCV14; output not pristine. Root resolves source/bytes/
+primary prerequisite items. Runtime must consume actual producer raw operations,
+not Adapter turn wrappers; neither is native quiescence proof. LinearCV10 receipt
+b6471e95-8152-44e3-bf9d-b6deae26de43 saved/readback, InProgress retained.
+
+Next canonical catalog29direct+oneobsoleteModelInfo exact-ID case through real
+later Controllerconsumer, runtime28, atomicconfig/factory17 and Controller30.
+Source503 immutable identities/decisions retained; formal group/EPERM/R020,
+CV13audit28/native/account/GUI/writer/service/release and parentCV14 remain open.
+Officialquota84%used16%remaining ordinaryUsageAllowedtrue/reset2unused.

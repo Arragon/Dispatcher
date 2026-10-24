@@ -1095,3 +1095,12 @@
   guard, even while raw work is pending. An open runtime, or a closed runtime with
   durably drained hosts, reaches the active-work guard. Assert raw status and
   immutable cleanup independently; one rejection code does not describe all phases.
+
+
+- A synchronous transport update contract can feed asynchronous durable observation
+  through an owned serial producer queue. Bound both each acknowledgement and the
+  aggregate terminal checkpoint; individually short callbacks can otherwise leave
+  the overall result unbounded. Retain underlying work after the public wait ends.
+- Enforce a callback capacity limit before invoking the owning callback. Checking
+  only while storing its returned Promise can start one untracked operation at
+  the limit. Cached unknown cleanup does not become confirmed after late settlement.

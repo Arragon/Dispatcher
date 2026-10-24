@@ -108,44 +108,44 @@ current passing-test totals.
 
 **Steps and acceptance**
 
-- [ ] Read actual current modules/scoped AGENTS and architecture/knowledge. Map
+- [x] Read actual current modules/scoped AGENTS and architecture/knowledge. Map
   every source producer assertion and any necessary canonical test setup change.
   Shared fixture extraction belongs here if it prevents real duplication; inspect
   the now113client tests/fixtures before choosing exact exported test helper.
-- [ ] Port source32 tests first with internal named imports/current canonical
+- [x] Port source32 tests first with internal named imports/current canonical
   fixture. Actual Adapter tests reserve execution+install owning sink/onBegin,
   retaining v3 separation/no-resume/terminal-persistence assertions. Missing
   import alone is port evidence, not proof of new behavior RED.
-- [ ] Add direct meaningful RED for awaited async running/terminal sinks (including
+- [x] Add direct meaningful RED for awaited async running/terminal sinks (including
   deferred rejection), real Adapter allocation before prompt, post-await authority
   revocation, forbidden async Guard normalizedonce, rawactive status before/after
   late settlement and immutable unknown receipt. Use production producer/Adapter,
   actual current NativeBindingEvents and local ACP fixture, no noop fake success.
-- [ ] Implement one-source canonical producer/Adapter. RequiresNativeBinding:true
+- [x] Implement one-source canonical producer/Adapter. RequiresNativeBinding:true
   connects actual StructuredCliAdapter startup/observer options. Clone identities/
   callbacks once, preserve one admission and no duplicate create on unknown,
   bind-before-model/prompt and guarded actual activity readiness. Track/await
   legitimate native facts at required checkpoints with bounded500ms gates.
-- [ ] Extend existing allocated mode only for exact Devin ownership. Assert zero
+- [x] Extend existing allocated mode only for exact Devin ownership. Assert zero
   host/probe/spawn work for foreign owner/ref/selection or stale initial observer.
   Invalid/conflicting allocated binding, persistence failure or authority loss
   after awaited sink must block subsequent model/prompt/input without recreating
   an already possible Session; retain its unknown outcome. Keep Codex/OpenCode/Pi
   modes unchanged and their
   existing dynamic callers intact. No provider-independent identity fallback.
-- [ ] Implement real hasActiveOperations and preserve raw callback/acquisition/
+- [x] Implement real hasActiveOperations and preserve raw callback/acquisition/
   work ownership through cancellation/deadline/shutdown. Do not let timeout/closed
   wrapper settlement erase raw work. Independently verify late settlement leaves
   cached unknown receipt unchanged. Keep source held-binding/acquisition-no-receipt
   tests and original before-root forbidden Guard assertions.
-- [ ] Self-review exact diff/callers, fixture extraction, no public registration/
+- [x] Self-review exact diff/callers, fixture extraction, no public registration/
   package/persisted contracts. Build, then focused command:
   `mise exec -- pnpm vitest run packages/adapters/test/devin-acp-execution.test.ts packages/adapters/test/devin-acp.test.ts packages/adapters/test/native-binding-events.test.ts packages/adapters/test/ecosystem.test.ts packages/adapters/test/pi-rpc-execution.test.ts packages/adapters/test/opencode-execution.test.ts packages/adapters/test/execution-selection.test.ts`.
   Derive tooling from package.json; no native provider/audit/deploy repetition.
-- [ ] One unchanged default `mise exec -- pnpm check` on final source. Required
+- [x] One unchanged default `mise exec -- pnpm check` on final source. Required
   build/typecheck/lint/boundaries/tests pass. Preserve exact failures and return
   concrete blockers; root will rule without policy/assertion weakening.
-- [ ] Commit only scoped code/tests, audit final Git blobs against actual final
+- [x] Commit only scoped code/tests, audit final Git blobs against actual final
   command pre/post and fixture/source assertion map, then report exact evidence,
   verified local scope/noise and all remaining Gates. Root required independent
   task review follows; no worker subagents/Linear/docs/index/activation/push/merge.

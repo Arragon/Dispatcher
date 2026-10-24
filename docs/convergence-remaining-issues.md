@@ -226,11 +226,20 @@ signal0 only, but its laterps snapshot cannot establish zombie state or original
 failure cause. Pinned officialXNU reference is not matched to this Darwin27 host;
 group finding andR020 remain open, with no unchanged diagnostic repeat/policy fix.
 
-Next: Devin Local producer/Adapter canonical binding and async observer work,
-remaining native providers, unresolved shared
-group safety and original provider/GUI/writer/service/release qualification.
-Current integration uses fixtures only; no real account/config/service activation
-or persisted-format/dependency change occurred. CV-09 and the full goal remain
+Internal producer/Adapter2631e36 is now independently spec compliant/quality
+Approved, with original32 producer cases+27direct regressions and client113
+preserved. Final default193/3175 plus non-test gates pass wall155.510445s; root
+checks35captures/161111pre+161116post/500Git exact final input bytes and shared
+fixture extraction, no final drift. Explicit Devin allocation, awaited durable
+facts and raw work lifetime remain internal. Full-suite fixture-noise Minor
+staysCV14; public catalog/runtime/config/Controller registration remains pending.
+
+Next: canonical Devin Local catalog29direct/one exact-ID case through later real
+Controller composition, runtime28, atomic config/factory17, Controller30,
+remaining native providers, unresolved shared group safety and original
+provider/GUI/writer/service/release qualification.
+Current native integration uses fixtures only; no real account/config/service activation
+or persisted-format change occurred. Exact SDK/Zod dependencies are recorded above. CV-09 and the full goal remain
 incomplete.
 
 The completed read-only source audits also identify these later development
