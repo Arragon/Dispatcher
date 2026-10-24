@@ -1,10 +1,11 @@
 import { isDeepStrictEqual } from "node:util";
-import { isExecutionContextRef, validateExecutionBinding, type ExecutionContextRef, type NativeTurnFact } from "@dispatcher/domain";
+import { isExecutionContextRef, validateExecutionBinding, type ExecutionContextRef, type NativeTurnFact, type ModelCatalogContext, type AccountModelCatalog } from "@dispatcher/domain";
 import { AdapterContractError, AdapterStartError, type AdapterManifest } from "./contracts.js";
 import { StructuredCliAdapter, type CliAgentBackend, type CliAgentProfile, type CliStartInput, type CliTurn, type CliTurnResult, type NormalizedCliEvent } from "./ecosystem-cli.js";
 import type { SessionStore } from "./generic.js";
 import type { LocalRuntimeDisconnect } from "./interaction-contracts.js";
 import { DevinLocalAcpClient, identity, type Identity, type DevinLocalAcpScope } from "./devin-acp.js";
+import { readDevinLocalCatalog } from "./devin-acp-catalog.js";
 import { freezeExecutionSelection } from "./execution-selection.js";
 const text = (value: unknown): value is string => typeof value === "string" && value.length > 0 && value.length <= 512 && !Array.from(value).some(character => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127);
 export interface DevinLocalAcpExecutionScope extends DevinLocalAcpScope { profileId: string; runnerId: string; nativeStoreRef: string }
@@ -191,8 +192,24 @@ export const devinLocalAcpManifest: AdapterManifest = {
   capabilities: { pause: false, resume: false, usage: false, diagnostics: true },
 };
 export class DevinLocalAcpAdapter extends StructuredCliAdapter {
-  constructor(profile: CliAgentProfile, backend: CliAgentBackend, store?: SessionStore) {
+  private readonly catalogScope?: Omit<DevinLocalAcpScope, "workspacePath">;
+  private readonly catalogRoots?: Identity[];
+  private readonly catalogProfileId: string;
+  constructor(profile: CliAgentProfile, backend: CliAgentBackend, store?: SessionStore, catalogScope?: Omit<DevinLocalAcpScope, "workspacePath">) {
     if (backend.backendId !== "devin-local-acp") throw new AdapterContractError("BACKEND_MISMATCH", "Devin Local requires its owning ACP backend");
-    super({ manifest: devinLocalAcpManifest, defaultExecutable: "devin", versionArgs: ["--version"], authArgs: [], supportsResume: false, supportsExecutionSelection: true, requiresNativeBinding: true, strictLifecycle: true, requireExecutionEvidence: true, startArgs: () => [] }, profile, backend, store);
+    super({ manifest: devinLocalAcpManifest, defaultExecutable: "devin", versionArgs: ["--version"], authArgs: [], supportsResume: false, supportsExecutionSelection: true, requiresNativeBinding: true, strictLifecycle: true, requireExecutionEvidence: true, startArgs: () => [] }, structuredClone(profile), backend, store);
+    this.catalogProfileId = profile.id;
+    if (catalogScope) {
+      const captured = structuredClone(catalogScope);
+      if (!profile.executable || captured.executable !== profile.executable) throw new AdapterContractError("MODEL_CONTEXT_MISMATCH", "MODEL_CONTEXT_MISMATCH");
+      try { this.catalogRoots = [identity(captured.executable, false), identity(captured.dataHome, true), identity(captured.configHome, true)]; }
+      catch { throw new AdapterContractError("MODEL_CONTEXT_MISMATCH", "MODEL_CONTEXT_MISMATCH"); }
+      this.catalogScope = captured;
+    }
+  }
+  override async modelCatalog(context: ModelCatalogContext & { workspacePath: string; signal?: AbortSignal }): Promise<AccountModelCatalog> {
+    if (!this.catalogScope || !this.catalogRoots) return super.modelCatalog(context);
+    const captured: ModelCatalogContext = { profileId: context.profileId, runnerId: context.runnerId, repositoryId: context.repositoryId, executionContextRef: context.executionContextRef, reason: context.reason };
+    return readDevinLocalCatalog({ profileId: this.catalogProfileId, scope: { ...this.catalogScope, workspacePath: context.workspacePath }, context: captured, ...(context.signal ? { signal: context.signal } : {}) }, this.catalogRoots);
   }
 }
