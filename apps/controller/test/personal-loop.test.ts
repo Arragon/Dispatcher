@@ -4,13 +4,18 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync,readFileSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { AdapterContractError, type AgentAdapter, type CodexBackend, type CodexTurnResult } from "@dispatcher/adapters";
+import { AdapterContractError, readCodexQuota, type AgentAdapter, type CodexBackend, type CodexTurnResult, type CodexReadRequest } from "@dispatcher/adapters";
 import type { DispatcherConfig, SecretMetadata, SecretStore } from "@dispatcher/config";
 import type { Run, Task, TaskContract } from "@dispatcher/domain";
 import { DispatcherDatabase,InteractionStore,type JsonValue } from "@dispatcher/persistence";
 import { ControllerService } from "../src/service.js";
 
 const OWNER = { authorization: "Bearer test-owner-token" };
+const codexNativeReader=async(input:CodexReadRequest)=>{
+  input.signal?.throwIfAborted();
+  if(input.method!=="account/rateLimits/read")throw Error(`Unexpected fixture Codex read ${input.method}`);
+  return {rateLimits:{limitId:"fixture",primary:{usedPercent:0,windowDurationMins:300}}};
+};
 const fixtures: Array<{ services: ControllerService[]; directory: string }> = [];
 class Secrets implements SecretStore {
   private readonly values = new Map([['secret://linear/token', 'linear-token'], ['secret://linear/webhook', 'linear-signing'], ['secret://slack/bot', 'slack-token'], ['secret://slack/signing', 'slack-signing'], ['secret://github/token', 'github-token']]);
@@ -79,7 +84,7 @@ async function setup(options: { realCodex?: boolean; executable?: string; verifi
     throw new Error(`Unexpected fixture URL ${url}`);
   };
   const make = async () => {
-    const service = new ControllerService({ ownerToken: "test-owner-token", dataDirectory: join(directory, "data"), withRunner: true, secretStore: secrets, integrationFetch, clock: () => control.now, gitTransport: { ensureBranch: async () => undefined, push: async () => { control.pushes += 1; await control.pushGate; return { commit: "commit-1" }; } }, ...(options.realCodex ? {} : { codexBackendFactory: () => backend }) });
+    const service = new ControllerService({ ownerToken: "test-owner-token", dataDirectory: join(directory, "data"), withRunner: true, secretStore: secrets, integrationFetch, codexNativeReader, clock: () => control.now, gitTransport: { ensureBranch: async () => undefined, push: async () => { control.pushes += 1; await control.pushGate; return { commit: "commit-1" }; } }, ...(options.realCodex ? {} : { codexBackendFactory: () => backend }) });
     fixture.services.push(service);
     await service.start({ listen: false });
     return service;
@@ -115,6 +120,14 @@ async function setup(options: { realCodex?: boolean; executable?: string; verifi
   };
   return { service, control, starts, slack, linear, taskId, send, approve, make, task: (target = service) => target.database.getCanonicalTask<Task>(taskId)!.document, run: (target = service) => target.database.listEntities<JsonValue>("run")[0] as unknown as Run };
 }
+
+it("isolates personal-loop quota reads with abort-aware fixture responses",async()=>{
+  const f=await setup(),reader=f.service.options.codexNativeReader;expect(reader).toBeTypeOf("function");
+  const profile={id:"fixture",alias:"Fixture",codexHome:"/fixture"};
+  expect(await readCodexQuota({profile,request:reader!})).toMatchObject({periods:[{id:"fixture:primary",unit:"percent",remaining:"100"}]});
+  const reason=Error("fixture quota aborted");await expect(readCodexQuota({profile,request:reader!,signal:AbortSignal.abort(reason)})).rejects.toBe(reason);
+  for(const method of ["account/read","model/list"] as const)await expect(reader!({executable:"/fixture/codex",codexHome:"/fixture",workspacePath:"/fixture",method,params:{}})).rejects.toThrow("Unexpected fixture Codex read");
+});
 
 describe("personal Slack–Linear loop", () => {
   it.each(["http","slack"] as const)("freezes a %s legacy dispatch choice on the Run and actual native invocation",async channel=>{
