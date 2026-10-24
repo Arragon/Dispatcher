@@ -4307,3 +4307,55 @@ whole-branch review/integration; retained SDD artifacts are evidence, not delete
 or merged per unit. CV09/the full goal and actual provider/account/GUI/writer/
 service/release Gates remain open. Next: saved Pi source-gap plan, native ownership
 prerequisite and remaining provider/UI/retention/delivery units.
+
+### 2026-10-24 Pi direct source assertions (Task1 locally complete)
+
+Source `76b7839f02b3c619c4ef89a9277343bfa2989789`, BASE `dc9096a`, changes
+only Pi service/Adapter tests and additive synthetic per-command child trace. No
+production/runtime/API/persistence/capability change.15 new service cases and an
+existing Adapter case assertion restore current canonical equivalents of the
+frozen source without inventing a product-defect RED.
+
+| Source gap | Decisive current assertion |
+| --- | --- |
+| G1 six service35 drift cases | Real reserved invocation enters runtime.start; currentRun/session/provider/lease/generation/attempt drift synchronously rejects not-created before default construction. Empty execution map, zero producer.start and absent probe/environment/RPC/prompt traces; exact current HTTP/Run/start projection is asserted separately. |
+| G3 service34 two Runs | Actual distinct UUIDs/PIDs/workspaces and persisted reference/selection/binding; same original native directories, exactly two scoped prompts, no print/no-session, unknown capability and foreign source refusal. |
+| G3 service49 duplicate | Refused duplicate cancellation leaves original actual PID/source and single prompt intact; only original owned synthetic root is then disconnected. |
+| G4 RPC194 | Injected Adapter has no aggregate interaction port; default print manifest and all prior continuation/native-stop refusals preserved. |
+| G5 retired global toggle adaptation | Explicit disable/removal ACTIVE cases block before/after real drain. Separate checked terminal fixture requires host drain; held callback unknown receipt stays blocked after late settlement, shutdown retains cleanup uncertainty. Binding/session marker preserved. |
+| Saved-config G2 service46 | Applied ConfigPlan reopens before dispatch with pi-rpc Adapter and zero native work; bound cold restart remains Task3. |
+
+Terminal fixture waits for actual Adapter result, checks legal ACTIVE→FAILED and
+RUNNING→FAILED transitions, then explicitly records FAILED Run/endedAt and matching
+Task as synthetic canonical setup. This isolates the host barrier without inferring
+terminality, native quiescence or writer release from Adapter completion. Current
+service has no Pi factory injection seam; the actual guard order and zero effects
+prove pre-allocation, not a separately spied constructor count. No new seam added.
+
+Final focused all7 fixture consumers/196tests pass (command21.715s). Sole final
+default `mise exec -- pnpm check` passes non-test gates and189files/2893tests
+(Vitest94.78s/command112.287602875s). Actual UTC
+2026-10-24T13:08:31.514257Z→13:10:23.792871Z. Evidence
+`/tmp/dispatcher-pi-gap-task1-evidence-20261024/022-final-default-gate`; logSHA256
+`18cbac8ff2918f0ebe1e1c42877ce126896ae31691333c05daf6bd0b35fb3439`.
+Root `/tmp/dispatcher-pi-gap-task1-root-payload-audit-20261024.json` verifies
+3Git inputs,3451post/668livegenerated,25runs and86275pre+86275post real copies,
+all matched. Source/test payload is unchanged across final focused/default/commit.
+
+007first6fail/34pass and011fourfail/42pass are retained fixture assumptions: final
+HTTP projection, stale-authority STARTING retention, duplicate Task command ID and
+Runner capacity. Corrected new fixtures retain decisive not-created/no native
+effects; no old assertion was weakened. Read-only inspection diagnostics and
+uncaptured initial bootstrap/helper establishment are disclosed in task report.
+All implementation/test/gate runs have real outside-checkout bytes/metadata.
+No historical reconstruction or unchanged-code retry.
+
+Independent `/tmp/dispatcher-pi-gap-task1-review-20261024.md` gives spec compliant/
+quality Approved,0Critical/Important,1Minor expected refusal-log noise deferredCV14.
+Reviewer checked actual guard-before-constructor ordering and domain transitions;
+root resolves unchanged authority/wire prerequisites by prior source/observer
+evidence and exact test-only scope. Task2raw lifetime and Task3bound restart,
+other providers and original account/GUI/native writer/service/release Gates remain
+open. The frozen155-case inventory is static mapping, not a new test total. No
+actual Pi/account/native activation, deletion, push or merge occurred. Architecture
+and know-how need no change for this test-only increment.

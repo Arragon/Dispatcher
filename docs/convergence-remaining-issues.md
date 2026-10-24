@@ -156,8 +156,17 @@ across16runs. Bootstrap/early timestamp limits are disclosed; final gate exact
 command chronology/output/manifest hashes are complete. No historical evidence
 was reconstructed; the current source guards/other runtime bytes are unchanged.
 
-Next: the saved three-unit Pi source-gap plan (direct assertions, first-demonstrated
-raw lifetime and explicit read-only Pi restart), remaining native providers, then actual
+Pi direct assertion Task1 source76b7839 is independently spec compliant/quality
+Approved with no Critical/Important findings. Test/fixture-only delta adds15service
+cases and injected no-aggregate assertions: six canonical admission drifts, two
+actual RPC child scopes/duplicate cancellation, explicit disable/remove ACTIVE/
+terminal/unknown callback barriers, and saved-config startup. Focused7/196 and
+default189/2893 pass (94.78s,wall112.287602875s). Root verifies3Git blobs,
+3451post/668livegenerated and86275pre+86275post actual copies across25runs.
+Fixture/projection corrections and bootstrap limitations remain disclosed.
+
+Next: Pi first-demonstrated raw lifetime and explicit read-only bound restart,
+remaining native providers, then actual
 provider/GUI/writer/service/release qualification. The
 current integration used fixtures only; no real account/config/service activation
 or persisted-format/dependency change occurred. CV-09 and the full goal remain
@@ -166,9 +175,10 @@ incomplete.
 The completed read-only source audits also identify these later development
 units; their static mapping counts are not test results or release evidence:
 
-- Pi155 source assertions: most RPC/runtime assertions map to current code;
-  add the seven missing direct service regressions and three partial groups.
-  Existing exact source routing is present; capability/quiescence is unqualified.
+- Pi155 source assertions retain their static source map. Reviewed Task1 restores
+  G1/G3/G4/G5 direct assertions and saved-config G2; bound cold restart G2 and
+  source-inspected raw guard-work G6 remain queued. Existing exact source routing
+  is present; capability/quiescence is unqualified.
 - Retention/delivery49 source assertions:6 adapted,4 composed,21 partial and18
   missing. Preserve CanonicalLocalResults/LocalGitDelivery and existing journals;
   do not restore a parallel NativeDeliveryCandidates stack.

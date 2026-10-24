@@ -35,15 +35,15 @@
 
 **Interfaces:** Consume current PiExecutionRuntime/Controller canonical dispatch and existing `piRpcFixture(roots, model?, version?)`. Test helper may accept distinct Task IDs for two Runs; preserve existing callers. Retrieve the exact source through current Controller nativePort, and assert injected Adapter `getInteractionPort(adapter)===undefined`.
 
-- [ ] Read current fixture, Pi service/runtime/Adapter tests, exact `assertManagedPiInput` and the G1/G3/G4/G5 plus saved-config G2 source dispositions; the155-case inventory remains static context, not this task's test count. Re-audit current bytes after OpenCode C3; do not import an old service/schema wholesale.
-- [ ] Add six before-allocation service cases for canonical currentRun, session, provider, lease, generation and attempt drift, intercepted at the actual Pi start boundary. Verify current not-created/error semantics, zero factory/probe/environment/RPC/prompt trace and no fallback. These assertion-restoration cases may already pass; report that rather than fabricate a RED.
-- [ ] Add a two-Run real-child fixture: distinct reserved UUIDs/workspaces, persisted exact bindings/selection, two prompt rows tied to their original workspaces, shared original agent/session directories, and no `--print` or `--no-session`. Preserve unknown source capability and cross-binding rejection.
-- [ ] Add refused duplicate plus duplicate cancellation against the original real synthetic child. Assert actual original PID remains live, exact source remains available and only one prompt was written. Clean only that owned fixture child afterward.
-- [ ] Add missing no-aggregate-interaction assertion to the injected PiAdapter case, retaining print default manifest and continuation/stop refusals.
-- [ ] Add explicit profile disable and removal cases with completed Adapter but ACTIVE canonical Run, and separate terminal-Run fixtures with pending host/unknown callback cleanup. Require current ConfigPlan rejection; after proved local drain and terminal canonical state, apply succeeds without deleting native sessions or claiming release.
-- [ ] Save applied Pi ConfigPlan, stop before dispatch, reopen Controller and verify `pi-rpc` Adapter with zero probe/RPC/native launch. Bound cold restart is Task 3.
-- [ ] Run `mise exec -- pnpm vitest run apps/controller/test/pi-runtime-service.test.ts apps/controller/test/pi-runtime.test.ts apps/controller/test/pi-reroute-service.test.ts packages/adapters/test/pi-rpc-adapter.test.ts` and the additive fixture's directly affected test if changed. Resolve actual failures without loosening old assertions.
-- [ ] Self-review, run one final default gate, commit owned tested files and report a source-case map, actual results/evidence and limits. Root dispatches review before Task 2.
+- [x] Read current fixture, Pi service/runtime/Adapter tests, exact `assertManagedPiInput` and the G1/G3/G4/G5 plus saved-config G2 source dispositions; the155-case inventory remains static context, not this task's test count. Re-audit current bytes after OpenCode C3; do not import an old service/schema wholesale.
+- [x] Add six before-allocation service cases for canonical currentRun, session, provider, lease, generation and attempt drift, intercepted at the actual Pi start boundary. Verify current not-created/error semantics, zero factory/probe/environment/RPC/prompt trace and no fallback. These assertion-restoration cases may already pass; report that rather than fabricate a RED.
+- [x] Add a two-Run real-child fixture: distinct reserved UUIDs/workspaces, persisted exact bindings/selection, two prompt rows tied to their original workspaces, shared original agent/session directories, and no `--print` or `--no-session`. Preserve unknown source capability and cross-binding rejection.
+- [x] Add refused duplicate plus duplicate cancellation against the original real synthetic child. Assert actual original PID remains live, exact source remains available and only one prompt was written. Clean only that owned fixture child afterward.
+- [x] Add missing no-aggregate-interaction assertion to the injected PiAdapter case, retaining print default manifest and continuation/stop refusals.
+- [x] Add explicit profile disable and removal cases with completed Adapter but ACTIVE canonical Run, and separate terminal-Run fixtures with pending host/unknown callback cleanup. Require current ConfigPlan rejection; after proved local drain and terminal canonical state, apply succeeds without deleting native sessions or claiming release.
+- [x] Save applied Pi ConfigPlan, stop before dispatch, reopen Controller and verify `pi-rpc` Adapter with zero probe/RPC/native launch. Bound cold restart is Task 3.
+- [x] Run `mise exec -- pnpm vitest run apps/controller/test/pi-runtime-service.test.ts apps/controller/test/pi-runtime.test.ts apps/controller/test/pi-reroute-service.test.ts packages/adapters/test/pi-rpc-adapter.test.ts` and the additive fixture's directly affected test if changed. Resolve actual failures without loosening old assertions.
+- [x] Self-review, run one final default gate, commit owned tested files and report a source-case map, actual results/evidence and limits. Root dispatches review before Task 2.
 
 ## Task 2: Demonstrate and close entered Pi raw-work lifetime gaps (G6)
 
@@ -74,3 +74,17 @@
 ## Root preparation receipt
 
 Prepared while OpenCode C3 is the sole implementation writer. Root source-inspected Pi runtime/producer, service input/registry and Task recovery semantics, fixture and direct assertion map; no Pi code/test/native execution was performed for preparation. G6 remains a testable source concern until its focused RED establishes the exact failure. Actual task dispatch BASE and reviewed C3 helper interface will be recorded at execution. User continuous-execution authorization overrides an otherwise unnecessary plan-review pause; no external activation is implied.
+
+## Task1 reviewed receipt 2026-10-24
+
+Source76b7839f02b3c619c4ef89a9277343bfa2989789 restores15direct service cases
+and existing Adapter assertions,3tests/fixture paths only. Final7/196 and
+default189/2893 pass (94.78s/112.287602875s); independent spec compliant/quality
+Approved,0Critical/Important,Minor expected fixture logs deferredCV14. Root3Git/
+3451post/668livegenerated,25run metadata and86275pre/post actual bytes match.
+First007/011fixture errors/bootstrap limits retained, no product-defect RED
+fabricated. Terminal fixture follows actual settled Adapter result+checked legal
+FAILED Run/Task transitions; separate ACTIVE case always blocks after drain.
+No new Pi factory seam for tests: synchronous guard/source-order and zero effect
+proof is explicit. Task2raw andTask3bound restart still pending; actual native Gates
+and parentCV14 stay open. No architecture/production/format/capability changes.
