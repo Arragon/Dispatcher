@@ -1,6 +1,6 @@
 # Explicit OpenCode Server Registration Implementation Plan
 
-> **For agentic workers:** Use superpowers:executing-plans, or the already authorized superpowers:subagent-driven-development workflow, to implement each reviewed task. This preparation is read-only apart from this `/tmp` deliverable; it authorizes no execution or additional agents.
+> **For agentic workers:** Use superpowers:executing-plans, or the already authorized superpowers:subagent-driven-development workflow, to implement each reviewed task. The root preparation was read-only; execution follows the already authorized continuous parent goal. R1 and R2 now form one atomic registration task after the verified preflight ruling below.
 
 **Goal:** Admit only explicitly reviewed `opencode-server-v2` profiles through ConfigPlan and the existing native adapter factory, while retaining standalone OpenCode behavior.
 
@@ -34,7 +34,7 @@ Each numbered task is one sequential SDD implementation/review unit. One impleme
 
 ## Verified source and file structure
 
-Read at worktree `/Users/wangdongxin/.codex/worktrees/dispatcher-plan-completion/dispatcher`; latest inspected HEAD `46a8960b87fcff98150e1a421a07447f4a3fea33`, clean status at that inspection. Catalog/runtime work is independently active; their draft/WIP is not final source.
+Read at worktree `/Users/wangdongxin/.codex/worktrees/dispatcher-plan-completion/dispatcher`; reviewed catalog `0208bffab9805d7321acf6958246ee39d7620baa` and runtime `761dddd53c2d8aee4e4103d47ce0771661ce5849` are final dependencies. Root coordinated metadata follows those commits; record the actual clean dispatch BASE separately. No active WIP is authority.
 
 | File | Responsibility / action |
 | --- | --- |
@@ -46,7 +46,13 @@ Read at worktree `/Users/wangdongxin/.codex/worktrees/dispatcher-plan-completion
 | `docs/architecture.md:39-57` | Update the precise boundary only after registration review; Controller remains separate. |
 | `docs/know-how.md:967-975` | Preserve invocation and durable runtime constraints; add only a new durable server-specific rule if not enforced clearly by tests. |
 
-## Task 1: (R1) Structural registration plus ConfigPlan acceptance
+## Task 1: Atomic structural registration and owning factory admission
+
+**Preflight ruling (2026-10-23):** R1 and R2 share one implementation/review/commit. Expanding only AgentProfileConfig breaks assignability at six current Controller/Runner callers of NativeProfileRegistration; adding its literal alone still lets configured server profiles select standalone when no factory exists. Therefore both narrow unions, structural validation and the already specified factory guards land together. This adds no Controller wiring or new contract. Source-only audit: `/tmp/dispatcher-opencode-registration-preflight-20261023.md`; no test failure was claimed from that audit.
+
+Root owns architecture, know-how, convergence records and Linear after review. Implementer owns exactly schema.ts, new config test, native-profile.ts and its test, plus this plan receipt. No adapters-to-config import, cast, dropped field, temporary fallback or shared framework is permitted.
+
+### Phase R1: Structural registration plus ConfigPlan acceptance
 
 **Interfaces**
 
@@ -70,11 +76,11 @@ Read at worktree `/Users/wangdongxin/.codex/worktrees/dispatcher-plan-completion
 - [ ] Run only this new file and record the expected missing-union/validation failures before code changes. Do not treat a test failing for a malformed fixture as a useful red test.
 - [ ] Extend both union/schema enum entries and replace the binary backend/provider/path branch with explicit handling for the three existing allowed variants. Keep Codex/Pi validation and error meanings intact; add server-only allowlist/model/approveTools checks. No host filesystem/process access in schema or ConfigPlan validation.
 - [ ] Run `mise exec -- pnpm vitest run packages/config/test/opencode-native-interaction.test.ts packages/config/test/codex-native-interaction.test.ts packages/config/test/pi-native-interaction.test.ts packages/config/test/config.test.ts`.
-- [ ] Review the exact diff and commit only R1 files if following the authorized implementation workflow. Passing means all listed structural/ConfigPlan groups pass without native reads; no change to engine risk policy is needed.
+- [ ] Review the R1 diff before continuing R2 in this same task; no intermediate R1 commit or activation. Passing means all listed structural/ConfigPlan groups pass without native reads; no change to engine risk policy is needed.
 
-## Task 2: (R2) Owning factory guards without server activation
+### Phase R2: Owning factory guards without server activation
 
-**Depends on:** R1; reviewed adapter producer/manifest commits and reviewed catalog identity. R2 does not depend on Controller runtime wiring.
+**Shares Task 1 with R1:** both structural contracts and factory guards must be present before this task is reviewable. Consumes reviewed adapter producer/manifest and canonical catalog identity; does not depend on Controller runtime wiring. Do not create an intermediate activation-capable schema commit without guards.
 
 **Interfaces**
 
@@ -94,8 +100,8 @@ Read at worktree `/Users/wangdongxin/.codex/worktrees/dispatcher-plan-completion
 - [ ] Run the focused file and confirm failures occur at the intended missing server guards.
 - [ ] Add a narrow pre-factory check for configured server ownership, then matching result/unconfigured-injected checks at the existing CLI factory boundary. Preserve disabled early return and existing Codex guards. Do not restore obsolete Controller-specific OpenCodeAdapter construction.
 - [ ] Run `mise exec -- pnpm vitest run packages/adapters/test/native-profile.test.ts packages/adapters/test/native-cli.test.ts packages/adapters/test/cli-catalog.test.ts packages/config/test/opencode-native-interaction.test.ts` (plus the reviewed new canonical catalog file if one was created).
-- [ ] Run `mise exec -- pnpm typecheck`, `mise exec -- pnpm lint`, `mise exec -- pnpm boundaries`; record exact results. These are existing root scripts, and typecheck includes build. Parent owns the eventual combined `mise exec -- pnpm check`.
-- [ ] Update architecture's explicit registration boundary and commit scoped files after review. Do not claim Controller activation or any real provider qualification from these tests.
+- [ ] Self-review the combined four-path payload and source-group mapping, then run the one final default `mise exec -- pnpm check` required by this task execution contract. It includes typecheck/build, lint, boundaries and tests; record exact logs/source/result manifests. Do not duplicate these broad checks beforehand without a concrete independent need.
+- [ ] Commit only the combined four code/test paths and own plan receipt after verification; write the assigned SDD report for root independent spec/quality review. Root updates the explicit registration architecture boundary afterward. Do not claim Controller activation or any real provider qualification from these tests.
 
 ## Historical source test disposition
 
@@ -112,6 +118,8 @@ Current applicable config tests are **real** Codex/Pi native-interaction groups 
 
 ## Handoff and unresolved dependency seam
 
-- This task can be reviewed as a standalone registration/factory change: default production behavior is unchanged and unsupported activation fails closed until composition ships.
+- This combined registration/factory task is a standalone reviewable change: default production behavior is unchanged and enabled server activation without the exact owning factory fails closed until composition ships. This statement does not apply to a schema-only intermediate payload.
 - Enabled-runtime construction/admission is the sole physical executable authority: qualify an existing regular executable with `access(X_OK)` without running it, and pin its realpath/dev/ino/metadata across async admission/source checks. That belongs to the reviewed runtime task, not this structural schema/factory task. Do not add a second filesystem validator in registration or service. `nativeProfileEpoch` currently omits realpath/dev/regular-file requirements and marks missing files unavailable, so it is insufficient alone. Composition tests exercise enabled missing/directory/non-executable/replaced files indirectly through the actual runtime constructor/admission seam; disabled registrations perform no factory/file work.
 - The reviewed runtime must export the concrete factory and lifecycle contract documented in the Controller plan before that plan is implemented. No active catalog WIP or inferred runtime API is an accepted dependency.
+
+Root preflight amendment records the atomic task boundary; the original R1/R2 requirement groups and historical source dispositions are retained above. Confirm current BASE and re-read all four implementation paths after runtime review before dispatch; historical line numbers are navigation hints, not authority.

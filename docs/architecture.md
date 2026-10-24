@@ -53,8 +53,19 @@ Shutdown releases public waiters while retaining raw acquisition, poll and callb
 work, with cached unknown cleanup preserved. Only an explicitly injected server backend
 selects this start/read/result manifest; generic native stop, continuation and resume
 remain unqualified. The standalone CLI manifest and optional read injection remain.
-Controller/runtime/profile registration and actual capability qualification remain
-separate work.
+The internal Controller OpenCodeExecutionRuntime composes one producer per exact
+managed execution. It captures the configured executable alias and physical regular
+file identity, full canonical selection/reference and original callback receivers
+before admission awaits. Controller assertions retain the alias; private producer
+scope and input use the same physical path. The default owned host invokes the same
+synchronous runtime guard before version-probe acquisition and service spawn;
+existing direct one-argument host consumers retain their contract. A custom injected
+producer factory is a trusted boundary, not proof of this default spawn composition.
+Exact persisted binding and current physical/entry authority select each source;
+no aggregate source or cold reattachment is provided. Public shutdown/cancellation
+does not erase raw admission or callback settlement, and cached unknown cleanup
+cannot become confirmed through a late result. ConfigPlan/profile/service wiring
+and actual capability qualification remain separate work.
 
 Controller retains unchanged profile adapters of every provider across ConfigPlan applies,
 bound to the profile and owning Runner execution identity. Replacement/removal

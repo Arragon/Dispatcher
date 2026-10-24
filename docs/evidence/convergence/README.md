@@ -3955,3 +3955,94 @@ Source is `a499d84:packages/adapters/test/opencode-catalog.test.ts`, with IDs/li
 | 29 | Typed backend-specific catalog/selection / standalone retained | C actual OpenCodeAdapter standalone/server pair asserts actual manifest/backend, supportsExecutionSelection, safe canonical entries; direct normalizer/reader default remains standalone. CLI/ES preserve standalone selection behavior. |
 | 30 | Requested model captured before delayed read | C request inputs captured before async resolver; ES freezes OpenCode selection before caller/store callback and rejects stored replacement during awaited prior result; unchanged CLI per-session concurrent/continuation selection tests. Removed modelInfo API remains removed. |
 | 31 | Physical replacement during cleanup rejected | C three confirmed-cleanup replacements (workspace/executable/account) and caller alias retargeting reject NATIVE_CONTEXT_CHANGED; late cancellation is also rejected. |
+
+
+### 2026-10-24 scoped OpenCode runtime (locally complete)
+
+Runtime source `761dddd53c2d8aee4e4103d47ce0771661ce5849` changes only the new
+Controller runtime/test, one unchanged validator named export, and the directly
+affected owned-host source/test. It composes exact per-execution producers, captures
+full canonical input and original receivers before awaits, checks physical executable
+and workspace identities, and selects only the exact persisted backend source.
+Original configured alias remains Controller authority; private producer scope and
+input both use the captured physical path. The existing hostFactory supplies the
+same synchronous runtime guard immediately before owned version-probe acquisition
+and service spawn; existing direct one-argument/PATH host consumers are preserved.
+Custom producer factories remain trusted injection, and pathname checks do not claim
+atomic file execution against unrelated OS replacement after the final check.
+
+Raw executable access, host acquisition and persistence remain owned independently
+of public shutdown/cancellation. Invalid async/thenable guard work is normalized
+once, tracked until actual settlement and still rejected synchronously. Losers cannot
+close another invocation's winner; rejected persistence withdraws source. Only the
+complete normalized not-created receipt can clear an unsent local barrier. Cached
+unknown receipts remain cloned and unknown after late settlement; native tools,
+writer release, deletion and cold continuation are not promoted.
+
+Frozen source `a499d84:apps/controller/test/opencode-runtime.test.ts` has12 expanded
+cases; all survive explicit canonical fixture/executable/observer adaptations.
+Current runtime111 adds99 independent admission/source/callback/physical/cleanup
+regressions. Existing owned-host23 (original20 plus3 prior regressions) retain every
+assertion; two new tests prove pre-probe async rejection and post-probe revocation
+before service spawn. Source bodies were captured before runs; no reconstruction.
+
+| Source ID | Current decisive assertion |
+| --- | --- |
+| R01 | Two exact hosts; no aggregate source; exact persisted source only; removing binding withdraws it; proven local cleanup clears only local barrier. |
+| R02 | Missing managed reference rejects synchronously before factory. |
+| R03 | Foreign owning Runner rejects before factory. |
+| R04 | Cold continuation/provider session reuse rejects before factory. |
+| R05 | Standalone/wrong backend rejects before factory. |
+| R06 | Original canonical owner revocation rejects before factory. |
+| R07 | Caller prompt/ref mutation cannot replace capture; revocation across real executable access rejects ready/result with zero factory. |
+| R08 | Duplicate start gets one factory/one native create; loser ready/result reject without closing winner. |
+| R09 | Disconnect withdraws source; closed runtime/cold continuation cannot create replacement; unused recovered runtime cleans without host. |
+| R10 | Never-started cleanup returns[] with zero factory/unclosed host. |
+| R11 | Original async beforePrompt is rejected; no native POST escapes. |
+| R12 | Workspace replacement across real executable access rejects before factory; ready/result reject. |
+
+Final focused command is `mise exec -- pnpm vitest run
+apps/controller/test/opencode-runtime.test.ts
+packages/adapters/test/opencode-owned-server.test.ts`:2 files/136 tests, exit0,
+Vitest12.88s/wall13.624s. Final unmodified default `mise exec -- pnpm check` passes
+build/typecheck, lint, boundaries and187 files/2608 tests, exit0, Vitest104.11s,
+wall118.1734139919281s. Source/result/log are
+`/tmp/dispatcher-opencode-runtime-task1-logs/full-check-final-{source,result}.json`
+and `full-check-final.log`; log SHA256
+`9d6f1e8207e8465f96a8284280a2838b055bd412009a8c57ae09b4551ca11495`.
+Root compared21 committed Git blob hashes and16 generated inputs separately against
+the final manifest, and808 saved payload hashes across25 run snapshots: no mismatch.
+All37 inputs were rechecked unchanged on2026-10-24. Generated dist is not staged;
+coordinated documentation here follows that source gate and changes no tested code.
+
+Earlier evidence remains separate: wiring RED includes missing module and unexpected
+live-port inspect errors; behavior RED86failed/30passed; initial56failures included
+unbuilt package-dist linkage; received-persistence source fencing failed115/116;
+recursive test fs spy caused SIGABRT, with the exact owned leftover fixture audited
+and no matching fixture process found; strict compile/lint errors were corrected
+without suppression. The typed-owner leak suspicion passed unchanged through the
+existing helper and is not claimed as a defect. Factory-shutdown RED130/131 and
+thenable/getter REDs produced narrow runtime fixes. The first187/2603 full success
+is retained as pre-thenable evidence; final2608 follows actual changed code/tests,
+not an unchanged retry. No timeout, worker, skip, assertion or probe cache changed.
+
+Independent `/tmp/dispatcher-opencode-runtime-review-20261024.md` returns spec
+compliant and quality Approved, no Critical/Important. The earlier review failed at
+service usage limit without a report and is not counted as a review pass. The only
+Minor observation is existing routine full-suite request-log noise; optional fixture
+logger cleanup is outside this runtime change and is not a correctness blocker.
+Root resolved cannot-verify items: catalog0208bff and its independent review remain
+prerequisites; the default gate covers existing local Codex/Pi regressions; original
+runtime12 bodies were compared directly; coordinated architecture/know-how are
+updated. Actual native/account/GUI/writer/restart/formal Gates remain explicitly
+unverified, and parentCV14 owns whole-branch review/integration.
+
+Next registration plan combines its originalR1/R2 as one atomic task: six existing
+Controller/Runner type callers require matching structural backend unions, and a
+schema-only intermediate payload can otherwise select standalone with no owning
+factory. The existing ConfigPlan policy, disabled-before-factory behavior and exact
+factory safeguards must land together. No physical validator is copied into schema.
+Controller/source/retention/shutdown/restart, the other native providers, audited
+Pi and retention/delivery gaps, and the overall goal remain incomplete. No real
+profile/config/account/service was activated, no dependency/persisted format changed,
+and no push/merge/release occurred.

@@ -109,12 +109,50 @@ Relative native account metadata locations reject before I/O rather than reading
 different accounts under parent/child cwd. Root-loss EPERM remains disclosed
 cleanup-unknown, with no claimed deterministic native cleanup or R-020 resolution.
 
-Next: retained Controller runtime/service and their20 original cases, explicit
-ConfigPlan registration, other native providers, then actual
+Internal OpenCode runtime source is committed at761dddd. Its original12 cases and
+99 new runtime regressions, plus existing23 and two new host spawn guards, pass
+the final default187 files/2608 tests (104.11s, wall118.173s) and non-test gates.
+All21 tracked Git inputs and16 generated inputs match the final manifest; all808
+saved payload hashes across25 runs match. The prior review attempt failed at the
+service usage limit without producing a report; the fresh2026-10-24 independent
+review is spec compliant/quality Approved with no Critical/Important findings. This local runtime slice remains unregistered. Its earlier
+2603-test gate, thenable/getter REDs, fixture errors and R-020 remain distinct.
+
+Next: atomic ConfigPlan/factory registration, the
+eight original Controller service assertions and current lifecycle/restart
+regressions, other native providers, then actual
 provider/GUI/writer/service/release qualification. The
 current integration used fixtures only; no real account/config/service activation
 or persisted-format/dependency change occurred. CV-09 and the full goal remain
 incomplete.
+
+The completed read-only source audits also identify these later development
+units; their static mapping counts are not test results or release evidence:
+
+- Pi155 source assertions: most RPC/runtime assertions map to current code;
+  add the seven missing direct service regressions and three partial groups.
+  Existing exact source routing is present; capability/quiescence is unqualified.
+- Retention/delivery49 source assertions:6 adapted,4 composed,21 partial and18
+  missing. Preserve CanonicalLocalResults/LocalGitDelivery and existing journals;
+  do not restore a parallel NativeDeliveryCandidates stack.
+- Run canonical verification/preparation inside its isolated snapshot, scrub
+  inherited Git selectors, and connect qualified return invalidation to the same
+  proof/Run transaction. Current commands execute in the mutable managed tree.
+- Bind the owning commit tree to verified bytes, retain occurred push/SCM facts
+  before reporting later authority loss, and prohibit second-stage Git URL
+  rewrites. Existing exact-SHA push/PR receipts remain authoritative.
+- Add durable native/control workspace pins, then recheck physical identity,
+  pins and NUL-delimited tracked/untracked/ignored status at cleanup. Preserve
+  whole-tree raced data through recoverable retirement rather than deletion.
+- Add targeted assertions for already implemented snapshot index/capacity/scope,
+  deletion barrier/tombstone and receipt recovery defenses. A missing historical
+  filename does not establish missing behavior.
+
+Detailed source bodies, decisive assertions and hashes remain in
+`/tmp/dispatcher-pi-source-assertion-map-20261023.{md,json}` and
+`/tmp/dispatcher-retention-delivery-assertion-map-20261023.{md,json}`. Any necessary
+public configuration/Runner protocol change must be decided before its slice;
+no such contract expansion or schema migration is authorized by the audit alone.
 
 ## Historical checkpoint 2026-10-22: stopped at remaining 0%
 

@@ -1016,3 +1016,18 @@
   through public lifetime races and preserve a cached unknown cleanup receipt after
   late settlement. Allocated identity and initial facts must persist before readiness,
   and bounded terminal sink failure must prevent completed results.
+
+- Keep the OpenCode runtime's configured executable alias as Controller authority,
+  while handing the captured physical path to both producer scope and input. The
+  producer requires those two values to agree. Recheck the original alias/metadata
+  through the same runtime guard before each owned probe/service spawn; passing a
+  realpath alone does not close replacement during an awaited probe.
+- The OpenCode producer adopts its binding only after the runtime's onBinding
+  bridge resolves. That bridge must validate captured and durably persisted scope
+  without requiring producer.source prematurely; public source lookup checks the
+  producer afterward and withdraws authority on rejected persistence.
+- A forbidden thenable returned by a synchronous guard may already own async work.
+  Normalize it once into a tracked Promise and pass that same Promise to the shared
+  admission helper before rejecting synchronously. Resolving the original thenable
+  twice can execute its then method twice; public rejection/shutdown is not proof
+  that its entered work settled.

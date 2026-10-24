@@ -1,5 +1,7 @@
 # Dispatcher 候选分支收敛与能力整合：架构决策及执行计划
 
+> 2026-10-24 当前执行说明：按用户最新持续推进指令执行完整开发范围；下方历史配额停止线不再控制当前执行。每单元仍读取实时额度并保留失败与来源证据，不自动使用reset credits。工程开发与原真实Gate分别验收；CV-14保留全分支审查及单一候选交接。
+
 > 2026-10-20 执行更新：用户已批准实施本计划，macOS 单人优先，分 A 本地日用试用版与 B 完整个人版。A 使用用户级 launchd、浏览器和一个真实 Codex；B 包含费用、Codex/OpenCode 原生往返与原日常/外部/恢复 Gate。依次执行 CV-01→CV-02/03→CV-04→CV-05/06/08/12→macOS 日用化→CV-07/09/10/11→CV-13/14。原验收不弱化，原 Done 不重开。仅增补 Controller 后台服务日用化差距卡。无法解决的问题/测试写入 `docs/convergence-remaining-issues.md` 并继续独立单元；每单元检查额度，剩余 ≤10% 停止。实际进展见 `docs/evidence/convergence/README.md`；以下 2026-10-19 内容保留为原规划快照。
 
 日期：2026-10-19；时区 America/Los_Angeles。状态：**规划，尚未启动产品整合**。用户已授权制定计划和同步Linear；本轮不切分支、不创建整合worktree、不合并/cherry-pick、不备份/迁移实际数据库、不运行付费模型或原生账号操作，不改变原业务票的完成状态。以下“迁入”“运行”“验收”均为后续执行要求。
@@ -394,7 +396,7 @@ server profile。owned host/producer及精确分配observer随后保存105ef8b�
 持久化失败继续保守处理。canonical catalog0208bff随后通过独立审查，31项来源安全
 断言映射为当前AccountModelCatalog/immutable selection，新增71例，最终186文件/
 2495例和非测试门禁通过；实际backend、读取前捕获与清理后复核已补齐。
-Controller/runtime/config及原真实Gates继续，未激活真实profile/账号/服务。
+内部runtime随后保存761dddd：保留12原始用例并新增99回归，host既有23例外再补两处actual-spawn守卫；最终默认187文件/2608例及非测试门禁通过。独立spec/quality审查通过，无Critical/Important，21个Git输入与16个生成输入均匹配最终manifest。下一ConfigPlan/factory注册按preflight合为原子单元，避免schema单独放行后误落standalone；Controller八项原service断言、生命周期/重启及原真实Gates继续，未激活真实profile/账号/服务。
 
 ### CV-10 · 保留其他本地Harness增量与Copilot未提交工作
 
