@@ -849,10 +849,10 @@ export class ControllerService {
       for (const close of this.dashboardStreamClosers) close();
       await this.app.close();
       this.events.close();
-      if(localReviewStopError)throw localReviewStopError;
+      if(localReviewStopError)runtimeStopErrors.push(localReviewStopError);
+      if(this.allNativeRuntimes().some(({runtime})=>runtime.hasUnclosedHosts()||"hasActiveOperations" in runtime&&runtime.hasActiveOperations()))runtimeStopErrors.push(new AdapterContractError("NATIVE_RUNTIME_CLEANUP_UNKNOWN","Owned native callbacks or processes remain unconfirmed; preserve the database for reconciliation"));
       if(runtimeStopErrors.length===1)throw runtimeStopErrors[0];
       if(runtimeStopErrors.length)throw new AggregateError(runtimeStopErrors,"Native runtime shutdown could not be fully recorded");
-      if(this.allNativeRuntimes().some(({runtime})=>runtime.hasUnclosedHosts()))throw new AdapterContractError("NATIVE_RUNTIME_CLEANUP_UNKNOWN","Owned native callbacks or processes remain unconfirmed; preserve the database for reconciliation");
       this.database.checkpoint();
       this.database.close();
       this.listening = false;
@@ -1267,11 +1267,12 @@ export class ControllerService {
   }
 
   private profileHasActiveOperations(id: string): boolean {
-    const adapter=this.agentAdapters.get(id),owned=adapter instanceof StructuredCliAdapter||adapter instanceof CodexAdapter||adapter instanceof RemoteNativeAdapter;
+    const adapter=this.agentAdapters.get(id),runtime=this.nativeRuntime(id),owned=adapter instanceof StructuredCliAdapter||adapter instanceof CodexAdapter||adapter instanceof RemoteNativeAdapter;
     return (this.pendingProfileStarts.get(id)??0)>0
       || this.accountQuotas.hasPending(id)
       || (this.database.listEntities<JsonValue>("run") as unknown as Run[]).some(run=>run.profileId===id&&!isTerminalRunState(run.state))
       || Boolean(owned&&adapter.hasActiveOperations())
+      || Boolean(runtime&&"hasActiveOperations" in runtime&&runtime.hasActiveOperations())
       || (this.database.listEntities<JsonValue>("adapter-session") as unknown as AdapterSession[]).some(session=>session.profileId===id&&(this.pendingConsoleInputs.has(session.id)||this.pendingSessionCancellations.has(session.id)||this.sessionStopUncertain(session)||session.state==="PAUSED"||!owned&&["STARTING","RUNNING"].includes(session.state)));
   }
   private assertCredentialChangeAllowed(reference: string): void {
