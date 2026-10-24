@@ -3,7 +3,7 @@ import {EventEmitter} from "node:events";
 import {expect,it,vi} from "vitest";
 import {OwnedProcessGroup} from "../src/owned-process.js";
 it.runIf(process.platform!=="win32")("keeps permission uncertainty and latches owned group absence before a numeric PID can be reused",()=>{
- const child=Object.assign(new EventEmitter(),{pid:2147483000}) as ChildProcess;
+ const child=Object.assign(new EventEmitter(),{pid:2147483000,kill:()=>true}) as ChildProcess;
  const owned=new OwnedProcessGroup(child);let state:"present"|"denied"|"absent"="present";
  const kill=vi.spyOn(process,"kill").mockImplementation(()=>{if(state!=="present")throw Object.assign(new Error("fixture"),{code:state==="denied"?"EPERM":"ESRCH"});return true;});
  try{

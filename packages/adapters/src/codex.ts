@@ -201,7 +201,7 @@ class SpawnedCodexTurn implements CodexTurn {
   async cancel(): Promise<void> {
     if (this.completed) return;
     this.cancelled = true;
-    await this.ownership.stop();
+    await this.ownership.stop(process.platform!=="win32");
     await this.outcome;
   }
   status(): "running" | "completed" { return this.completed ? "completed" : "running"; }
