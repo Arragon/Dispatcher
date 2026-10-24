@@ -15,7 +15,7 @@ import { readOwnedNativeVersion } from "./native-version-probe.js";
 export const devinLocalAcpCliVersion = "devin 3000.11.3 (9c803229faa4)";
 export interface DevinLocalAcpScope { executable: string; workspacePath: string; dataHome: string; configHome: string }
 export interface DevinAcpReadOptions { signal?: AbortSignal; timeoutMs?: number; beforeSend?: () => void }
-interface Identity { path: string; dev: bigint; ino: bigint }
+export interface Identity { path: string; dev: bigint; ino: bigint }
 interface Permit { method: string; params: Record<string, unknown>; signal: AbortSignal; deadline: number; beforeSend?: () => void; onWrite?: () => void; cancellation?: { active: ActivePrompt; written: boolean; skipped: boolean } }
 export interface DevinAcpBootstrapInput {
   mode: "new" | "resume"; profileId: string; runnerId: string; nativeStoreRef: string; dispatcherSessionId: string;
@@ -39,7 +39,7 @@ export interface DevinAcpNegotiation { protocolVersion: 1; agentName?: string; a
 const fail = (code: string) => new AdapterContractError(code, code);
 const text = (value: unknown, limit = 512): value is string => typeof value === "string" && value.length > 0 && value.length <= limit && !/[\0\r\n]/.test(value);
 const record = (value: unknown): value is Record<string, unknown> => Boolean(value && typeof value === "object" && !Array.isArray(value));
-function identity(path: string, directory: boolean): Identity {
+export function identity(path: string, directory: boolean): Identity {
   try {
     if (!text(path, 4_096) || !isAbsolute(path)) throw Error();
     const physical = realpathSync(path), stat = statSync(physical, { bigint: true });

@@ -1,7 +1,7 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
+import { devinAcpFixture } from "./fixtures/devin-acp.js";
 import * as adapters from "../src/devin-acp.js";
 import type { LocalRuntimeDisconnect } from "../src/interaction-contracts.js";
 import type { ExecutionContextRef, ExecutionSelection, NativeBinding } from "@dispatcher/domain";
@@ -9,36 +9,7 @@ import type { Writable } from "node:stream";
 
 const roots: string[] = [], clients: Array<{ close(): Promise<LocalRuntimeDisconnect> }> = [];
 afterEach(async () => { for (const client of clients.splice(0)) await client.close(); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
-function fixture(mode = "normal") {
-  const root = mkdtempSync(join(realpathSync(tmpdir()), "dispatcher-devin-acp-")); roots.push(root);
-  const workspacePath = join(root, "workspace"), dataHome = join(root, "native-data"), configHome = join(root, "native-config");
-  for (const path of [workspacePath, dataHome, configHome]) mkdirSync(path);
-  const executable = join(root, "devin");
-  const script = [
-    "#!" + process.execPath,
-    "const fs=require('node:fs'),path=require('node:path');",
-    "const root=" + JSON.stringify(root) + ",mode=" + JSON.stringify(mode) + ";",
-    "if(process.argv.includes('--version')){if(mode==='version-mutate'){fs.renameSync(process.env.XDG_DATA_HOME,process.env.XDG_DATA_HOME+'-old');fs.mkdirSync(process.env.XDG_DATA_HOME);}process.stdout.write(mode==='wrong-version'?'devin 1.0.0':'devin 3000.11.3 (9c803229faa4)');process.exit(0);}",
-    "fs.writeFileSync(path.join(root,'started'),JSON.stringify({pid:process.pid,cwd:process.cwd(),pwd:process.env.PWD,args:process.argv.slice(2),data:process.env.XDG_DATA_HOME,config:process.env.XDG_CONFIG_HOME}));",
-    "const calls=[];let buffer='',activePrompt;const emit=value=>process.stdout.write(JSON.stringify(value)+'\\n');",
-    "let currentModel=mode==='model-set'?'other':'chosen';const config=()=>[{id:'model',name:'Model',category:'model',type:'select',currentValue:currentModel,options:[{value:'chosen',name:'Chosen'},{value:'other',name:'Other'}]}];",
-    "process.stdin.on('data',chunk=>{buffer+=chunk;while(buffer.includes('\\n')){const at=buffer.indexOf('\\n'),line=buffer.slice(0,at);buffer=buffer.slice(at+1);const m=JSON.parse(line);if(m.method==='session/set_config_option')m.bindingPersisted=fs.existsSync(path.join(root,'binding-persisted'));calls.push(m);fs.writeFileSync(path.join(root,'calls'),JSON.stringify(calls));",
-    "if(m.method==='initialize'){if(mode==='bad-frame'){process.stdout.write('x'.repeat(1048577));continue;}emit({jsonrpc:'2.0',id:m.id,result:{protocolVersion:mode==='wrong-protocol'?2:1,agentCapabilities:{loadSession:true,sessionCapabilities:mode==='no-list'?{}:{list:{}}},agentInfo:{name:'affogato',version:'0.0.0-dev'},authMethods:[]}});continue;}",
-    "if(m.method==='session/cancel'){if(mode!=='prompt-lost-cancel')setTimeout(()=>emit({jsonrpc:'2.0',id:activePrompt,result:{stopReason:'cancelled',_meta:{credential:'cog-do-not-log'}}}),10);continue;}",
-    "if(m.method==='session/prompt'){activePrompt=m.id;if(mode==='prompt-ignore'||mode==='prompt-lost-cancel')continue;const update=u=>emit({jsonrpc:'2.0',method:'session/update',params:{sessionId:mode==='prompt-foreign'?'foreign':'native-exact',update:u,_meta:{credential:'cog-do-not-log'}}});if(mode==='prompt-drift'){currentModel='other';update({sessionUpdate:'config_option_update',configOptions:config()});}if(mode==='prompt-permission')emit({jsonrpc:'2.0',id:'prompt-permission-1',method:'session/request_permission',params:{sessionId:'native-exact',toolCall:{toolCallId:'tool-1'},options:[{optionId:'allow',name:'Allow',kind:'allow_once'}]}});const text=mode==='prompt-huge'?'x'.repeat(20000):mode==='prompt-bad-text'?7:'cog-raw-response credential=abc';for(let i=0;i<(mode==='prompt-flood'?1100:1);i++)update({sessionUpdate:'agent_message_chunk',content:{type:'text',text}});if(mode==='prompt-bad-tool')update({sessionUpdate:'tool_call_update',toolCallId:'undeclared',status:'completed'});else{for(let i=0;i<(mode==='prompt-many-tools'?65:1);i++){update({sessionUpdate:'tool_call',toolCallId:'tool-'+i,title:'Raw secret title',kind:'edit',status:mode==='prompt-tool-failed'?'failed':mode==='prompt-tool-pending'?'pending':'in_progress',rawInput:{credential:'cog-do-not-log'}});if(mode!=='prompt-tool-failed'&&mode!=='prompt-tool-pending')update({sessionUpdate:'tool_call_update',toolCallId:'tool-'+i,status:'completed',rawOutput:{credential:'cog-do-not-log'}});}}emit({jsonrpc:'2.0',id:m.id,result:{stopReason:mode.startsWith('stop-')?mode.slice(5):'end_turn',_meta:{credential:'cog-do-not-log'}}});continue;}",
-    "if(m.method==='session/new'||m.method==='session/load'||m.method==='session/set_config_option'){if(mode==='create-ignore'&&m.method==='session/new')continue;if(m.method==='session/set_config_option')currentModel=m.params.value;if(mode==='foreign-update')emit({jsonrpc:'2.0',method:'session/update',params:{sessionId:'foreign',update:{sessionUpdate:'current_mode_update',currentModeId:'normal'}}});if(mode==='metadata-update')emit({jsonrpc:'2.0',method:'session/update',params:{sessionId:'native-exact',update:{sessionUpdate:'available_commands_update',availableCommands:[]}}});if(mode==='session-info-update')emit({jsonrpc:'2.0',method:'session/update',params:{sessionId:'native-exact',update:{sessionUpdate:'session_info_update',title:'Native title',_meta:{credential:'cog-do-not-log'}}}});const result={configOptions:mode==='missing-model'?[]:config()};if(m.method==='session/new'||mode==='load-wrong-id')result.sessionId=mode==='load-wrong-id'?'foreign':'native-exact';emit({jsonrpc:'2.0',id:m.id,result});if(mode==='model-drift-during-binding')setTimeout(()=>{currentModel='other';emit({jsonrpc:'2.0',method:'session/update',params:{sessionId:'native-exact',update:{sessionUpdate:'config_option_update',configOptions:config()}}});},5);continue;}",
-    "if(m.method==='session/list'){if(mode==='ignore')continue;if(mode==='root-exit'){const child=require('node:child_process').spawn(process.execPath,['-e','setTimeout(()=>{},1500)'],{stdio:['ignore',process.stdout,process.stderr]});child.unref();process.exit(0);}if(mode==='permission'){emit({jsonrpc:'2.0',id:'permission-1',method:'session/request_permission',params:{sessionId:'native-exact',toolCall:{toolCallId:'tool-1'},options:[{optionId:'allow',name:'Allow',kind:'allow_once'}]}});}",
-    "if(mode==='bad-notification')emit({jsonrpc:'2.0',method:'session/update',params:{sessionId:'native-exact',_meta:{credential:'cog-review-secret-do-not-log'}}});",
-    "if(mode==='callback-flood'||mode==='callback-big-id'){process.stdin.pause();let lines='';for(let i=0;i<(mode==='callback-flood'?100:1);i++)lines+=JSON.stringify({jsonrpc:'2.0',id:mode==='callback-big-id'?'x'.repeat(20000):'permission-'+i,method:'session/request_permission',params:{sessionId:'native-exact',toolCall:{toolCallId:'tool-'+i},options:[{optionId:'allow',name:'Allow',kind:'allow_once'}]}})+'\\n';process.stdout.write(lines);}",
-    "const result={sessions:[{sessionId:'native-exact',cwd:process.cwd(),title:'cog-do-not-export',_meta:{credential:'secret-value'}}],nextCursor:null};",
-    "if(mode==='missing-old')result.sessions=[];if(mode==='prefix-old')result.sessions[0].sessionId='native-exact-prefix';",
-    "if(mode==='foreign-cwd')result.sessions[0].cwd='/foreign';if(mode==='duplicate')result.sessions.push(result.sessions[0]);if(mode==='oversize')result.sessions=Array.from({length:101},(_,i)=>({sessionId:'id-'+i,cwd:process.cwd()}));if(mode==='error'){emit({jsonrpc:'2.0',id:m.id,error:{code:123,message:'cog-do-not-export'}});continue;}",
-    "if(mode==='unicode')result.sessions[0].sessionId='native-\\u2028-exact';emit({jsonrpc:'2.0',id:m.id,result});}",
-    "}});setInterval(()=>{},1000);"
-  ].join("\n");
-  writeFileSync(executable, script, { mode: 0o755 });
-  return { root, scope: { executable, workspacePath, dataHome, configHome }, calls: () => existsSync(join(root, "calls")) ? JSON.parse(readFileSync(join(root, "calls"), "utf8")) as Array<Record<string, unknown>> : [] };
-}
+const fixture = (mode = "normal") => devinAcpFixture(roots, mode);
 async function open(f: ReturnType<typeof fixture>) { const client = await adapters.DevinLocalAcpClient.open(f.scope); clients.push(client); return client; }
 
 it("opens a pinned local ACP with literal worktree and native homes", async () => {

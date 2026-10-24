@@ -181,3 +181,33 @@ it.each(['region','nativeThreadId','parentSessionId'] as const)('rejects an alre
 it.each(['nativeStoreRef','parentSessionId','nativeThreadId'] as const)('keeps exact OpenCode repeats immutable for %s',async field=>{const f=opencodeFixture(),options=f.options();await options.onBinding(f.ref);await options.onBinding(structuredClone(f.ref));expect(f.events).toHaveLength(2);await expect(options.onBinding({...f.ref,[field]:'foreign'})).rejects.toMatchObject({code:'NATIVE_IDENTITY_CHANGED'});expect(f.store.load('session')?.nativeBinding).toEqual(f.ref);expect(f.events).toHaveLength(2);});
 it.each(['pi-rpc','opencode-cli-json','codex-app-server'])('cannot allocate OpenCode session identities for %s',backendId=>{const f=opencodeFixture({backendId});expect(()=>f.options()).toThrowError(expect.objectContaining({code:'NATIVE_IDENTITY_CHANGED'}));expect(f.events).toEqual([]);});
 it.each(['executionRef','executionSelection','execution','nativeInvocationId'] as const)('rejects current allocated OpenCode %s drift before saving',async field=>{const f=opencodeFixture(),options=f.options(),current=f.store.load(f.session.id)!;if(field==='executionRef')current.executionRef={...current.executionRef!,id:'foreign'};if(field==='executionSelection')current.executionSelection={version:1,mode:'manual',selectionType:'native-default',source:'native-default',profileId:'profile',providerId:'opencode',backendId:'opencode-server-v2',runnerId:'local',configRevision:1,contextFingerprint:'scope',selectedAt:at,nativeParameters:{}};if(field==='execution')current.execution={...current.execution!,generation:2};if(field==='nativeInvocationId')current.nativeInvocationId='foreign';f.store.save(current);await expect(options.onBinding(f.ref)).rejects.toThrow();expect(f.store.load(f.session.id)?.nativeBinding).toBeUndefined();expect(f.events).toEqual([]);});
+
+function devinFixture(input:Partial<AdapterSession>={}) {
+ const f=fixture({backendId:"devin-local-acp",...input}),ref:NativeBinding={version:1,product:"devin-local",region:"global",profileId:"profile",backendId:"devin-local-acp",runnerId:"local",nativeStoreRef:"native-store:devin-local",nativeSessionId:"native-exact",identityState:"bound",executionRefId:"execution"};
+ return {...f,ref,options:()=>f.observer.startOptions(f.session,f.emit,"devin-local",()=>undefined,"devin-local-session")};
+}
+it("persists allocated Devin identity before the awaited owning waiting sink",async()=>{
+ const f=devinFixture();let release!:()=>void,entered=false;const held=new Promise<void>(resolve=>{release=resolve;});
+ f.observer.setSink(async event=>{entered=true;expect(f.store.load("session")).toMatchObject({providerSessionId:"native-exact",nativeBinding:f.ref});await held;f.events.push(event);},()=>()=>true);
+ const emit=f.observer.begin("session"),options=f.observer.startOptions(f.session,emit,"devin-local",()=>undefined,"devin-local-session"),pending=options.onBinding(f.ref);void pending.catch(()=>{});
+ await Promise.resolve();expect(entered).toBe(true);expect(f.events).toEqual([]);release();await pending;expect(f.events).toHaveLength(1);expect(()=>options.beforePrompt()).not.toThrow();
+});
+it.each(["product","region","profileId","backendId","runnerId","executionRefId","nativeThreadId","parentSessionId","nativeSessionId"] as const)("rejects foreign Devin allocated %s without saving or emitting",async field=>{
+ const f=devinFixture();f.ref[field]=field==="nativeSessionId"?"unstarted:unsafe":"foreign";
+ await expect(f.options().onBinding(f.ref)).rejects.toMatchObject({code:"NATIVE_IDENTITY_CHANGED"});expect(f.store.load("session")?.nativeBinding).toBeUndefined();expect(f.events).toEqual([]);
+});
+it.each(["historical","state","owner","drift","stale"])("fences Devin allocation for %s",async mode=>{
+ const f=devinFixture(mode==="historical"?{providerSessionId:"historical"}:mode==="state"?{state:"RUNNING"}:{});
+ if(mode==="historical"||mode==="state")expect(()=>f.options()).toThrowError(expect.objectContaining({code:"NATIVE_IDENTITY_CHANGED"}));
+ else if(mode==="owner")expect(()=>f.observer.startOptions(f.session,f.emit,"opencode",()=>undefined,"devin-local-session")).toThrowError(expect.objectContaining({code:"NATIVE_IDENTITY_CHANGED"}));
+ else {const options=f.options();if(mode==="drift")f.store.save({...f.store.load("session")!,providerSessionId:"other"});else f.revoke();await expect(options.onBinding(f.ref)).rejects.toMatchObject({code:mode==="drift"?"NATIVE_IDENTITY_CHANGED":"STALE_NATIVE_OBSERVER"});}
+ expect(f.events).toEqual([]);expect(f.store.load("session")?.nativeBinding).toBeUndefined();
+});
+it.each(["save","sink","authority"])("retains Devin allocated uncertainty and fences input after %s failure",async mode=>{
+ const f=devinFixture(),save=f.store.save.bind(f.store);
+ if(mode==="save")f.store.save=session=>{if(session.nativeBinding)throw Error("private save");save(session);};
+ f.observer.setSink(async()=>{await Promise.resolve();if(mode==="authority")f.revoke();else if(mode==="sink")throw Error("private sink");},()=>f.ownsAuthority);
+ const emit=f.observer.begin("session"),options=f.observer.startOptions(f.session,emit,"devin-local",()=>undefined,"devin-local-session");
+ await expect(options.onBinding(f.ref)).rejects.toThrow();expect(()=>options.beforePrompt()).toThrow();
+ expect(f.store.load("session")?.providerSessionId).toBe(mode==="save"?undefined:"native-exact");if(mode!=="authority")expect(f.store.load("session")?.nativeIdentityIssue).toBe("NATIVE_EVENT_PERSISTENCE_FAILED");
+});
