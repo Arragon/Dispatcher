@@ -29,12 +29,15 @@ export class PiExecutionRuntime implements CliAgentBackend {
  private readonly nativeDirectories:DirectoryIdentity[];
  private readonly hosts=new NativeRuntimeHosts();
  private readonly executions=new Map<string,ExecutionHost>();
+ private readonly operations=new Set<Promise<unknown>>();
  private closed=false;private cleanup?:Promise<RuntimeLocalDisconnectResult[]>;private receipts?:RuntimeLocalDisconnectResult[];
  constructor(options:RuntimeOptions){
   this.options=Object.freeze({...options,profile:structuredClone(options.profile),assertInput:options.assertInput.bind(options),bindingFor:options.bindingFor.bind(options),...(options.factory?{factory:options.factory.bind(options)}:{})});
   assertPiRuntimeSettings(this.options.profile,this.options.agentDirectory,this.options.sessionDirectory);this.nativeDirectories=[options.agentDirectory,options.sessionDirectory].map(directory);
  }
  isClosed():boolean{return this.closed;}
+ hasActiveOperations():boolean{return this.operations.size>0||[...this.executions.values()].some(entry=>entry.backend.hasActiveOperations());}
+ private track<T>(work:Promise<T>):Promise<T>{this.operations.add(work);void work.then(()=>this.operations.delete(work),()=>this.operations.delete(work));return work;}
  hasUnclosedHosts():boolean{return this.executions.size>0&&(!this.receipts||this.receipts.some(receipt=>receipt.connection!=="closed"||receipt.ownedRoot==="unknown"||receipt.callbacks!=="drained"));}
  beginShutdown():void{this.closed=true;for(const entry of this.executions.values())entry.backend.beginShutdown();}
  source(binding:NativeBinding):NativeInteractionPort|undefined{
@@ -58,13 +61,13 @@ export class PiExecutionRuntime implements CliAgentBackend {
   if(!isExecutionContextRef(ref)||ref.kind!=="managed-worktree"||ref.runnerId!==this.options.runnerId||!n||n.profileId!==this.options.profile.id||n.backendId!==this.backendId||input.executable!==this.options.profile.executable)reject();
   if(!n.newSession)reject("PI_RPC_CONTINUATION_REQUIRES_COMMAND_LANE");
   if(typeof n.providerSessionId!=="string"||!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(n.providerSessionId)||typeof input.beforePrompt!=="function"||typeof input.onBinding!=="function")reject("PI_RPC_START_INVALID");
-  try{this.assertDirectories();if(!isDeepStrictEqual(directory(input.workspacePath),workspace))reject();const result:unknown=this.options.assertInput(input);if(result!==undefined){void Promise.resolve(result).catch(()=>undefined);reject();}this.assertDirectories();if(!isDeepStrictEqual(directory(input.workspacePath),workspace))reject();}catch{return reject();}
+  try{this.assertDirectories();if(!isDeepStrictEqual(directory(input.workspacePath),workspace))reject();const result:unknown=this.options.assertInput(input);if(result!==undefined){this.track(Promise.resolve(result));reject();}this.assertDirectories();if(!isDeepStrictEqual(directory(input.workspacePath),workspace))reject();}catch{return reject();}
   if(this.closed)reject("PI_RPC_LOCAL_CONNECTION_CLOSED");
  }
  start(original:CliStartInput):CliTurn{
   const input={...original,...(original.executionRef?{executionRef:structuredClone(original.executionRef)}:{}),...(original.nativeInput?{nativeInput:structuredClone(original.nativeInput)}:{})},workspace=directory(input.workspacePath);this.validate(input,workspace);
   let cancelled=false,ownsCreation=false,captured:ExecutionHost|undefined;const guard=()=>{if(cancelled)reject("PI_RPC_LOCAL_CONNECTION_CLOSED");this.validate(input,workspace);};
-  return new AcquiringTurn(async()=>{
+  const turn=new AcquiringTurn(async()=>{
    guard();const reference=input.executionRef!;let entry=this.executions.get(reference.id);
    if(entry&&(!isDeepStrictEqual(entry.reference,reference)||!isDeepStrictEqual(entry.workspace,workspace)))reject();
    if(!entry){
@@ -75,10 +78,11 @@ export class PiExecutionRuntime implements CliAgentBackend {
     entry={reference:structuredClone(reference),workspace,backend,handle,creationAdmitted:false};this.executions.set(reference.id,entry);
    }
    captured=entry;await captured.handle;guard();if(captured.creationAdmitted)reject("PI_RPC_SESSION_ALREADY_ADMITTED");captured.creationAdmitted=true;ownsCreation=true;
-   return captured.backend.start({...input,beforePrompt:()=>{guard();const result:unknown=input.beforePrompt!();if(result!==undefined){void Promise.resolve(result).catch(()=>undefined);reject("PI_RPC_ADMISSION_MUST_BE_SYNCHRONOUS");}guard();},onBinding:async binding=>{guard();captured!.binding=structuredClone(binding);await input.onBinding!(structuredClone(binding));guard();}});
+   return captured.backend.start({...input,beforePrompt:()=>{guard();const result:unknown=input.beforePrompt!();if(result!==undefined){this.track(Promise.resolve(result));reject("PI_RPC_ADMISSION_MUST_BE_SYNCHRONOUS");}guard();},onBinding:async binding=>{guard();captured!.binding=structuredClone(binding);await input.onBinding!(structuredClone(binding));guard();}});
   },async()=>{cancelled=true;if(ownsCreation)await captured?.backend.disconnectLocal();},async error=>{
    if(ownsCreation&&captured&&error instanceof AdapterStartError&&error.creationOutcome==="not-created")await this.closeNotCreated(captured);
   });
+  this.track(turn.ready());return turn;
  }
  async disconnectLocal():Promise<RuntimeLocalDisconnectResult[]>{this.beginShutdown();this.cleanup??=this.hosts.shutdownLocal().then(receipts=>{this.receipts=receipts;return receipts;});return structuredClone(await this.cleanup);}
 }

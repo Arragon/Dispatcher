@@ -1,6 +1,6 @@
 import {writeFileSync,rmSync,existsSync,readFileSync} from "node:fs";
 import {join} from "node:path";
-import {afterEach,expect,it} from "vitest";
+import {afterEach,expect,it,vi} from "vitest";
 import type {ExecutionContextRef,NativeBinding} from "@dispatcher/domain";
 import {PiRpcExecutionBackend,type PiRpcStartInput as CliStartInput,type PiRpcTurn as CliTurn} from "../src/pi-rpc-execution.js";
 import {piRpcFixture,sessionId} from "./fixtures/pi-rpc.js";
@@ -36,7 +36,7 @@ it("rechecks revoked creation authority after the version await before spawning 
 });
 it("execution persists the exact reserved UUID before prompt and returns readiness at ACK",async()=>{const f=producer();f.input.onBinding=async ref=>{expect(existsSync(join(f.root,"prompt-input"))).toBe(false);f.bindings.push(structuredClone(ref));};const turn=f.backend.start(f.input);await ready(turn);expect(f.bindings).toEqual([binding()]);expect(readFileSync(join(f.root,"prompt-input"),"utf8")).toBe("-literal task; $(not a shell)");expect(turn.status()).toBe("running");expect(await turn.result()).toMatchObject({state:"completed",providerSessionId:sessionId,summary:"native answer"});});
 it.each(["exec-fast","exec-handled"])("execution finishes the distinct settled/handled path for %s",async mode=>{const f=producer(mode),turn=f.backend.start(f.input);await ready(turn);expect((await turn.result()).state).toBe(mode==="exec-fast"?"completed":"waiting");});
-it("execution keeps agent_end pending until authoritative settled",async()=>{const f=producer("exec-pending"),turn=f.backend.start(f.input);await ready(turn);await new Promise(resolve=>setTimeout(resolve,25));expect(turn.status()).toBe("running");await turn.cancel();expect((await turn.result()).state).toBe("cancelled");});
+it("execution keeps agent_end pending until authoritative settled",async()=>{const f=producer("exec-pending");expect(f.backend.hasActiveOperations()).toBe(false);const turn=f.backend.start(f.input);expect(f.backend.hasActiveOperations()).toBe(true);await ready(turn);await new Promise(resolve=>setTimeout(resolve,25));expect(turn.status()).toBe("running");expect(f.backend.hasActiveOperations()).toBe(true);await turn.cancel();expect((await turn.result()).state).toBe("cancelled");expect(f.backend.hasActiveOperations()).toBe(false);});
 it("execution rejects a duplicate start without another owned process",async()=>{const f=producer(),turn=f.backend.start(f.input);expect(()=>f.backend.start(f.input)).toThrowError(expect.objectContaining({code:"PI_RPC_SESSION_ALREADY_ADMITTED"}));await ready(turn);await turn.result();expect(wire(f.root).filter(type=>type==="prompt")).toHaveLength(1);});
 it.each(["profileId","backendId"] as const)("execution refuses %s drift before native creation",field=>{const f=producer();f.input.nativeInput![field]="different";expect(()=>f.backend.start(f.input)).toThrowError(expect.objectContaining({code:"PI_RPC_SCOPE_CHANGED",creationOutcome:"not-created"}));expect(existsSync(join(f.root,"rpc-started"))).toBe(false);});
 it("execution requires the original managed reference before native creation",()=>{const f=producer();f.input.executionRef={...executionRef,id:"another"};expect(()=>f.backend.start(f.input)).toThrowError(expect.objectContaining({code:"PI_RPC_SCOPE_CHANGED",creationOutcome:"not-created"}));expect(existsSync(join(f.root,"rpc-started"))).toBe(false);});
@@ -68,3 +68,25 @@ it("execution native loss ends readiness while binding callback remains unresolv
 it("execution cannot report success when its completed consumer throws",async()=>{const f=producer();f.input.onNativeEvent=fact=>{if(fact.state==="completed")throw Error("private terminal callback");};const turn=f.backend.start(f.input);await ready(turn);const result=await turn.result();expect(result.state).toBe("failed");expect(JSON.stringify(result)).not.toContain("private terminal");});
 it("execution waits for bounded consumer settlement before claiming success",async()=>{const f=producer();f.input.onNativeEvent=async fact=>{if(fact.state==="completed"){await new Promise(resolve=>setTimeout(resolve,30));throw Error("private async terminal");}};const turn=f.backend.start(f.input);await ready(turn);const result=await turn.result();expect(result.state).toBe("failed");expect(JSON.stringify(result)).not.toContain("private async");});
 it("execution keeps an unresolved terminal callback unknown after bounded result waiting",async()=>{const f=producer();let release!:()=>void;const held=new Promise<void>(resolve=>{release=resolve;});f.input.onNativeEvent=async fact=>{if(fact.state==="completed")await held;};const turn=f.backend.start(f.input);try{await ready(turn);expect((await turn.result()).state).toBe("failed");expect(await f.backend.disconnectLocal()).toMatchObject({callbacks:"unknown",backgroundTools:"unknown"});}finally{release();}});
+
+it.each(["initial","admitted"] as const)("retains entered async guard work at %s admission after public failure",async boundary=>{
+ const f=producer(),held=Promise.withResolvers<void>();let getters=0,thenCalls=0,entered=false;
+ const result={get then(){getters++;return (resolve:()=>void,reject:(reason:unknown)=>void)=>{thenCalls++;void held.promise.then(resolve,reject);};}};
+ f.input.beforePrompt=()=>{if(boundary==="initial"||existsSync(join(f.root,"environment.jsonl"))){entered=true;return result as never;}};
+ try{
+  expect(f.backend.hasActiveOperations()).toBe(false);
+  if(boundary==="initial")expect(()=>f.backend.start(f.input)).toThrowError(expect.objectContaining({code:"PI_RPC_ADMISSION_MUST_BE_SYNCHRONOUS",creationOutcome:"not-created"}));
+  else{const turn=f.backend.start(f.input);expect(f.backend.hasActiveOperations()).toBe(true);await expect(ready(turn)).rejects.toMatchObject({code:"PI_RPC_AUTHORITY_CHANGED",creationOutcome:"not-created"});await expect(turn.result()).rejects.toMatchObject({code:"PI_RPC_AUTHORITY_CHANGED"});}
+  expect(entered).toBe(true);const receipt=await f.backend.disconnectLocal();
+  expect(receipt).toMatchObject({connection:"closed",ownedRoot:"not-created",callbacks:"unknown",backgroundTools:"unknown",nativeSessionDeleted:false});
+  expect(f.backend.hasActiveOperations()).toBe(true);expect(getters).toBe(1);expect(thenCalls).toBe(1);expect(wire(f.root)).toEqual([]);expect(f.backend.source(binding())).toBeUndefined();
+  held.reject(Error("late private guard rejection"));await vi.waitFor(()=>expect(f.backend.hasActiveOperations()).toBe(false));
+  expect(await f.backend.disconnectLocal()).toEqual(receipt);expect(f.backend.source(binding())).toBeUndefined();expect(wire(f.root)).toEqual([]);expect(existsSync(join(f.root,"rpc-started"))).toBe(false);expect(getters).toBe(1);expect(thenCalls).toBe(1);
+ }finally{held.resolve();}
+});
+it("consumes a rejected then getter once while preserving synchronous guard rejection",async()=>{
+ const f=producer();let getters=0;f.input.beforePrompt=()=>({get then(){getters++;throw Error("private getter rejection");}} as never);
+ expect(()=>f.backend.start(f.input)).toThrowError(expect.objectContaining({code:"PI_RPC_ADMISSION_MUST_BE_SYNCHRONOUS",creationOutcome:"not-created"}));
+ expect(f.backend.hasActiveOperations()).toBe(true);await vi.waitFor(()=>expect(f.backend.hasActiveOperations()).toBe(false));expect(getters).toBe(1);
+ expect(await f.backend.disconnectLocal()).toMatchObject({callbacks:"drained",ownedRoot:"not-created"});expect(wire(f.root)).toEqual([]);
+});

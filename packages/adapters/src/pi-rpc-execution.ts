@@ -33,7 +33,7 @@ export class PiRpcExecutionBackend implements CliAgentBackend {
  private admitted=false;private closed=false;private created=false;
  private client?:PiRpcClient;private port?:PiRpcInteractionPort;private binding?:NativeBinding;
  private opening?:Promise<PiRpcClient>;private acquisitionEnded=true;private probeUnknown=false;
- private work?:Promise<CliTurnResult>;private cleanup?:Promise<LocalRuntimeDisconnect>;
+ private work?:Promise<CliTurnResult>;private workPending=false;private cleanup?:Promise<LocalRuntimeDisconnect>;
  private readonly callbacks=new Set<Promise<unknown>>();
  private readonly shutdown=new AbortController();
  constructor(options:PiRpcExecutionOptions){
@@ -47,7 +47,7 @@ export class PiRpcExecutionBackend implements CliAgentBackend {
  private guard(input:PiRpcStartInput):void{
   if(this.closed)this.rejectStart("PI_RPC_LOCAL_CONNECTION_CLOSED");
   try{this.assertDirectories();if(input.executable!==this.scope.executable||!isDeepStrictEqual(input.executionRef,this.reference)||!isDeepStrictEqual(directory(input.workspacePath),this.directories[0]))this.rejectStart("PI_RPC_SCOPE_CHANGED");}catch{this.rejectStart("PI_RPC_SCOPE_CHANGED");}
-  try{const result:unknown=input.beforePrompt!();if(result!==undefined){void Promise.resolve(result).catch(()=>undefined);this.rejectStart("PI_RPC_ADMISSION_MUST_BE_SYNCHRONOUS");}}
+  try{const result:unknown=input.beforePrompt!();if(result!==undefined){const callback=Promise.resolve(result);this.callbacks.add(callback);void callback.then(()=>this.callbacks.delete(callback),()=>this.callbacks.delete(callback));this.rejectStart("PI_RPC_ADMISSION_MUST_BE_SYNCHRONOUS");}}
   catch(error){if(error instanceof AdapterStartError&&error.code==="PI_RPC_ADMISSION_MUST_BE_SYNCHRONOUS")throw error;this.rejectStart("PI_RPC_AUTHORITY_CHANGED");}
   if(this.closed)this.rejectStart("PI_RPC_LOCAL_CONNECTION_CLOSED");this.assertDirectories();
  }
@@ -66,6 +66,7 @@ export class PiRpcExecutionBackend implements CliAgentBackend {
   const checked=validateExecutionBinding({profileId:c.profileId,providerId:"pi",backendId:this.backendId,runnerId:c.runnerId,executionRef:this.reference},selection,{repositoryId:this.reference.repositoryId,baseRevision:this.reference.baseRevision});if(!checked.valid)this.rejectStart(checked.code);
   this.guard(input);return {provider:choice.slice(0,slash),model:choice.slice(slash+1)};
  }
+ hasActiveOperations():boolean{return !this.acquisitionEnded||this.workPending||this.callbacks.size>0;}
  source(ref:NativeBinding):NativeInteractionPort|undefined{
   if(this.closed||this.client?.disconnectSignal.aborted||!isDeepStrictEqual(ref,this.binding))return undefined;
   try{this.assertDirectories();this.client?.assertCurrentScope();return this.port;}catch{return undefined;}
@@ -94,7 +95,7 @@ export class PiRpcExecutionBackend implements CliAgentBackend {
    try{const returned:unknown=input.onNativeEvent?.(fact);if(returned!==undefined){const callback=Promise.resolve(returned).catch(()=>{failed=true;}).finally(()=>this.callbacks.delete(callback));this.callbacks.add(callback);}}
    catch{failed=true;}
   };
-  this.acquisitionEnded=false;
+  this.acquisitionEnded=false;this.workPending=true;
   this.opening=PiRpcClient.open({executable:this.scope.executable,workspacePath:this.scope.workspacePath,agentDirectory:this.scope.agentDirectory,sessionDirectory:this.scope.sessionDirectory,sessionId:n.providerSessionId!,mode:"new",...model},{signal:this.shutdown.signal,beforeCreate:()=>this.guard(input)});
   const preparation=(async()=>{
    try{this.client=await this.opening!;this.created=true;this.guard(input);}
@@ -128,7 +129,7 @@ export class PiRpcExecutionBackend implements CliAgentBackend {
    const state=outcome();
    const summary=state==="completed"?[...events].reverse().find(event=>event.type==="activity")?.summary??"Native Pi turn completed":state==="cancelled"?"Local Pi execution cancelled":"Native Pi execution could not be confirmed";
    return {state,summary,providerSessionId:n.providerSessionId!,events} satisfies CliTurnResult;
-  }).finally(()=>{completed=true;unsubscribe?.();if(disconnected){this.client?.disconnectSignal.removeEventListener("abort",disconnected);this.shutdown.signal.removeEventListener("abort",disconnected);}if(this.closed)void this.client?.close().catch(()=>undefined);});this.work=work;void work.catch(()=>undefined);
+  }).finally(()=>{completed=true;this.workPending=false;unsubscribe?.();if(disconnected){this.client?.disconnectSignal.removeEventListener("abort",disconnected);this.shutdown.signal.removeEventListener("abort",disconnected);}if(this.closed)void this.client?.close().catch(()=>undefined);});this.work=work;void work.catch(()=>undefined);
   return {ready:async()=>{await preparation;},status:()=>completed?"completed":"running",result:async()=>structuredClone(await work),events:()=>structuredClone(events),cancel:async()=>{await this.disconnectLocal();}};
  }
  beginShutdown():void{this.closed=true;this.shutdown.abort();}

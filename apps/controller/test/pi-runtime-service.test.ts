@@ -2,7 +2,7 @@ import {execFileSync} from "node:child_process";
 import {existsSync,readFileSync,rmSync,writeFileSync} from "node:fs";
 import {join} from "node:path";
 import {afterEach,expect,it,vi} from "vitest";
-import {PiRpcExecutionBackend,type AgentAdapter,type CliStartInput} from "@dispatcher/adapters";
+import {PiRpcExecutionBackend,StructuredCliAdapter,type AgentAdapter,type CliStartInput} from "@dispatcher/adapters";
 import {assertRunTransition,assertTaskTransition,isTerminalRunState,type Run,type Task} from "@dispatcher/domain";
 import {DispatcherDatabase,InteractionStore} from "@dispatcher/persistence";
 import {piRpcFixture} from "../../../packages/adapters/test/fixtures/pi-rpc.js";
@@ -185,9 +185,34 @@ it.each(["disable","remove"] as const)("retains unknown callback cleanup as a pr
  const boundary=vi.spyOn(runtime,"start").mockImplementation(input=>start({...input,onNativeEvent:async fact=>{await input.onNativeEvent?.(fact);if(fact.state==="completed"){entered.resolve();await held.promise;}}}));
  try{
   const run=await f.dispatch();await entered.promise;await terminalFixture(f,run,"FAILED");const binding=new InteractionStore(f.service.database).binding(run.sessionId),apply=changeProfile(f,change),before=f.service.configuration.current();
-  expect(apply).toThrow(expect.objectContaining({code:"NATIVE_RUNTIME_DRAIN_REQUIRED"}));const receipts=await f.service.disconnectNativeRuntime("pi");expect(receipts).toEqual([expect.objectContaining({connection:"closed",ownedRoot:"exited",callbacks:"unknown",backgroundTools:"unknown",nativeSessionDeleted:false})]);
-  expect(apply).toThrow(expect.objectContaining({code:"NATIVE_RUNTIME_DRAIN_REQUIRED"}));held.resolve();await vi.waitFor(()=>expect([...runtime["executions"].values()][0]!.backend["callbacks"].size).toBe(0));
+  const backend=[...runtime["executions"].values()][0]!.backend;expect(runtime.hasActiveOperations()).toBe(true);expect(backend.hasActiveOperations()).toBe(true);
+  expect(apply).toThrow(expect.objectContaining({code:"ACTIVE_AGENT_PROFILE"}));const receipts=await f.service.disconnectNativeRuntime("pi");expect(receipts).toEqual([expect.objectContaining({connection:"closed",ownedRoot:"exited",callbacks:"unknown",backgroundTools:"unknown",nativeSessionDeleted:false})]);
+  expect(runtime.hasActiveOperations()).toBe(true);expect(backend.hasActiveOperations()).toBe(true);expect(apply).toThrow(expect.objectContaining({code:"NATIVE_RUNTIME_DRAIN_REQUIRED"}));held.resolve();await vi.waitFor(()=>{expect(runtime.hasActiveOperations()).toBe(false);expect(backend.hasActiveOperations()).toBe(false);});
   expect(await f.service.disconnectNativeRuntime("pi")).toEqual(receipts);expect(runtime.hasUnclosedHosts()).toBe(true);expect(apply).toThrow(expect.objectContaining({code:"NATIVE_RUNTIME_DRAIN_REQUIRED"}));expect(f.service.configuration.current()).toEqual(before);expect(new InteractionStore(f.service.database).binding(run.sessionId)).toEqual(binding);
   services.splice(services.indexOf(f.service),1);await expect(f.service.stop()).rejects.toMatchObject({code:"NATIVE_RUNTIME_CLEANUP_UNKNOWN"});f.service.database.close();
  }finally{held.resolve();boundary.mockRestore();}
+});
+
+it.each(["resolve","reject"] as const)("retains the registered Pi runtime and SQLite while rejected raw guard work awaits late %s",async settlement=>{
+ const f=await fixture(),runtime=f.service["piRuntimes"].get("pi")!,start=runtime.start.bind(runtime);let original:CliStartInput|undefined;
+ const capture=vi.spyOn(runtime,"start").mockImplementation(input=>{original=input;return start(input);});
+ const held=Promise.withResolvers<void>(),databaseClose=vi.spyOn(f.service.database,"close");let guard:ReturnType<typeof vi.spyOn>|undefined;
+ try{
+  const run=await f.dispatch();await terminalFixture(f,run);capture.mockRestore();
+  const binding=new InteractionStore(f.service.database).binding(run.sessionId)!,wireBefore=readFileSync(join(f.root,"wire-types"),"utf8"),adapter=f.service["agentAdapters"].get("pi")!;
+  // Adversarial entered callback; the production Controller guard is synchronous.
+  guard=vi.spyOn(f.service as unknown as {assertManagedPiInput:(profileId:string,input:CliStartInput)=>void},"assertManagedPiInput").mockImplementation(()=>held.promise);
+  expect(()=>start(original!)).toThrowError(expect.objectContaining({code:"PI_RPC_SCOPE_CHANGED",creationOutcome:"not-created"}));guard.mockRestore();
+  const receipts=await f.service.disconnectNativeRuntime("pi");expect(receipts).toEqual([expect.objectContaining({connection:"closed",ownedRoot:"exited",callbacks:"drained",backgroundTools:"unknown",nativeSessionDeleted:false})]);
+  expect(runtime.hasUnclosedHosts()).toBe(false);expect(adapter).toBeInstanceOf(StructuredCliAdapter);expect((adapter as StructuredCliAdapter).hasActiveOperations()).toBe(false);
+  expect(runtime.hasActiveOperations()).toBe(true);expect([...runtime["executions"].values()][0]!.backend.hasActiveOperations()).toBe(false);
+  expect(f.service["piRuntimes"].get("pi")).toBe(runtime);expect(runtime.isClosed()).toBe(true);expect(f.service["nativePort"](binding)).toBeUndefined();
+  const close=vi.spyOn(f.service.app,"close"),closeEvents=vi.spyOn(f.service.events,"close");services.splice(services.indexOf(f.service),1);
+  await expect(f.service.stop()).rejects.toMatchObject({code:"NATIVE_RUNTIME_CLEANUP_UNKNOWN"});expect(close).toHaveBeenCalledOnce();expect(closeEvents).toHaveBeenCalledOnce();expect(databaseClose).not.toHaveBeenCalled();
+  expect(f.service.database.getEntity("native-runtime-disconnect","pi")).toMatchObject({backendId:"pi-rpc",receipts});expect(f.service["piRuntimes"].get("pi")).toBe(runtime);
+  const apply=changeProfile(f,"disable"),before=f.service.configuration.current();
+  expect(apply).toThrow(expect.objectContaining({code:"ACTIVE_AGENT_PROFILE"}));expect(f.service.configuration.current()).toEqual(before);
+  if(settlement==="resolve")held.resolve();else held.reject(Error("late private service guard"));await vi.waitFor(()=>expect(runtime.hasActiveOperations()).toBe(false));
+  expect(await f.service.disconnectNativeRuntime("pi")).toEqual(receipts);expect(readFileSync(join(f.root,"wire-types"),"utf8")).toBe(wireBefore);expect(f.service["nativePort"](binding)).toBeUndefined();expect(f.service["piRuntimes"].get("pi")).toBe(runtime);expect(f.service["agentAdapters"].get("pi")).toBe(adapter);expect(new InteractionStore(f.service.database).binding(run.sessionId)).toEqual(binding);expect(databaseClose).not.toHaveBeenCalled();
+ }finally{held.resolve();guard?.mockRestore();capture.mockRestore();const index=services.indexOf(f.service);if(index>=0)services.splice(index,1);await f.service.app.close();f.service.events.close();if(databaseClose.mock.calls.length===0)f.service.database.close();}
 });

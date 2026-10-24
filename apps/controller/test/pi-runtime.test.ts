@@ -69,3 +69,29 @@ it("retains an unknown creation outcome without treating local cleanup as not-cr
  try{await expect(turn.ready!()).rejects.toMatchObject({creationOutcome:"unknown"});expect(f.runtime.hasUnclosedHosts()).toBe(true);expect(f.runtime.isClosed()).toBe(false);expect(f.entries[0]!.disconnect).not.toHaveBeenCalled();}
  finally{await f.runtime.disconnectLocal();}
 });
+
+it.each(["assertInput","assertInput-startup","beforePrompt"] as const)("retains entered runtime %s work independently of public failure and host receipts",async boundary=>{
+ const f=fixture(),held=Promise.withResolvers<void>();let getters=0,thenCalls=0;
+ const result={get then(){getters++;return (resolve:()=>void,reject:(reason:unknown)=>void)=>{thenCalls++;void held.promise.then(resolve,reject);};}};
+ const input=f.input();if(boundary==="assertInput")f.assertInput.mockReturnValue(result);else if(boundary==="assertInput-startup")f.assertInput.mockImplementation(()=>f.runtime["executions"].size>0?result:undefined);else input.beforePrompt=()=>result as never;
+ try{
+  if(boundary==="assertInput")expect(()=>f.runtime.start(input)).toThrowError(expect.objectContaining({code:"PI_RPC_SCOPE_CHANGED",creationOutcome:"not-created"}));
+  else{const code=boundary==="assertInput-startup"?"PI_RPC_SCOPE_CHANGED":"PI_RPC_ADMISSION_MUST_BE_SYNCHRONOUS",turn=f.runtime.start(input);await expect(turn.ready!()).rejects.toMatchObject({code,creationOutcome:"not-created"});await expect(turn.result()).rejects.toMatchObject({code});}
+  const receipts=await f.runtime.disconnectLocal();expect(f.runtime.hasUnclosedHosts()).toBe(false);expect(f.persisted.size).toBe(0);
+  expect(f.runtime.hasActiveOperations()).toBe(true);expect(getters).toBe(1);expect(thenCalls).toBe(1);if(boundary==="assertInput")expect(f.factory).not.toHaveBeenCalled();
+  held.reject(Error("late private runtime rejection"));await vi.waitFor(()=>expect(f.runtime.hasActiveOperations()).toBe(false));
+  expect(await f.runtime.disconnectLocal()).toEqual(receipts);expect(f.persisted.size).toBe(0);expect(f.entries.every(entry=>entry.source.mock.calls.length===0)).toBe(true);expect(getters).toBe(1);expect(thenCalls).toBe(1);
+ }finally{held.resolve();}
+});
+it("tracks acquisition readiness until it really settles",async()=>{
+ const f=fixture(),held=Promise.withResolvers<void>(),turn=f.runtime.start(f.input());
+ f.entries[0]!.starts.mockReturnValue({ready:()=>held.promise,status:()=>"completed",result:async()=>({state:"completed",summary:"fixture",events:[]}),cancel:async()=>{}});
+ try{await vi.waitFor(()=>expect(f.entries[0]!.starts).toHaveBeenCalledOnce());expect(f.runtime.hasActiveOperations()).toBe(true);f.runtime.beginShutdown();expect(f.runtime.hasActiveOperations()).toBe(true);}
+ finally{held.resolve();await turn.ready!();await f.runtime.disconnectLocal();}
+ expect(f.runtime.hasActiveOperations()).toBe(false);
+});
+it("consumes a runtime guard then getter rejection exactly once",async()=>{
+ const f=fixture();let getters=0;f.assertInput.mockReturnValue({get then(){getters++;throw Error("private runtime getter");}});
+ expect(()=>f.runtime.start(f.input())).toThrowError(expect.objectContaining({code:"PI_RPC_SCOPE_CHANGED"}));expect(f.runtime.hasActiveOperations()).toBe(true);
+ await vi.waitFor(()=>expect(f.runtime.hasActiveOperations()).toBe(false));expect(getters).toBe(1);expect(await f.runtime.disconnectLocal()).toEqual([]);
+});
