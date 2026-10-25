@@ -506,3 +506,16 @@ with actual controlled-delay evidence and unchanged post-open wait/native budget
 Historical OS/R020 cause remains unknown. I3 lost first exploratory native bytes
 remain an explicit CV14 exception, not fixed; M2 prior negative-path logs deferred.
 No config/service/account/native/writer/formal activation, goal remains active.
+
+Current acceptance supersedes the pending runtime paragraph above:3935178 fixes
+only actual-open setup/observation phases in the existing Devin test. Original59,
+124matchers/19waits retained,64current/focused520/full202files3986tests and non-test
+gates pass. Required review Approved0C/I/newMinor; root8run/524Git/4704full-input/
+661fixture-copy audit clean, reviewed Copilot73f0c33 source/compiled five hashes
+agree. Runtime I2 resolved, local source41→114 unit complete; no unchanged rerun.
+Historical failures/unknown OS-R020 cause, I3 lost first-native bytes exception,
+existing log/committer observations remain. Actual Controller joint-owner consumer
+and config/factory remain next, not qualified by these local fixtures. Upcoming
+atomic6path config unit also hides exact existing dataHome/configHome/agentDirectory/
+sessionDirectory/copilotHome in console projection and protects leaf edits; current
+export already omits settings, no real data-exposure claim. Whole goal stays active.

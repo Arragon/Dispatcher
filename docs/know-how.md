@@ -1172,3 +1172,7 @@
 - Pure local failures after producer entry still need the entry-aware unknown
   outcome mapper. A before-result path check must not report not-created merely
   because it runs outside the awaited result/callback error wrapper.
+- Start observer-lifetime test waits after actual native open succeeds or rejects.
+  A short entry poll otherwise measures earlier valid version/initialize work.
+  When testing late acquisition, observe the real inner open before holding its
+  delivery; awaiting held delivery or readiness defeats the lifetime assertion.

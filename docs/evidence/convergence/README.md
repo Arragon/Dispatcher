@@ -5119,3 +5119,48 @@ absolute-file-path hashes; they prove their own runs. M2 existing log noise stay
 deferred without suppression. I2 still blocks Task1 completion; no source503
 acceptance/real provider/account/GUI/writer/release/P4 promotion. Quota59used41left,
 ordinaryallowed/reset2unused. Goal and remaining plans continue.
+
+## Copilot runtime local acceptance via owning Devin phase correction
+
+Owning3935178 changes only devin-acp-execution.test.ts, preserving34decl/59cases/
+124matchers/19originalwaits/tables/safetybudgets; only "open" instrumentation moves
+to the shared local actual-open spy. It awaits real open success/rejection before
+11original initial-poll declarations (13cases), preserves held-delivery raw work,
+restores exceptional spy state, and captures actual inputs before the first RED.
+Direct RED3fail/2pass/59filtered retained, including current no-delay open1057ms
+and delayed1609/1602ms; this is current phase evidence, not historical OS/R020 cause.
+Current64/focused7files520/build/lint pass. Required fresh review Speccompliant/
+QualityApproved0C/I/newMinor; expected existing full diagnostic/Gitidentity2minor
+observations deferred to CV14. No suppression, production or shared fixture edits.
+
+One changed-input full passes202files3986tests/all non-test checks, UTC21:53:22.066901
+..21:56:36.151564, wall194.084451042s, logSHA
+19161286d74c3299cf188eec93c19982901262458e016f73fbd8faf4dd393246. During command HEAD
+was281cfe0 with frozen changed test; its bytes exactly equal committed3935178.
+Correct post-build reviewed Copilot source/test/JS/declaration/map five hashes
+agree with73f0c33 focused and this full pre/post. Earlier green-owner-final had stale
+compiledJS/map; that comparison is preserved, not used as the current reference.
+Prior runtime code I1/N1 scoped review plus this owning review/byte agreement
+resolves runtime I2 without another unchanged full run. Local runtime unit complete,
+source41/current114/prior103tables164assertions preserved with explicit owner API.
+
+Root /tmp/dispatcher-devin-entry-phase-task-root-audit-20261025.json verifies8runs/
+37632pre37632post/32digests185external661generatedfilecopies347manifests16Gitobs/
+524Git/4704fullinputs700dist16buildinfo, zeroerrors. All command input/external
+prepost maps equal; both live ledgers frozen, primary HEAD/status/all3dirty contents
+preserved. Full47Devinpre-spawn/64cleanup roots include17no-acquisition fixtures;
+separate actual Copilotdefault6copies retained. Every declared file hash/size/path
+key checked; after-only fixtures and unknown receipts are not root-absence proof.
+Other provider ephemeral bytes and runtime binaries/node_modules excluded; no
+hermetic/real provider/account/GUI/writer/release/P4 Gate proof. Historical runtime
+3966/3967/producer611/612 and original I3 lost-first-run exception remain unchanged.
+
+CV03a40877df, CV10af4626ed and umbrellab68ced73 exact bodies saved/readback at
+/tmp/dispatcher-copilot-runtime-phase-linear-acceptance-20261025.json. Official
+quota66used34remaining ordinaryallowed/reset2unused. Next atomic ConfigPlan/factory
+17+existing console private-field protection6paths; preparation pure projection
+shows exact five native directory keys survive console/plan views, export still
+omits settings. CV13e1d40644 records synthetic probe only, no server/auth/account
+disclosure claim. New actual regression RED/frozen qualification required next.
+Controller29/readonly recovery, remaining provider/UI/retention/delivery/security/
+performance/CI/whole-branch/formal Gates and goal remain active.

@@ -1868,5 +1868,6 @@ Raw acquisition, result and callbacks survive public cancellation; bounded
 acknowledgements and aggregate checkpoints preserve immutable unknown receipts.
 Result bytes are copied before owner callbacks. Source remains undefined and
 native control, continuation, catalog and writer release remain unqualified.
-The code has scoped review and focused verification; required full verification
-is pending the separately owned Devin test setup/observation correction.
+The code has scoped review and full local verification through the separately
+reviewed Devin test setup/observation correction. Controller configuration/factory
+and actual service ownership remain separate consumers, not granted by that gate.
