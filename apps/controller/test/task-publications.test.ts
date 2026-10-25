@@ -121,10 +121,19 @@ describe("task publication receipts", () => {
     const reader=vi.spyOn(CodexAdapter.prototype,"modelCatalog").mockImplementation(async function(this:CodexAdapter,context){entered.resolve();await release.promise;const {signal,...scope}=context;void signal;return original.call(this,scope);});
     try{
       const pending=f.service.app.inject({headers:OWNER,url:"/api/agents/profiles/codex-local/models?repositoryId=repo"}).then(value=>value);
-      await entered.promise;await f.service.stop();expect((await pending).json().code).toBe("CATALOG_CLOSED");
+      await entered.promise;await expect(f.service.stop()).rejects.toMatchObject({code:"NATIVE_RUNTIME_CLEANUP_UNKNOWN"});expect((await pending).json().code).toBe("CATALOG_CLOSED");
+      expect(f.service.database.getEntity("catalog-lifecycle","shutdown")).toMatchObject({state:"unknown",reasonCode:"CATALOG_CLEANUP_UNKNOWN",pendingReads:1});
       const db=new DatabaseSync(join(f.root,"..","data","dispatcher.sqlite"),{readOnly:true});
       try{expect(JSON.parse(String(db.prepare("SELECT document_json FROM entities WHERE kind='catalog-lifecycle' AND id='shutdown'").get()!.document_json))).toMatchObject({state:"unknown",reasonCode:"CATALOG_CLEANUP_UNKNOWN",pendingReads:1});}finally{db.close();}
-    }finally{release.resolve();reader.mockRestore();}
+    }finally{
+      release.resolve();reader.mockRestore();
+      await Promise.allSettled([...f.service["nativeCatalogReads"]]);
+      // This intentional unknown stop keeps storage open. Drain its raw reader,
+      // then remove only this service from normal successful-stop fixture cleanup.
+      const owner=fixtures.find(entry=>entry.services.includes(f.service))!;
+      owner.services=owner.services.filter(service=>service!==f.service);
+      f.service.database.close();
+    }
   });
 
   it("aborts owned catalog reads and waits for cleanup before closing storage",async()=>{

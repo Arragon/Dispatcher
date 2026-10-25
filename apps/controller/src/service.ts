@@ -1,6 +1,7 @@
 import {CanonicalLocalResults} from "./local-results.js";
 import {CodexExecutionRuntime} from "./codex-runtime.js";
 import {OpenCodeExecutionRuntime} from "./opencode-runtime.js";
+import {DevinExecutionRuntime,assertDevinRuntimeSettings} from "./devin-runtime.js";
 import {PiExecutionRuntime} from "./pi-runtime.js";
 import {NativeHistoryService,NativeHistoryError} from "./native-history.js";
 import {nativeSessionView} from "./native-session-view.js";
@@ -58,7 +59,8 @@ import {
   isNativeCliProvider,
   probeNativeCliProfile,
   DevinAdapter,
-  devinManifest,
+  devinManifest, devinLocalAcpManifest,
+  type DevinLocalAcpExecutionScope, type DevinLocalAcpExecutionBackend,
   LocalServiceAdapter,
   localServiceManifest,
   GenericCliAdapter,
@@ -196,6 +198,7 @@ export interface ControllerOptions {
   integrationFetch?: (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
   gitTransport?: GitTransport;
   codexNativeReader?: (input:CodexReadRequest)=>Promise<unknown>;
+  devinExecutionFactory?: (scope:DevinLocalAcpExecutionScope,executionRef:ExecutionContextRef)=>DevinLocalAcpExecutionBackend;
   opencodeExecutionFactory?: (scope:OpenCodeV2OwnedScope,executionRef:ExecutionContextRef)=>OpenCodeV2ExecutionBackend;
   codexAppServerFactory?: (scope:CodexAppServerScope,authority?:CodexNativeAuthority)=>CodexAppServerBackend;
   codexBackendFactory?: (profile: CodexProfileConfig) => CodexBackend;
@@ -222,7 +225,7 @@ export interface BackgroundWorkerOptions {
   runMaxDelayMs?: number;
 }
 
-type OwnedNativeRuntime=PiExecutionRuntime|CodexExecutionRuntime|OpenCodeExecutionRuntime;
+type OwnedNativeRuntime=PiExecutionRuntime|CodexExecutionRuntime|OpenCodeExecutionRuntime|DevinExecutionRuntime;
 type TaskDispatchResult = { run: Run; routing: { explanation: string; eligible: unknown[]; rejected: unknown[] } };
 class TaskDispatchError extends Error {
   constructor(readonly code: string, readonly statusCode: number, message: string) { super(message); }
@@ -453,7 +456,7 @@ function llmConfiguration(config: DispatcherConfig["internalLlm"]): LlmConfigura
   };
 }
 
-const adapterManifests = [genericMockManifest, genericCliManifest, codexManifest, qoderManifest, cursorManifest, devinManifest, kiroManifest, localServiceManifest, opencodeManifest, grokManifest, piManifest, antigravityManifest, zcodeManifest, workbuddyCliManifest, qoderCnManifest] as const;
+const adapterManifests = [genericMockManifest, genericCliManifest, codexManifest, qoderManifest, cursorManifest, devinManifest, devinLocalAcpManifest, kiroManifest, localServiceManifest, opencodeManifest, grokManifest, piManifest, antigravityManifest, zcodeManifest, workbuddyCliManifest, qoderCnManifest] as const;
 
 function manifestForProvider(provider: string) {
   if (provider === "workbuddy" || provider === "codebuddy") return localServiceManifest;
@@ -494,6 +497,7 @@ export class ControllerService {
   readonly tasks: CanonicalTaskService;
   private readonly nativeInteractions:NativeInteractions;
   private readonly codexRuntimes=new Map<string,CodexExecutionRuntime>();
+  private readonly devinRuntimes=new Map<string,DevinExecutionRuntime>();
   private readonly opencodeRuntimes=new Map<string,OpenCodeExecutionRuntime>();
   private readonly nativeRuntimeAdapters=new WeakMap<OwnedNativeRuntime,AgentAdapter>();
   private readonly nativeDisconnects=new WeakMap<OwnedNativeRuntime,Promise<RuntimeLocalDisconnectResult[]>>();
@@ -832,8 +836,8 @@ export class ControllerService {
       await this.lifecycle.stop();
       await Promise.allSettled([...this.remoteLifecycleJobs.values()]);
       await this.profileProbes.drain();
-      await this.drainCatalogReads();
       const runtimeStopErrors:unknown[]=[];
+      try{await this.drainCatalogReads();}catch(error){runtimeStopErrors.push(error);}
       try{await this.accountQuotas.close();}catch(error){runtimeStopErrors.push(error);}
       // Drain every owned runtime before persisting receipts: one failed write must
       // not strand another profile's process or prevent HTTP shutdown.
@@ -860,8 +864,8 @@ export class ControllerService {
     return this.stopping;
   }
 
-  private nativeRuntime(profileId:string):OwnedNativeRuntime|undefined {return this.codexRuntimes.get(profileId)??this.piRuntimes.get(profileId)??this.opencodeRuntimes.get(profileId);}
-  private allNativeRuntimes():Array<{profileId:string;backendId:"pi-rpc"|"codex-app-server"|"opencode-server-v2";runtime:OwnedNativeRuntime}> {return [...[...this.piRuntimes].map(([profileId,runtime])=>({profileId,backendId:"pi-rpc" as const,runtime})),...[...this.codexRuntimes].map(([profileId,runtime])=>({profileId,backendId:"codex-app-server" as const,runtime})),...[...this.opencodeRuntimes].map(([profileId,runtime])=>({profileId,backendId:"opencode-server-v2" as const,runtime}))];}
+  private nativeRuntime(profileId:string):OwnedNativeRuntime|undefined {return this.codexRuntimes.get(profileId)??this.piRuntimes.get(profileId)??this.opencodeRuntimes.get(profileId)??this.devinRuntimes.get(profileId);}
+  private allNativeRuntimes():Array<{profileId:string;backendId:"pi-rpc"|"codex-app-server"|"opencode-server-v2"|"devin-local-acp";runtime:OwnedNativeRuntime}> {return [...[...this.piRuntimes].map(([profileId,runtime])=>({profileId,backendId:"pi-rpc" as const,runtime})),...[...this.codexRuntimes].map(([profileId,runtime])=>({profileId,backendId:"codex-app-server" as const,runtime})),...[...this.opencodeRuntimes].map(([profileId,runtime])=>({profileId,backendId:"opencode-server-v2" as const,runtime})),...[...this.devinRuntimes].map(([profileId,runtime])=>({profileId,backendId:"devin-local-acp" as const,runtime}))];}
 
   private nativePort(binding:NativeBinding):NativeInteractionPort|undefined {
     const profileId=binding.profileId,runtime=this.nativeRuntime(profileId);
@@ -871,7 +875,7 @@ export class ControllerService {
       const source=runtime.source(binding);
       return this.nativeRuntime(profileId)===runtime&&this.agentAdapters.get(profileId)===adapter&&this.nativeRuntimeAdapters.get(runtime)===adapter?source:undefined;
     }
-    if(binding.backendId==="opencode-server-v2")return undefined;
+    if(binding.backendId==="opencode-server-v2"||binding.backendId==="devin-local-acp")return undefined;
     return this.agentAdapters.get(binding.profileId)?.interaction;
   }
 
@@ -1270,6 +1274,7 @@ export class ControllerService {
     const adapter=this.agentAdapters.get(id),runtime=this.nativeRuntime(id),owned=adapter instanceof StructuredCliAdapter||adapter instanceof CodexAdapter||adapter instanceof RemoteNativeAdapter;
     return (this.pendingProfileStarts.get(id)??0)>0
       || this.accountQuotas.hasPending(id)
+      || (this.devinRuntimes.has(id)&&[...this.nativeCatalogProfiles.values()].includes(id))
       || (this.database.listEntities<JsonValue>("run") as unknown as Run[]).some(run=>run.profileId===id&&!isTerminalRunState(run.state))
       || Boolean(owned&&adapter.hasActiveOperations())
       || Boolean(runtime&&"hasActiveOperations" in runtime&&runtime.hasActiveOperations())
@@ -1285,6 +1290,14 @@ export class ControllerService {
   }
   private applyRuntimeConfiguration(config: DispatcherConfig): void {
     this.credentialContext.assertAvailable(config);
+    // Startup applies configuration before constructing the executor; live applies
+    // must retain that executor's exact identity. Disabled reservations do no I/O.
+    for(const profile of config.agentProfiles.filter(profile=>profile.enabled!==false&&profile.provider==="devin-local")){
+      const embeddedId=this.embeddedRunner?.runner.id??this.configuration.current().config.runners.find(runner=>runner.mode==="embedded")?.id??"local";
+      if(!this.options.withRunner||profile.runnerId!==embeddedId||!config.runners.some(runner=>runner.id===embeddedId&&runner.mode==="embedded"))throw new ConfigPlanError("NATIVE_RUNTIME_SCOPE_UNSUPPORTED","Devin Local ACP requires this Controller's embedded executor");
+      try{assertDevinRuntimeSettings({id:profile.id,alias:profile.alias,executable:stringSetting(profile.settings?.executable)!},stringSetting(profile.settings?.dataHome)!,stringSetting(profile.settings?.configHome)!);}
+      catch{throw new ConfigPlanError("NATIVE_RUNTIME_SCOPE_UNSUPPORTED","Devin Local ACP requires existing explicit native paths");}
+    }
     const retainedAdapters = new Map<string, AgentAdapter>();
     const runnerIdentity = (runnerId: string) => {
       const runner = config.runners.find(candidate => candidate.id === runnerId);
@@ -1295,6 +1308,7 @@ export class ControllerService {
       const adapter = this.agentAdapters.get(id);
       const next = config.agentProfiles.find(profile => profile.id === id && profile.enabled !== false);
       const runtime=this.nativeRuntime(id),unchanged=Boolean(next&&isDeepStrictEqual(previous,adapterConfiguration(next)));
+      if(!unchanged&&this.devinRuntimes.has(id)&&this.catalogCleanupUnknownProfiles.has(id))throw new ConfigPlanError("NATIVE_RUNTIME_DRAIN_REQUIRED","Native catalog cleanup remains unconfirmed for this profile");
       if(runtime?.isClosed()&&(!this.durableNativeDisconnects.has(runtime)||runtime.hasUnclosedHosts())&&!unchanged)throw new ConfigPlanError("NATIVE_RUNTIME_DRAIN_REQUIRED","Persist proven local cleanup before replacing a closed native runtime");
       if (adapter && next && unchanged) {
         retainedAdapters.set(id, adapter);
@@ -1392,6 +1406,7 @@ export class ControllerService {
 
     this.agentAdapters.clear();
     for(const id of this.codexRuntimes.keys())if(!retainedAdapters.has(id))this.codexRuntimes.delete(id);
+    for(const id of this.devinRuntimes.keys())if(!retainedAdapters.has(id))this.devinRuntimes.delete(id);
     for(const id of this.opencodeRuntimes.keys())if(!retainedAdapters.has(id))this.opencodeRuntimes.delete(id);
     for(const id of this.piRuntimes.keys())if(!retainedAdapters.has(id))this.piRuntimes.delete(id);
     for (const [id, adapter] of retainedAdapters) this.agentAdapters.set(id, adapter);
@@ -1422,7 +1437,7 @@ export class ControllerService {
     const resolveProviderCredential = (reference: string): Promise<string> => this.secrets.resolve(reference, { principal: "controller", purpose: "provider" });
     for (const profile of enabledProfiles) {
       if (retainedAdapters.has(profile.id)) continue;
-      let piRuntime:PiExecutionRuntime|undefined,codexRuntime:CodexExecutionRuntime|undefined,opencodeRuntime:OpenCodeExecutionRuntime|undefined;
+      let piRuntime:PiExecutionRuntime|undefined,codexRuntime:CodexExecutionRuntime|undefined,opencodeRuntime:OpenCodeExecutionRuntime|undefined,devinRuntime:DevinExecutionRuntime|undefined,devinAdapter:AgentAdapter|undefined;
       if(profile.nativeInteraction?.backendId==="codex-app-server"){
         codexRuntime=new CodexExecutionRuntime({profile:{id:profile.id,alias:profile.alias,executable:stringSetting(profile.settings?.executable)!,codexHome:stringSetting(profile.settings?.codexHome)!,...(stringSetting(profile.settings?.model)?{model:stringSetting(profile.settings?.model)!}:{})},runnerId:profile.runnerId,assertInput:input=>this.assertManagedCodexInput(profile.id,input),bindingFor:id=>this.persistedNativeBinding(profile.id,id),authorityFor:scope=>this.codexNativeAuthority(scope),...(this.options.codexAppServerFactory?{factory:this.options.codexAppServerFactory}:{})});this.codexRuntimes.set(profile.id,codexRuntime);
       }
@@ -1433,18 +1448,24 @@ export class ControllerService {
         },bindingFor:id=>this.persistedNativeBinding(profile.id,id),...(this.options.opencodeExecutionFactory?{factory:this.options.opencodeExecutionFactory}:{})});
         this.opencodeRuntimes.set(profile.id,opencodeRuntime);
       }
+      if(profile.nativeInteraction?.backendId==="devin-local-acp"){
+        const assertOwner=()=>{if(!devinRuntime||!devinAdapter||this.devinRuntimes.get(profile.id)!==devinRuntime||this.nativeRuntimeAdapters.get(devinRuntime)!==devinAdapter||this.agentAdapters.get(profile.id)!==devinAdapter)throw new InteractionGuardError("EXECUTION_CONTEXT_DRIFT");};
+        devinRuntime=new DevinExecutionRuntime({profile:{id:profile.id,alias:profile.alias,executable:stringSetting(profile.settings?.executable)!},dataHome:stringSetting(profile.settings?.dataHome)!,configHome:stringSetting(profile.settings?.configHome)!,runnerId:profile.runnerId,assertInput:input=>{assertOwner();this.assertManagedDevinInput(profile.id,input);},bindingFor:id=>{assertOwner();return this.persistedNativeBinding(profile.id,id);},...(this.options.devinExecutionFactory?{factory:this.options.devinExecutionFactory}:{})});
+        this.devinRuntimes.set(profile.id,devinRuntime);
+      }
       if(profile.nativeInteraction?.backendId==="pi-rpc"){
         piRuntime=new PiExecutionRuntime({profile:{id:profile.id,alias:profile.alias,executable:stringSetting(profile.settings?.executable)!,model:stringSetting(profile.settings?.model)!},agentDirectory:stringSetting(profile.settings?.agentDirectory)!,sessionDirectory:stringSetting(profile.settings?.sessionDirectory)!,runnerId:profile.runnerId,assertInput:input=>this.assertManagedPiInput(profile.id,input),bindingFor:id=>this.persistedNativeBinding(profile.id,id)});
         this.piRuntimes.set(profile.id,piRuntime);
       }
       const adapter = createNativeProfileAdapter(profile, {
+        ...(devinRuntime?{devinLocalBackendFactory:()=>devinRuntime!}:{}),
         store, resolveCredential: resolveProviderCredential,
         ...(codexRuntime?{codexBackendFactory:()=>codexRuntime!}:this.options.codexBackendFactory ? { codexBackendFactory: this.options.codexBackendFactory } : {}),
         ...(this.options.codexNativeReader ? { codexNativeReader: this.options.codexNativeReader } : {}),
         ...(opencodeRuntime?{cliBackendFactory:()=>opencodeRuntime!}:piRuntime?{cliBackendFactory:()=>piRuntime!}:this.options.cliBackendFactory ? { cliBackendFactory: this.options.cliBackendFactory } : {}),
       });
       if (adapter) {
-        const runtime=codexRuntime??piRuntime??opencodeRuntime;if(runtime)this.nativeRuntimeAdapters.set(runtime,adapter);
+        devinAdapter=adapter;const runtime=codexRuntime??piRuntime??opencodeRuntime??devinRuntime;if(runtime)this.nativeRuntimeAdapters.set(runtime,adapter);
         codexRuntime?.setNativeRequestSink(event=>{
           if(this.stopping||this.agentAdapters.get(profile.id)!==adapter)throw new InteractionGuardError("NATIVE_REQUEST_CONNECTION_CHANGED");
           const port=event.binding.profileId===profile.id?this.nativePort(event.binding):undefined;if(!port)throw new InteractionGuardError("SESSION_OWNER_MISMATCH");
@@ -2107,7 +2128,14 @@ export class ControllerService {
     if(identity.runId!==run.id||identity.sessionId!==run.sessionId)throw new InteractionGuardError("EXECUTION_CONTEXT_DRIFT");
   }
 
-  private assertManagedNativeInput(profileId:string,owner:{providerId:"codex";backendId:"codex-app-server"}|{providerId:"opencode";backendId:"opencode-server-v2"},input:{executionRef:ExecutionContextRef;workspacePath:string;executionSelection:ExecutionSelection;commandId:string}):Run {
+  private assertManagedDevinInput(profileId:string,input:CliStartInput):void {
+    const identity=input.nativeInput;
+    if(!input.executionRef||!identity||identity.version!==1||identity.profileId!==profileId||identity.backendId!=="devin-local-acp"||!identity.executionSelection||!identity.commandId)throw new InteractionGuardError("EXECUTION_CONTEXT_DRIFT");
+    const run=this.assertManagedNativeInput(profileId,{providerId:"devin-local",backendId:"devin-local-acp"},{executionRef:input.executionRef,workspacePath:input.workspacePath,executionSelection:identity.executionSelection,commandId:identity.commandId});
+    if(identity.runId!==run.id||identity.sessionId!==run.sessionId)throw new InteractionGuardError("EXECUTION_CONTEXT_DRIFT");
+  }
+
+  private assertManagedNativeInput(profileId:string,owner:{providerId:"codex";backendId:"codex-app-server"}|{providerId:"opencode";backendId:"opencode-server-v2"}|{providerId:"devin-local";backendId:"devin-local-acp"},input:{executionRef:ExecutionContextRef;workspacePath:string;executionSelection:ExecutionSelection;commandId:string}):Run {
     const ref=input.executionRef,workspace=this.workspaces.get(input.workspacePath);
     if(this.stopping||!isExecutionContextRef(ref)||ref.kind!=="managed-worktree"||this.embeddedRunner?.runner.id!==ref.runnerId||!workspace)throw new InteractionGuardError("EXECUTION_CONTEXT_DRIFT");
     const run=this.database.getEntity<JsonValue>("run",workspace.runId) as unknown as Run|undefined;
@@ -2509,15 +2537,17 @@ export class ControllerService {
   }
   private readonly catalogReads=new Map<string,Promise<AccountModelCatalog>>();
   private readonly nativeCatalogReads=new Set<Promise<AccountModelCatalog>>();
+  private readonly nativeCatalogProfiles=new Map<Promise<AccountModelCatalog>,string>();
+  private readonly catalogCleanupUnknownProfiles=new Set<string>();
   private readonly catalogShutdown=new AbortController();
   private catalogCleanupUnknown=false;
-  private async ownedCatalogRead(read:()=>Promise<AccountModelCatalog>):Promise<AccountModelCatalog>{
+  private async ownedCatalogRead(profileId:string,read:()=>Promise<AccountModelCatalog>):Promise<AccountModelCatalog>{
     const signal=this.catalogShutdown.signal;
     if(signal.aborted)throw new PublicationError("CATALOG_CLOSED",409,"Native catalog admission is closed");
-    const operation=Promise.resolve().then(read);this.nativeCatalogReads.add(operation);
-    void operation.then(()=>{this.nativeCatalogReads.delete(operation);},error=>{
-      this.nativeCatalogReads.delete(operation);
-      if(error instanceof AdapterContractError&&["MODEL_CATALOG_CLEANUP_UNKNOWN","NATIVE_CATALOG_CLEANUP_UNKNOWN"].includes(error.code))this.catalogCleanupUnknown=true;
+    const operation=Promise.resolve().then(read);this.nativeCatalogReads.add(operation);this.nativeCatalogProfiles.set(operation,profileId);
+    void operation.then(()=>{this.nativeCatalogReads.delete(operation);this.nativeCatalogProfiles.delete(operation);},error=>{
+      this.nativeCatalogReads.delete(operation);this.nativeCatalogProfiles.delete(operation);
+      if(error instanceof AdapterContractError&&["MODEL_CATALOG_CLEANUP_UNKNOWN","NATIVE_CATALOG_CLEANUP_UNKNOWN"].includes(error.code)){this.catalogCleanupUnknown=true;this.catalogCleanupUnknownProfiles.add(profileId);}
     });
     let cancel:()=>void=()=>undefined;
     const closed=new Promise<never>((_,reject)=>{cancel=()=>reject(new PublicationError("CATALOG_CLOSED",409,"Native catalog admission is closed"));signal.addEventListener("abort",cancel,{once:true});if(signal.aborted)cancel();});
@@ -2531,6 +2561,7 @@ export class ControllerService {
       if(!drained||this.catalogCleanupUnknown||prior?.state==="unknown"){
         this.database.saveEntity("catalog-lifecycle","shutdown",{state:"unknown",pendingReads:this.nativeCatalogReads.size,observedAt:this.now().toISOString(),reasonCode:"CATALOG_CLEANUP_UNKNOWN"});
         this.app.log.warn({pendingReads:this.nativeCatalogReads.size},"Native catalog cleanup remains unconfirmed");
+        throw new AdapterContractError("NATIVE_RUNTIME_CLEANUP_UNKNOWN","Native catalog cleanup remains unconfirmed; preserve the database for reconciliation");
       }
     }finally{if(timer)clearTimeout(timer);}
   }
@@ -2777,7 +2808,7 @@ export class ControllerService {
     try {
       const run=remote&&workspacePath?this.database.listEntities<JsonValue>("run").map(value=>value as unknown as Run).find(run=>run.profileId===profileId&&run.worktree===workspacePath&&!isTerminalRunState(run.state)):undefined;
       if(remote&&workspacePath&&!run)throw new AdapterContractError("RUN_CONTEXT_UNAVAILABLE","Remote worktree does not have matching canonical Run authority");
-      catalog=await this.ownedCatalogRead(()=>remote?this.remoteRequest(profile.runnerId,{type:"native.model_catalog",profileId,repositoryId,reason,...(run?{runId:run.id}:{})},run).then(value=>remoteCatalog(value,{profileId,runnerId:profile.runnerId,providerId:profile.provider})):adapter!.modelCatalog!({...context,workspacePath:workspacePath??repository.root,signal:this.catalogShutdown.signal}));
+      catalog=await this.ownedCatalogRead(profileId,()=>remote?this.remoteRequest(profile.runnerId,{type:"native.model_catalog",profileId,repositoryId,reason,...(run?{runId:run.id}:{})},run).then(value=>remoteCatalog(value,{profileId,runnerId:profile.runnerId,providerId:profile.provider})):adapter!.modelCatalog!({...context,workspacePath:workspacePath??repository.root,signal:this.catalogShutdown.signal}));
       if(catalog.profileId!==profileId||catalog.runnerId!==profile.runnerId||catalog.providerId!==profile.provider||!adapter?.manifest.backends.some(backend=>backend.id===catalog.backendId))throw new AdapterContractError("NATIVE_CONTEXT_CHANGED","Native catalog returned a different account or backend context");
     }
     catch (error) {
@@ -4189,6 +4220,17 @@ export class ControllerService {
         return probeGenericCli({ file: body.executable, args: body.args, ...(body.mode ? { mode: body.mode } : {}) });
       }
       return reply.code(404).send({ code: "ADAPTER_NOT_FOUND" });
+    });
+    this.app.post<{Body:{id:string;alias:string;runnerId?:string;enabled?:boolean;executable:string;dataHome:string;configHome:string;previewOnly?:boolean;baseRevision?:number}}>("/api/agents/devin-local/profiles",{schema:{body:{type:"object",additionalProperties:false,required:["id","alias","executable","dataHome","configHome"],properties:{id:{type:"string",minLength:1},alias:{type:"string",minLength:1},runnerId:{type:"string",minLength:1},enabled:{type:"boolean"},executable:{type:"string"},dataHome:{type:"string"},configHome:{type:"string"},previewOnly:{type:"boolean"},baseRevision:{type:"integer"}}}}},async(request,reply)=>{
+      const body=request.body,current=this.configuration.current();
+      if(body.baseRevision!==undefined&&body.baseRevision!==current.revision)throw new RevisionConflictError(body.baseRevision,current.revision);
+      if(current.config.agentProfiles.some(profile=>profile.id===body.id))return reply.code(409).send({code:"PROFILE_EXISTS"});
+      const next=structuredClone(current.config),runnerId=body.runnerId??"local";
+      next.agentProfiles.push({id:body.id,alias:body.alias,provider:"devin-local",runnerId,...(body.enabled===undefined?{}:{enabled:body.enabled}),settings:{executable:body.executable,dataHome:body.dataHome,configHome:body.configHome},nativeInteraction:{mode:"compatible",backendId:"devin-local-acp",executionLocation:"managed-worktree"}});
+      const plan=await this.planConfiguration(next,this.principalFor(request).id,"web");
+      if(body.previewOnly===true)return reply.code(201).send({plan:consoleConfigPlan(plan)});
+      const applied=await this.applyConfigurationPlan(plan.id,{confirmed:true});
+      return reply.code(201).send({profile:{id:body.id,provider:"devin-local",alias:body.alias,runnerId,state:body.enabled===false?"DISABLED":"CONFIGURED"},revision:applied.revision});
     });
     this.app.post<{ Params: { provider: string }; Body: EcosystemProfileBody }>("/api/agents/:provider/profiles", async (request, reply) => {
       const body = request.body;
