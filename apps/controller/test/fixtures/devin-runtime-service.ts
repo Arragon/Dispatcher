@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
-import { afterEach, vi } from "vitest";
+import { afterEach, expect, vi } from "vitest";
 import { DevinLocalAcpExecutionBackend, type DevinLocalAcpExecutionScope, type AgentAdapter, type NativeInteractionPort } from "@dispatcher/adapters";
 import type { Run, ExecutionContextRef, ExecutionSelection, NativeBinding } from "@dispatcher/domain";
 import { InteractionStore, type JsonValue } from "@dispatcher/persistence";
@@ -16,7 +16,36 @@ function retainFixtureFile(path:string):void {
   writeFileSync(join(target,"identity.json"),JSON.stringify({path,sha256:createHash("sha256").update(readFileSync(path)).digest("hex")})+"\n");
 }
 export const fixtures: Array<{ service: ControllerService; root: string }> = [];
-afterEach(async () => { for (const f of fixtures.splice(0)) { try { await f.service.stop(); } catch (error) { if (!(error instanceof AggregateError) && (error as { code?: string }).code !== "NATIVE_RUNTIME_CLEANUP_UNKNOWN") throw error; f.service.database.close(); } const held=join(f.root,"model-descendant");if(existsSync(held)){const pid=Number(readFileSync(held,"utf8"));await vi.waitFor(()=>{try{process.kill(pid,0);}catch{return;}throw Error("Held catalog pipe has not naturally closed");},{timeout:3500});} for(const name of ["devin-fixture","roots","wire","model-queries","model-descendant"])retainFixtureFile(join(f.root,name));rmSync(f.root, { recursive: true, force: true }); } });
+const retainedStopFailures=new WeakMap<ControllerService,unknown>();
+/** Assertion must succeed before this specific rejected stop can retain test storage. */
+export async function expectRetainedStop(service:ControllerService,expected:object):Promise<unknown> {
+  const failure=await service.stop().then(()=>{throw Error("Expected fixture shutdown to reject");},error=>error);
+  expect(failure).toMatchObject(expected);
+  retainedStopFailures.set(service,failure);
+  return failure;
+}
+export async function cleanupFixture(f:{service:ControllerService;root:string}):Promise<void> {
+  let closeRetainedStorage=false;
+  try { await f.service.stop(); }
+  catch(error){
+    // Error class/code cannot authorize cleanup of an otherwise ordinary fixture.
+    if(!retainedStopFailures.has(f.service)||retainedStopFailures.get(f.service)!==error)throw error;
+    await Promise.allSettled([...f.service["nativeCatalogReads"]]);
+    if(f.service["allNativeRuntimes"]().some(({runtime})=>"hasActiveOperations" in runtime&&runtime.hasActiveOperations()))throw Error("Release and drain retained fixture native operations before storage cleanup",{cause:error});
+    closeRetainedStorage=true;
+  }
+  const held=join(f.root,"model-descendant");
+  if(existsSync(held)){
+    const pid=Number(readFileSync(held,"utf8"));
+    await vi.waitFor(()=>{try{process.kill(pid,0);}catch{return;}throw Error("Held catalog pipe has not naturally closed");},{timeout:3500});
+  }
+  if(closeRetainedStorage)f.service.database.close();
+  for(const name of ["devin-fixture","roots","wire","model-queries","model-descendant"])retainFixtureFile(join(f.root,name));
+  rmSync(f.root,{recursive:true,force:true});retainedStopFailures.delete(f.service);
+  const index=fixtures.findIndex(entry=>entry.service===f.service);if(index>=0)fixtures.splice(index,1);
+}
+
+afterEach(async()=>{for(const f of fixtures.splice(0))await cleanupFixture(f);});
 export const json = (value: unknown): JsonValue => JSON.parse(JSON.stringify(value));
 export const registry = (service: ControllerService) => (service as unknown as { agentAdapters: Map<string, AgentAdapter> }).agentAdapters;
 export const source = (service: ControllerService, binding: NativeBinding) => (service as unknown as { nativePort: (binding: NativeBinding) => NativeInteractionPort | undefined }).nativePort(binding);

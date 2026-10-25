@@ -1,10 +1,10 @@
-import { chmodSync, existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect,it,vi } from "vitest";
 import { DispatcherDatabase, InteractionStore } from "@dispatcher/persistence";
 import type { PublishDraftV1, Run } from "@dispatcher/domain";
 import type { AgentAdapter, CliStartInput } from "@dispatcher/adapters";
-import {fixture,registry,source,json} from "./fixtures/devin-runtime-service.js";
+import {cleanupFixture,expectRetainedStop,fixture,fixtures,registry,source,json} from "./fixtures/devin-runtime-service.js";
 async function finishRun(f:Awaited<ReturnType<typeof fixture>>,run:Run){const saved=f.service.database.getEntity("run",run.id);f.service.database.saveEntity("run",run.id,json({...saved as object,state:"FAILED",endedAt:new Date().toISOString()}));}
 it("composes exact owned Local ACP per Run without cloud or read/control qualification", async () => {
   const f = await fixture(), a = await f.create("a"), b = await f.create("b"), adapter = registry(f.service).get("p")!;
@@ -35,7 +35,7 @@ it("keeps SQLite open when active catalog pipe cleanup remains unknown", async (
   const request = f.service.app.inject({ method: "GET", url: "/api/agents/profiles/p/models?repositoryId=repo&configRevision=" + revision, headers: { authorization: "Bearer owner" } }).then(result => result); let descendant: number | undefined;
   try {
     await vi.waitFor(() => expect(existsSync(join(f.root, "model-descendant"))).toBe(true), { timeout: 3500 }); descendant = Number(readFileSync(join(f.root, "model-descendant"), "utf8"));
-    await expect(f.service.stop()).rejects.toMatchObject({ code: "NATIVE_RUNTIME_CLEANUP_UNKNOWN" }); const response = await request; expect(response.statusCode).toBe(409); expect(response.json()).toMatchObject({code:"CATALOG_CLOSED"});
+    await expectRetainedStop(f.service,{code:"NATIVE_RUNTIME_CLEANUP_UNKNOWN"}); const response = await request; expect(response.statusCode).toBe(409); expect(response.json()).toMatchObject({code:"CATALOG_CLOSED"});
     expect(f.service.database.getEntity("catalog-lifecycle","shutdown")).toMatchObject({state:"unknown",reasonCode:"CATALOG_CLEANUP_UNKNOWN"}); expect(() => process.kill(descendant!, 0)).not.toThrow();
   } finally { if (descendant) await vi.waitFor(() => expect(() => process.kill(descendant!, 0)).toThrow(), { timeout: 3500 }); await request; }
 });
@@ -81,7 +81,7 @@ it("requires owned cleanup before disabling all Local profiles through ConfigPla
 });
 it("retains storage and prevents replacement on unknown callback drain", async () => {
   const f = await fixture(), run = await f.create("a"), session = await f.start(run); await registry(f.service).get("p")!.result(session.id); const backend = f.entries[0]!.backend, close = backend.disconnectLocal.bind(backend); vi.spyOn(backend, "disconnectLocal").mockImplementation(async () => ({ ...await close(), callbacks: "unknown" }));
-  await f.service.disconnectNativeRuntime("p"); await finishRun(f,run); f.config.agentProfiles[0]!.alias = "Changed"; expect(() => f.apply()).toThrowError(expect.objectContaining({ code: "NATIVE_RUNTIME_DRAIN_REQUIRED" })); await expect(f.service.stop()).rejects.toMatchObject({ code: "NATIVE_RUNTIME_CLEANUP_UNKNOWN" }); expect(f.service.database.listEntities("native-runtime-local-disconnect")).toHaveLength(1);
+  await f.service.disconnectNativeRuntime("p"); await finishRun(f,run); f.config.agentProfiles[0]!.alias = "Changed"; expect(() => f.apply()).toThrowError(expect.objectContaining({ code: "NATIVE_RUNTIME_DRAIN_REQUIRED" })); await expectRetainedStop(f.service,{code:"NATIVE_RUNTIME_CLEANUP_UNKNOWN"}); expect(f.service.database.listEntities("native-runtime-local-disconnect")).toHaveLength(1);
 });
 // Source restart case is assigned to C2: checked-storage startup certificate.
 it("creates a distinct explicit Local profile through ConfigPlan without starting ACP", async () => {
@@ -97,6 +97,10 @@ it("stores a disabled explicit profile and rejects unsupported activation withou
 it("rejects an unqualified installed version without a replacement producer", async () => {
   const f = await fixture(true,true,"9.9.9"), run = await f.create("a");
   await expect(f.start(run)).rejects.toMatchObject({ code: "DEVIN_ACP_VERSION_UNQUALIFIED", creationOutcome: "not-created" }); expect(f.factory).toHaveBeenCalledOnce(); expect(f.rows("roots")).toEqual([]);
+  const runtime=f.service["devinRuntimes"].get("p")!;await vi.waitFor(()=>expect(runtime.hasActiveOperations()).toBe(false));
+  expect(await f.service.disconnectNativeRuntime("p")).toMatchObject([expect.objectContaining({backendId:"devin-local-acp",executionRefId:run.executionRef!.id,connection:"unknown",ownedRoot:"unknown",callbacks:"unknown",backgroundTools:"unknown",nativeSessionDeleted:false})]);
+  expect(runtime.hasUnclosedHosts()).toBe(true);expect(runtime.hasActiveOperations()).toBe(false);expect(new InteractionStore(f.service.database).binding(run.sessionId)).toBeUndefined();expect(f.rows("wire")).toEqual([]);
+  await expectRetainedStop(f.service,{code:"NATIVE_RUNTIME_CLEANUP_UNKNOWN"});
 });
 it.each([{ credentialRef: "secret://devin-local/copied" }, { approveTools: true }, { cloud: true }, { args: ["--cloud"] }])("rejects unsupported Local profile options %j without persistence", async extra => {
   const f = await fixture(false), before = f.service.configuration.current(), result = await f.service.app.inject({ method: "POST", url: "/api/agents/devin-local/profiles", headers: { authorization: "Bearer owner" }, payload: { id: "p", alias: "Local", executable: f.executable, dataHome: f.dataHome, configHome: f.configHome, ...extra } });
@@ -161,6 +165,7 @@ it("blocks profile replacement during raw catalog work and retains its unknown c
  const f=await fixture();writeFileSync(join(f.root,"model-held-pipe"),"fixture");const request=f.service.app.inject({url:"/api/agents/profiles/p/models?repositoryId=repo",headers}).then(r=>r);
  await vi.waitFor(()=>expect(existsSync(join(f.root,"model-descendant"))).toBe(true),{timeout:3500});f.config.agentProfiles[0]!.alias="Changed";expect(f.apply).toThrow(expect.objectContaining({code:"ACTIVE_AGENT_PROFILE"}));
  const response=await request;expect(response.statusCode).toBe(200);expect(response.json()).toMatchObject({freshness:"unverified"});expect(f.apply).toThrow(expect.objectContaining({code:"NATIVE_RUNTIME_DRAIN_REQUIRED"}));
+ await expectRetainedStop(f.service,{code:"NATIVE_RUNTIME_CLEANUP_UNKNOWN"});
  const descendant=Number(readFileSync(join(f.root,"model-descendant"),"utf8"));await vi.waitFor(()=>expect(()=>process.kill(descendant,0)).toThrow(),{timeout:3500});
 });
 
@@ -188,7 +193,7 @@ it("retains raw binding callback activity and cached unknown cleanup after publi
  vi.spyOn(runtime,"start").mockImplementation(input=>start({...input,onBinding:async binding=>{await input.onBinding!(binding);entered.resolve();await held.promise;}}));
  const admission=f.start(run).catch(error=>error);await entered.promise;await finishRun(f,run);f.config.agentProfiles[0]!.alias="Changed";expect(f.apply).toThrow(expect.objectContaining({code:"ACTIVE_AGENT_PROFILE"}));
  let failure:unknown;
- try{failure=await f.service.stop().catch(error=>error);expect(failure).toMatchObject({code:"NATIVE_RUNTIME_CLEANUP_UNKNOWN"});expect(await admission).toMatchObject({creationOutcome:"unknown"});expect(runtime.hasActiveOperations()).toBe(true);expect(f.service.database.listEntities("native-runtime-local-disconnect")).toHaveLength(1);expect(f.rows("wire").filter(row=>row.method==="session/prompt")).toEqual([]);}
+ try{failure=await expectRetainedStop(f.service,{code:"NATIVE_RUNTIME_CLEANUP_UNKNOWN"});expect(failure).toMatchObject({code:"NATIVE_RUNTIME_CLEANUP_UNKNOWN"});expect(await admission).toMatchObject({creationOutcome:"unknown"});expect(runtime.hasActiveOperations()).toBe(true);await expect(cleanupFixture(f)).rejects.toMatchObject({message:"Release and drain retained fixture native operations before storage cleanup",cause:failure});expect(f.service.database.handle.isOpen).toBe(true);expect(f.service.database.listEntities("native-runtime-local-disconnect")).toHaveLength(1);expect(f.rows("wire").filter(row=>row.method==="session/prompt")).toEqual([]);}
  finally{held.resolve();await admission;await vi.waitFor(()=>expect(runtime.hasActiveOperations()).toBe(false));}
  expect(await f.service.stop().catch(error=>error)).toBe(failure);expect(runtime.hasUnclosedHosts()).toBe(true);expect(f.apply).toThrow(expect.objectContaining({code:"NATIVE_RUNTIME_DRAIN_REQUIRED"}));expect(f.factory).toHaveBeenCalledOnce();
 });
@@ -199,6 +204,39 @@ it("attempts every real runtime and closes HTTP while catalog and receipt persis
  const save=f.service.database.saveEntity.bind(f.service.database),fault=vi.spyOn(f.service.database,"saveEntity").mockImplementation((...args)=>{if(args[0]==="catalog-lifecycle")throw Error("catalog receipt failed");if(args[0]==="native-runtime-local-disconnect"&&(args[2] as {profileId?:string}).profileId==="p")throw Error("runtime receipt failed");return save(...args);});
  const closed=vi.spyOn(f.service.app,"close"),quotaClose=f.service["accountQuotas"].close.bind(f.service["accountQuotas"]),reviewClose=f.service["localResults"].close.bind(f.service["localResults"]);
  vi.spyOn(f.service["accountQuotas"],"close").mockImplementation(async()=>{await quotaClose();throw Error("quota close failed");});vi.spyOn(f.service["localResults"],"close").mockImplementation(async()=>{await reviewClose();throw Error("local review failed");});
- try{const error=await f.service.stop().catch(error=>error);expect(error).toBeInstanceOf(AggregateError);expect((error as AggregateError).errors.map(e=>e.message)).toEqual(expect.arrayContaining(["catalog receipt failed","runtime receipt failed","quota close failed","local review failed"]));expect(closed).toHaveBeenCalledOnce();expect(f.service.database.listEntities("native-runtime-local-disconnect")).toHaveLength(1);expect(f.service.database.listEntities("native-runtime-disconnect")).toHaveLength(1);for(const row of f.rows("roots"))expect(()=>process.kill(Number(row.pid),0)).toThrow();expect((await query).statusCode).toBe(409);}
+ try{const error=await expectRetainedStop(f.service,{errors:[expect.objectContaining({message:"catalog receipt failed"}),expect.objectContaining({message:"quota close failed"}),expect.objectContaining({message:"runtime receipt failed"}),expect.objectContaining({message:"local review failed"})]});expect(error).toBeInstanceOf(AggregateError);expect((error as AggregateError).errors.map(e=>e.message)).toEqual(expect.arrayContaining(["catalog receipt failed","runtime receipt failed","quota close failed","local review failed"]));expect(closed).toHaveBeenCalledOnce();expect(f.service.database.listEntities("native-runtime-local-disconnect")).toHaveLength(1);expect(f.service.database.listEntities("native-runtime-disconnect")).toHaveLength(1);for(const row of f.rows("roots"))expect(()=>process.kill(Number(row.pid),0)).toThrow();expect((await query).statusCode).toBe(409);}
  finally{fault.mockRestore();await query;}
+});
+
+it.each(["aggregate","unknown"] as const)("propagates unexpected %s from the real fixture cleanup entrypoint",async kind=>{
+ const f=await fixture(false),failure=kind==="aggregate"?new AggregateError([Error("unrelated shutdown failure")],"unexpected fixture aggregate"):Object.assign(Error("unexpected fixture cleanup uncertainty"),{code:"NATIVE_RUNTIME_CLEANUP_UNKNOWN"}),close=f.service["localResults"].close.bind(f.service["localResults"]);
+ vi.spyOn(f.service["localResults"],"close").mockImplementation(async()=>{await close();throw failure;});
+ try{await expect(cleanupFixture(f)).rejects.toBe(failure);expect(f.service.database.handle.isOpen).toBe(true);expect(existsSync(f.root)).toBe(true);}
+ finally{disposeInjectedFixture(f);}
+});
+
+function injectedShutdownFailure(f:Awaited<ReturnType<typeof fixture>>,failure:Error){
+ const close=f.service["localResults"].close.bind(f.service["localResults"]);
+ vi.spyOn(f.service["localResults"],"close").mockImplementation(async()=>{await close();throw failure;});
+}
+function disposeInjectedFixture(f:Awaited<ReturnType<typeof fixture>>){
+ const index=fixtures.findIndex(entry=>entry.service===f.service);if(index>=0)fixtures.splice(index,1);
+ if(f.service.database.handle.isOpen)f.service.database.close();rmSync(f.root,{recursive:true,force:true});
+}
+it("rejects a different error even after this service enrolled its asserted failed stop",async()=>{
+ const f=await fixture(false),failure=Object.assign(Error("asserted shutdown failure"),{code:"NATIVE_RUNTIME_CLEANUP_UNKNOWN"}),different=Object.assign(Error("different shutdown failure"),{code:"NATIVE_RUNTIME_CLEANUP_UNKNOWN"});injectedShutdownFailure(f,failure);
+ await expectRetainedStop(f.service,{code:"NATIVE_RUNTIME_CLEANUP_UNKNOWN"});const stop=vi.spyOn(f.service,"stop").mockRejectedValue(different);
+ try{await expect(cleanupFixture(f)).rejects.toBe(different);expect(f.service.database.handle.isOpen).toBe(true);expect(existsSync(f.root)).toBe(true);}
+ finally{stop.mockRestore();await cleanupFixture(f);}
+});
+it("does not enroll a failed expected-stop assertion for later cleanup",async()=>{
+ const f=await fixture(false),failure=Object.assign(Error("unmatched shutdown failure"),{code:"NATIVE_RUNTIME_CLEANUP_UNKNOWN"});injectedShutdownFailure(f,failure);
+ try{await expect(expectRetainedStop(f.service,{code:"DIFFERENT_EXPECTATION"})).rejects.toThrow();await expect(cleanupFixture(f)).rejects.toBe(failure);expect(f.service.database.handle.isOpen).toBe(true);}
+ finally{disposeInjectedFixture(f);}
+});
+it("does not borrow another service's enrolled error even when the error object is identical",async()=>{
+ const enrolled=await fixture(false),ordinary=await fixture(false),failure=Object.assign(Error("service-specific shutdown failure"),{code:"NATIVE_RUNTIME_CLEANUP_UNKNOWN"});injectedShutdownFailure(enrolled,failure);injectedShutdownFailure(ordinary,failure);
+ await expectRetainedStop(enrolled.service,{code:"NATIVE_RUNTIME_CLEANUP_UNKNOWN"});
+ try{await expect(cleanupFixture(ordinary)).rejects.toBe(failure);expect(ordinary.service.database.handle.isOpen).toBe(true);}
+ finally{disposeInjectedFixture(ordinary);await cleanupFixture(enrolled);}
 });
