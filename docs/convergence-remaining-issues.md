@@ -445,3 +445,13 @@ source restart1 and read-only stored certificate/corruption matrix. A directly
 affected catalog-unknown shutdown path needs behavioral reproduction and storage
 barrier correction in C1. No personal profile/account/service activation. Group/
 EPERM/R020/CV13 audit28/formal Gates/CV14 stay open; complete plan remains active.
+
+Current2026-10-25 Controller C1 checkpoint:175b2d4+bee6483 completes source29,
+actual catalog exact-selector trial and shared raw catalog/storage barriers.
+Review I1 blanket test-teardown swallow fixed and scoped re-review clean; final
+197files3536tests plus non-test gates pass. Source restart1 remains C2 with pure
+checked-storage certificate/corruption matrix. Historical early script capture
+gaps/non-final self-review drift remain explicit in evidence ledger; no retroactive
+proof claim. Config/factory ac61772 stays accepted. Copilot147/runtime41/WIP17+29
+inputs prepared only. Group/EPERM/R020/CV13audit28/CV14/formal Gates and full goal
+remain open; no personal account/profile/service activation.

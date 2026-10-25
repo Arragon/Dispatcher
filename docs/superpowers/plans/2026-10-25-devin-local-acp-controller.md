@@ -28,12 +28,13 @@ accepted ConfigPlan/factory unit are prerequisites; record their actual HEADs.
   source fixture. Reuse current native runtime registry/observer/disconnect paths,
   canonical managed Guard, ConfigPlan, current catalog and model routing service.
   No separate execution, configuration, persistence or routing framework.
-- Four paths only: apps/controller/src/service.ts; new
+- Five paths after the explicit shared-consumer ruling: apps/controller/src/service.ts; new
   apps/controller/test/devin-runtime-service.test.ts; new
-  apps/controller/test/fixtures/devin-runtime-service.ts; packages/adapters/src/index.ts.
+  apps/controller/test/fixtures/devin-runtime-service.ts; packages/adapters/src/index.ts;
+  apps/controller/test/task-publications.test.ts (one intentional expectation/teardown).
   The index change is exactly a named devinLocalAcpManifest export for the actual
   Controller manifest consumer. No client/SDK wildcard exports, package/dependency,
-  schema/domain/protocol/persisted format, other provider runtime or test changes.
+  schema/domain/protocol/persisted format, other provider runtime or unrelated test changes.
 - Add devinExecutionFactory with the actual reviewed scope/reference -> producer
   signature, matching existing OpenCode composition. Register real
   DevinExecutionRuntime in OwnedNativeRuntime, map/lookup/enumeration/retention/
@@ -72,7 +73,7 @@ accepted ConfigPlan/factory unit are prerequisites; record their actual HEADs.
   strands another runtime, cached-unknown upgrade, descendant/group kill, widened
   timeout or old error surface just to satisfy frozen assertions.
 - All owned Local roots/callbacks/real producer activity participate in profile
-  active/replacement/global-disable and shutdown guards. Confirmed local disconnect
+  active/replacement/profile-disable and shutdown guards. Confirmed local disconnect
   receipts are durably saved before replacement/SQLite close; failed receipt writes
   retry only cached persistence, never repeat root close. Unknown stays unknown after
   raw settlement; no native session deletion/background-tool/writer-release proof.
@@ -127,23 +128,30 @@ accepted ConfigPlan/factory unit are prerequisites; record their actual HEADs.
 
 **Steps/acceptance**
 
-- [ ] Read and inventory source30/current contracts, record 29 C1 + 1 C2 partition
+- [x] Read and inventory source30/current contracts, record 29 C1 + 1 C2 partition
   and the catalog unit's one deferred trial case. Verify each source purpose/value.
-- [ ] Create canonical real fixture and source-shaped regressions; capture loadable
+- [x] Create canonical real fixture and source-shaped regressions; capture loadable
   missing-composition RED and actual catalog-shutdown safety RED before fixes.
-- [ ] Implement four-path owning composition. Preserve every current provider guard,
+- [x] Implement four-path owning composition. Preserve every current provider guard,
   rollback/retention/disconnect behavior and exact source no-I/O guarantees.
-- [ ] Self-review, build and changed-file lint. Run actual focused existing suites:
+- [x] Self-review, build and changed-file lint. Run actual focused existing suites:
   `mise exec -- pnpm vitest run apps/controller/test/devin-runtime-service.test.ts apps/controller/test/opencode-runtime-service.test.ts apps/controller/test/pi-runtime-service.test.ts apps/controller/test/adapter-lifecycle.test.ts packages/runner/test/native-runtime-lifecycle.test.ts packages/adapters/test/native-profile.test.ts packages/adapters/test/devin-catalog.test.ts`.
   Verify paths exist first; if a named path is absent, derive the actual corresponding
   current suite and record the substitution, never invent a passing command.
-- [ ] One unchanged final `mise exec -- pnpm check` after final source freeze;
+- [x] One unchanged final `mise exec -- pnpm check` after final source freeze;
   build/typecheck/lint/boundaries/tests required. Preserve failures and raise concrete
   scope conflicts before edits outside the four paths.
-- [ ] Commit four scoped files, audit final gate/Git/pre/post bytes, write complete
+- [x] Commit four scoped files, audit final gate/Git/pre/post bytes, write complete
   source dispositions/RED/GREEN/commands/inputs/noise/limitations report. Root runs
   required independent task review and handles source503/docs/Linear after handoff.
 
 **Handoff:** C2 owns pure checked-storage Devin certificate plus exact corruption
 matrix and the original source restart/no-reattach case. It may reuse this fixture,
 not add native history/source or physical/account reads to certificate validation.
+
+**Accepted scope/rulings:** fifth file apps/controller/test/task-publications.test.ts
+is the sole intentional existing-consumer expectation/teardown adaptation. Current
+config has no global native switch: source case21 uses all-Local-profile enabled=false.
+Full review I1 addressed in bee6483, scoped re-review clean; final197/3536. Original
+restart sourcecase23 remains C2. Historical evidence limitations are recorded in
+the root convergence ledger, not relabeled as original captures.

@@ -4822,3 +4822,68 @@ Required review is spec compliant / task quality Approved,0 Critical/Important a
 1 MinorCV14. Root resolved both cannot-verify items: independent byte/source proof
 as above and explicit out-of-unit real Gates. LinearCV10
 34ccaf0d-ce10-427b-a651-8a42d310f7f3 saved and exact body read back.
+
+## Devin Local ACP Controller C1 and strict teardown acceptance (2026-10-25)
+
+175b2d4db2335dff83dd4820686ec13912232dbd plus
+bee64835c5b1e7e519f33f8951d12d948f003530 compose the real Local runtime/Adapter/
+manifest, exact ConfigPlan route, canonical owner Guard and raw catalog/profile/
+shutdown storage barriers. The fifth path task-publications.test.ts was explicitly
+authorized after its old stop-resolves expectation conflicted with the required
+unknown-cleanup barrier; only that test changes, normal teardown and69 case count
+remain. No schema/dependency/other-provider runtime or personal activation change.
+
+Source30 maps29 C1 +1 C2 restart. Original parameter tables retained with explicit
+canonical ExecutionSelection/contract/Session/API substitutions. Nonexistent old
+global native switch maps to ConfigPlan disabling all owning Local profiles.
+Catalog's prior exact-ID consumer is now actual /api/model-routing/test: chosen
+ready, cho unavailable, unchanged routing/config stores and no ACP allocation.
+Current Local73 includes source29 plus44 regressions/consumer cases. Root mapSHA
+85d810008daedcc87c100c316d34dc25ea55b37377b3687fe13cf6e155b7dfd4;
+/tmp/dispatcher-devin-acp-controller-fix1-root-source-map-20261025.json.
+
+Required full review /tmp/dispatcher-devin-acp-controller-task1-review-20261025.md
+found I1: new fixture globally swallowed unexpected aggregate/unknown stop errors.
+Fix1 makes successful stop default; exact service/error enrollment follows an
+explicit successful assertion. Five real cleanup regressions prevent unexpected,
+nonmatching or cross-service exceptions; enrolled cleanup still refuses active
+raw work. Wrong-version9.9.9 now explicitly asserts its existing conservative
+unknown receipt/raw settlement, without changing production receipt policy. Scoped
+/tmp/dispatcher-devin-acp-controller-task1-fix1-review-20261025.md: I1 ADDRESSED,
+no new Critical/Important/Minor. All local cannot-verify items resolved by root
+case/input proof; C2/real Gates explicitly remain outside C1.
+
+First full3530/3531 failure and passing3531 candidate vulnerable to I1 remain
+retained. Final covering2/142 (Local73 +publication69), lint and one unchanged
+fix1 mise exec -- pnpm check pass197files3536tests and all non-test gates.
+UTC2026-10-25T19:27:43.533241Z to19:30:23.979129Z,wall160.445464542s,
+Vitest142.35s; logSHA
+8b7ec385b4f1cc5058cf1ad5d468e66e6927fab033c0fe7e78825ee12923922a.
+Evidence /tmp/dispatcher-devin-acp-controller-fix1-evidence-20261025.
+
+Root /tmp/dispatcher-devin-acp-controller-fix1-root-audit-20261025.json checks34
+actual command records158124pre/158125post copies,136digests,109external copies
+and971actual generated fixture copies;511trackedGit matches4652finalinputs,
+688dist/16buildinfo,zeroerrors. Fix touches only two authorized test paths;
+production/publication payload remains exactly175b2d4. Primary HEAD/status and
+all three dirty document contents match preserved original hashes.
+
+Historical limitation: red-catalog/red-catalog-profile/green-initial/focus-02 lack
+original ephemeral Local executable copies; source/helper/output remain, no replay
+or reconstruction claimed. First original capture focus-03; fix1 captures from
+its first RED. One non-final covering-final-02 self-review text changed while its
+command ran: original pre copy plus later matching bytes prove equivalence, not
+an original unique postcopy. Final gate source/external inputs frozen. Intentional
+post-gate append-report changes have original source/post-source report copies.
+Initial root audit correctly rejected the previously unlisted report mutation;
+the exact documented packaging case was verified, not a blanket drift exemption.
+Runtime binaries/node_modules excluded, no hermetic claim.
+
+LinearCV10 acceptance1efa0859-21f7-42a3-b49e-93a4da6614dd and umbrella
+19bca02d-5dc1-48f4-b928-86ed4ceaefc9 saved and exact bodies read back.
+Quota23used77remaining allowed/reset2unused. Full goal active; next C2 owns pure
+checked-storage Local certificate/corruption matrix and original restart1.
+Copilot committed147/runtime41 and WIPconfig17/service29 are only prepared inputs
+under /tmp/dispatcher-copilot-preflight-20261025, not passing target claims.
+Original group/EPERM/R020/CV13 audit28, expected diagnostic noise/CV14 and real
+provider/account/GUI/writer/service/release Gates remain open.

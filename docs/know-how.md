@@ -1133,3 +1133,11 @@
   and physical catalog scope first, pass a detached callback value, and construct
   from the captured values. Disabled reservations skip runtime construction while
   their explicit native homes still require repository-path protection.
+
+- Raw native catalog reads outlive public cancellation. Keep their owning profile
+  fenced until settlement, and retain cleanup uncertainty afterward; an error
+  recorded in SQLite must also prevent shutdown from closing that SQLite handle.
+- Tests that deliberately retain a failed-stop database must assert the actual
+  service/error before enrolling its cleanup exception. Exact identity prevents a
+  later failure or another service from borrowing it; even enrolled cleanup must
+  wait for original raw callbacks before closing storage.

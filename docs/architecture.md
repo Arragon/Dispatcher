@@ -1388,7 +1388,7 @@ persists normalized cleanup plus an unknown observation/read barrier. Failed
 persistence retains the closed host; retry writes its cached receipt without
 another physical disconnect. Changing an idle profile requires confirmed durable
 local cleanup; an active canonical Run still blocks replacement. Shutdown attempts
-all three Pi/Codex/OpenCode registries and records each actual backend even if
+all Pi/Codex/OpenCode/Devin Local registries and records each actual backend even if
 another disconnect or receipt write fails, then closes HTTP/events and preserves
 storage when host cleanup or exposed raw work remains uncertain. Pi tracks raw
 guard results and admission/readiness alongside producer acquisition/turn/callback
@@ -1752,8 +1752,9 @@ Producer activity tracks actual acquisition, work and original callback settleme
 independently of bounded public waits. Runtime composition must consume this raw
 status; the Adapter turn wrapper alone cannot establish drain. Unknown disconnect
 receipts remain immutable after later settlement. The profile factory now constructs this scoped Adapter through its dedicated
-Local ACP backend slot. Controller composition remains separate; construction
-grants no continuation, history, background-tool or writer-release qualification.
+Local ACP backend slot, and Controller now owns its exact scoped runtime. This
+composition grants no continuation, history, background-tool or writer-release
+qualification.
 
 
 ## Internal Devin Local catalog
@@ -1769,8 +1770,9 @@ The catalog opts into the shared version probe's strict output validation; the
 probe retains its existing stdout cap, independently bounds stderr and validates
 UTF-8 after drain. The model query has independent 1MiB stream bounds and a whole
 query deadline. Cleanup uncertainty wins over usable data, cancellation or timeout.
-The explicit Local profile factory supplies this catalog scope. Controller
-registration and its actual catalog/profile routes remain separate.
+The explicit Local profile factory supplies this catalog scope to Controller
+profile/catalog routes. Actual model-routing trials match exact catalog IDs without
+allocating an ACP Session; a selector prefix is unavailable.
 
 
 ## Internal Devin managed runtime
@@ -1788,7 +1790,7 @@ proof is available, including the interval before a binding reply. Result data i
 captured before awaited authority and identity checks, and public output uses only
 that validated snapshot. This internal runtime exposes no native source, history,
 continuation or writer control. Explicit ConfigPlan/factory registration is now
-available; Controller runtime composition remains separate from package exports.
+available with explicit Controller runtime composition through the owning factory.
 
 ## Explicit Devin Local configuration and factory
 
@@ -1802,3 +1804,19 @@ captures detached profile/path values, requires the exact supplied backend and
 constructs the existing scoped Adapter without starting it. Disabled rows return
 before physical or callback work. Both explicit native homes remain private paths
 even while disabled; the owning Controller/Runner retains remote-path filtering.
+
+## Devin Local Controller ownership and storage barriers
+
+Enabled Local profiles preflight explicit physical paths and this process's fixed
+embedded executor before configuration side effects. Initial configuration precedes
+EmbeddedRunner construction, so it uses the configured identity and explicit
+withRunner option; later changes also verify the live identity. The dedicated
+profile route uses ConfigPlan and an exact field set without CLI discovery.
+
+Admission and binding lookup capture the exact runtime, Adapter and registry
+association and reuse the canonical managed Guard. Raw catalog work survives public
+CATALOG_CLOSED cancellation, blocks profile changes, and retains sticky uncertainty.
+Shutdown collects catalog persistence/drain failures with the existing runtime,
+quota and local-review failures, attempts all runtimes, closes HTTP/events and
+retains SQLite on unknown cleanup. A receipt retry does not close an owned root twice.
+Cold Local metadata qualification remains a separate checked-storage boundary.
