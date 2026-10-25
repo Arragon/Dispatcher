@@ -1176,3 +1176,10 @@
   A short entry poll otherwise measures earlier valid version/initialize work.
   When testing late acquisition, observe the real inner open before holding its
   delivery; awaiting held delivery or readiness defeats the lifetime assertion.
+
+- Native-directory privacy belongs to the existing config projection/edit boundary.
+  Exact known dataHome/configHome/agentDirectory/sessionDirectory/copilotHome keys
+  need the same omission/protected-parent handling as executable/codexHome; export
+  dropping settings alone does not protect console or plan before/after values.
+  Keep precise leaf edits and private siblings, and reject parent replacement
+  atomically without adding a wildcard for future unrelated settings.

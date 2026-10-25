@@ -519,3 +519,19 @@ and config/factory remain next, not qualified by these local fixtures. Upcoming
 atomic6path config unit also hides exact existing dataHome/configHome/agentDirectory/
 sessionDirectory/copilotHome in console projection and protects leaf edits; current
 export already omits settings, no real data-exposure claim. Whole goal stays active.
+
+Copilot config/factory/privacy a77d48f is now locally accepted: source17 original
+calls/tables/inner values preserved except actual buildPlan source fixture→import;
+old factory80 and console7 wholecalls/fake script unchanged, current34/125/18.
+Meaningful RED59failed118passed; final focused10files593tests, one frozen full
+203files4076tests/all non-test checks pass. Independent Spec/Quality Approved0C/I,
+Two inherited Minor observations (diagnostics/local Git identity) remain for CV14.
+Root7run/526Git/
+4711full-input/227generated+20Local-fixture audit and independent source AST map
+clean; full pre/post input/external maps and committed bytes agree, primary preserved.
+Initial build updates15compiled/build-info files; those before/after bytes are retained.
+This resolves the five-directory console/plan protection gap using exact known
+keys; preparation was synthetic, no account/server disclosure claim. Controller C1
+must now implement the actual synchronous joint canonical+persisted owner decision,
+raw shutdown/storage barriers and source-denial; C2 owns original restart1. Existing
+historical I3/group/R020/security/retention/UI/performance/real/formal Gates remain.

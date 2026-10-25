@@ -23,11 +23,20 @@ Spec: frozen WIP config test /tmp/dispatcher-copilot-preflight-20261025/wip/pack
 
 ## Task 1: Preserve config17 with atomic owning factory
 
-- [ ] Read affected schema/factory/actual constructor/current architecture+know-how/nested AGENTS; inventory source17 and whole existing factory cases/assertions, exact API map and no source side effects.
-- [ ] Add source17 canonically loadable tests plus missing-opt-in/strict settings/current factory ownership/mutation/disabled controls before fixes; retain actual RED separate from setup errors.
-- [ ] Implement only exact TS/JSON/semantic config opt-in, private native home, dedicated factory slot/guarded construction and existing console private-key omission/edit protection above. No Controller service/source/catalog expansion.
-- [ ] Verify ConfigPlan apply/readback/restart, enabled factory/canonical ownership, disabled structural reservation/private paths and no callbacks, factory mutation and cross-provider injection; all old factory cases unchanged.
-- [ ] Build, changed-file lint, source17/new factory plus actual existing native configs/factory/client/producer/runtime compatibility as appropriate; freeze self-review/source and one full gate. Capture all original inputs/failures/outputs/Git/digests.
-- [ ] Commit6paths/clean handoff/same assigned full report with source17 case/table/scalar mapping, old factory/config-edit wholecall preservation, RED/green exact commands/native-vs-double/projection-only scope/limitations. Required fresh review/root source503/docs/Linear after handoff.
+- [x] Read affected schema/factory/actual constructor/current architecture+know-how/nested AGENTS; inventory source17 and whole existing factory cases/assertions, exact API map and no source side effects.
+- [x] Add source17 canonically loadable tests plus missing-opt-in/strict settings/current factory ownership/mutation/disabled controls before fixes; retain actual RED separate from setup errors.
+- [x] Implement only exact TS/JSON/semantic config opt-in, private native home, dedicated factory slot/guarded construction and existing console private-key omission/edit protection above. No Controller service/source/catalog expansion.
+- [x] Verify ConfigPlan apply/readback/restart, enabled factory/canonical ownership, disabled structural reservation/private paths and no callbacks, factory mutation and cross-provider injection; all old factory cases unchanged.
+- [x] Build, changed-file lint, source17/new factory plus actual existing native configs/factory/client/producer/runtime compatibility as appropriate; freeze self-review/source and one full gate. Capture all original inputs/failures/outputs/Git/digests.
+- [x] Commit6paths/clean handoff/same assigned full report with source17 case/table/scalar mapping, old factory/config-edit wholecall preservation, RED/green exact commands/native-vs-double/projection-only scope/limitations. Required fresh review/root source503/docs/Linear after handoff.
 
 Next Controller C1sourceother28 and pure stored restartC2 remain separate; unsupported catalog must return unsupported/unverified with zero Task/native allocation rather than fake manual model activation. Source Copilot history/continuation/controls stay unqualified.
+
+## Acceptance
+
+Task1 COMPLETE locally at a77d48f: required Spec/Quality Approved0C/I; original17,
+old80+7 fullcall/script preservation independently verified; meaningful RED59/118,
+final focused593 and one full203files4076tests/non-test checks pass. Root7run byte/
+526Git/4711input and primary audit zeroerrors. Report/hash/initial setup failure,
+minor logs/local identity, Git-only capture limits and historical I3 exception kept.
+Controller C1 actual joint store owner and C2 restart remain next; no formal Gate.

@@ -1871,3 +1871,12 @@ native control, continuation, catalog and writer release remain unqualified.
 The code has scoped review and full local verification through the separately
 reviewed Devin test setup/observation correction. Controller configuration/factory
 and actual service ownership remain separate consumers, not granted by that gate.
+
+Copilot ConfigPlan now admits only explicit compatible copilot-rpc on the owning
+Embedded Runner with executable/copilotHome and native login. The structural
+factory uses a dedicated owning backend slot, captures the minimal profile before
+the callback and constructs the existing three-argument Adapter from that capture.
+Disabled registrations skip factory work while protecting their configured home.
+Console/plan projections omit the five known native directory keys through the
+existing private-key/edit boundary; export continues omitting all settings.
+Actual Controller composition and the real joint store assertion follow in C1.

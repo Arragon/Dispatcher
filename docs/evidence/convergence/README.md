@@ -5164,3 +5164,51 @@ omits settings. CV13e1d40644 records synthetic probe only, no server/auth/accoun
 disclosure claim. New actual regression RED/frozen qualification required next.
 Controller29/readonly recovery, remaining provider/UI/retention/delivery/security/
 performance/CI/whole-branch/formal Gates and goal remain active.
+
+## Copilot explicit config/factory and native-directory privacy — a77d48f
+
+Exactly six implementation/test files, BASEe0628e1→a77d48f. Source17 five full
+calls/tables/inner invalid values retained; only actual buildPlan source scalar
+fixture→import changes (GUI fixture unchanged). Old factory30decl80cases and
+console7decl7cases wholecalls/script exact; current factory125/config34/console18.
+Root independent AST map: /tmp/dispatcher-copilot-config-factory-root-source-map-20261025.json.
+Dedicated backend slot, captured minimal profile/detached callback/original receiver,
+explicit opt-in even disabled, exact two paths/native login and disabled private
+home protection. Console/plan omit dataHome/configHome/agentDirectory/sessionDirectory/
+copilotHome through existing privateKey; exact leaf/private sibling/parent refusal,
+export settings omission and unrelated future key preserved. Existing constructor
+physical executable check remains after valid owning backend; no home/account probe.
+
+Evidence /tmp/dispatcher-copilot-config-factory-evidence-20261025. Original RED
+59fail118pass177 is behavioral; earlier overbroad evidence-map scalar matcher setup
+failure retained separately. Final focused10files593tests, build/lint pass. A newly
+added hostile typed fixture changed to Reflect.set after self-review, then covering
+lint/focused repeated; no production change or unchanged retry. One full command
+mise exec -- pnpm check UTC22:15:39.198439..22:18:53.826869 wall194.627884834s,
+203files4076tests and all build/typecheck/lint/boundary checks pass. Full log SHA
+335a6173b49384f1fbbb89802ff4c5cbb1c7f1bdbfec8372fcf2e4edf4749fd7.
+Command HEAD was e0628e1 plus six frozen changed files; those equal committed a77d48f,
+not an assertion that this command ran at a clean a77d48f HEAD. CV14 owns final candidate.
+
+Required review /tmp/dispatcher-copilot-config-factory-task1-review-20261025.md fully
+read: Spec/Quality Approved0C/I, two inherited diagnostic/local committer observations.
+No suite reruns. Cannot-verify cross-task items resolved by root source/primary audit
+and source503 five verification-only updates; no formal/account/service Gate claimed.
+Root /tmp/dispatcher-copilot-config-factory-root-audit-20261025.json checks7runs,
+32977pre32977post/28digests168external/227hashed-path generatedfilecopies117manifests,
+20Local-factory relative copies16manifests/14Gitobs526trackedGit/full4711inputs700dist/
+16buildinfo, zeroerrors. Original full repository and28external maps unchanged;
+all committed bytes and current files agree. Initial build updates15compiled/build-info
+files; all snapshots retained, later focused/full unchanged. Primary HEAD/status/three dirty contents
+preserved. Root source mapper separately preserves37 old wholecalls plus allsource17.
+
+Native-profile fixtures have original-root-relative copies/dev/ino/mode with actual
+version then models-list calls; changed-registration path is not mistaken for the
+original executable. No-spawn root-drift fixture is separate, no invented root
+receipt. Existing Copilot/Devin full captures also verified; other providers' ephemeral
+bytes/runtime binaries/node_modules excluded. Seven check phases have full payloads;
+Git-only staging/commit records exact argv/cwd/UTC/output but no identical pre/post
+capture layout. Historical earlier capture loss and root producer ledger exception
+remain unchanged. Current unit ledgers/docs stayed frozen until completed audit.
+No hermetic/account/GUI/native writer/release/P4 proof. Official quota72used28remaining,
+ordinaryallowed/reset2unused; goalactive and next C1/C2 dispatched in dependency order.
