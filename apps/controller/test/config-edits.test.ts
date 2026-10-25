@@ -1,6 +1,7 @@
 import {expect,it} from "vitest";
-import {defaultDispatcherConfig} from "@dispatcher/config";
-import {consoleConfig,applyConfigEdits} from "../src/config-edits.js";
+import {defaultDispatcherConfig, ConfigurationEngine} from "@dispatcher/config";
+import {consoleConfig,applyConfigEdits,consoleConfigPlan,exportConsoleConfig} from "../src/config-edits.js";
+import { DispatcherDatabase } from "@dispatcher/persistence";
 function config(){const c=structuredClone(defaultDispatcherConfig);c.agentProfiles=[{id:"account",alias:"Account",provider:"codex",runnerId:"local",settings:{codexHome:"/private/account",configDir:"/private/config",model:"native"}}];return c;}
 it("omits private native paths and exposes exact protected paths without placeholders",()=>{
   const view=consoleConfig(config());expect(JSON.stringify(view)).not.toContain("/private/");expect(view.config.agentProfiles[0]!.settings).toEqual({model:"native"});expect(view.protectedPaths).toContain("/agentProfiles/0/settings/codexHome");
@@ -59,4 +60,50 @@ it("builds revision-bound console edits through ConfigPlan and recovers safe pla
 
 it("omits secret-like field names and literal secrets inside argument arrays",()=>{
   const c=config();c.agentProfiles[0]!.settings={api_key:"sk-private-key-12345678",args:["--key","sk-private-key-12345678"],environment:{TOKEN:"private"},model:"native"};const view=consoleConfig(c);expect(view.config.agentProfiles[0]!.settings).toEqual({model:"native"});expect(JSON.stringify(view)).not.toContain("sk-private-key");expect(view.protectedPaths).toContain("/agentProfiles/0/settings/args");
+});
+
+const privateNativeKeys = ["dataHome", "configHome", "agentDirectory", "sessionDirectory", "copilotHome"];
+function nativePathConfig(key: string) {
+  const c = structuredClone(defaultDispatcherConfig);
+  c.agentProfiles = [{ id: "reserved", alias: "Reserved", provider: "cursor", runnerId: "local", enabled: false, settings: { [key]: "/synthetic/private/native", model: "native" } }];
+  return c;
+}
+it.each(privateNativeKeys)("omits the known native %s from console config and plan before/after", key => {
+  const c = nativePathConfig(key), before = structuredClone(c), view = consoleConfig(c);
+  expect(view.config.agentProfiles[0]!.settings).toEqual({ model: "native" });
+  expect(view.protectedPaths).toEqual([`/agentProfiles/0/settings/${key}`]);
+  const database = new DispatcherDatabase(":memory:");
+  try {
+    const engine = new ConfigurationEngine(database), plan = engine.buildPlan(c, "owner", "import"), safe = consoleConfigPlan(plan);
+    expect(JSON.stringify(safe)).not.toContain("/synthetic/private/native"); expect(plan.changes.length).toBeGreaterThan(0);
+    engine.applyPlan(plan.id, { confirmed: true });
+    const changed = structuredClone(c); changed.agentProfiles[0]!.settings![key] = "/synthetic/private/changed";
+    const replaced = engine.buildPlan(changed, "owner", "import");
+    expect(JSON.stringify(replaced)).toContain("/synthetic/private/native"); expect(JSON.stringify(replaced)).toContain("/synthetic/private/changed");
+    expect(JSON.stringify(consoleConfigPlan(replaced))).not.toContain("/synthetic/private/");
+    expect(c).toEqual(before);
+  } finally { database.close(); }
+});
+it.each(privateNativeKeys)("preserves private %s siblings for leaf edits and refuses parent replacements atomically", key => {
+  const c = nativePathConfig(key), before = structuredClone(c), alias = { op: "replace", path: "/agentProfiles/0/alias", value: "Changed", entityId: "reserved" };
+  const next = applyConfigEdits(c, [alias]);
+  expect(next.agentProfiles[0]).toMatchObject({ alias: "Changed", settings: { [key]: "/synthetic/private/native", model: "native" } });
+  expect(applyConfigEdits(c, [{ op: "replace", path: `/agentProfiles/0/settings/${key}`, value: "/explicit/new", entityId: "reserved" }]).agentProfiles[0]!.settings![key]).toBe("/explicit/new");
+  expect(applyConfigEdits(c, [{ op: "replace", path: "/agentProfiles/0/settings/model", value: "changed", entityId: "reserved" }]).agentProfiles[0]!.settings![key]).toBe("/synthetic/private/native");
+  for (const edit of [
+    { op: "replace", path: "/agentProfiles/0/settings", value: { model: "new" }, entityId: "reserved" },
+    { op: "remove", path: "/agentProfiles/0/settings", entityId: "reserved" },
+    { op: "replace", path: "/agentProfiles/0", value: { ...c.agentProfiles[0], settings: { model: "new" } }, entityId: "reserved" },
+  ]) expect(() => applyConfigEdits(c, [alias, edit])).toThrow(expect.objectContaining({ code: "CONFIG_PROTECTED_PARENT" }));
+  expect(c).toEqual(before);
+  expect(applyConfigEdits(c, [{ op: "remove", path: "/agentProfiles/0", entityId: "reserved" }]).agentProfiles).toEqual([]);
+});
+it("keeps reference export settings-free while retaining only the exact known private key protection", () => {
+  const c = nativePathConfig("copilotHome");
+  Object.assign(c.agentProfiles[0]!.settings!, { dataHome: "/synthetic/data", configHome: "/synthetic/config", agentDirectory: "/synthetic/agent", sessionDirectory: "/synthetic/sessions", futureDirectory: "ordinary-field" });
+  const view = consoleConfig(c); expect(view.config.agentProfiles[0]!.settings).toEqual({ model: "native", futureDirectory: "ordinary-field" });
+  const exported = exportConsoleConfig(c);
+  expect((exported.config as typeof c).agentProfiles[0]).not.toHaveProperty("settings"); expect(exported.omittedPaths).toContain("/agentProfiles/0/settings");
+  for (const key of privateNativeKeys) expect(exported.omittedPaths).toContain(`/agentProfiles/0/settings/${key}`);
+  expect(JSON.stringify(exported)).not.toContain("/synthetic/");
 });

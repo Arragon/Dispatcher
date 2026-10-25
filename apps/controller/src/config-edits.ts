@@ -5,7 +5,7 @@ export interface ConfigEdit {op:"add"|"replace"|"remove";path:string;value?:unkn
 const object=(value:unknown):value is Record<string,unknown>=>Boolean(value&&typeof value==="object"&&!Array.isArray(value));
 const own=(value:object,key:string)=>Object.hasOwn(value,key);
 const pointer=(key:string)=>key.replaceAll("~","~0").replaceAll("/","~1");
-const privateKey=(key:string)=>/^(?:codexHome|configDir|home|executable|password|token|apiKey|accessToken|refreshToken|secret|environment|env)$/i.test(key);
+const privateKey=(key:string)=>/^(?:codexHome|configDir|dataHome|configHome|agentDirectory|sessionDirectory|copilotHome|home|executable|password|token|apiKey|accessToken|refreshToken|secret|environment|env)$/i.test(key);
 function fail(code:string,message:string):never {throw new ConfigPlanError(code,message);}
 /** Private values are omitted, never replaced with strings that could be saved back. */
 function consoleValue(input:unknown):{value:unknown;protectedPaths:string[]}{

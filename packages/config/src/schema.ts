@@ -36,7 +36,7 @@ export interface AgentProfileConfig {
   runnerId: string;
   credentialRef?: string;
   settings?: Record<string, JsonValue>;
-  nativeInteraction?:{mode:"compatible";backendId:"pi-rpc"|"codex-app-server"|"opencode-server-v2"|"devin-local-acp";executionLocation:"managed-worktree";surface?:never};
+  nativeInteraction?:{mode:"compatible";backendId:"pi-rpc"|"codex-app-server"|"opencode-server-v2"|"devin-local-acp"|"copilot-rpc";executionLocation:"managed-worktree";surface?:never};
 }
 
 export interface RepositoryConfig {
@@ -305,7 +305,7 @@ export const dispatcherConfigSchema = {
           enabled: { type: "boolean" },
           nativeInteraction: {
             type: "object", additionalProperties: false, required: ["mode", "backendId", "executionLocation"],
-            properties: { mode: { const: "compatible" }, backendId: { enum: ["pi-rpc","codex-app-server","opencode-server-v2","devin-local-acp"] }, executionLocation: { const: "managed-worktree" } },
+            properties: { mode: { const: "compatible" }, backendId: { enum: ["pi-rpc","codex-app-server","opencode-server-v2","devin-local-acp","copilot-rpc"] }, executionLocation: { const: "managed-worktree" } },
           },
           credentialRef: integrationSchema.properties.credentialRef,
           settings: { type: "object", additionalProperties: true },
@@ -445,6 +445,7 @@ export function validateConfig(input: unknown): DispatcherConfig {
       throw new ConfigValidationError([`/agentProfiles/${profile.id} references unknown runner ${profile.runnerId}`]);
     }
     if (profile.provider === "devin-local" && !profile.nativeInteraction) throw new ConfigValidationError([`/agentProfiles/${profile.id}/nativeInteraction is required for Devin Local ACP`]);
+    if (profile.provider === "copilot" && !profile.nativeInteraction) throw new ConfigValidationError([`/agentProfiles/${profile.id}/nativeInteraction is required for Copilot RPC`]);
     if (profile.nativeInteraction) {
       const backendId = profile.nativeInteraction.backendId;
       let provider: string, label: string, pathKeys: string[];
@@ -453,15 +454,16 @@ export function validateConfig(input: unknown): DispatcherConfig {
         case "codex-app-server": provider = "codex"; label = "Codex App Server"; pathKeys = ["executable", "codexHome"]; break;
         case "opencode-server-v2": provider = "opencode"; label = "OpenCode Server"; pathKeys = ["executable"]; break;
         case "devin-local-acp": provider = "devin-local"; label = "Devin Local ACP"; pathKeys = ["executable", "dataHome", "configHome"]; break;
+        case "copilot-rpc": provider = "copilot"; label = "Copilot RPC"; pathKeys = ["executable", "copilotHome"]; break;
       }
       if (profile.provider !== provider || config.runners.find(runner => runner.id === profile.runnerId)?.mode !== "embedded") throw new ConfigValidationError([`/agentProfiles/${profile.id}/nativeInteraction requires ${label} on an embedded Runner`]);
       for (const key of pathKeys) {
         const path = profile.settings?.[key];
         if (typeof path !== "string" || !isAbsolute(path) || path.length > 4096 || Array.from(path).some(character => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127)) throw new ConfigValidationError([`/agentProfiles/${profile.id}/settings/${key} must be an explicit absolute ${label} path`]);
       }
-      if (backendId === "devin-local-acp") {
+      if (backendId === "devin-local-acp" || backendId === "copilot-rpc") {
         for (const key of Object.keys(profile.settings ?? {})) {
-          if (!pathKeys.includes(key)) throw new ConfigValidationError([`/agentProfiles/${profile.id}/settings/${key} is not supported by Devin Local ACP`]);
+          if (!pathKeys.includes(key)) throw new ConfigValidationError([`/agentProfiles/${profile.id}/settings/${key} is not supported by ${label}`]);
         }
       }
       const model = profile.settings?.model;
@@ -482,7 +484,7 @@ export function validateConfig(input: unknown): DispatcherConfig {
       && (!["cursor", "opencode", "grok", "antigravity"].includes(profile.provider) || typeof profile.settings.approveTools !== "boolean")) {
       throw new ConfigValidationError([`/agentProfiles/${profile.id}/settings/approveTools must be boolean and is supported only by Cursor, OpenCode, Grok or Antigravity`]);
     }
-    if ((["opencode", "pi", "antigravity", "zcode", "workbuddy-cli", "qoder-cn", "devin-local"].includes(profile.provider)||profile.nativeInteraction?.backendId==="codex-app-server") && profile.credentialRef) {
+    if ((["opencode", "pi", "antigravity", "zcode", "workbuddy-cli", "qoder-cn", "devin-local", "copilot"].includes(profile.provider)||profile.nativeInteraction?.backendId==="codex-app-server") && profile.credentialRef) {
       throw new ConfigValidationError([`/agentProfiles/${profile.id} uses native login; credentialRef is not supported`]);
     }
     if (profile.provider === "zcode" && profile.settings?.model !== undefined) throw new ConfigValidationError([`/agentProfiles/${profile.id} selects its model in the native ZCode client`]);

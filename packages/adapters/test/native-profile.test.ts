@@ -1,10 +1,13 @@
 import { afterEach, expect, it,vi } from "vitest";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync, readdirSync, statSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DevinLocalAcpAdapter } from "../src/devin-acp-execution.js";
 import { createNativeProfileAdapter, nativePrivatePaths, probeNativeProfile, type NativeProfileRegistration } from "../src/native-profile.js";
 import type { CodexBackend } from "../src/codex.js";
+import { CopilotAdapter } from "../src/copilot-execution.js";
+import type { NativeProfileFactoryOptions } from "../src/native-profile.js";
 
 const nativeCodex=()=>({id:"native",alias:"Native",provider:"codex",nativeInteraction:{mode:"compatible" as const,backendId:"codex-app-server" as const,executionLocation:"managed-worktree" as const},settings:{codexHome:"/native/home",executable:"/native/bin/codex"}});
 it("requires the explicitly configured Codex runtime instead of falling back to exec",()=>{
@@ -179,7 +182,31 @@ it("reserves both explicit Local homes even for disabled profiles, without perso
 });
 
 const devinRoots: string[] = [];
-afterEach(() => { for (const root of devinRoots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+const localFixtureEvidence = new Map<string, string>();
+function captureLocalFixture(root: string, phase: "before-query" | "before-teardown") {
+  const destination = process.env.DISPATCHER_NATIVE_PROFILE_FIXTURE_EVIDENCE;
+  if (!destination) return;
+  let folder = localFixtureEvidence.get(root);
+  if (!folder) {
+    mkdirSync(destination, { recursive: true });
+    folder = mkdtempSync(join(destination, "local-factory-")); localFixtureEvidence.set(root, folder);
+  }
+  const target = join(folder, phase); mkdirSync(target);
+  const files: Record<string, unknown> = {};
+  const visit = (directory: string, relative = "") => {
+    for (const name of readdirSync(directory)) {
+      const path = join(directory, name), key = join(relative, name), stat = statSync(path);
+      if (stat.isDirectory()) { mkdirSync(join(target, key), { recursive: true }); visit(path, key); }
+      else if (stat.isFile()) {
+        const bytes = readFileSync(path); writeFileSync(join(target, key), bytes);
+        files[path] = { sha256: createHash("sha256").update(bytes).digest("hex"), size: stat.size, mode: stat.mode, dev: stat.dev, ino: stat.ino };
+      }
+    }
+  };
+  visit(root);
+  writeFileSync(join(target, "manifest.json"), JSON.stringify({ utc: new Date().toISOString(), root, executable: join(root, "devin"), files }, null, 2) + "\n");
+}
+afterEach(() => { for (const root of devinRoots.splice(0)) { captureLocalFixture(root, "before-teardown"); rmSync(root, { recursive: true, force: true }); } });
 function physicalDevin() {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "dispatcher-local-factory-"))); devinRoots.push(root);
   const settings = { executable: join(root, "devin"), dataHome: join(root, "data"), configHome: join(root, "config") }, workspacePath = join(root, "workspace");
@@ -190,6 +217,7 @@ function physicalDevin() {
     "fs.appendFileSync(" + JSON.stringify(join(root, "calls")) + ",JSON.stringify({argv:process.argv.slice(2),data:process.env.XDG_DATA_HOME,config:process.env.XDG_CONFIG_HOME})+'\\n');",
     "process.stdout.write(process.argv.includes('--version')?'devin 3000.11.3 (9c803229faa4)':JSON.stringify({families:[{family_uid:'family',family_label:'Family',variants:[{model_uid:'chosen',label:'Chosen'}]}]}));",
   ].join("\n"), { mode: 0o700 });
+  captureLocalFixture(root, "before-query");
   return { root, workspacePath, profile: { ...nativeDevin(), settings } };
 }
 it("constructs the actual scoped Local Adapter with captured profile and homes and no eager native work", async () => {
@@ -223,4 +251,107 @@ it("keeps Local ACP outside generic probes and cloud Devin construction", async 
   expect(createNativeProfileAdapter({ id: "cloud", alias: "Cloud", provider: "devin" }, { devinLocalBackendFactory: local, cliBackendFactory: generic })).toBeUndefined();
   await expect(probeNativeProfile(nativeDevin())).rejects.toMatchObject({ code: "PROBE_UNAVAILABLE" });
   expect(local).not.toHaveBeenCalled(); expect(generic).not.toHaveBeenCalled();
+});
+
+const nativeCopilot = () => ({ id: "copilot-native", alias: "Copilot", provider: "copilot", nativeInteraction: { mode: "compatible", backendId: "copilot-rpc", executionLocation: "managed-worktree" }, settings: { executable: "/fixture/copilot", copilotHome: "/fixture/copilot-home" } } satisfies NativeProfileRegistration);
+it("requires the dedicated Copilot runtime without borrowing another provider or default executable", () => {
+  const copilot = vi.fn(() => undefined), generic = vi.fn(), local = vi.fn(), codex = vi.fn();
+  expect(() => createNativeProfileAdapter(nativeCopilot(), { cliBackendFactory: generic, devinLocalBackendFactory: local, codexBackendFactory: codex })).toThrow(expect.objectContaining({ code: "COPILOT_RPC_RUNTIME_UNAVAILABLE" }));
+  expect(() => createNativeProfileAdapter(nativeCopilot(), { copilotBackendFactory: copilot })).toThrow(expect.objectContaining({ code: "COPILOT_RPC_RUNTIME_UNAVAILABLE" }));
+  expect(copilot).toHaveBeenCalledExactlyOnceWith({ id: "copilot-native", alias: "Copilot", executable: "/fixture/copilot" });
+  expect(generic).not.toHaveBeenCalled(); expect(local).not.toHaveBeenCalled(); expect(codex).not.toHaveBeenCalled();
+});
+it.each(["devin", "devin-local", "codex", "pi", "opencode", "cursor", "unsupported"])("rejects configured Copilot on foreign provider %s before all factories", provider => {
+  const copilot = vi.fn(), generic = vi.fn(), local = vi.fn(), codex = vi.fn();
+  expect(() => createNativeProfileAdapter({ ...nativeCopilot(), provider }, { copilotBackendFactory: copilot, cliBackendFactory: generic, devinLocalBackendFactory: local, codexBackendFactory: codex })).toThrow(expect.objectContaining({ code: "BACKEND_MISMATCH" }));
+  expect(copilot).not.toHaveBeenCalled(); expect(generic).not.toHaveBeenCalled(); expect(local).not.toHaveBeenCalled(); expect(codex).not.toHaveBeenCalled();
+});
+it.each(["pi-rpc", "codex-app-server", "opencode-server-v2", "devin-local-acp"] as const)("rejects foreign Copilot backend %s before every factory", backendId => {
+  const profile = nativeCopilot(), copilot = vi.fn(), generic = vi.fn(), local = vi.fn(), codex = vi.fn();
+  expect(() => createNativeProfileAdapter({ ...profile, nativeInteraction: { ...profile.nativeInteraction, backendId } }, { copilotBackendFactory: copilot, cliBackendFactory: generic, devinLocalBackendFactory: local, codexBackendFactory: codex })).toThrow(expect.objectContaining({ code: "BACKEND_MISMATCH" }));
+  expect(copilot).not.toHaveBeenCalled(); expect(generic).not.toHaveBeenCalled(); expect(local).not.toHaveBeenCalled(); expect(codex).not.toHaveBeenCalled();
+});
+it.each(["missing", "mode", "location", "credential"])("rejects invalid Copilot %s before the owning factory", mode => {
+  const profile: NativeProfileRegistration = nativeCopilot(), factory = vi.fn();
+  if (mode === "missing") delete profile.nativeInteraction;
+  if (mode === "mode") Reflect.set(profile.nativeInteraction!, "mode", "native-gui");
+  if (mode === "location") Reflect.set(profile.nativeInteraction!, "executionLocation", "provider-cloud");
+  if (mode === "credential") profile.credentialRef = "secret://copilot/copied";
+  expect(() => createNativeProfileAdapter(profile, { copilotBackendFactory: factory })).toThrow(expect.objectContaining({ code: mode === "credential" ? "COPILOT_RPC_INVALID_PROFILE" : "NATIVE_INTERACTION_REQUIRED" }));
+  expect(factory).not.toHaveBeenCalled();
+});
+it.each(["executable", "copilotHome"])("rejects invalid Copilot %s before the owning factory", field => {
+  for (const value of [undefined, "", "relative", 7, null, "/fixture/\npath", "/fixture/\u0001path", "/fixture/\u007fpath", "/" + "p".repeat(4096)]) {
+    const profile: NativeProfileRegistration = nativeCopilot(), factory = vi.fn(); profile.settings![field] = value;
+    expect(() => createNativeProfileAdapter(profile, { copilotBackendFactory: factory })).toThrow(expect.objectContaining({ code: "COPILOT_RPC_INVALID_PROFILE" }));
+    expect(factory).not.toHaveBeenCalled();
+  }
+});
+it.each(["approveTools", "args", "environment", "cloud", "model", "organizationId", "configDir"])("rejects unsupported Copilot factory setting %s", field => {
+  const profile: NativeProfileRegistration = nativeCopilot(), factory = vi.fn(); profile.settings![field] = false;
+  expect(() => createNativeProfileAdapter(profile, { copilotBackendFactory: factory })).toThrow(expect.objectContaining({ code: "COPILOT_RPC_INVALID_PROFILE" }));
+  expect(factory).not.toHaveBeenCalled();
+});
+it.each([undefined, "devin-local-acp", "opencode-cli-json", "pi-rpc", "codex-app-server", "arbitrary"])("rejects mismatched Copilot factory backend %s before physical access or startup", backendId => {
+  const start = vi.fn();
+  expect(() => createNativeProfileAdapter(nativeCopilot(), { copilotBackendFactory: () => ({ backendId, start }) })).toThrow(expect.objectContaining({ code: "BACKEND_MISMATCH" }));
+  expect(start).not.toHaveBeenCalled();
+});
+it.each(["cursor", "kiro", "grok", "opencode", "pi", "antigravity", "zcode", "workbuddy-cli", "qoder-cn"])("rejects injected Copilot RPC on generic provider %s", provider => {
+  const start = vi.fn();
+  expect(() => createNativeProfileAdapter({ id: provider, alias: provider, provider }, { cliBackendFactory: () => ({ backendId: "copilot-rpc", start }) })).toThrow(expect.objectContaining({ code: "BACKEND_MISMATCH" }));
+  expect(start).not.toHaveBeenCalled();
+});
+it("rejects injected Copilot RPC through Codex and Local owning factories", () => {
+  const start = vi.fn(), foreign = { start }; Reflect.set(foreign, "backendId", "copilot-rpc");
+  expect(() => createNativeProfileAdapter({ id: "codex", alias: "Codex", provider: "codex", settings: { codexHome: "/fixture/codex" } }, { codexBackendFactory: () => foreign })).toThrow(expect.objectContaining({ code: "BACKEND_MISMATCH" }));
+  expect(() => createNativeProfileAdapter(nativeDevin(), { devinLocalBackendFactory: () => foreign })).toThrow(expect.objectContaining({ code: "BACKEND_MISMATCH" }));
+  expect(start).not.toHaveBeenCalled();
+});
+it("returns disabled Copilot before even reading settings or resolving credentials", () => {
+  const copilot = vi.fn(), generic = vi.fn(), local = vi.fn(), codex = vi.fn(), resolve = vi.fn();
+  const profile: NativeProfileRegistration = { ...nativeCopilot(), enabled: false, credentialRef: "secret://copilot/copied" };
+  Object.defineProperty(profile, "settings", { get() { throw new Error("disabled settings accessed"); } });
+  expect(createNativeProfileAdapter(profile, { copilotBackendFactory: copilot, cliBackendFactory: generic, devinLocalBackendFactory: local, codexBackendFactory: codex, resolveCredential: resolve })).toBeUndefined();
+  expect(copilot).not.toHaveBeenCalled(); expect(generic).not.toHaveBeenCalled(); expect(local).not.toHaveBeenCalled(); expect(codex).not.toHaveBeenCalled(); expect(resolve).not.toHaveBeenCalled();
+});
+it("protects the exact configured Copilot home even when disabled without default account paths", () => {
+  const environment = { ...process.env };
+  expect(nativePrivatePaths([{ ...nativeCopilot(), enabled: false }])).toEqual(["/fixture/copilot-home"]);
+  expect(nativePrivatePaths([{ id: "missing", alias: "Copilot", provider: "copilot" }, { ...nativeCopilot(), provider: "devin" }])).toEqual([]);
+  expect(process.env).toEqual(environment);
+});
+it("constructs the actual Copilot Adapter from a detached minimal profile and preserves the factory receiver without eager work", async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "dispatcher-copilot-factory-"))), executable = join(root, "copilot"), called = join(root, "called");
+  writeFileSync(executable, "#!" + process.execPath + "\nrequire('node:fs').writeFileSync(" + JSON.stringify(called) + ", 'unexpected spawn');\n", { mode: 0o700 });
+  try {
+    const profile = nativeCopilot(); profile.settings.executable = executable;
+    const before = structuredClone(profile), environment = { ...process.env }, start = vi.fn(), resolve = vi.fn(), generic = vi.fn(), local = vi.fn(), codex = vi.fn();
+    let supplied: { id: string; alias: string; executable?: string } | undefined;
+    const options: NativeProfileFactoryOptions = { resolveCredential: resolve, cliBackendFactory: generic, devinLocalBackendFactory: local, codexBackendFactory: codex,
+      copilotBackendFactory: function (native) {
+        expect(this).toBe(options); expect(native).toEqual({ id: "copilot-native", alias: "Copilot", executable });
+        supplied = native; native.id = "foreign"; native.alias = "Foreign"; native.executable = "/foreign";
+        return { backendId: "copilot-rpc", start };
+      },
+    };
+    const adapter = createNativeProfileAdapter(profile, options);
+    expect(adapter).toBeInstanceOf(CopilotAdapter);
+    if (!(adapter instanceof CopilotAdapter)) throw new Error("Copilot Adapter missing");
+    expect(adapter.profile).toEqual({ id: "copilot-native", alias: "Copilot", executable }); expect(profile).toEqual(before);
+    profile.id = "changed"; profile.alias = "Changed"; profile.settings.executable = "/changed"; profile.settings.copilotHome = "/changed";
+    supplied!.id = "changed-again";
+    expect(adapter.profile).toEqual({ id: "copilot-native", alias: "Copilot", executable });
+    expect(adapter.manifest.backends.map(backend => backend.id)).toEqual(["copilot-rpc"]);
+    expect(adapter.supportsExecutionRef).toBe(true); expect(adapter.supportsExecutionSelection).toBe(true);
+    expect(adapter.legacyInvocationDefaults()).toEqual({ backendId: "copilot-rpc" });
+    expect(await adapter.modelCatalog({ profileId: "copilot-native", runnerId: "local", repositoryId: "repo", executionContextRef: "workspace:repo", reason: "manual-refresh", workspacePath: "/nonexistent/workspace" })).toMatchObject({ profileId: "copilot-native", providerId: "copilot", backendId: "copilot-rpc", freshness: "unverified", selectionSupport: "unsupported", entries: [], failure: { code: "MODEL_CATALOG_UNSUPPORTED" } });
+    expect(existsSync(called)).toBe(false); expect(start).not.toHaveBeenCalled(); expect(resolve).not.toHaveBeenCalled(); expect(generic).not.toHaveBeenCalled(); expect(local).not.toHaveBeenCalled(); expect(codex).not.toHaveBeenCalled(); expect(process.env).toEqual(environment);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+it("keeps Copilot outside generic probes and unrelated provider construction", async () => {
+  const copilot = vi.fn(), generic = vi.fn();
+  expect(createNativeProfileAdapter({ id: "cloud", alias: "Cloud", provider: "devin" }, { copilotBackendFactory: copilot, cliBackendFactory: generic })).toBeUndefined();
+  await expect(probeNativeProfile(nativeCopilot())).rejects.toMatchObject({ code: "PROBE_UNAVAILABLE" });
+  expect(copilot).not.toHaveBeenCalled(); expect(generic).not.toHaveBeenCalled();
 });
