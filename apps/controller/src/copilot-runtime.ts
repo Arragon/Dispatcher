@@ -144,7 +144,14 @@ export class CopilotExecutionRuntime implements CliAgentBackend {
     const guard = () => {
       try {
         if (boundaryFailure) throw boundaryFailure; if (cancel.signal.aborted) reject("COPILOT_RPC_LOCAL_CONNECTION_CLOSED"); this.validate(input, workspace);
-        if (captured) { this.registered(captured); if (captured.creator !== token || !isDeepStrictEqual(captured.reference, reference) || !isDeepStrictEqual(captured.selection, selection)) reject(); if (captured.bindingPersisted) { this.persisted(captured); this.validate(input, workspace); this.registered(captured); } }
+        if (captured) {
+          this.registered(captured); if (captured.creator !== token || !isDeepStrictEqual(captured.reference, reference) || !isDeepStrictEqual(captured.selection, selection)) reject();
+          if (captured.bindingPersisted) {
+            this.persisted(captured); this.validate(input, workspace);
+            // Canonical callbacks may replace durable state; finish with tuple/physical/entry checks.
+            this.persisted(captured); this.registered(captured);
+          }
+        }
       } catch (error) { throw failure(error); }
     };
     const bounded = async <T>(work: Promise<T>, code: string): Promise<T> => {

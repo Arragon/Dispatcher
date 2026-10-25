@@ -426,3 +426,41 @@ it("includes callbacks enqueued during an awaited readiness checkpoint", async (
  try { expect(await Promise.race([ready.then(() => "ready"), new Promise(resolve => setTimeout(() => resolve("waiting"), 25))])).toBe("waiting"); }
  finally { second.resolve(); await ready; await f.runtime.disconnectLocal(); }
 });
+it.each([false, true])("checks the persisted tuple after the final canonical Guard before native action (replace=%s)", async replace => {
+ const f = fixture(), input = f.input(), consumer = vi.fn(); let armed = false, checks = 0, mutated = false, nativeAction = false;
+ input.onNativeEvent = consumer;
+ input.beforePrompt = () => { if (f.persisted.has("native-a")) armed = true; };
+ f.assertInput.mockImplementation(() => {
+  if (armed && ++checks === 2 && replace) { const binding = f.persisted.get("native-a")!; f.persisted.set("native-a", { ...binding, nativeStoreRef: "foreign" }); mutated = true; armed = false; }
+ });
+ wrapProducer(f, (producerInput, delegate) => delegate({ ...producerInput, beforePrompt: () => {
+  producerInput.beforePrompt!();
+  if (f.persisted.has("native-a")) { nativeAction = true; void Promise.resolve(producerInput.onNativeEvent!({ state: "running", observedAt: "2026-10-25T00:00:00Z", nativeSessionId: "native-a" })).catch(() => {}); }
+ } }));
+ const turn = f.runtime.start(input);
+ try {
+  if (replace) {
+   await expect(turn.ready!()).rejects.toMatchObject({ code: "COPILOT_RPC_IDENTITY_CHANGED", creationOutcome: "unknown" });
+   await expect(turn.result()).rejects.toMatchObject({ code: "COPILOT_RPC_IDENTITY_CHANGED", creationOutcome: "unknown" });
+   expect(mutated).toBe(true); expect(f.persisted.get("native-a")!.nativeStoreRef).toBe("foreign"); expect(nativeAction).toBe(false); expect(consumer).not.toHaveBeenCalled();
+  } else {
+   await turn.ready!(); expect(await turn.result()).toMatchObject({ state: "completed", providerSessionId: "native-a" });
+   expect(mutated).toBe(false); expect(nativeAction).toBe(true); expect(consumer).toHaveBeenCalledOnce(); expect(f.runtime.diagnostics("native-a")).toEqual({ executionRefId: "a", localConnection: "open" });
+  }
+ } finally { await f.runtime.disconnectLocal(); }
+});
+it("retains canonical revocation checks after persisted binding lookup reentry before native action", async () => {
+ const f = fixture(), input = f.input(); let armed = false, revoked = false, nativeAction = false;
+ const runtime = new CopilotExecutionRuntime({ ...f.options, bindingFor: id => {
+  if (armed) { revoked = true; f.assertInput.mockImplementation(() => { throw Error("canonical authority revoked by lookup"); }); }
+  return f.persisted.get(id);
+ } });
+ input.beforePrompt = () => { if (f.persisted.has("native-a")) armed = true; };
+ wrapProducer(f, (producerInput, delegate) => delegate({ ...producerInput, beforePrompt: () => { producerInput.beforePrompt!(); if (f.persisted.has("native-a")) nativeAction = true; } }));
+ const turn = runtime.start(input);
+ try {
+  await expect(turn.ready!()).rejects.toMatchObject({ code: "COPILOT_RPC_SCOPE_CHANGED", creationOutcome: "unknown" });
+  await expect(turn.result()).rejects.toMatchObject({ code: "COPILOT_RPC_SCOPE_CHANGED", creationOutcome: "unknown" });
+  expect(revoked).toBe(true); expect(nativeAction).toBe(false);
+ } finally { await runtime.disconnectLocal(); }
+});
