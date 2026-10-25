@@ -21,7 +21,7 @@ export interface CopilotPromptOptions extends CopilotRpcOptions {onUpdate?:(upda
 export interface CopilotPromptResult {messageId:string;nativeStopReason:"idle"|"aborted";executionEvidence:boolean;toolFailure:boolean;permissionDenied:boolean;pendingTools:number}
 export type CopilotReadMethod="ping"|"status.get"|"auth.getStatus"|"session.list"|"session.getMetadata";
 type CopilotMethod=CopilotReadMethod|"connect"|"session.create"|"session.resume"|"session.model.getCurrent"|"session.send"|"session.abort"|"session.permissions.handlePendingPermissionRequest";
-interface BootstrapState {id:string;model:string;sideEffects:boolean;modelDrift:boolean;permissionObserved:boolean;deleted:boolean}
+interface BootstrapState {id:string;model:string;sideEffects:boolean;modelDrift:boolean;permissionObserved:boolean;permissionBeforeInput:boolean;deleted:boolean}
 interface TurnEvent {type:string;messageId?:string;origin?:string;model?:string;proof?:boolean;tools?:string[];toolId?:string;success?:boolean;aborted?:boolean;mode?:string;requestId?:string;resolved?:boolean;owner?:string;ownerAgent?:string}
 interface ActivePrompt {
  id:string;model:string;deadline:number;signal?:AbortSignal;onUpdate?:CopilotPromptOptions["onUpdate"];written:boolean;terminal:boolean;ack?:string;consumed:boolean;proof:boolean;toolFailure:boolean;permissionDenied:boolean;aborted:boolean;updates:number;cancelAdmitted:boolean;
@@ -263,8 +263,21 @@ export class CopilotRpcClient {
      if(!object(data)||!text(data.newModel)||data.providerId!==undefined&&!text(data.providerId)||data.previousProviderId!==undefined&&!text(data.previousProviderId))throw failure("COPILOT_RPC_PROTOCOL_INVALID");
      if(data.newModel!==state.model||data.previousProviderId!==undefined&&data.providerId!==data.previousProviderId)state.modelDrift=true;
     }
-    if(event.type==="permission.requested")state.permissionObserved=true;
     const active=this.activePrompt;
+    if(event.type==="permission.requested"){
+     state.permissionObserved=true;
+     if(this.qualified&&!active?.written){
+      if(event.agentId!==undefined&&!text(event.agentId))throw failure("COPILOT_RPC_PROTOCOL_INVALID");
+      if(event.agentId===undefined){
+       const permission=this.projectTurnEvent(event)!;
+       if(!permission.resolved){
+        if(permission.owner!==state.id||permission.ownerAgent!==undefined)throw failure("COPILOT_RPC_IDENTITY_CHANGED");
+        // No pre-input decision path is qualified; later idle/hook events cannot clear this fact.
+        state.permissionBeforeInput=true;
+       }
+      }
+     }
+    }
     if(active&&active.written){
      this.assertPrompt(active);
      if(event.agentId!==undefined&&!text(event.agentId))throw failure("COPILOT_RPC_PROTOCOL_INVALID");
@@ -334,7 +347,7 @@ export class CopilotRpcClient {
    duration=timeout(options.timeoutMs);
    if(!["new","resume"].includes(mode)||!text(model)||typeof onSessionKnown!=="function"||mode==="resume"&&!text(requestedId)||mode==="new"&&requestedId!==undefined&&(!text(requestedId)||!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(requestedId)))throw failure("COPILOT_RPC_REQUEST_INVALID");
   }catch{throw new AdapterStartError("not-created","COPILOT_RPC_REQUEST_INVALID","Copilot bootstrap input is invalid");}
-  const state:BootstrapState={id:requestedId??randomUUID(),model,sideEffects:false,modelDrift:false,permissionObserved:false,deleted:false},deadline=performance.now()+duration;
+  const state:BootstrapState={id:requestedId??randomUUID(),model,sideEffects:false,modelDrift:false,permissionObserved:false,permissionBeforeInput:false,deleted:false},deadline=performance.now()+duration;
   this.bootstrapAttempted=true;this.bootstrapState=state;
   const check=()=>{
    this.assertCurrentScope();if(signal?.aborted)throw failure("COPILOT_RPC_CANCELLED");if(performance.now()>=deadline)throw failure("COPILOT_RPC_TIMEOUT");
@@ -380,6 +393,7 @@ export class CopilotRpcClient {
   this.assertCurrentScope();const state=this.bootstrapState;
   if(this.activePrompt!==active||!this.qualified||state?.id!==active.id)throw failure("COPILOT_RPC_IDENTITY_CHANGED");
   if(state.deleted)throw failure("COPILOT_RPC_SESSION_NOT_FOUND");if(state.modelDrift||state.model!==active.model)throw failure("COPILOT_RPC_MODEL_DRIFT");
+  if(state.permissionBeforeInput)throw failure("COPILOT_RPC_PERMISSION_UNCONFIRMED");
   if(active.signal?.aborted)throw failure("COPILOT_RPC_CANCELLED");if(performance.now()>=active.deadline)throw failure("COPILOT_RPC_TIMEOUT");
  }
  private projectTurnEvent(event:Record<string,unknown>):TurnEvent|undefined{

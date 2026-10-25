@@ -53,7 +53,16 @@ function native(mode:string,root:string){
   else if(m.method==="status.get")result={protocolVersion:3,version:"1.0.97"};
   else if(m.method==="session.create"){sessionId=m.params.sessionId as string;result={sessionId};}
   else if(m.method==="session.getMetadata"){metadataReads++;result=mode==="missing-before-input"&&metadataReads>1?{}:{session:{sessionId,startTime:"2026-10-13T00:00:00Z",modifiedTime:"2026-10-13T00:00:00Z",isRemote:false,context:{cwd:process.cwd()}}};}
-  else if(m.method==="session.model.getCurrent"){modelReads++;result={modelId:mode==="drift-before-input"&&modelReads>1?"different":"chosen"};}
+  else if(m.method==="session.model.getCurrent"){
+   modelReads++;result={modelId:mode==="drift-before-input"&&modelReads>1?"different":"chosen"};
+   if(modelReads===2&&mode.startsWith("preflight-permission-")){
+    const permission=event("permission.requested",{requestId:"before-input",ownerSessionId:mode==="preflight-permission-foreign-owner"?"sibling":sessionId,permissionRequest:{kind:"shell"},resolvedByHook:mode==="preflight-permission-hook",...(mode==="preflight-permission-owned-agent"?{ownerAgentId:"subagent"}:{})},mode==="preflight-permission-subagent"?{agentId:"subagent"}:{});
+    if(mode==="preflight-permission-sibling")permission.params.sessionId="sibling";
+    batch([{jsonrpc:"2.0",id:m.id,result},permission,...(mode==="preflight-permission-idle"?[event("session.idle",{mode:"interactive"})]:mode==="preflight-permission-hook-tail"?[event("permission.requested",{requestId:"before-input",ownerSessionId:sessionId,permissionRequest:{kind:"shell"},resolvedByHook:true})]:[])]);return;
+   }
+  }else if(m.method==="ping"&&mode==="between-prompts-permission"){
+   batch([{jsonrpc:"2.0",id:m.id,result:{protocolVersion:3,timestamp:"2026-10-25T00:00:00Z"}},event("permission.requested",{requestId:"before-input",ownerSessionId:sessionId,permissionRequest:{kind:"shell"},resolvedByHook:false}),event("session.idle",{mode:"interactive"})]);return;
+  }
   else if(m.method==="session.send"){
    sends++;const messageId="turn-"+sends,ack={jsonrpc:"2.0",id:m.id,result:mode==="bad-ack"?{messageId:4}:{messageId}};
    if(mode==="hold"||mode==="held-until-release"){emit(ack);held=turn(messageId);return;}
@@ -209,4 +218,28 @@ it("retains a reentrant asynchronous update through local close and caches its u
   const receipt=await closing;expect(receipt).toMatchObject({ownedRoot:"exited",callbacks:"unknown"});
   gate.resolve();await gate.promise;expect(c.close()).toBe(closing);expect(await c.close()).toBe(receipt);
  }finally{gate.resolve();}
+});
+
+it.each(["unresolved","idle","hook-tail"])("rejects sticky same-buffer preflight permission %s before writing prompt input",async kind=>{
+ const f=fixture("preflight-permission-"+kind),c=await execution(f),updates:Update[]=[];
+ await expect(c.prompt(input,{onUpdate:update=>{updates.push(update);}})).rejects.toMatchObject({code:"COPILOT_RPC_PERMISSION_UNCONFIRMED"});
+ expect(f.calls().slice(-2).map(call=>call.method)).toEqual(["session.getMetadata","session.model.getCurrent"]);
+ expect(f.calls().some(call=>call.method==="session.send"||call.method==="session.permissions.handlePendingPermissionRequest")).toBe(false);expect(updates).toEqual([]);
+});
+it.each(["hook","sibling","subagent"])("preserves preflight permission %s isolation without resolving another owner",async kind=>{
+ const f=fixture("preflight-permission-"+kind),c=await execution(f);
+ expect(await c.prompt(input)).toEqual(expected);expect(f.calls().filter(call=>call.method==="session.send")).toHaveLength(1);
+ expect(f.calls().some(call=>call.method==="session.permissions.handlePendingPermissionRequest")).toBe(false);
+});
+it.each(["foreign-owner","owned-agent"])("rejects preflight permission %s without sending or denying another owner's request",async kind=>{
+ const f=fixture("preflight-permission-"+kind),c=await execution(f);
+ await expect(c.prompt(input)).rejects.toMatchObject({code:"COPILOT_RPC_IDENTITY_CHANGED"});
+ expect(f.calls().some(call=>call.method==="session.send"||call.method==="session.permissions.handlePendingPermissionRequest")).toBe(false);
+});
+it("retains an unresolved exact permission observed between prompts despite a later idle",async()=>{
+ const f=fixture("between-prompts-permission"),c=await execution(f);expect(await c.prompt(input)).toEqual(expected);
+ await c.request("ping");const count=f.calls().length;
+ await expect(c.prompt(input)).rejects.toMatchObject({code:"COPILOT_RPC_PERMISSION_UNCONFIRMED"});
+ expect(f.calls()).toHaveLength(count);expect(f.calls().filter(call=>call.method==="session.send")).toHaveLength(1);
+ expect(f.calls().some(call=>call.method==="session.permissions.handlePendingPermissionRequest")).toBe(false);
 });
