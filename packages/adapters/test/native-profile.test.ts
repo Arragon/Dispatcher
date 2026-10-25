@@ -1,5 +1,9 @@
-import { expect, it,vi } from "vitest";
-import { createNativeProfileAdapter, nativePrivatePaths, type NativeProfileRegistration } from "../src/native-profile.js";
+import { afterEach, expect, it,vi } from "vitest";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { DevinLocalAcpAdapter } from "../src/devin-acp-execution.js";
+import { createNativeProfileAdapter, nativePrivatePaths, probeNativeProfile, type NativeProfileRegistration } from "../src/native-profile.js";
 import type { CodexBackend } from "../src/codex.js";
 
 const nativeCodex=()=>({id:"native",alias:"Native",provider:"codex",nativeInteraction:{mode:"compatible" as const,backendId:"codex-app-server" as const,executionLocation:"managed-worktree" as const},settings:{codexHome:"/native/home",executable:"/native/bin/codex"}});
@@ -111,4 +115,112 @@ it("protects the effective XDG OpenCode directory and restores the process envir
     if (original === undefined) delete process.env.XDG_DATA_HOME; else process.env.XDG_DATA_HOME = original;
   }
   expect(process.env.XDG_DATA_HOME).toBe(original);
+});
+
+const nativeDevin = () => ({ id: "devin-local", alias: "Local", provider: "devin-local", nativeInteraction: { mode: "compatible", backendId: "devin-local-acp", executionLocation: "managed-worktree" }, settings: { executable: "/fixture/devin", dataHome: "/fixture/data", configHome: "/fixture/config" } } satisfies NativeProfileRegistration);
+it("requires the explicit Local runtime without generic factory or executable fallback", () => {
+  const generic = vi.fn(), codex = vi.fn(), local = vi.fn(() => undefined);
+  expect(() => createNativeProfileAdapter(nativeDevin(), { cliBackendFactory: generic, codexBackendFactory: codex })).toThrow(expect.objectContaining({ code: "DEVIN_ACP_RUNTIME_UNAVAILABLE" }));
+  expect(() => createNativeProfileAdapter(nativeDevin(), { devinLocalBackendFactory: local })).toThrow(expect.objectContaining({ code: "DEVIN_ACP_RUNTIME_UNAVAILABLE" }));
+  expect(local).toHaveBeenCalledWith({ id: "devin-local", alias: "Local", executable: "/fixture/devin" });
+  expect(generic).not.toHaveBeenCalled(); expect(codex).not.toHaveBeenCalled();
+});
+it.each([undefined, "opencode-cli-json", "pi-rpc", "codex-app-server", "devin-organization-api", "arbitrary"])("rejects mismatched Local runtime %s before physical access or start", backendId => {
+  const start = vi.fn();
+  expect(() => createNativeProfileAdapter(nativeDevin(), { devinLocalBackendFactory: () => ({ backendId, start }) })).toThrow(expect.objectContaining({ code: "BACKEND_MISMATCH" }));
+  expect(start).not.toHaveBeenCalled();
+});
+it.each(["devin", "codex", "pi", "opencode", "cursor", "unsupported"])("rejects configured ACP on foreign provider %s before every factory", provider => {
+  const local = vi.fn(), generic = vi.fn(), codex = vi.fn();
+  expect(() => createNativeProfileAdapter({ ...nativeDevin(), provider }, { devinLocalBackendFactory: local, cliBackendFactory: generic, codexBackendFactory: codex })).toThrow(expect.objectContaining({ code: "BACKEND_MISMATCH" }));
+  expect(local).not.toHaveBeenCalled(); expect(generic).not.toHaveBeenCalled(); expect(codex).not.toHaveBeenCalled();
+});
+it.each(["pi-rpc", "codex-app-server", "opencode-server-v2"] as const)("rejects foreign Local backend %s before every factory", backendId => {
+  const profile = nativeDevin(), local = vi.fn(), generic = vi.fn(), codex = vi.fn();
+  expect(() => createNativeProfileAdapter({ ...profile, nativeInteraction: { ...profile.nativeInteraction, backendId } }, { devinLocalBackendFactory: local, cliBackendFactory: generic, codexBackendFactory: codex })).toThrow(expect.objectContaining({ code: "BACKEND_MISMATCH" }));
+  expect(local).not.toHaveBeenCalled(); expect(generic).not.toHaveBeenCalled(); expect(codex).not.toHaveBeenCalled();
+});
+it.each(["missing", "mode", "location", "credential"])("rejects invalid Local opt-in/ownership %s before factory", mode => {
+  const profile: NativeProfileRegistration = nativeDevin(), factory = vi.fn();
+  if (mode === "missing") delete profile.nativeInteraction;
+  if (mode === "mode") Reflect.set(profile.nativeInteraction!, "mode", "native-session");
+  if (mode === "location") Reflect.set(profile.nativeInteraction!, "executionLocation", "provider-cloud");
+  if (mode === "credential") profile.credentialRef = "secret://devin-local/copied";
+  expect(() => createNativeProfileAdapter(profile, { devinLocalBackendFactory: factory })).toThrow(expect.objectContaining({ code: mode === "credential" ? "DEVIN_ACP_INVALID_PROFILE" : "NATIVE_INTERACTION_REQUIRED" }));
+  expect(factory).not.toHaveBeenCalled();
+});
+it.each(["executable", "dataHome", "configHome"])("rejects invalid Local %s before factory", field => {
+  for (const value of [undefined, "", "relative", 7, null, "/fixture/\npath", "/fixture/\u0000path", "/fixture/\u007fpath", "/" + "x".repeat(4096)]) {
+    const profile: NativeProfileRegistration = nativeDevin(), factory = vi.fn(); profile.settings![field] = value;
+    expect(() => createNativeProfileAdapter(profile, { devinLocalBackendFactory: factory })).toThrow(expect.objectContaining({ code: "DEVIN_ACP_INVALID_PROFILE" }));
+    expect(factory).not.toHaveBeenCalled();
+  }
+});
+it.each(["model", "default", "args", "environment", "approveTools", "cloud", "organizationId", "createAsUserId", "configDir", "credential", "remote"])("rejects unsupported Local factory setting %s", field => {
+  const profile: NativeProfileRegistration = nativeDevin(), factory = vi.fn(); profile.settings![field] = false;
+  expect(() => createNativeProfileAdapter(profile, { devinLocalBackendFactory: factory })).toThrow(expect.objectContaining({ code: "DEVIN_ACP_INVALID_PROFILE" }));
+  expect(factory).not.toHaveBeenCalled();
+});
+it.each(["cursor", "kiro", "grok", "opencode", "pi", "antigravity", "zcode", "workbuddy-cli", "qoder-cn"])("rejects injected ACP backend on generic provider %s", provider => {
+  const start = vi.fn();
+  expect(() => createNativeProfileAdapter({ id: provider, alias: provider, provider }, { cliBackendFactory: () => ({ backendId: "devin-local-acp", start }) })).toThrow(expect.objectContaining({ code: "BACKEND_MISMATCH" }));
+  expect(start).not.toHaveBeenCalled();
+});
+it("returns reserved disabled Local profiles before factories or physical checks", () => {
+  const local = vi.fn(), generic = vi.fn(), codex = vi.fn();
+  expect(createNativeProfileAdapter({ ...nativeDevin(), enabled: false }, { devinLocalBackendFactory: local, cliBackendFactory: generic, codexBackendFactory: codex })).toBeUndefined();
+  expect(local).not.toHaveBeenCalled(); expect(generic).not.toHaveBeenCalled(); expect(codex).not.toHaveBeenCalled();
+});
+it("reserves both explicit Local homes even for disabled profiles, without personal fallbacks", () => {
+  const environment = { ...process.env };
+  expect(nativePrivatePaths([{ ...nativeDevin(), enabled: false }])).toEqual(["/fixture/data", "/fixture/config"]);
+  expect(nativePrivatePaths([{ id: "unconfigured", alias: "Local", provider: "devin-local" }, { ...nativeDevin(), provider: "devin" }])).toEqual([]);
+  expect(process.env).toEqual(environment);
+});
+
+const devinRoots: string[] = [];
+afterEach(() => { for (const root of devinRoots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+function physicalDevin() {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "dispatcher-local-factory-"))); devinRoots.push(root);
+  const settings = { executable: join(root, "devin"), dataHome: join(root, "data"), configHome: join(root, "config") }, workspacePath = join(root, "workspace");
+  for (const directory of [settings.dataHome, settings.configHome, workspacePath]) mkdirSync(directory);
+  writeFileSync(settings.executable, [
+    "#!" + process.execPath,
+    "const fs=require('node:fs');",
+    "fs.appendFileSync(" + JSON.stringify(join(root, "calls")) + ",JSON.stringify({argv:process.argv.slice(2),data:process.env.XDG_DATA_HOME,config:process.env.XDG_CONFIG_HOME})+'\\n');",
+    "process.stdout.write(process.argv.includes('--version')?'devin 3000.11.3 (9c803229faa4)':JSON.stringify({families:[{family_uid:'family',family_label:'Family',variants:[{model_uid:'chosen',label:'Chosen'}]}]}));",
+  ].join("\n"), { mode: 0o700 });
+  return { root, workspacePath, profile: { ...nativeDevin(), settings } };
+}
+it("constructs the actual scoped Local Adapter with captured profile and homes and no eager native work", async () => {
+  const f = physicalDevin(), profile = f.profile, before = structuredClone(profile), start = vi.fn(), environment = { ...process.env };
+  const factory = vi.fn((native: { id: string; alias: string; executable?: string }) => {
+    expect(native).toEqual({ id: "devin-local", alias: "Local", executable: before.settings.executable });
+    native.id = "foreign"; native.executable = "/foreign";
+    return { backendId: "devin-local-acp", start };
+  });
+  const adapter = createNativeProfileAdapter(profile, { devinLocalBackendFactory: factory })!;
+  expect(adapter).toBeInstanceOf(DevinLocalAcpAdapter);
+  expect(adapter.manifest.backends.map(backend => backend.id)).toEqual(["devin-local-acp"]);
+  expect(adapter.supportsExecutionRef).toBe(true); expect(adapter.supportsExecutionSelection).toBe(true);
+  expect(existsSync(join(f.root, "calls"))).toBe(false); expect(start).not.toHaveBeenCalled(); expect(profile).toEqual(before);
+  profile.id = "changed"; profile.settings.executable = "/changed"; profile.settings.dataHome = "/changed"; profile.settings.configHome = "/changed";
+  expect(await adapter.modelCatalog!({ profileId: "devin-local", runnerId: "local", repositoryId: "repo", executionContextRef: "workspace:repo", reason: "manual-refresh", workspacePath: f.workspacePath })).toMatchObject({ profileId: "devin-local", providerId: "devin-local", backendId: "devin-local-acp", freshness: "native-fresh", selectionSupport: "explicit", entries: [expect.objectContaining({ id: "chosen" })] });
+  expect(readFileSync(join(f.root, "calls"), "utf8").trim().split("\n").map(line => JSON.parse(line))).toEqual([
+    { argv: ["--version"], data: before.settings.dataHome, config: before.settings.configHome },
+    { argv: ["models", "list", "--format", "json"], data: before.settings.dataHome, config: before.settings.configHome },
+  ]);
+  expect(start).not.toHaveBeenCalled(); expect(process.env).toEqual(environment);
+});
+it("pins physical Local catalog roots at construction without a probe", async () => {
+  const f = physicalDevin(), start = vi.fn(), adapter = createNativeProfileAdapter(f.profile, { devinLocalBackendFactory: () => ({ backendId: "devin-local-acp", start }) })!;
+  renameSync(f.profile.settings.dataHome, f.profile.settings.dataHome + "-old"); mkdirSync(f.profile.settings.dataHome);
+  await expect(adapter.modelCatalog!({ profileId: "devin-local", runnerId: "local", repositoryId: "repo", executionContextRef: "workspace:repo", reason: "manual-refresh", workspacePath: f.workspacePath })).rejects.toMatchObject({ code: "MODEL_CONTEXT_MISMATCH" });
+  expect(existsSync(join(f.root, "calls"))).toBe(false); expect(start).not.toHaveBeenCalled();
+});
+it("keeps Local ACP outside generic probes and cloud Devin construction", async () => {
+  const local = vi.fn(), generic = vi.fn();
+  expect(createNativeProfileAdapter({ id: "cloud", alias: "Cloud", provider: "devin" }, { devinLocalBackendFactory: local, cliBackendFactory: generic })).toBeUndefined();
+  await expect(probeNativeProfile(nativeDevin())).rejects.toMatchObject({ code: "PROBE_UNAVAILABLE" });
+  expect(local).not.toHaveBeenCalled(); expect(generic).not.toHaveBeenCalled();
 });

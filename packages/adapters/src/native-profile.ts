@@ -4,19 +4,21 @@ import type { CodexReadRequest } from "./codex-catalog.js";
 import { CursorAdapter, KiroAdapter, probeCursorProfile, probeKiroProfile, type CliAgentBackend, type CliAgentProfile, type NativeProbeContext, type CredentialResolver } from "./ecosystem-cli.js";
 import { AntigravityAdapter, GrokAdapter, OpenCodeAdapter, PiAdapter, QoderCnAdapter, WorkBuddyCliAdapter, ZCodeAdapter, isNativeCliProvider, probeNativeCliProfile, type NativeCliProvider } from "./native-cli.js";
 import type { SessionStore } from "./generic.js";
+import { DevinLocalAcpAdapter } from "./devin-acp-execution.js";
 import {homedir} from "node:os";
-import {join} from "node:path";
+import {isAbsolute,join} from "node:path";
 
 /** Structural registration contract; adapters do not depend on configuration or persistence. */
 export interface NativeProfileRegistration {
   id: string; alias: string; provider: string; enabled?: boolean; credentialRef?: string; settings?: Record<string, unknown>;
-  nativeInteraction?:{mode:"compatible";backendId:"pi-rpc"|"codex-app-server"|"opencode-server-v2";executionLocation:"managed-worktree"};
+  nativeInteraction?:{mode:"compatible";backendId:"pi-rpc"|"codex-app-server"|"opencode-server-v2"|"devin-local-acp";executionLocation:"managed-worktree"};
 }
 /** Native account locations used by our registered adapters/catalogs; owning host only. */
 export function nativePrivatePaths(profiles:readonly NativeProfileRegistration[]):string[]{
   const paths=new Set<string>();
   for(const profile of profiles){
     for(const key of ["codexHome","configDir"])if(typeof profile.settings?.[key]==="string"&&profile.settings[key])paths.add(profile.settings[key]);
+    if(profile.provider==="devin-local")for(const key of ["dataHome","configHome"])if(typeof profile.settings?.[key]==="string"&&profile.settings[key])paths.add(profile.settings[key]);
     if(profile.provider==="pi")for(const key of ["agentDirectory","sessionDirectory"])if(typeof profile.settings?.[key]==="string"&&profile.settings[key])paths.add(profile.settings[key]);
     if(profile.provider==="cursor")paths.add(join(homedir(),".cursor"));
     if(profile.provider==="qoder-cn"&&!profile.settings?.configDir)paths.add(join(homedir(),".qoder-cn"));
@@ -33,6 +35,7 @@ export function nativePrivatePaths(profiles:readonly NativeProfileRegistration[]
 export interface NativeProfileFactoryOptions {
   store?: SessionStore; resolveCredential?: CredentialResolver;
   codexBackendFactory?: (profile: CodexProfileConfig) => CodexBackend | undefined;
+  devinLocalBackendFactory?: (profile: CliAgentProfile) => CliAgentBackend | undefined;
   cliBackendFactory?: (provider: "cursor" | "kiro" | NativeCliProvider, profile: CliAgentProfile) => CliAgentBackend | undefined;
   codexNativeReader?: (input: CodexReadRequest) => Promise<unknown>;
 }
@@ -51,9 +54,25 @@ function cliProfile(profile: NativeProfileRegistration): CliAgentProfile {
     ...(profile.credentialRef ? { credentialRef: profile.credentialRef } : {}),
   };
 }
+function devinLocalPath(profile: NativeProfileRegistration, key: string): string {
+  const value = profile.settings?.[key];
+  if (typeof value !== "string" || !isAbsolute(value) || value.length > 4096 || Array.from(value).some(character => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127)) throw new AdapterContractError("DEVIN_ACP_INVALID_PROFILE", `Devin Local requires an explicit absolute ${key}`);
+  return value;
+}
 export function createNativeProfileAdapter(profile: NativeProfileRegistration, options: NativeProfileFactoryOptions = {}): AgentAdapter | undefined {
   if (profile.enabled === false) return;
   const configured = profile.nativeInteraction?.backendId;
+  if ((configured === "devin-local-acp" && profile.provider !== "devin-local") || (profile.provider === "devin-local" && configured && configured !== "devin-local-acp")) throw new AdapterContractError("BACKEND_MISMATCH", "Devin Local ACP requires its owning Local profile");
+  if (profile.provider === "devin-local") {
+    if (configured !== "devin-local-acp" || profile.nativeInteraction?.mode !== "compatible" || profile.nativeInteraction.executionLocation !== "managed-worktree") throw new AdapterContractError("NATIVE_INTERACTION_REQUIRED", "Devin Local ACP requires explicit compatible managed-worktree configuration");
+    if (profile.credentialRef !== undefined || Object.keys(profile.settings ?? {}).some(key => !["executable", "dataHome", "configHome"].includes(key))) throw new AdapterContractError("DEVIN_ACP_INVALID_PROFILE", "Devin Local ACP accepts only explicit native paths and native login");
+    const scope = { executable: devinLocalPath(profile, "executable"), dataHome: devinLocalPath(profile, "dataHome"), configHome: devinLocalPath(profile, "configHome") };
+    const native = { id: profile.id, alias: profile.alias, executable: scope.executable };
+    const backend = options.devinLocalBackendFactory?.(structuredClone(native));
+    if (!backend) throw new AdapterContractError("DEVIN_ACP_RUNTIME_UNAVAILABLE", "Configured Devin Local ACP requires its owning execution host");
+    if (backend.backendId !== "devin-local-acp") throw new AdapterContractError("BACKEND_MISMATCH", "Configured Devin Local host returned a different backend");
+    return new DevinLocalAcpAdapter(native, backend, options.store, scope);
+  }
   if ((configured === "opencode-server-v2" && profile.provider !== "opencode") || (profile.provider === "opencode" && configured && configured !== "opencode-server-v2")) throw new AdapterContractError("BACKEND_MISMATCH", "OpenCode Server requires its owning OpenCode profile");
   if (profile.provider === "codex") {
     const native = codexProfile(profile); if (!native) return;
@@ -66,6 +85,7 @@ export function createNativeProfileAdapter(profile: NativeProfileRegistration, o
   }
   if (profile.provider !== "cursor" && profile.provider !== "kiro" && !isNativeCliProvider(profile.provider)) return;
   const native = cliProfile(profile), backend = options.cliBackendFactory?.(profile.provider, native), store = options.store, resolve = options.resolveCredential;
+  if (backend?.backendId === "devin-local-acp") throw new AdapterContractError("BACKEND_MISMATCH", "Devin Local ACP cannot serve another provider");
   if (configured === "opencode-server-v2" && !backend) throw new AdapterContractError("OPENCODE_RUNTIME_UNAVAILABLE", "Configured OpenCode Server requires its owning execution host");
   if (configured === "opencode-server-v2" && backend?.backendId !== configured) throw new AdapterContractError("BACKEND_MISMATCH", "Configured OpenCode native host returned a different backend");
   if (backend?.backendId === "opencode-server-v2") {
