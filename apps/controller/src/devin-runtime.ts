@@ -52,7 +52,7 @@ class AcquiringTurn implements CliTurn {
   async result(): Promise<CliTurnResult> {
     await this.admission;
     if (!this.work) this.beforeResult();
-    this.work ??= this.track((async () => { try { const result = await this.turn!.result(); await this.finish(result); return structuredClone(result); } catch (error) { throw this.failure(error); } })());
+    this.work ??= this.track((async () => { try { const result = structuredClone(await this.turn!.result()); await this.finish(result); return result; } catch (error) { throw this.failure(error); } })());
     return structuredClone(await this.lifetime(this.work));
   }
   events() { return this.turn?.events?.() ?? []; }
@@ -133,7 +133,7 @@ export class DevinExecutionRuntime implements CliAgentBackend {
   start(original: CliStartInput): CliTurn {
     const input = capture(original), workspace = physical(input.workspacePath); this.validate(input, workspace);
     const reference = input.executionRef as Host["reference"], selection = input.nativeInput!.executionSelection!, token = Symbol("creation"), cancel = new AbortController();
-    let ownsCreation = false, creationObserved = false, captured: Host | undefined, boundaryFailure: AdapterStartError | undefined;
+    let ownsCreation = false, creationObserved = false, producerEntered = false, captured: Host | undefined, boundaryFailure: AdapterStartError | undefined;
     const pending = new Set<Promise<unknown>>();
     const failure = (error: unknown): AdapterStartError => {
       const code = error instanceof AdapterContractError ? error.code : "DEVIN_ACP_CALLBACK_FAILED";
@@ -173,6 +173,7 @@ export class DevinExecutionRuntime implements CliAgentBackend {
       const handle = this.track(this.hosts.acquireRuntime({ id: this.options.profile.id }, { id: this.backendId, runnerId: scope.runnerId, nativeStoreRef: scope.nativeStoreRef, product: "devin-local", region: "global", executionRefId: reference.id, ownership: "owned", acquire: async () => ({ id: randomUUID(), profileId: scope.profileId, backendId: this.backendId, runnerId: scope.runnerId, nativeStoreRef: scope.nativeStoreRef, product: "devin-local", region: "global", executionRefId: reference.id, ownership: "owned", interrupt: unsupported, quiescent: async () => false, stop: unsupported, detach: unsupported, disconnectLocal: () => backend.disconnectLocal() }) }));
       entry = { reference: structuredClone(reference), selection: structuredClone(selection), workspace, workspacePath: input.workspacePath, scope, backend, handle, creator: token }; this.executions.set(reference.id, entry);
       captured = entry; ownsCreation = true; await handle; guard();
+      producerEntered = true;
       return backend.start({ ...copy(input), beforePrompt: () => { try { guard(); this.sync(input.beforePrompt!, "DEVIN_ACP_AUTHORITY_CHANGED"); guard(); } catch (error) { throw failure(error); } }, ...(input.onNativeEvent ? { onNativeEvent: originalFact => {
         let fact: typeof originalFact; try { fact = structuredClone(originalFact); } catch (error) { throw failure(error); }
         return durable(() => { if (!captured!.bindingPersisted || fact.nativeSessionId !== captured!.binding!.nativeSessionId) reject("DEVIN_ACP_IDENTITY_CHANGED", "unknown"); return input.onNativeEvent!(fact); }, "DEVIN_ACP_CALLBACK_FAILED", () => {});
@@ -187,7 +188,7 @@ export class DevinExecutionRuntime implements CliAgentBackend {
       } });
     })().catch(error => { throw failure(error); }));
     const lifetime = <T>(work: Promise<T>): Promise<T> => new Promise((resolve, fail) => {
-      const closed = () => fail(failure(new AdapterStartError(creationObserved ? "unknown" : "not-created", "DEVIN_ACP_LOCAL_CONNECTION_CLOSED", "DEVIN_ACP_LOCAL_CONNECTION_CLOSED")));
+      const closed = () => fail(failure(new AdapterStartError(producerEntered ? "unknown" : "not-created", "DEVIN_ACP_LOCAL_CONNECTION_CLOSED", "DEVIN_ACP_LOCAL_CONNECTION_CLOSED")));
       this.shutdown.signal.addEventListener("abort", closed, { once: true }); cancel.signal.addEventListener("abort", closed, { once: true });
       void work.then(resolve, fail).finally(() => { this.shutdown.signal.removeEventListener("abort", closed); cancel.signal.removeEventListener("abort", closed); }).catch(() => {});
       if (this.closed || cancel.signal.aborted) closed();

@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
-import { DevinLocalAcpExecutionBackend, type DevinLocalAcpExecutionScope, type CliStartInput } from "@dispatcher/adapters";
+import { DevinLocalAcpExecutionBackend, type DevinLocalAcpExecutionScope, type CliStartInput, type CliTurnResult } from "@dispatcher/adapters";
 import type { ExecutionContextRef, ExecutionSelection, NativeBinding } from "@dispatcher/domain";
 import { NativeRuntimeHosts } from "@dispatcher/runner";
 import { devinAcpFixture } from "../../../packages/adapters/test/fixtures/devin-acp.js";
@@ -299,4 +299,45 @@ it('preserves original host receipt facts alongside separately scoped runtime ca
  const first=await f.runtime.disconnectLocal();expect(first).toHaveLength(2);expect(first[0]).toMatchObject({version:1,connection:'closed',ownedRoot:'exited',callbacks:'drained',backgroundTools:'unknown',nativeSessionDeleted:false,ownedRootPid:4321,profileId:'p',backendId:'devin-local-acp',runnerId:'local',nativeStoreRef:entry.scope.nativeStoreRef,product:'devin-local',region:'global',ownership:'owned',executionRefId:'a'});expect(first[0]!.hostId).toEqual(expect.any(String));
  expect(first[1]).toEqual({version:1,connection:'closed',ownedRoot:'not-created',callbacks:'unknown',backgroundTools:'unknown',nativeSessionDeleted:false,profileId:'p',backendId:'devin-local-acp',runnerId:'local',nativeStoreRef:entry.scope.nativeStoreRef,product:'devin-local',region:'global',ownership:'owned'});
  expect(f.factory).toHaveBeenCalledOnce();expect(entry.disconnect).toHaveBeenCalledOnce();expect(f.runtime.hasUnclosedHosts()).toBe(true);expect(f.runtime.hasActiveOperations()).toBe(true);const original=structuredClone(first);first[0]!.ownedRootPid=1;first[1]!.callbacks='drained';held.resolve();await expect(turn.ready!()).rejects.toMatchObject({creationOutcome:'unknown'});await vi.waitFor(()=>expect(f.runtime.hasActiveOperations()).toBe(false));expect(await f.runtime.disconnectLocal()).toEqual(original);expect(entry.disconnect).toHaveBeenCalledOnce();expect(f.runtime.hasUnclosedHosts()).toBe(true);
+});
+
+it.each(['shutdown','cancel'] as const)('reports unknown for %s after session/new is written but before binding',async mode=>{
+ const native=devinAcpFixture(roots,'create-ignore'),f=fixture(),input=f.input(),persist=vi.fn();input.executable=native.scope.executable;input.workspacePath=native.scope.workspacePath;input.onBinding=persist;
+ const runtime=new DevinExecutionRuntime({profile:{id:'p',alias:'Local',executable:native.scope.executable},dataHome:native.scope.dataHome,configHome:native.scope.configHome,runnerId:'local',assertInput:()=>{},bindingFor:()=>undefined});
+ try{
+  const turn=runtime.start(input);await vi.waitFor(()=>expect(native.calls().filter(call=>call.method==='session/new')).toHaveLength(1));expect(persist).not.toHaveBeenCalled();
+  const cancelled=mode==='cancel'?turn.cancel():undefined;if(mode==='shutdown')runtime.beginShutdown();
+  await expect(turn.ready!()).rejects.toMatchObject({code:'DEVIN_ACP_LOCAL_CONNECTION_CLOSED',creationOutcome:'unknown'});await expect(turn.result()).rejects.toMatchObject({creationOutcome:'unknown'});await cancelled;
+  const receipt=await runtime.disconnectLocal();expect(receipt[0]).toMatchObject({backgroundTools:'unknown',nativeSessionDeleted:false});expect(receipt[0]!.ownedRootPid).toBeGreaterThan(0);expect(persist).not.toHaveBeenCalled();expect(native.calls().filter(call=>call.method==='session/new')).toHaveLength(1);expect(await runtime.disconnectLocal()).toEqual(receipt);
+ }finally{await runtime.disconnectLocal();await f.runtime.disconnectLocal();}
+});
+it.each(['shutdown','cancel'] as const)('retains proven not-created for %s before producer entry',async mode=>{
+ const f=fixture(),turn=f.runtime.start(f.input()),cancelled=mode==='cancel'?turn.cancel():undefined;if(mode==='shutdown')f.runtime.beginShutdown();await expect(turn.ready!()).rejects.toMatchObject({code:'DEVIN_ACP_LOCAL_CONNECTION_CLOSED',creationOutcome:'not-created'});await expect(turn.result()).rejects.toMatchObject({creationOutcome:'not-created'});await cancelled;expect(f.entries[0]!.starts).not.toHaveBeenCalled();expect(f.persisted.size).toBe(0);await f.runtime.disconnectLocal();
+});
+function resultFixture(result:()=>CliTurnResult|Promise<CliTurnResult>){
+ const f=fixture(),turn=f.runtime.start(f.input());f.entries[0]!.starts.mockImplementation(native=>({...controlledTurn(Promise.resolve().then(async()=>{await native.onBinding!(exactBinding(f));})),result:async()=>result()}));return {...f,turn};
+}
+const completedResult=():CliTurnResult=>({state:'completed',summary:'original',providerSessionId:'native-a',events:[]});
+it('captures a changing result identity getter once before validating or returning it',async()=>{
+ const shared=completedResult();let reads=0;Object.defineProperty(shared,'providerSessionId',{enumerable:true,get(){reads++;return reads<=3?'native-a':'foreign';}});const f=resultFixture(()=>shared);
+ try{await f.turn.ready!();expect((await f.turn.result()).providerSessionId).toBe('native-a');expect(reads).toBe(1);}finally{await f.runtime.disconnectLocal();}
+});
+it('rejects the captured foreign result identity even if later getter reads would match',async()=>{
+ const shared=completedResult();let reads=0;Object.defineProperty(shared,'providerSessionId',{enumerable:true,get(){return ++reads===1?'foreign':'native-a';}});const f=resultFixture(()=>shared);
+ try{await f.turn.ready!();await expect(f.turn.result()).rejects.toMatchObject({code:'DEVIN_ACP_IDENTITY_CHANGED',creationOutcome:'unknown'});expect(reads).toBe(1);}finally{await f.runtime.disconnectLocal();}
+});
+it('validates only the result snapshot despite shared object mutation during awaited authority checks',async()=>{
+ const shared=completedResult();let delivered=false,mutated=false;const f=resultFixture(()=>{delivered=true;return shared;});f.assertInput.mockImplementation(()=>{if(delivered&&!mutated){mutated=true;queueMicrotask(()=>{shared.providerSessionId='foreign';shared.summary='changed';shared.events.push({type:'activity',summary:'changed'});});}});
+ try{await f.turn.ready!();expect(await f.turn.result()).toEqual(completedResult());expect(shared.providerSessionId).toBe('foreign');expect(mutated).toBe(true);}finally{await f.runtime.disconnectLocal();}
+});
+it('rechecks physical authority after result getter capture before publishing success',async()=>{
+ const shared=completedResult(),f=resultFixture(()=>shared);let changed=false;Object.defineProperty(shared,'providerSessionId',{enumerable:true,get(){if(!changed){changed=true;renameSync(f.a,f.a+'.old');mkdirSync(f.a);}return 'native-a';}});
+ try{await f.turn.ready!();await expect(f.turn.result()).rejects.toMatchObject({code:'DEVIN_ACP_SCOPE_CHANGED',creationOutcome:'unknown'});expect(changed).toBe(true);}finally{await f.runtime.disconnectLocal();}
+});
+it.each(['getter','uncloneable'] as const)('sanitizes %s result capture failure without publishing success',async mode=>{
+ const shared=completedResult();if(mode==='getter')Object.defineProperty(shared,'providerSessionId',{enumerable:true,get(){throw Error('private result credential');}});else Object.assign(shared,{uncloneable:()=>{}});const f=resultFixture(()=>shared);
+ try{await f.turn.ready!();await expect(f.turn.result()).rejects.toMatchObject({code:'DEVIN_ACP_CALLBACK_FAILED',creationOutcome:'unknown',message:'DEVIN_ACP_CALLBACK_FAILED'});}finally{await f.runtime.disconnectLocal();}
+});
+it('returns independent copies of the validated ordinary result snapshot',async()=>{
+ const shared=completedResult(),f=resultFixture(()=>shared);try{await f.turn.ready!();const first=await f.turn.result();expect(first).toEqual(completedResult());shared.providerSessionId='foreign';shared.summary='changed';first.providerSessionId='caller-change';first.events.push({type:'activity',summary:'caller-change'});expect(await f.turn.result()).toEqual(completedResult());}finally{await f.runtime.disconnectLocal();}
 });
