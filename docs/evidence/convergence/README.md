@@ -4772,3 +4772,53 @@ umbrellac7c1f534-3774-45ef-b639-4a2bd5195afa saved/readback. Nextatomicfactory/
 config17 thenController30+lookup1/coldreadonly/storagefences; source503 immutable
 identities/decisions preserved. Group/EPERM/R020/CV13audit28/formalGates/CV14open.
 Officialquota4used96remaining allowed/reset2unused, fullgoalcontinues.
+
+## Devin Local ACP atomic ConfigPlan and factory acceptance (2026-10-25)
+
+Commit ac61772a8c2624fc0a50c6c37bc77e90db025300 changes exactly four assigned
+paths. Explicit structural settings/ownership, dedicated owning backend factory,
+scoped catalog construction and disabled native-home protection are locally
+implemented. No Controller registration, personal profile, native account or
+service activation is included. Cloud Devin v3 remains distinct.
+
+Frozen source17 retains whole canonical test calls, parameter tables and all inner
+invalid scalars. Its ConfigPlan source string fixture maps to current import;
+original factory32 across17 declarations plus its whole non-import block remain
+unchanged. Current config46/factory80 total126; meaningful RED52 failed/74 passed,
+GREEN126, requested seven-suite focus323. Final unchanged mise exec -- pnpm check
+passes196 files/3463 tests plus build/typecheck/lint/boundaries. UTC
+2026-10-25T18:48:43.889500Z to18:51:31.967540Z; wall168.077716459s,
+Vitest143.27s; logSHA256
+edd1f3f3b63a56c1804dbf2ef9493dbb900f6097f7a3e6a7ecd3a00a313389ed.
+Evidence: /tmp/dispatcher-devin-acp-config-factory-evidence-20261025.
+
+Independent spec/quality review:
+/tmp/dispatcher-devin-acp-config-factory-task1-review-20261025.md. Root independently
+checks12 actual command records,55703 pre/55704 post copies,48 digests and150
+uniquely keyed external copies;508 tracked Git files match final pre/post and
+4642 final inputs,688 dist/16 buildinfo, zero errors. Primary dirty checkout is
+preserved. Root audit: /tmp/dispatcher-devin-acp-config-factory-root-audit-20261025.json;
+source whole-call/table proof mapSHA256
+6cf86072e9014278d5daa697145dd0013a226cea5abf154212ae14eab415f92f.
+Runtime binaries/node_modules excluded; no hermetic claim. Post-gate report/review
+packaging is separate from frozen executable inputs.
+
+Zero-start backend spies prove no factory-boundary execution only; real scoped
+Adapter, physical fixture paths and explicit catalog subprocess remain actual.
+Expected rejection diagnostics and mise/committer notices are retained; MinorCV14
+noise stays open without production suppression. No assertion/budget/worker/cache/
+lint weakening or unchanged retry. Current quota9used91remaining, allowed, two
+reset credits unused; latest nonstop authorization remains active.
+
+Next Controller C1 owns29 of the30 source cases plus the catalog's deferred actual
+exact-ID routing trial. The source restart/no-reattach case belongs to C2's checked
+storage certificate and corruption matrix: current startup otherwise rejects a
+nonterminal bound Local Run. C1 also reproduces the observed catalog-unknown
+shutdown/storage risk before fixing the directly affected shared path. No obsolete
+ModelInfo/status/model-catalog-state surface restored. Original group/EPERM/R020,
+CV13 audit28, real provider/account/GUI/writer/service/release Gates and CV14 remain open.
+
+Required review is spec compliant / task quality Approved,0 Critical/Important and
+1 MinorCV14. Root resolved both cannot-verify items: independent byte/source proof
+as above and explicit out-of-unit real Gates. LinearCV10
+34ccaf0d-ce10-427b-a651-8a42d310f7f3 saved and exact body read back.

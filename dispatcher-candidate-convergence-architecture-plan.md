@@ -599,3 +599,5 @@ server profile。owned host/producer及精确分配observer随后保存105ef8b�
 
 
 **ACP runtime回执**：a3a4e66+c76d315完成独立managed runtime；原28源例、prior95断言/helper保持，当前106、兼容278、最终195文件3369例及全部非测试门禁通过。独立审查I1创建取消unknown/I2结果先捕获再验证均经修复与范围复审解决；原host事实保留并追加runtime callback未知行。root52次真实捕获/506Git/source与最终输入核验零错误，历史8个外部basename碰撞仅证明保留字节等价而不升级原始捕获保证，新fix唯一副本解决后续问题。下一原子config/factory17，再Controller30+lookup1与cold readonly/实际存储护栏；无个人profile或服务激活，group/R020/CV13/CV14/正式Gates继续开放。
+
+**ACP ConfigPlan/factory 回执**：ac61772 完成显式结构配置与专属 owning factory；原17配置源例、工厂32例及其完整原块保持，当前126、七套聚焦323、最终196文件3463例与非测试门禁通过。root 核对12次捕获、508个Git输入及最终快照，主工作区未改动；独立双项审查单列。下一 Controller C1 保留29源例及真实 exact-ID routing trial，源重启1例归 C2 只读存储证书/腐坏矩阵；目录 unknown 停机存储风险先复现后修复。不恢复过时 API 或假造能力，group/R020/CV13/CV14/正式 Gates 继续开放。

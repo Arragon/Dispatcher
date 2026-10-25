@@ -1751,9 +1751,9 @@ with 500ms individual and aggregate checkpoints, then rechecks authority.
 Producer activity tracks actual acquisition, work and original callback settlement
 independently of bounded public waits. Runtime composition must consume this raw
 status; the Adapter turn wrapper alone cannot establish drain. Unknown disconnect
-receipts remain immutable after later settlement. This internal Adapter is not
-registered in the profile factory or Controller and grants no continuation,
-history, background-tool or writer-release qualification.
+receipts remain immutable after later settlement. The profile factory now constructs this scoped Adapter through its dedicated
+Local ACP backend slot. Controller composition remains separate; construction
+grants no continuation, history, background-tool or writer-release qualification.
 
 
 ## Internal Devin Local catalog
@@ -1769,7 +1769,8 @@ The catalog opts into the shared version probe's strict output validation; the
 probe retains its existing stdout cap, independently bounds stderr and validates
 UTF-8 after drain. The model query has independent 1MiB stream bounds and a whole
 query deadline. Cleanup uncertainty wins over usable data, cancellation or timeout.
-This catalog is internal until explicit runtime/profile/Controller composition.
+The explicit Local profile factory supplies this catalog scope. Controller
+registration and its actual catalog/profile routes remain separate.
 
 
 ## Internal Devin managed runtime
@@ -1786,5 +1787,18 @@ Forced cancellation after producer entry reports unknown until actual outcome
 proof is available, including the interval before a binding reply. Result data is
 captured before awaited authority and identity checks, and public output uses only
 that validated snapshot. This internal runtime exposes no native source, history,
-continuation or writer control. ConfigPlan/factory/Controller registration follows
-separately and does not arise merely from its compiled package-root exports.
+continuation or writer control. Explicit ConfigPlan/factory registration is now
+available; Controller runtime composition remains separate from package exports.
+
+## Explicit Devin Local configuration and factory
+
+ConfigPlan admits Local ACP only with embedded ownership, an explicit managed
+backend opt-in and exact executable/dataHome/configHome settings. Structural
+validation performs no filesystem or provider work, including disabled reserved
+profiles. Cloud Devin v3 retains its separate credential/settings contract.
+
+The Local factory validates ownership before its dedicated backend callback,
+captures detached profile/path values, requires the exact supplied backend and
+constructs the existing scoped Adapter without starting it. Disabled rows return
+before physical or callback work. Both explicit native homes remain private paths
+even while disabled; the owning Controller/Runner retains remote-path filtering.

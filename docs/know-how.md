@@ -1128,3 +1128,8 @@
 - External command inputs need unique full-path retention keys. Basename-only copies
   can overwrite each other; matching retained snapshots to declared hashes proves
   byte equivalence and must not be called an original per-command unique capture.
+
+- A native factory callback can mutate its arguments. Capture minimal owning profile
+  and physical catalog scope first, pass a detached callback value, and construct
+  from the captured values. Disabled reservations skip runtime construction while
+  their explicit native homes still require repository-path protection.

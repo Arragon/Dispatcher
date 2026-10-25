@@ -97,19 +97,19 @@ counts are inventories, not target passing evidence.
 
 **Steps/acceptance**
 
-- [ ] Read/map all17source cases/current factory and callers before edits. Retain
+- [x] Read/map all17source cases/current factory and callers before edits. Retain
   exact source scalar values and explicit canonical substitutions only if needed.
-- [ ] Write source tests and new factory regressions first. Capture loadable RED
+- [x] Write source tests and new factory regressions first. Capture loadable RED
   through current schema/factory's real missing behavior, not only import errors.
-- [ ] Implement schema/factory together, using only explicit settings/new dedicated
+- [x] Implement schema/factory together, using only explicit settings/new dedicated
   real slot; no native startup or standalone fallback. Preserve old provider paths.
-- [ ] Self-review exact diff/named callers and source/body parity; build, changed
+- [x] Self-review exact diff/named callers and source/body parity; build, changed
   filelint, then actual seven-suite focused command (existing six paths verified):
   `mise exec -- pnpm vitest run packages/config/test/devin-local-config.test.ts packages/adapters/test/native-profile.test.ts packages/adapters/test/devin-catalog.test.ts packages/config/test/config.test.ts packages/config/test/pi-native-interaction.test.ts packages/config/test/codex-native-interaction.test.ts packages/config/test/opencode-native-interaction.test.ts`.
-- [ ] One unchanged final `mise exec -- pnpm check` after final source freeze;
+- [x] One unchanged final `mise exec -- pnpm check` after final source freeze;
   build/typecheck/lint/boundaries/tests all required. Preserve failures and report
   concrete conflict before widening scope; no policy/test weakening or blind retry.
-- [ ] Commit four scoped files, audit actual final gate pre/post/Git bytes and
+- [x] Commit four scoped files, audit actual final gate pre/post/Git bytes and
   source17/old factory preservation, write exact RED/GREEN/commands/evidence/noise/
   limitations report. No worker subagents/reviewer/docs/Linear/native/push/merge.
   Root dispatches sole independent task review and handles source503/metadata.

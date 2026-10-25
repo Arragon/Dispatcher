@@ -435,3 +435,13 @@ Latest reviewed runtime post-fix default check is green at176 files/1956 tests
 (82.21s), including all non-test gates and the unchanged Task2 backend. R-020
 root cause stays unresolved; previous failed logs remain. This qualifies local
 backend/host increments only, without activation or real provider Gate promotion.
+
+Current 2026-10-25 Local ACP config/factory checkpoint: ac61772 preserves source17
+and original factory32, adds explicit ConfigPlan/owning factory without startup;
+focused323 and final default196/3463 plus non-test gates pass. Required review and
+root source/input audit recorded in the convergence evidence ledger. Controller
+composition remains: C1 source29 plus actual catalog exact-selector trial, C2
+source restart1 and read-only stored certificate/corruption matrix. A directly
+affected catalog-unknown shutdown path needs behavioral reproduction and storage
+barrier correction in C1. No personal profile/account/service activation. Group/
+EPERM/R020/CV13 audit28/formal Gates/CV14 stay open; complete plan remains active.
