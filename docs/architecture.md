@@ -1398,7 +1398,7 @@ runtime and cleanup-uncertainty failures share the final error collection, so
 simultaneous failures remain visible. Local cleanup never deletes native sessions
 or proves background writer release.
 
-Restart accepts only consistent bound canonical managed Codex/OpenCode/Pi metadata
+Restart accepts only consistent bound canonical managed Codex/OpenCode/Pi/Devin Local metadata
 for read and receipt reconciliation. A private checked-storage helper preserves
 Run/Task/Session/Adapter/selection/reference/binding agreement, frozen repository/
 base and unique SQL/document control ownership. Explicit provider wrappers retain
@@ -1819,4 +1819,9 @@ CATALOG_CLOSED cancellation, blocks profile changes, and retains sticky uncertai
 Shutdown collects catalog persistence/drain failures with the existing runtime,
 quota and local-review failures, attempts all runtimes, closes HTTP/events and
 retains SQLite on unknown cleanup. A receipt retry does not close an owned root twice.
-Cold Local metadata qualification remains a separate checked-storage boundary.
+Cold Local metadata qualification uses the existing checked-storage predicate with
+an explicit provider wrapper. Local opaque Session IDs have1..512 UTF-16 units,
+exclude C0/DEL/unstarted values, and carry no thread/parent fields. Qualification
+uses stored agreement only, preserves the prior provider predicates, and performs
+no physical/native/account read. Physical enabled admission remains independent;
+restart invalidates prior readable evidence and retains manual/unknown ownership.

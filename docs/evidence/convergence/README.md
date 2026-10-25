@@ -4887,3 +4887,60 @@ Copilot committed147/runtime41 and WIPconfig17/service29 are only prepared input
 under /tmp/dispatcher-copilot-preflight-20261025, not passing target claims.
 Original group/EPERM/R020/CV13 audit28, expected diagnostic noise/CV14 and real
 provider/account/GUI/writer/service/release Gates remain open.
+
+## Devin Local ACP C2 checked-storage recovery acceptance (2026-10-25)
+
+Commit b7d0651fe20dc26e48efc0a23ecee3359d7397b7 changes exactly three assigned
+paths. Narrow Local wrapper delegates checkedManagedRun and is added only to the
+constructor/reconciliation admission ORs. The entire prior start-recovery.ts prefix
+is byte-identical; C1 strict fixture/common corruption helper and old provider
+code/tests/package/lock remain unchanged. No persisted version or live authority.
+
+Original sourceCase23 restart1 now has QUEUED/RUNNING variants with literal settings,
+exact stored identity and receipt projection, unknown fresh observation/barrier,
+manual Run/Task recovery, no new producer/root/prompt and denied mutations. C1other29
+and actual catalog exact-ID consumer remain accepted. Combined original Controller30
+source purposes are covered, not a claim of native/provider/GUI qualification.
+New94 =restart2 +pure stored/physical separation1 +corruption86 +opaque positives5.
+All C0/DEL and LF/CR boundary controls use consistent binding-copy edits; Unicode,
+decomposed Unicode,1unit/512units and opaque store positives imply agreement only.
+Root static mapSHA
+d1dbcff73643261c5a78fe058cfb032064a8588f0dda57cff4b7d9e9de67c16b.
+
+Loadable initial RED2 reaches real constructor refusal. First GREEN92 then added
+missing Task/decomposed Unicode before final freeze. Initial lint control-regex
+failure fixed with producer character-code style, no suppression. Final focus5/428
+and one unchanged mise exec -- pnpm check pass198files3630tests plus all non-test
+gates, UTC2026-10-25T19:44:03.111475Z to19:46:54.682959Z,wall171.570866s,
+Vitest153.84s. logSHA
+d4888d315bd7c758ba5d06dbfdc3373a84e47168aeba68e0517a1bc9d458a4ef.
+Evidence /tmp/dispatcher-devin-acp-recovery-evidence-20261025.
+
+Required /tmp/dispatcher-devin-acp-recovery-task1-review-20261025.md: spec compliant,
+quality Approved,0Critical/Important; existing expected-diagnostic noise MinorCV14
+retained. Root resolved local cannot-verify items with exact prior helper/provider
+prefix, all513Git inputs and C1 source-case/fixture fidelity plus the unchanged
+full shared matrix in focused428. Real/formal Gates explicitly outside scope.
+Root /tmp/dispatcher-devin-acp-recovery-root-audit-20261025.json checks13commands,
+60554pre/60555post copies,52digests,72external copies,1068actual generated Local
+fixture copies from firstRED;513Git matches4658finalinputs/688dist/16buildinfo,
+zeroerrors. Primary HEAD/status and three dirty file contents match originals.
+Final source/self-review/external inputs frozen; report/review post-gate metadata
+separate. Runtime binaries/node_modules excluded, no hermetic claim.
+
+CV10 acceptance0c678b10-f377-43ec-89ae-ad1ff34ed9b5 saved/exactbodyreadback.
+Quota27used73remaining allowed/reset2unused; whole goal active. Original group/
+EPERM/R020/CV13audit28/CV14 and real provider/account/GUI/writer/service/release
+Gates open; no personal account/profile/service activation.
+
+Next Copilot client113 uses frozen committed source76read/bootstrap+37prompt;
+producer34/runtime41 and WIPconfig17/service29 remain separate unimplemented inputs.
+Eight frozen Copilot source files and eight WIP backup files were hash-verified under
+/tmp/dispatcher-copilot-preflight-20261025; no wholesale restore. A bounded experiment
+/tmp/dispatcher-copilot-codec-probe-20261025 compared official8.2.1 and10.0.0:
+identical316-byte Unicode frames/ordered coalesced+one-byte decode, timeout0/dispose
+onNode24.21.0. Prefer exact maintained10.0.0 with new /node export. Actual Microsoft
+MIT License/SRI/zero-proddeps verified, single-package advisory lookup{} time-specific.
+This is only API/wire compatibility preparation, not113client/native/security Gate
+evidence. New codec/package/deployed notice and all source tests remain next task;
+no SDK/commercial CLI incorporation or package change in this C2 unit.

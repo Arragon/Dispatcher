@@ -99,15 +99,15 @@ passing tests. C1 real fixture/composition and accepted internal runtime are inp
 
 **Steps/acceptance**
 
-- [ ] Verify C1 exact accepted fixture/API, source-case map and read actual affected
+- [x] Verify C1 exact accepted fixture/API, source-case map and read actual affected
   files/AGENTS/relevant architecture/knowledge. Record source1/current-case inventory.
-- [ ] Loadable valid stored restart RED on current startup guard, then narrow owning
+- [x] Loadable valid stored restart RED on current startup guard, then narrow owning
   predicate/OR extensions and full corruption/positive/authority regressions.
-- [ ] Self-review, build, changed-file lint and actual focused command:
+- [x] Self-review, build, changed-file lint and actual focused command:
   `mise exec -- pnpm vitest run apps/controller/test/devin-runtime-recovery.test.ts apps/controller/test/devin-runtime-service.test.ts apps/controller/test/opencode-runtime-service.test.ts apps/controller/test/pi-runtime-service.test.ts apps/controller/test/native-recovery-preflight.test.ts`.
   The existing four named suites were verified; native-recovery-preflight is the
   actual recovery suite, replacing an absent draft control-recovery path.
-- [ ] One unchanged final `mise exec -- pnpm check`, all non-test gates plus tests;
+- [x] One unchanged final `mise exec -- pnpm check`, all non-test gates plus tests;
   preserve failures, no unchanged retry or scope widening without concrete ruling.
-- [ ] Scoped three-path commit; final Git/pre/post input audit and exact complete
+- [x] Scoped three-path commit; final Git/pre/post input audit and exact complete
   assigned report. Required independent task review/root metadata follow separately.

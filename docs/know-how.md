@@ -1141,3 +1141,8 @@
   service/error before enrolling its cleanup exception. Exact identity prevents a
   later failure or another service from borrowing it; even enrolled cleanup must
   wait for original raw callbacks before closing storage.
+
+- Local ACP opaque Session ID limits count UTF-16 units, matching the producer's
+  JavaScript string length. A256-symbol astral ID is512units; decomposed Unicode
+  remains distinct and valid. Cold validation must preserve this grammar rather
+  than import another provider's UUID/ses rule or normalize stored identity.
