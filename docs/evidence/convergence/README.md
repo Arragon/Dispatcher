@@ -5303,3 +5303,89 @@ for eventual separately authorized publication review. C2 readonly certificate n
 all account/provider/GUI/writer/stop/history/continuation/release/P4/CI/rollback/
 wholebranch/remaining-development/formal Gates stay open. Latest official83used17
 remaining ordinaryallowed, two reset credits unused; user's nonstop goal active.
+
+## Copilot C2 stored readonly restart — locally accepted4881a25
+
+BASE67a1efe→4881a2565eaa8ec087afaea185be23482a6ec922, exactly3paths/164insertions/
+3deletions. Appended isReadableManagedCopilotRun uses existing full checkedManagedRun
+and exact Copilot/copilot-rpc/global/opaque1..512UTF16/noC0DEL/no unstarted/no thread/
+parent shape. Only constructor compatibility and bound readonly reconcile expressions
+consume it; no physical/native/credential/config/schema/runtime/SDK changes or writer.
+Full10263byte old helper/provider prefix SHA
+82b97306d429080234ac4cf3758cb6a7cae20da0eb2073fce7cfe9a071ee9c2c exact,
+new871byte suffix. Root independently reversed only import and two admission tokens
+to exactBASE service bytes: /tmp/dispatcher-copilot-controller-c2-root-prefix-20261025.json.
+Root first inline prefix check miscopied one zero in expectedSHA; corrected literal,
+actual Git bytes unchanged and no tests rerun. No source503 helper/test row invented;
+these are new owning modules, originalWIPrestart1 maps through service/source29 manifest.
+
+Source WIP declaration12/restart1 SHA
+ d106ee8e03c953e40ff788fe0e00ab85ca2d98c24d4b74e755c2152bbbac06d9 is now covered:
+TaskQUEUED/RUNNING after actual native result/raw settlement, actual C1STARTING/crash
+reservation replaces old unreservedACTIVE fixture explicitly. Exact original Run's
+state becomes recoveryState, unknown/manual/unavailable Task/readAPI/observation/
+receipt mapping and no producer/factory/root/source or mutation. Existing startup
+SENDING→UNKNOWN/NATIVE_START_OUTCOME_UNKNOWN changes only state/code/revision+1/time;
+first new expectation of byteexactSENDING failed and was corrected to this real
+contract, no production projection change/ACK/terminal bypass. Direct certificate
+purity after aliases disappear has zero DBwrites/Node physical-fs/process calls;
+aliases restored for strict owned-reference teardown. Whole Controller recovery's
+intentional existing writes are separate, enabled physical preflight still applies.
+
+Current101 =2original Task-state positives+1purity+20field+52shape+17structural
+corruptions+5opaque+4malformed. Opaque all-copy agreement is not external provenance;
+realclientUUID does not narrow actual supported runtime grammar. Existing wrappers,
+fixtures/helpers/provider suites, original71ledger/brief/plan files and503 identities
+unchanged during implementation. BehavioralRED2 actualconstructor denials; missing
+certificate purity separate; three controlled faults make missing shared agreement,
+C0 filter and forcedUUID fail actual tests before restoring final source. Original
+101matrix GREEN and firstfocus19files1504pass/2newreceipt failures retained; corrected
+finalfocus20files1506 pass, no worker/cache/deadline/skip/expectation weakening.
+
+ONE defaultfull mise exec -- pnpm check passes205files4233tests/all non-test checks.
+Command-only UTC2026-10-25T23:20:53.147452..23:24:25.932542, wall212.784139833s,
+logSHA6bcc8fa81f378826bc8fa8e6636c09d470e0f46e6b7752c1c0c05c37e76bcbbb.
+Execution HEAD was67a1efe with three frozen changed files, exactly equal committed
+4881a25; not clean final-candidate SHA qualification. Evidence
+/tmp/dispatcher-copilot-controller-c2-evidence-20261025. Independent review
+/tmp/dispatcher-copilot-controller-c2-task1-review-20261025.md fully read:Spec✅/
+QualityApproved0C/I/M1 expected request/denial log noise, no suite/audit rerun. Root
+cannotverify state/payload items resolved by audits below and immutable503 policy;
+formal/account/provider/GUI/writer/stop/history/continuation/release/P4/CI remain open.
+
+Root /tmp/dispatcher-copilot-controller-c2-root-audit-20261025.json verifies25v2runs,
+118258pre118259post source copies,760pre760post external copies/1520external identity
+rows/236517source identityrows/100digests50Gitobs/532trackedGit, zeroerrors, primary
+HEAD/status/allthree dirtycontents preserved and every committed blob matches full.
+Full4731inputs43external prepost identical and commonGit head/status/diff/index equal;
+700 directdist16buildinfo vs2004historical compiled paths (2720aggregate),52fullrebuild
+stat identities changed but bytes equal.1094controlledtree snapshots44867fileRefs/
+3192ownedadminrefs;24801content payloads48293captureevents, firstRED4trees166fileRefs
+and full290trees153fixture roots11857fileRefs checked. Standard unrelated-provider
+formats explicit:225producer exe pins/459retained members are not per-member original
+hash declarations; runtime/node_modules/globalGit payload exclusions stay. No new
+historical missing-fixture waiver: original first native/Git objects/admin inputs
+captured contemporaneously. Earliest explicit Git-tool identity was absent; later
+wrapper adds it without retroactive metadata claims. Current capture is individual
+live bytes, never atomic OS/SQLite backup or real-provider qualification.
+
+Recorded expected output changes: build7compiled bytes, fixture/source audit outputs,
+report-preparation creating report and report-finalization updating only report/results
+after full. Root /tmp/dispatcher-copilot-controller-c2-root-report-diff-20261025.patch
+retains exact frozen/final report difference; existing live drift only that report,
+no code/ledger gate drift. Intermediate matrix-green had external wrapper/input-list
+metadata edited while it ran (only Gittool identity and accepted C1audit refs); both
+pre/post payload versions and actually executed old wrapper retained, source/test
+bytes unchanged. Root /tmp/dispatcher-copilot-controller-c2-root-matrix-tooling-delta-20261025.json
+records it. Do not call that intermediate tooling frozen; actual finalfocus/full
+use completed frozen tooling and no unchanged rerun. Root initial audit falsely
+classified handoff JSON as old flat schema; removed unused v1 path (C2allv2), failed
+attempt script retained, no tests rerun or final requirements weakened. Existing
+C1 partial original Git/dist/time breach/olderruntimeI3/group/R020 remain separate
+history. Local committer notice kept, no global identity/push/primary changes.
+
+Source29 WIP controller purposes now all mapped28C1+1C2; source17ConfigPlan and all
+local Copilot client/producer/runtime units remain their recorded reviewed scope.
+NextCursor locator/resume46, then Devinv3/UI/retention/delivery/Node/dependency/perf/
+wholebranch/CI/formal work. Latest official91used9remaining ordinaryallowed=true,
+reset2unused; latest nonstop goal continues, no obsolete stop threshold applied.

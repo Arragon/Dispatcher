@@ -1194,3 +1194,14 @@
   retained buffer hash/length separately from original live-file stat size; these
   copies are not an atomic database backup. Inspect actual wire/event identity
   before interpreting a failed array-count assertion as a native send.
+
+- A pure restart certificate and whole Controller recovery have different effects.
+  Qualification reads stored agreement without writes; existing startup may project
+  SENDING commands to UNKNOWN because delivery is unproven. Preserve complete
+  command identity/semantics/fence while checking only the sanctioned state/code/
+  revision/time delta; do not fabricate ACK to prepare a readonly fixture.
+- Freeze capture scripts and declared-input lists before starting each check.
+  Tooling metadata added during an intermediate run does not describe the already
+  loaded wrapper. Retain both versions and label that run accurately; final checks
+  must use the completed immutable tooling. Default client UUIDs also do not narrow
+  a supported wider opaque storage-ID contract or prove external provenance.

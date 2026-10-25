@@ -30,3 +30,13 @@ Spec: original frozen WIP /tmp/dispatcher-copilot-preflight-20261025/wip/apps/co
 9. Commit only3allowlisted implementation/test paths, clean handoff/report with exact original restart1 map/API adaptation, old helper/provider prefix byte checks, regression matrix and source-only-vs-behavior distinctions, first RED/green commands/artifacts, original/final inputs and capture exclusions/limitations. Root owns independent review/source503/docs/Linear/ledgers and parent CV14 later. No push/merge/global identity/primary/personal account change.
 
 All other real provider/account/GUI/native writer/stop/history/continuation/release/P4/CI/rollback/whole-branch/security/Node/dependency/retention/UI formal Gates remain open. Complete local C2 means readonly recovery only, never native execution qualification or whole-goal completion.
+
+## Acceptance
+
+Task1 COMPLETE locally4881a25, Spec/Quality Approved0C/I/M1 logs, root25run/532Git/
+4731input43external/first-final fixture and immutableprefix/reverse-token audits clean.
+Source restart1 covered at realSTARTING crashpoint over2Taskstates;101current; focus
+20/1506 and onefull205/4233/non-test pass. Source29 now28C1+1C2 local coverage.
+OldSENDING expectation corrected to sanctioned UNKNOWN projection, no native writer.
+Intermediate metadata-tooling delta recorded with original versions; finalfocus/full
+strictfrozen. All old/formal limitations remain, nextCursor and rest of goal active.

@@ -1887,5 +1887,13 @@ the callback and constructs the existing three-argument Adapter from that captur
 Disabled registrations skip factory work while protecting their configured home.
 Console/plan projections omit the five known native directory keys through the
 existing private-key/edit boundary; export continues omitting all settings.
-Readonly restart admission remains a separate stored-agreement certificate;
-current Copilot nonterminal cold records stay closed until that certificate exists.
+Readonly restart admission reuses the shared persisted-agreement certificate with
+a narrow Copilot/global binding qualifier. It accepts the actual runtime's opaque
+1..512 UTF-16 IDs without control characters, an unstarted prefix, thread or parent;
+default client UUID allocation does not narrow supported stored identity. The
+certificate performs only database reads, independently of physical admission.
+Constructor compatibility and bound reconciliation preserve stored identities,
+invalidate old observations and recover nonterminal records as manual unknown/
+Runner unavailable. Existing pending SENDING start receipts become UNKNOWN;
+no native connection, source, Session, writer or mutation authority is restored.
+Enabled live profile construction still has its separate physical preflight.

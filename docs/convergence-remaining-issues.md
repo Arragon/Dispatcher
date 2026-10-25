@@ -560,3 +560,25 @@ RED genuinely sentonce/returnedRUNNING; final row/document equality fixes it. Th
 histories and earlier runtimeI3/group/R020 remain explicit CV14 follow-ups, not erased.
 C2 pure readonly restart certificate is next; all real/provider/UI/retention/delivery/
 Node/dependency/performance/CI/rollback/wholebranch/formal Gates remain open.
+
+Copilot C2 locally complete4881a25: appended pure stored-agreement wrapper and
+exact constructor/reconcile consumers, no live source/writer restoration. Original
+restart1 now covered over TaskQUEUED/RUNNING at actual C1STARTING crashpoint, preserving
+literal settings/binding/native files and sanctioned pending-start UNKNOWN receipt.
+Current101cases cover2restart/1purity/89corruption/5opaque/4malformed; source29 now
+mapsC1other28 plusC2one, not an unimplemented restart. Original10263byte helper/
+provider prefix exact; service changes only three tokens. Independent Spec/Quality
+Approved0C/I/M1 logs. Focus20/1506, onefull205/4233/non-test checks pass. Root25run/
+532Git/full4731source43external/current700dist16buildinfo audit zeroerrors; source/
+external bytes and Git full observations frozen,52 reemit identities changed bytesnone,
+primary preserved. Root-owned service source503 verification updated only,503IDs exact.
+
+Intermediate matrix run's wrapper/input-list metadata changed to add Git identity
+and prior C1 audit refs; executed original wrapper and both versions retained, code/
+test bytes unchanged. It is not a frozen-tooling run; corrected finalfocus and full
+are strictly frozen. Current original native/Git firstRED and final captures complete,
+no C1historical-loss waiver reused. Only report result bookkeeping changes aftergate.
+C1 historical irrecoverable inputs/runtimeI3/group/R020/log/identity issues remain;
+Cursor locator/exact resume46, Devinv3, UI/retention/delivery/security/Node/performance/
+CI/wholebranch/realprovider/formal Gates still open. Goal continues, no paid/cloud
+or personal/default native home activated.
