@@ -1154,3 +1154,12 @@
   buffer cannot erase an already observed unresolved condition. Check the retained
   fact again at the final stdin sink, while preserving resolved-hook and sibling/
   subagent qualification rules.
+
+
+- Reserve creation admission before reading getter-backed start input or invoking
+  its validation Guard. Setting only the final admitted flag after validation lets
+  a synchronous reentrant start enter twice. Keep that temporary reservation
+  separate from the one-creation latch and raw callback slots.
+- An observation failure may close the local connection itself. Preserve that
+  cause so the final result remains failed instead of reporting user cancellation;
+  a closed transport does not identify who requested cancellation.

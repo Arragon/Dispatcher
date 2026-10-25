@@ -1839,3 +1839,16 @@ principals cannot gain mutation via options. Complete outgoing frames recheck th
 original authority after backpressure at stdin; unresolved pre-input permission
 facts remain sticky through model/idle ordering. This internal client provides
 no registered Controller source, account/catalog or native writer qualification.
+
+
+## Internal Copilot execution producer
+
+CopilotExecutionBackend owns one canonical explicit model and managed reference,
+using the internal RPC client and existing physical identity helper. It persists
+the allocated global session before input through the shared NativeBindingEvents
+STARTING/invocation/save-before-emit path. Native transport updates stay synchronous;
+a serial producer queue awaits bounded durable facts before readiness/result. Raw
+callback slots and creation admission are reserved before caller reentry, while
+public cancellation retains underlying work and immutable unknown cleanup. Native
+stop remains unqualified. The internal Adapter grants no catalog, account, source
+or writer qualification; Controller runtime/profile registration follows separately.

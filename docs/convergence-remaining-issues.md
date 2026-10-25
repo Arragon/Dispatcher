@@ -477,3 +477,20 @@ clearance. Producer34/runtime41/WIPconfig17/service29 still need integration; no
 package-root export/Controller/account activation. Group/EPERM/R020/CV13-14/formal
 Gates and whole goal remain active. Historical fixture identity/copy limits remain
 explicit in evidence ledger.
+
+
+Current2026-10-25 Copilot producer checkpoint:66789bd locally accepted after required
+review0Critical/Important and root18run/520Git byte/source34/old84 observer audit.
+Current73producer/119observer, default201files3867tests/non-test gates pass. Source
+147client113+producer34 purposes mapped; runtime41/WIP17+29 remain. No root export/
+Controller/account activation. WholeSnapshotFrozen=false for exact root-owned
+ignored-ledger metadata delta; code/check inputs frozen, both original bytes kept.
+Original capture key transition corrected append-only. See evidence ledger.
+
+Additional native-acquisition observation: expanded focused12 retained611/612,
+unchanged Devin test217 entered=false at existing1s poll before cleanup assertions.
+Earlier seven-suite502/later default3867 pass its59cases, without unchanged focused
+retry or test/helper/deadline/worker/cache change. No retained open error distinguishes
+delay/failure, no claim of R020's same cause or resolution. Failed12 ephemeral native
+bytes unavailable; original source/output retained. This remains follow-up alongside
+existing loader/group/security/performance/native/formal Gates; whole goal active.

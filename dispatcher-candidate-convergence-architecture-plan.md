@@ -608,3 +608,6 @@ server profile。owned host/producer及精确分配observer随后保存105ef8b�
 
 
 **Copilot client回执**：aa85671+80ab301 仅内部协议客户端，源113整调用/表/预算不变，新增16回归，聚焦149/最终200文件3759例及非测试门禁通过。独立审查 I1 发送前权限窗口经真实子进程RED与粘性准入/最终写入围栏修复、范围复审解决；原有拒权ACK/resolved-hook/旁路控制保持。root原候选26次捕获及fix16次/517Git/全部最终输入和主脏文件内容核验零错误。codec10精确MIT/SRI及真实部署保持，旧28审计仅固定时点未变版本，不代表安全Gate。下一producer34复用canonical observer与500ms异步确认，再runtime41/WIP17+29；group/R020/CV13/CV14/真实Gates开放。
+
+
+**Copilot producer回执**：66789bd 完成内部canonical producer/Adapter及实际Copilot分配身份模式，源34目的/表/标量和18规范化函数体保持，16/20两处真实observer/Adapter适配单列。旧84观察器完整前缀不变并补35，当前73+119；独立审查零Critical/Important，默认201文件3867例及非测试门禁通过。root18次捕获/520Git/全部代码检查输入核验零错误；全快照因root冻结后台账变更为false，仅精确元数据SHA对例外，不掩盖或重跑。保留无改动Devin1s等待失败611/612及未知原因，原始捕获键说明已追加纠正。下一runtime41，再原子config/factory17与Controller29/纯只读恢复；group/R020/CV13-14/实际Gates开放。

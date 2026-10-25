@@ -5007,3 +5007,75 @@ CV10 acceptance 6fcee9f9-0d38-4c10-ad36-3d26654db812 and umbrella 718e47ea-2888-
 exact bodies read back. Goal remains active; source503 identities unchanged. Next
 producer34 uses actual canonical allocation/durable observer, then runtime41 and
 config17/service29. Group/EPERM/R020/CV13/CV14 and all real Gates remain open.
+
+
+## Internal Copilot producer acceptance (2026-10-25)
+
+Commit66789bd7a181e58a0255c4412ec3d2ca06e0f914 changes the six planned paths only. Internal producer owns one
+explicit canonical ExecutionSelection/managed creation, uses the accepted client
+physical helper through a named internal export, and extends the existing allocated
+observer with copilot/copilot-rpc. No root export/registration/config/Controller,
+package/lock or deployed-release change. Original source147 purposes now mapped as
+client113 +producer34; runtime41/WIPconfig17/service29 remain separate unfinished units.
+
+Source34 retains all20names/whole inner tables/scalars;18bodies equal under named
+canonical model/parameter/import substitutions. Declaration16 uses actual canonical
+Adapter reservation/observer and unsupported catalog instead of obsolete manifest
+fields;20 retains exact fake-child array/wire assertions plus actual reservation/
+sink and root receipt. Source18 unresolved async fact still fails500ms with raw
+unknown;19 acquisition retains2500close/500drain. Client129 whole test files unchanged;
+old84 observer entire26116-byte prefix/calls unchanged and35Copilot controls appended.
+Current producer73/observer119, with reentry/cap64/raw thenables/positive async
+durability/ordered500ms per+aggregate/failure classification/pending mutation/stop
+diagnostic/physical drift controls. Root independent static map
+/tmp/dispatcher-copilot-execution-root-source-map-20261025.json.
+
+Actual loadable01RED32/35 captures missing allocation and Guard ownership;02build
+Promise.withResolvers lib failure fixed in new source without config change.05RED
+182/187 captures reentrant start/internal failure cancellation errors; new revoked
+authority test corrected to assert actual STALE_NATIVE_OBSERVER, no boundary weakened.
+First7-suite450, later502 pass. Expanded12tenfiles611/612 retains unchanged Devin
+late real acquisition entered poll failure at existing1s, before cleanup assertions.
+Actual open includes version3000ms/initialize5000ms; no underlying error retained to
+distinguish delay/failure. No unchanged focused retry/test/deadline/worker/cache change
+or R020 same-cause/solution claim. Its ephemeral native bytes were not captured;
+source/output retained, no reconstruction.
+
+One planned default mise exec -- pnpm check passes201files3867tests and build/
+typecheck/lint/boundaries, UTC2026-10-25T20:42:44.257732Z→20:45:57.347729Z,
+wall193.089858667s, logSHA
+0e21c0799de66fbb298b38f44447cc89e3b9f68fd6f716a3b82a0b07ab23c618. Earlier focused
+failure is not erased by this current whole-suite pass. Required fresh review
+/tmp/dispatcher-copilot-execution-task1-review-20261025.md fully read: spec compliant,
+quality Approved,0Critical0Important1Minor inherited service/Git output noise deferred
+CV14. Root resolved local cannot-verify via source/API/fixture/Git/input proof; real
+provider/account/entitlement/GUI/writer/descendant-release/formal Gates excluded.
+
+Root /tmp/dispatcher-copilot-execution-root-audit-20261025.json checks18actualruns/
+84304pre84309post/72digests/418externalcopies/3097generatedretainedfiles/364producer
+identity+executablecopies/32Gitobservations;520Git/4684finalinputs/696dist/16buildinfo,
+zeroerrors; primary HEAD/status/all3dirty contents preserved. All product/test/check/
+self-review/external bytes frozen. FinalSnapshotFrozen=false: root wrote ignored SDD
+progress.md after freeze; exact e505aa9bb0da9df2617b8679e4b9cc12ecfa0071b64d91407b161c2948f297ed
+→388cd1a6df006e8fe8805a9970f8994b3854afbb21af9e995e3a4306204d49a0 metadata pair
+retained/disclosed, no directory waiver/restore/retry. Root owns this avoidable
+coordination error; no false whole-directory frozen claim.
+
+Original01/04/05 captures use full-root keys(36/36/70),08/12/15 full-executable
+keys(72/75/75). Report's05 transition was corrected append-only after root inspector
+failed; original failed inspector/corrected exact-schema check retained. Derived
+full-file index is not retroactive original capture. Legacy client unique-mkdtemp
+layout unchanged. Actual final fake rootPID56649 exited/ESRCH, exact bound input and
+native-file preservation captured; this is local root proof only, backgroundTools
+unknown/nativeSessionDeletedfalse. First report-generator optional-key failure and
+original script/tool transcript retained; corrected18 report is packaging only.
+Node_modules/runtime binaries excluded, no hermetic or new release-artifact claim.
+
+CV10 acceptance 64883009-2178-465b-8d9f-f736c93f6fd4 and umbrella e4284f8d-7ab6-40c6-b8a5-05111572e0cf saved/exact
+readback. Quota46used54remaining allowed/reset2unused. CV13 audit28 grouped7modules
+read-only preparation and four official high-advisory range reads saved in
+/tmp/dispatcher-cv13-current-audit-preparation-20261025.json; Linear183c9de8 saved/
+readback. No dependency mutation; those advisory minima are not latest/security
+clearance. Whole goal active: next runtime41 actual producer raw-status consumer,
+then atomic config/factory17, Controller29/pure restart certificate. Group/EPERM/
+R020/CV13-14 and all actual provider/account/GUI/service/writer/release Gates open.
