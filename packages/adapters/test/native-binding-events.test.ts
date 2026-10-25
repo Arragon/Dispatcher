@@ -211,3 +211,57 @@ it.each(["save","sink","authority"])("retains Devin allocated uncertainty and fe
  await expect(options.onBinding(f.ref)).rejects.toThrow();expect(()=>options.beforePrompt()).toThrow();
  expect(f.store.load("session")?.providerSessionId).toBe(mode==="save"?undefined:"native-exact");if(mode!=="authority")expect(f.store.load("session")?.nativeIdentityIssue).toBe("NATIVE_EVENT_PERSISTENCE_FAILED");
 });
+
+function copilotFixture(input:Partial<AdapterSession>={}) {
+ const f=fixture({backendId:"copilot-rpc",...input}),ref:NativeBinding={version:1,product:"copilot",region:"global",profileId:"profile",backendId:"copilot-rpc",runnerId:"local",nativeStoreRef:"native-store:copilot",nativeSessionId:"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",identityState:"bound",executionRefId:"execution"};
+ return {...f,ref,options:()=>f.observer.startOptions(f.session,f.emit,"copilot",()=>undefined,"copilot-session")};
+}
+it("persists allocated Copilot identity before the awaited owning waiting sink",async()=>{
+ const f=copilotFixture();let release!:()=>void,entered=false;const held=new Promise<void>(resolve=>{release=resolve;});
+ f.observer.setSink(async event=>{entered=true;expect(f.store.load("session")).toMatchObject({providerSessionId:"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",nativeBinding:f.ref});await held;f.events.push(event);},()=>()=>true);
+ const emit=f.observer.begin("session"),options=f.observer.startOptions(f.session,emit,"copilot",()=>undefined,"copilot-session"),pending=options.onBinding(f.ref);void pending.catch(()=>{});
+ await Promise.resolve();expect(entered).toBe(true);expect(f.events).toEqual([]);release();await pending;expect(f.events).toHaveLength(1);expect(()=>options.beforePrompt()).not.toThrow();
+});
+it.each(["product","region","profileId","backendId","runnerId","executionRefId","nativeThreadId","parentSessionId","nativeSessionId"] as const)("rejects foreign Copilot allocated %s without saving or emitting",async field=>{
+ const f=copilotFixture();f.ref[field]=field==="nativeSessionId"?"unstarted:unsafe":"foreign";
+ await expect(f.options().onBinding(f.ref)).rejects.toMatchObject({code:"NATIVE_IDENTITY_CHANGED"});expect(f.store.load("session")?.nativeBinding).toBeUndefined();expect(f.events).toEqual([]);
+});
+it.each(["historical","state","owner","drift","stale"])("fences Copilot allocation for %s",async mode=>{
+ const f=copilotFixture(mode==="historical"?{providerSessionId:"historical"}:mode==="state"?{state:"RUNNING"}:{});
+ if(mode==="historical"||mode==="state")expect(()=>f.options()).toThrowError(expect.objectContaining({code:"NATIVE_IDENTITY_CHANGED"}));
+ else if(mode==="owner")expect(()=>f.observer.startOptions(f.session,f.emit,"opencode",()=>undefined,"copilot-session")).toThrowError(expect.objectContaining({code:"NATIVE_IDENTITY_CHANGED"}));
+ else {const options=f.options();if(mode==="drift")f.store.save({...f.store.load("session")!,providerSessionId:"other"});else f.revoke();await expect(options.onBinding(f.ref)).rejects.toMatchObject({code:mode==="drift"?"NATIVE_IDENTITY_CHANGED":"STALE_NATIVE_OBSERVER"});}
+ expect(f.events).toEqual([]);expect(f.store.load("session")?.nativeBinding).toBeUndefined();
+});
+it.each(["save","sink","authority"])("retains Copilot allocated uncertainty and fences input after %s failure",async mode=>{
+ const f=copilotFixture(),save=f.store.save.bind(f.store);
+ if(mode==="save")f.store.save=session=>{if(session.nativeBinding)throw Error("private save");save(session);};
+ f.observer.setSink(async()=>{await Promise.resolve();if(mode==="authority")f.revoke();else if(mode==="sink")throw Error("private sink");},()=>f.ownsAuthority);
+ const emit=f.observer.begin("session"),options=f.observer.startOptions(f.session,emit,"copilot",()=>undefined,"copilot-session");
+ await expect(options.onBinding(f.ref)).rejects.toThrow();expect(()=>options.beforePrompt()).toThrow();
+ expect(f.store.load("session")?.providerSessionId).toBe(mode==="save"?undefined:"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");if(mode!=="authority")expect(f.store.load("session")?.nativeIdentityIssue).toBe("NATIVE_EVENT_PERSISTENCE_FAILED");
+});
+
+it.each(["RUNNING","COMPLETED","FAILED"] as const)("refuses Copilot state %s changed by final Guard",async state=>{
+ const f=copilotFixture(),options=f.observer.startOptions(f.session,f.emit,"copilot",()=>{f.store.save({...f.store.load("session")!,state});},"copilot-session");
+ await expect(options.onBinding(f.ref)).rejects.toMatchObject({code:"NATIVE_IDENTITY_CHANGED"});expect(f.store.load("session")?.nativeBinding).toBeUndefined();expect(f.events).toEqual([]);
+});
+it("refuses Copilot identity changed by final Guard without overwriting it",async()=>{
+ const f=copilotFixture(),options=f.observer.startOptions(f.session,f.emit,"copilot",()=>{f.store.save({...f.store.load("session")!,providerSessionId:"foreign"});},"copilot-session");
+ await expect(options.onBinding(f.ref)).rejects.toMatchObject({code:"NATIVE_IDENTITY_CHANGED"});expect(f.store.load("session")?.providerSessionId).toBe("foreign");expect(f.events).toEqual([]);
+});
+it.each(["pi-rpc","opencode-server-v2","devin-local-acp","codex-app-server"])("cannot allocate Copilot identity for %s",backendId=>{
+ const f=copilotFixture({backendId});expect(()=>f.options()).toThrowError(expect.objectContaining({code:"NATIVE_IDENTITY_CHANGED"}));expect(f.events).toEqual([]);
+});
+it.each(["nativeStoreRef","nativeThreadId","parentSessionId","nativeSessionId"] as const)("retains exact repeated Copilot binding and rejects %s replacement",async field=>{
+ const f=copilotFixture(),options=f.options();await options.onBinding(f.ref);await options.onBinding(structuredClone(f.ref));await expect(options.onBinding({...f.ref,[field]:"foreign"})).rejects.toMatchObject({code:"NATIVE_IDENTITY_CHANGED"});expect(f.store.load("session")?.nativeBinding).toEqual(f.ref);expect(f.events).toHaveLength(2);
+});
+it.each(["region","nativeThreadId","parentSessionId"] as const)("rejects already bound Copilot %s incompatible with allocation",field=>{
+ const f=copilotFixture(),binding={...f.ref,[field]:"foreign"},session={...f.session,nativeBinding:binding,providerSessionId:binding.nativeSessionId};f.store.save(session);const emit=f.observer.begin(session.id);expect(()=>f.observer.startOptions(session,emit,"copilot",()=>{},"copilot-session")).toThrowError(expect.objectContaining({code:"NATIVE_IDENTITY_CHANGED"}));expect(f.events).toEqual([]);
+});
+it("rejects a foreign and stale Copilot observer invocation",()=>{
+ const f=copilotFixture(),other={...f.session,id:"other",runId:"other-run"};f.store.save(other);const foreign=f.observer.begin(other.id);expect(()=>f.observer.startOptions(f.session,foreign,"copilot",()=>{},"copilot-session")).toThrowError(expect.objectContaining({code:"STALE_NATIVE_OBSERVER"}));f.observer.begin(f.session.id);expect(()=>f.options()).toThrowError(expect.objectContaining({code:"STALE_NATIVE_OBSERVER"}));expect(f.events).toEqual([]);
+});
+it("rejects an asynchronous final Copilot Guard before saving",async()=>{
+ const f=copilotFixture(),options=f.observer.startOptions(f.session,f.emit,"copilot",async()=>{},"copilot-session");await expect(options.onBinding(f.ref)).rejects.toMatchObject({code:"NATIVE_CAPABILITY_UNVERIFIED"});expect(f.store.load("session")?.nativeBinding).toBeUndefined();expect(f.events).toEqual([]);
+});

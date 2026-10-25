@@ -24,12 +24,14 @@ export class NativeBindingEvents {
   this.failedInvocations.add(invocationId);
   try{const current=this.store.load(sessionId);if(current?.nativeInvocationId===invocationId&&(!canProject||canProject()))this.store.save({...current,nativeIdentityIssue:current.nativeIdentityIssue??"NATIVE_EVENT_PERSISTENCE_FAILED"});}catch{/* Original invocation stays closed when persistence itself is unavailable. */}
  }
- startOptions(session:AdapterSession,emit:NativeTurnObserver,product:string,admit:()=>void,identity:"reserved"|"codex-thread"|"opencode-session"|"devin-local-session"="reserved"):{beforePrompt:()=>void;onBinding:(binding:NativeBinding)=>Promise<void>} {
+ startOptions(session:AdapterSession,emit:NativeTurnObserver,product:string,admit:()=>void,identity:"reserved"|"codex-thread"|"opencode-session"|"devin-local-session"|"copilot-session"="reserved"):{beforePrompt:()=>void;onBinding:(binding:NativeBinding)=>Promise<void>} {
   const expected=structuredClone(session),invocationId=this.store.load(session.id)?.nativeInvocationId,observer=this.observers.get(emit);
   if(!invocationId||observer?.sessionId!==session.id||observer.invocationId!==invocationId)throw new AdapterContractError("STALE_NATIVE_OBSERVER","Native observer does not own this invocation");
   let bound=structuredClone(expected.nativeBinding);
-  const codexThread=identity==="codex-thread",opencodeSession=identity==="opencode-session",devinSession=identity==="devin-local-session",sessionAllocated=opencodeSession||devinSession,allocated=codexThread||sessionAllocated;
-  if(!["reserved","codex-thread","opencode-session","devin-local-session"].includes(identity)||sessionAllocated&&((opencodeSession?product!=="opencode"||expected.backendId!=="opencode-server-v2":product!=="devin-local"||expected.backendId!=="devin-local-acp")||bound&&(bound.region!=="global"||bound.nativeThreadId!==undefined||bound.parentSessionId!==undefined))||allocated&&(codexThread&&(product!=="codex"||expected.backendId!=="codex-app-server")||(bound?expected.providerSessionId!==bound.nativeSessionId:expected.providerSessionId!==undefined||expected.state!=="STARTING")))throw new AdapterContractError("NATIVE_IDENTITY_CHANGED","Native allocation requires the original qualified invocation");
+  const codexThread=identity==="codex-thread";
+  const sessionModes={"opencode-session":["opencode","opencode-server-v2"],"devin-local-session":["devin-local","devin-local-acp"],"copilot-session":["copilot","copilot-rpc"]} as const;
+  const pair=identity in sessionModes?sessionModes[identity as keyof typeof sessionModes]:undefined,sessionAllocated=pair!==undefined,allocated=codexThread||sessionAllocated;
+  if(!["reserved","codex-thread",...Object.keys(sessionModes)].includes(identity)||sessionAllocated&&(product!==pair[0]||expected.backendId!==pair[1]||bound&&(bound.region!=="global"||bound.nativeThreadId!==undefined||bound.parentSessionId!==undefined))||allocated&&(codexThread&&(product!=="codex"||expected.backendId!=="codex-app-server")||(bound?expected.providerSessionId!==bound.nativeSessionId:expected.providerSessionId!==undefined||expected.state!=="STARTING")))throw new AdapterContractError("NATIVE_IDENTITY_CHANGED","Native allocation requires the original qualified invocation");
   const assertCurrent=()=>{
    this.assertIdentity(expected.id);const current=this.store.load(expected.id);
    if(!current)throw new AdapterContractError("SESSION_NOT_FOUND","Native input requires the original Adapter session");

@@ -38,6 +38,7 @@ const failure=(code:string)=>new AdapterContractError(code,"Copilot RPC operatio
 const object=(value:unknown):value is Record<string,unknown>=>Boolean(value)&&typeof value==="object"&&!Array.isArray(value);
 const text=(value:unknown,max=512):value is string=>typeof value==="string"&&value.length>0&&value.length<=max&&Array.from(value).every(char=>char.charCodeAt(0)>=32&&char.charCodeAt(0)!==127);
 const methods=new Set(["ping","status.get","auth.getStatus","session.list","session.getMetadata"]);
+export {physical as copilotPhysicalIdentity};
 function physical(path:string,directory:boolean){
  try{
   if(!text(path,4096)||!isAbsolute(path))throw Error();const resolved=realpathSync(path),stat=statSync(resolved,{bigint:true});
