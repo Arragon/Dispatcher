@@ -2,6 +2,7 @@ import {CanonicalLocalResults} from "./local-results.js";
 import {CodexExecutionRuntime} from "./codex-runtime.js";
 import {OpenCodeExecutionRuntime} from "./opencode-runtime.js";
 import {DevinExecutionRuntime,assertDevinRuntimeSettings} from "./devin-runtime.js";
+import {CopilotExecutionRuntime,assertCopilotRuntimeSettings} from "./copilot-runtime.js";
 import {PiExecutionRuntime} from "./pi-runtime.js";
 import {NativeHistoryService,NativeHistoryError} from "./native-history.js";
 import {nativeSessionView} from "./native-session-view.js";
@@ -59,7 +60,8 @@ import {
   isNativeCliProvider,
   probeNativeCliProfile,
   DevinAdapter,
-  devinManifest, devinLocalAcpManifest,
+  devinManifest, devinLocalAcpManifest, copilotManifest,
+  type CopilotExecutionScope, type CopilotExecutionBackend,
   type DevinLocalAcpExecutionScope, type DevinLocalAcpExecutionBackend,
   LocalServiceAdapter,
   localServiceManifest,
@@ -198,6 +200,7 @@ export interface ControllerOptions {
   integrationFetch?: (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
   gitTransport?: GitTransport;
   codexNativeReader?: (input:CodexReadRequest)=>Promise<unknown>;
+  copilotExecutionFactory?: (scope:CopilotExecutionScope,executionRef:ExecutionContextRef)=>CopilotExecutionBackend;
   devinExecutionFactory?: (scope:DevinLocalAcpExecutionScope,executionRef:ExecutionContextRef)=>DevinLocalAcpExecutionBackend;
   opencodeExecutionFactory?: (scope:OpenCodeV2OwnedScope,executionRef:ExecutionContextRef)=>OpenCodeV2ExecutionBackend;
   codexAppServerFactory?: (scope:CodexAppServerScope,authority?:CodexNativeAuthority)=>CodexAppServerBackend;
@@ -225,7 +228,7 @@ export interface BackgroundWorkerOptions {
   runMaxDelayMs?: number;
 }
 
-type OwnedNativeRuntime=PiExecutionRuntime|CodexExecutionRuntime|OpenCodeExecutionRuntime|DevinExecutionRuntime;
+type OwnedNativeRuntime=CopilotExecutionRuntime|PiExecutionRuntime|CodexExecutionRuntime|OpenCodeExecutionRuntime|DevinExecutionRuntime;
 type TaskDispatchResult = { run: Run; routing: { explanation: string; eligible: unknown[]; rejected: unknown[] } };
 class TaskDispatchError extends Error {
   constructor(readonly code: string, readonly statusCode: number, message: string) { super(message); }
@@ -456,7 +459,7 @@ function llmConfiguration(config: DispatcherConfig["internalLlm"]): LlmConfigura
   };
 }
 
-const adapterManifests = [genericMockManifest, genericCliManifest, codexManifest, qoderManifest, cursorManifest, devinManifest, devinLocalAcpManifest, kiroManifest, localServiceManifest, opencodeManifest, grokManifest, piManifest, antigravityManifest, zcodeManifest, workbuddyCliManifest, qoderCnManifest] as const;
+const adapterManifests = [genericMockManifest, genericCliManifest, codexManifest, qoderManifest, cursorManifest, devinManifest, devinLocalAcpManifest, copilotManifest, kiroManifest, localServiceManifest, opencodeManifest, grokManifest, piManifest, antigravityManifest, zcodeManifest, workbuddyCliManifest, qoderCnManifest] as const;
 
 function manifestForProvider(provider: string) {
   if (provider === "workbuddy" || provider === "codebuddy") return localServiceManifest;
@@ -496,6 +499,7 @@ export class ControllerService {
   readonly connectors = new ConnectorRegistry();
   readonly tasks: CanonicalTaskService;
   private readonly nativeInteractions:NativeInteractions;
+  private readonly copilotRuntimes=new Map<string,CopilotExecutionRuntime>();
   private readonly codexRuntimes=new Map<string,CodexExecutionRuntime>();
   private readonly devinRuntimes=new Map<string,DevinExecutionRuntime>();
   private readonly opencodeRuntimes=new Map<string,OpenCodeExecutionRuntime>();
@@ -864,8 +868,8 @@ export class ControllerService {
     return this.stopping;
   }
 
-  private nativeRuntime(profileId:string):OwnedNativeRuntime|undefined {return this.codexRuntimes.get(profileId)??this.piRuntimes.get(profileId)??this.opencodeRuntimes.get(profileId)??this.devinRuntimes.get(profileId);}
-  private allNativeRuntimes():Array<{profileId:string;backendId:"pi-rpc"|"codex-app-server"|"opencode-server-v2"|"devin-local-acp";runtime:OwnedNativeRuntime}> {return [...[...this.piRuntimes].map(([profileId,runtime])=>({profileId,backendId:"pi-rpc" as const,runtime})),...[...this.codexRuntimes].map(([profileId,runtime])=>({profileId,backendId:"codex-app-server" as const,runtime})),...[...this.opencodeRuntimes].map(([profileId,runtime])=>({profileId,backendId:"opencode-server-v2" as const,runtime})),...[...this.devinRuntimes].map(([profileId,runtime])=>({profileId,backendId:"devin-local-acp" as const,runtime}))];}
+  private nativeRuntime(profileId:string):OwnedNativeRuntime|undefined {return this.copilotRuntimes.get(profileId)??this.codexRuntimes.get(profileId)??this.piRuntimes.get(profileId)??this.opencodeRuntimes.get(profileId)??this.devinRuntimes.get(profileId);}
+  private allNativeRuntimes():Array<{profileId:string;backendId:"pi-rpc"|"codex-app-server"|"opencode-server-v2"|"devin-local-acp"|"copilot-rpc";runtime:OwnedNativeRuntime}> {return [...[...this.copilotRuntimes].map(([profileId,runtime])=>({profileId,backendId:"copilot-rpc" as const,runtime})),...[...this.piRuntimes].map(([profileId,runtime])=>({profileId,backendId:"pi-rpc" as const,runtime})),...[...this.codexRuntimes].map(([profileId,runtime])=>({profileId,backendId:"codex-app-server" as const,runtime})),...[...this.opencodeRuntimes].map(([profileId,runtime])=>({profileId,backendId:"opencode-server-v2" as const,runtime})),...[...this.devinRuntimes].map(([profileId,runtime])=>({profileId,backendId:"devin-local-acp" as const,runtime}))];}
 
   private nativePort(binding:NativeBinding):NativeInteractionPort|undefined {
     const profileId=binding.profileId,runtime=this.nativeRuntime(profileId);
@@ -875,7 +879,7 @@ export class ControllerService {
       const source=runtime.source(binding);
       return this.nativeRuntime(profileId)===runtime&&this.agentAdapters.get(profileId)===adapter&&this.nativeRuntimeAdapters.get(runtime)===adapter?source:undefined;
     }
-    if(binding.backendId==="opencode-server-v2"||binding.backendId==="devin-local-acp")return undefined;
+    if(binding.backendId==="opencode-server-v2"||binding.backendId==="devin-local-acp"||binding.backendId==="copilot-rpc")return undefined;
     return this.agentAdapters.get(binding.profileId)?.interaction;
   }
 
@@ -1298,6 +1302,12 @@ export class ControllerService {
       try{assertDevinRuntimeSettings({id:profile.id,alias:profile.alias,executable:stringSetting(profile.settings?.executable)!},stringSetting(profile.settings?.dataHome)!,stringSetting(profile.settings?.configHome)!);}
       catch{throw new ConfigPlanError("NATIVE_RUNTIME_SCOPE_UNSUPPORTED","Devin Local ACP requires existing explicit native paths");}
     }
+    for(const profile of config.agentProfiles.filter(profile=>profile.enabled!==false&&profile.provider==="copilot")){
+      const embeddedId=this.embeddedRunner?.runner.id??this.configuration.current().config.runners.find(runner=>runner.mode==="embedded")?.id??"local";
+      if(!this.options.withRunner||profile.runnerId!==embeddedId||!config.runners.some(runner=>runner.id===embeddedId&&runner.mode==="embedded"))throw new ConfigPlanError("NATIVE_RUNTIME_SCOPE_UNSUPPORTED","Copilot RPC requires this Controller's embedded executor");
+      try{assertCopilotRuntimeSettings({id:profile.id,alias:profile.alias,executable:stringSetting(profile.settings?.executable)!},stringSetting(profile.settings?.copilotHome)!);}
+      catch{throw new ConfigPlanError("NATIVE_RUNTIME_SCOPE_UNSUPPORTED","Copilot RPC requires existing explicit native paths");}
+    }
     const retainedAdapters = new Map<string, AgentAdapter>();
     const runnerIdentity = (runnerId: string) => {
       const runner = config.runners.find(candidate => candidate.id === runnerId);
@@ -1405,6 +1415,7 @@ export class ControllerService {
     }
 
     this.agentAdapters.clear();
+    for(const id of this.copilotRuntimes.keys())if(!retainedAdapters.has(id))this.copilotRuntimes.delete(id);
     for(const id of this.codexRuntimes.keys())if(!retainedAdapters.has(id))this.codexRuntimes.delete(id);
     for(const id of this.devinRuntimes.keys())if(!retainedAdapters.has(id))this.devinRuntimes.delete(id);
     for(const id of this.opencodeRuntimes.keys())if(!retainedAdapters.has(id))this.opencodeRuntimes.delete(id);
@@ -1437,7 +1448,11 @@ export class ControllerService {
     const resolveProviderCredential = (reference: string): Promise<string> => this.secrets.resolve(reference, { principal: "controller", purpose: "provider" });
     for (const profile of enabledProfiles) {
       if (retainedAdapters.has(profile.id)) continue;
-      let piRuntime:PiExecutionRuntime|undefined,codexRuntime:CodexExecutionRuntime|undefined,opencodeRuntime:OpenCodeExecutionRuntime|undefined,devinRuntime:DevinExecutionRuntime|undefined,devinAdapter:AgentAdapter|undefined;
+      let copilotRuntime:CopilotExecutionRuntime|undefined,copilotAdapter:AgentAdapter|undefined,piRuntime:PiExecutionRuntime|undefined,codexRuntime:CodexExecutionRuntime|undefined,opencodeRuntime:OpenCodeExecutionRuntime|undefined,devinRuntime:DevinExecutionRuntime|undefined,devinAdapter:AgentAdapter|undefined;
+      if(profile.nativeInteraction?.backendId==="copilot-rpc"){
+        copilotRuntime=new CopilotExecutionRuntime({profile:{id:profile.id,alias:profile.alias,executable:stringSetting(profile.settings?.executable)!},copilotHome:stringSetting(profile.settings?.copilotHome)!,runnerId:profile.runnerId,assertCurrent:(input,expectedBinding)=>this.assertManagedCopilotCurrent(profile.id,copilotRuntime!,copilotAdapter!,input,expectedBinding),bindingFor:id=>this.persistedNativeBinding(profile.id,id),...(this.options.copilotExecutionFactory?{factory:this.options.copilotExecutionFactory}:{})});
+        this.copilotRuntimes.set(profile.id,copilotRuntime);
+      }
       if(profile.nativeInteraction?.backendId==="codex-app-server"){
         codexRuntime=new CodexExecutionRuntime({profile:{id:profile.id,alias:profile.alias,executable:stringSetting(profile.settings?.executable)!,codexHome:stringSetting(profile.settings?.codexHome)!,...(stringSetting(profile.settings?.model)?{model:stringSetting(profile.settings?.model)!}:{})},runnerId:profile.runnerId,assertInput:input=>this.assertManagedCodexInput(profile.id,input),bindingFor:id=>this.persistedNativeBinding(profile.id,id),authorityFor:scope=>this.codexNativeAuthority(scope),...(this.options.codexAppServerFactory?{factory:this.options.codexAppServerFactory}:{})});this.codexRuntimes.set(profile.id,codexRuntime);
       }
@@ -1458,6 +1473,7 @@ export class ControllerService {
         this.piRuntimes.set(profile.id,piRuntime);
       }
       const adapter = createNativeProfileAdapter(profile, {
+        ...(copilotRuntime?{copilotBackendFactory:()=>copilotRuntime!}:{}),
         ...(devinRuntime?{devinLocalBackendFactory:()=>devinRuntime!}:{}),
         store, resolveCredential: resolveProviderCredential,
         ...(codexRuntime?{codexBackendFactory:()=>codexRuntime!}:this.options.codexBackendFactory ? { codexBackendFactory: this.options.codexBackendFactory } : {}),
@@ -1465,7 +1481,7 @@ export class ControllerService {
         ...(opencodeRuntime?{cliBackendFactory:()=>opencodeRuntime!}:piRuntime?{cliBackendFactory:()=>piRuntime!}:this.options.cliBackendFactory ? { cliBackendFactory: this.options.cliBackendFactory } : {}),
       });
       if (adapter) {
-        devinAdapter=adapter;const runtime=codexRuntime??piRuntime??opencodeRuntime??devinRuntime;if(runtime)this.nativeRuntimeAdapters.set(runtime,adapter);
+        copilotAdapter=adapter;devinAdapter=adapter;const runtime=copilotRuntime??codexRuntime??piRuntime??opencodeRuntime??devinRuntime;if(runtime)this.nativeRuntimeAdapters.set(runtime,adapter);
         codexRuntime?.setNativeRequestSink(event=>{
           if(this.stopping||this.agentAdapters.get(profile.id)!==adapter)throw new InteractionGuardError("NATIVE_REQUEST_CONNECTION_CHANGED");
           const port=event.binding.profileId===profile.id?this.nativePort(event.binding):undefined;if(!port)throw new InteractionGuardError("SESSION_OWNER_MISMATCH");
@@ -2136,14 +2152,45 @@ export class ControllerService {
   }
 
   private assertManagedNativeInput(profileId:string,owner:{providerId:"codex";backendId:"codex-app-server"}|{providerId:"opencode";backendId:"opencode-server-v2"}|{providerId:"devin-local";backendId:"devin-local-acp"},input:{executionRef:ExecutionContextRef;workspacePath:string;executionSelection:ExecutionSelection;commandId:string}):Run {
+    const run=this.assertManagedNativeStoreInput(profileId,owner,input);
+    try{this.fenceNativeSpawn(run.id,profileId);}catch{throw new InteractionGuardError("EXECUTION_CONTEXT_DRIFT");}
+    return run;
+  }
+
+  private assertManagedNativeStoreInput(profileId:string,owner:{providerId:"codex";backendId:"codex-app-server"}|{providerId:"opencode";backendId:"opencode-server-v2"}|{providerId:"devin-local";backendId:"devin-local-acp"}|{providerId:"copilot";backendId:"copilot-rpc"},input:{executionRef:ExecutionContextRef;workspacePath:string;executionSelection:ExecutionSelection;commandId:string}):Run {
     const ref=input.executionRef,workspace=this.workspaces.get(input.workspacePath);
     if(this.stopping||!isExecutionContextRef(ref)||ref.kind!=="managed-worktree"||this.embeddedRunner?.runner.id!==ref.runnerId||!workspace)throw new InteractionGuardError("EXECUTION_CONTEXT_DRIFT");
     const run=this.database.getEntity<JsonValue>("run",workspace.runId) as unknown as Run|undefined;
     const task=run?this.database.getCanonicalTask<JsonValue>(run.taskId)?.document as unknown as Task|undefined:undefined;
     const session=run?this.database.getEntity<JsonValue>("adapter-session",run.sessionId) as unknown as AdapterSession|undefined:undefined;
     if(!run||!session||run.profileId!==profileId||run.providerId!==owner.providerId||run.runnerId!==ref.runnerId||isTerminalRunState(run.state)||task?.currentRunId!==run.id||!isDeepStrictEqual(run.executionRef,ref)||!isDeepStrictEqual(run.executionSelection,input.executionSelection)||!isDeepStrictEqual(session.executionSelection,run.executionSelection)||!isDeepStrictEqual(session.executionRef,ref)||session.id!==run.sessionId||session.runId!==run.id||session.profileId!==profileId||session.backendId!==owner.backendId||!input.commandId||session.nativeInvocationId!==input.commandId||!isDeepStrictEqual(session.execution,{generation:run.generation,attempt:run.attempt,leaseId:run.leaseId})||run.worktree!==input.workspacePath||ref.workspaceId!==run.id||workspace.repositoryId!==ref.repositoryId||workspace.branch!==ref.branch||workspace.baseRevision!==ref.baseRevision)throw new InteractionGuardError("EXECUTION_CONTEXT_DRIFT");
-    try{this.fenceNativeSpawn(run.id,profileId);}catch{throw new InteractionGuardError("EXECUTION_CONTEXT_DRIFT");}
     return run;
+  }
+
+  private assertManagedCopilotCurrent(profileId:string,runtime:CopilotExecutionRuntime,adapter:AgentAdapter,input:CliStartInput,expectedBinding:NativeBinding|undefined):void {
+    const identity=input.nativeInput,ref=input.executionRef;
+    if(!identity||!ref||identity.version!==1||identity.profileId!==profileId||identity.backendId!=="copilot-rpc"||!identity.executionSelection||!identity.commandId)throw new InteractionGuardError("EXECUTION_CONTEXT_DRIFT");
+    // Admission and clock callbacks can reenter. They precede the final direct
+    // canonical permission + persisted identity decision; no callback follows it.
+    this.fenceNativeSpawn(identity.runId,profileId);
+    const now=this.now().getTime();
+    this.database.transaction(()=>{
+      if(this.copilotRuntimes.get(profileId)!==runtime||this.agentAdapters.get(profileId)!==adapter||this.nativeRuntimeAdapters.get(runtime)!==adapter)throw new InteractionGuardError("EXECUTION_CONTEXT_DRIFT");
+      const run=this.assertManagedNativeStoreInput(profileId,{providerId:"copilot",backendId:"copilot-rpc"},{executionRef:ref,workspacePath:input.workspacePath,executionSelection:identity.executionSelection!,commandId:identity.commandId});
+      const session=this.database.getEntity<JsonValue>("adapter-session",run.sessionId) as unknown as AdapterSession;
+      const canonical=this.database.getEntity<JsonValue>("session",run.sessionId) as unknown as {id:string;profileId:string;providerId:string;executionRef?:ExecutionContextRef}|undefined;
+      const task=this.database.getCanonicalTask<JsonValue>(run.taskId),store=new InteractionStore(this.database),control=store.control(run.sessionId),start=store.command(`native-start:${run.id}`),lease=this.leaseAuthority.current(run.id);
+      const controlRow=this.database.handle.prepare("SELECT session_id,active_run_id,epoch,revision,state FROM session_controls WHERE session_id=?").get(run.sessionId) as {session_id:string;active_run_id:string;epoch:number;revision:number;state:string}|undefined;
+      const observer=this.database.getEntity<JsonValue>("native-observer-authority",`${run.sessionId}:${identity.commandId}`) as unknown as {sessionId:string;runId:string;profileId:string;backendId:string;invocationId:string;generation:number;attempt:number;leaseId:string;controlEpoch:number;controlRevision:number}|undefined;
+      if(identity.runId!==run.id||identity.sessionId!==run.sessionId||this.cancelledRunIds.has(run.id)||run.revokedLeaseIds?.includes(run.leaseId)||!task||["DONE","FAILED","CANCELLED"].includes((task.document as {state:string}).state)||!canonical||canonical.id!==run.sessionId||canonical.profileId!==profileId||canonical.providerId!=="copilot"||!isDeepStrictEqual(canonical.executionRef,ref)||this.database.getConfigState()?.revision!==run.executionSelection?.configRevision||session.workspacePath!==input.workspacePath||!["STARTING","RUNNING"].includes(session.state)||session.nativeIdentityIssue||!session.nativeBinding&&session.state!=="STARTING"||!lease||lease.runnerId!==run.runnerId||lease.leaseId!==run.leaseId||lease.generation!==run.generation||lease.revokedAt||!Number.isFinite(now)||!Number.isFinite(Date.parse(lease.expiresAt))||Date.parse(lease.expiresAt)<=now||run.leaseExpiresAt&&(!Number.isFinite(Date.parse(run.leaseExpiresAt))||Date.parse(run.leaseExpiresAt)<=now))throw new InteractionGuardError("STALE_RUN_AUTHORITY");
+      if(!observer||observer.sessionId!==run.sessionId||observer.runId!==run.id||observer.profileId!==profileId||observer.backendId!=="copilot-rpc"||observer.invocationId!==identity.commandId||observer.generation!==run.generation||observer.attempt!==run.attempt||observer.leaseId!==run.leaseId||!control||!controlRow||controlRow.session_id!==control.sessionId||controlRow.active_run_id!==control.activeRunId||controlRow.epoch!==control.epoch||controlRow.revision!==control.revision||controlRow.state!==control.state||control.sessionId!==run.sessionId||control.activeRunId!==run.id||control.state!=="AUTOMATED"||control.epoch!==observer.controlEpoch||control.revision!==observer.controlRevision||!start||start.id!==`native-start:${run.id}`||start.fence.commandId!==start.id||start.type!=="start"||start.profileId!==profileId||start.backendId!=="copilot-rpc"||!["SENDING","ACKNOWLEDGED"].includes(start.state)||start.fence.runId!==run.id||start.fence.sessionId!==run.sessionId||start.fence.expectedCurrentRunId!==run.id||start.fence.expectedTaskRevision!==task.revision||start.fence.expectedControlEpoch!==control.epoch||start.fence.expectedControlRevision!==control.revision||start.fence.generation!==run.generation||start.fence.leaseId!==run.leaseId||start.configRevision!==run.executionSelection?.configRevision)throw new InteractionGuardError("STALE_CONTROL_REVISION");
+      // Undefined permits the durable onBinding transition before the runtime's
+      // bindingPersisted flag advances. A bound expectation must match both stores.
+      if(expectedBinding!==undefined){
+        const expected={version:1,product:"copilot",region:"global",profileId,backendId:"copilot-rpc",runnerId:run.runnerId,nativeStoreRef:expectedBinding.nativeStoreRef,nativeSessionId:expectedBinding.nativeSessionId,identityState:"bound",executionRefId:ref.id};
+        if(!isDeepStrictEqual(expectedBinding,expected)||session.providerSessionId!==expectedBinding.nativeSessionId||!isDeepStrictEqual(session.nativeBinding,expectedBinding)||!isDeepStrictEqual(store.binding(run.sessionId),expectedBinding))throw new InteractionGuardError("NATIVE_IDENTITY_CHANGED");
+      }
+    });
   }
 
   private assertManagedPiInput(profileId:string,input:CliStartInput):void {
@@ -4221,6 +4268,17 @@ export class ControllerService {
       }
       return reply.code(404).send({ code: "ADAPTER_NOT_FOUND" });
     });
+    this.app.post<{Body:{id:string;alias:string;runnerId?:string;enabled?:boolean;executable:string;copilotHome:string;previewOnly?:boolean;baseRevision?:number}}>("/api/agents/copilot/profiles",{schema:{body:{type:"object",additionalProperties:false,required:["id","alias","executable","copilotHome"],properties:{id:{type:"string",minLength:1},alias:{type:"string",minLength:1},runnerId:{type:"string",minLength:1},enabled:{type:"boolean"},executable:{type:"string"},copilotHome:{type:"string"},previewOnly:{type:"boolean"},baseRevision:{type:"integer"}}}}},async(request,reply)=>{
+      const body=request.body,current=this.configuration.current();
+      if(body.baseRevision!==undefined&&body.baseRevision!==current.revision)throw new RevisionConflictError(body.baseRevision,current.revision);
+      if(current.config.agentProfiles.some(profile=>profile.id===body.id))return reply.code(409).send({code:"PROFILE_EXISTS"});
+      const next=structuredClone(current.config),runnerId=body.runnerId??"local";
+      next.agentProfiles.push({id:body.id,alias:body.alias,provider:"copilot",runnerId,...(body.enabled===undefined?{}:{enabled:body.enabled}),settings:{executable:body.executable,copilotHome:body.copilotHome},nativeInteraction:{mode:"compatible",backendId:"copilot-rpc",executionLocation:"managed-worktree"}});
+      const plan=await this.planConfiguration(next,this.principalFor(request).id,"web");
+      if(body.previewOnly===true)return reply.code(201).send({plan:consoleConfigPlan(plan)});
+      const applied=await this.applyConfigurationPlan(plan.id,{confirmed:true});
+      return reply.code(201).send({profile:{id:body.id,provider:"copilot",alias:body.alias,runnerId,state:body.enabled===false?"DISABLED":"CONFIGURED"},revision:applied.revision});
+    });
     this.app.post<{Body:{id:string;alias:string;runnerId?:string;enabled?:boolean;executable:string;dataHome:string;configHome:string;previewOnly?:boolean;baseRevision?:number}}>("/api/agents/devin-local/profiles",{schema:{body:{type:"object",additionalProperties:false,required:["id","alias","executable","dataHome","configHome"],properties:{id:{type:"string",minLength:1},alias:{type:"string",minLength:1},runnerId:{type:"string",minLength:1},enabled:{type:"boolean"},executable:{type:"string"},dataHome:{type:"string"},configHome:{type:"string"},previewOnly:{type:"boolean"},baseRevision:{type:"integer"}}}}},async(request,reply)=>{
       const body=request.body,current=this.configuration.current();
       if(body.baseRevision!==undefined&&body.baseRevision!==current.revision)throw new RevisionConflictError(body.baseRevision,current.revision);
@@ -4290,7 +4348,10 @@ export class ControllerService {
       return { revision: applied.revision, profile: { id: profile.id, alias: profile.alias, enabled: profile.enabled } };
     });
     this.app.post<{ Params:{id:string};Body:{repositoryId?:string}|undefined }>("/api/agents/profiles/:id/test",async(request,reply)=>{
-      if(!this.configuration.current().config.agentProfiles.some(profile=>profile.id===request.params.id))return reply.code(404).send({code:"PROFILE_NOT_FOUND"});return this.probeConfiguredProfile(request.params.id,request.body?.repositoryId);
+      const profile=this.configuration.current().config.agentProfiles.find(profile=>profile.id===request.params.id);
+      if(!profile)return reply.code(404).send({code:"PROFILE_NOT_FOUND"});
+      if(profile.provider==="copilot")return reply.code(409).send({code:"PROFILE_UNSUPPORTED"});
+      return this.probeConfiguredProfile(request.params.id,request.body?.repositoryId);
     });
     this.app.post<{ Params: { id: string }; Body: CodexRunBody }>("/api/agents/profiles/:id/runs", async (request, reply) => {
       if (typeof request.body?.workspacePath !== "string" || typeof request.body.prompt !== "string" || !request.body.prompt.trim()) return reply.code(400).send({ code: "RUN_INPUT_REQUIRED" });
@@ -4303,6 +4364,7 @@ export class ControllerService {
       this.resolveProfileExecutionContext(profileId, workspace.repositoryId, "start");
       const adapter = this.agentAdapters.get(profileId);
       if (!adapter) return reply.code(404).send({ code: "PROFILE_NOT_FOUND" });
+      if(profile.provider==="copilot")return reply.code(409).send({code:"NATIVE_SELECTION_UNSUPPORTED",message:"Copilot has no qualified standalone trial selection"});
       this.pendingProfileStarts.set(profileId, (this.pendingProfileStarts.get(profileId) ?? 0) + 1);
       const runId = randomUUID();
       try {

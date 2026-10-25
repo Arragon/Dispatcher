@@ -33,4 +33,4 @@ export {freezeExecutionSelection} from "./execution-selection.js";
 
 export {devinLocalAcpManifest,DevinLocalAcpExecutionBackend,type DevinLocalAcpExecutionScope} from "./devin-acp-execution.js";
 
-export {CopilotExecutionBackend,type CopilotExecutionScope} from "./copilot-execution.js";
+export {copilotManifest,CopilotExecutionBackend,type CopilotExecutionScope} from "./copilot-execution.js";

@@ -3,11 +3,12 @@ import { execFileSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
-import { afterEach, expect, vi } from "vitest";
+import { afterEach, vi } from "vitest";
 import { DevinLocalAcpExecutionBackend, type DevinLocalAcpExecutionScope, type AgentAdapter, type NativeInteractionPort } from "@dispatcher/adapters";
 import type { Run, ExecutionContextRef, ExecutionSelection, NativeBinding } from "@dispatcher/domain";
 import { InteractionStore, type JsonValue } from "@dispatcher/persistence";
 import { ControllerService } from "../../src/service.js";
+import {expectRetainedStop,stopFixtureStorage,clearRetainedStop} from "./native-service-fixture-cleanup.js";
 
 // Optional verification capture retains the exact generated executable and native logs.
 function retainFixtureFile(path:string):void {
@@ -15,25 +16,10 @@ function retainFixtureFile(path:string):void {
   const target=join(evidence,createHash("sha256").update(path).digest("hex"));mkdirSync(target,{recursive:true});copyFileSync(path,join(target,basename(path)));
   writeFileSync(join(target,"identity.json"),JSON.stringify({path,sha256:createHash("sha256").update(readFileSync(path)).digest("hex")})+"\n");
 }
+export {expectRetainedStop};
 export const fixtures: Array<{ service: ControllerService; root: string }> = [];
-const retainedStopFailures=new WeakMap<ControllerService,unknown>();
-/** Assertion must succeed before this specific rejected stop can retain test storage. */
-export async function expectRetainedStop(service:ControllerService,expected:object):Promise<unknown> {
-  const failure=await service.stop().then(()=>{throw Error("Expected fixture shutdown to reject");},error=>error);
-  expect(failure).toMatchObject(expected);
-  retainedStopFailures.set(service,failure);
-  return failure;
-}
 export async function cleanupFixture(f:{service:ControllerService;root:string}):Promise<void> {
-  let closeRetainedStorage=false;
-  try { await f.service.stop(); }
-  catch(error){
-    // Error class/code cannot authorize cleanup of an otherwise ordinary fixture.
-    if(!retainedStopFailures.has(f.service)||retainedStopFailures.get(f.service)!==error)throw error;
-    await Promise.allSettled([...f.service["nativeCatalogReads"]]);
-    if(f.service["allNativeRuntimes"]().some(({runtime})=>"hasActiveOperations" in runtime&&runtime.hasActiveOperations()))throw Error("Release and drain retained fixture native operations before storage cleanup",{cause:error});
-    closeRetainedStorage=true;
-  }
+  const closeRetainedStorage=await stopFixtureStorage(f.service);
   const held=join(f.root,"model-descendant");
   if(existsSync(held)){
     const pid=Number(readFileSync(held,"utf8"));
@@ -41,7 +27,7 @@ export async function cleanupFixture(f:{service:ControllerService;root:string}):
   }
   if(closeRetainedStorage)f.service.database.close();
   for(const name of ["devin-fixture","roots","wire","model-queries","model-descendant"])retainFixtureFile(join(f.root,name));
-  rmSync(f.root,{recursive:true,force:true});retainedStopFailures.delete(f.service);
+  rmSync(f.root,{recursive:true,force:true});clearRetainedStop(f.service);
   const index=fixtures.findIndex(entry=>entry.service===f.service);if(index>=0)fixtures.splice(index,1);
 }
 
