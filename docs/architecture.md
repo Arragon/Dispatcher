@@ -1861,16 +1861,24 @@ selection and complete binding fences. Its mandatory synchronous assertCurrent
 owner checks canonical permission and the expected persisted binding in one
 critical section. Only pure local fences follow that decision; an independent
 binding lookup cannot authorize input. Diagnostics retains its separate observed
-binding lookup and grants no control. The future Controller service consumer must
-implement the joint assertion over its real canonical and persisted store.
+binding lookup and grants no control. The Controller service implements that
+joint assertion over real canonical and persisted facts in one store transaction,
+after external lease/admission/clock callbacks. It checks current control document
+and SQL row, config revision, lease/cancellation, original observer/start reservation,
+Adapter workspace/invocation and both complete binding copies. Only direct local
+registry/physical fences follow.
 
 Raw acquisition, result and callbacks survive public cancellation; bounded
 acknowledgements and aggregate checkpoints preserve immutable unknown receipts.
 Result bytes are copied before owner callbacks. Source remains undefined and
 native control, continuation, catalog and writer release remain unqualified.
-The code has scoped review and full local verification through the separately
-reviewed Devin test setup/observation correction. Controller configuration/factory
-and actual service ownership remain separate consumers, not granted by that gate.
+Controller composes this runtime through its exact profile/Adapter association.
+Raw acquisition, observer and result work participate in profile replacement and
+SQLite shutdown barriers; cached cleanup receipts persist before storage closes,
+and a persistence retry does not close the original root twice. Local disconnect
+still grants no native tool/writer release. Copilot cannot borrow an aggregate
+source if its own runtime is absent. Public model/trial/publication paths reject
+unsupported selection before Task/Run/Adapter Session/native allocation.
 
 Copilot ConfigPlan now admits only explicit compatible copilot-rpc on the owning
 Embedded Runner with executable/copilotHome and native login. The structural
@@ -1879,4 +1887,5 @@ the callback and constructs the existing three-argument Adapter from that captur
 Disabled registrations skip factory work while protecting their configured home.
 Console/plan projections omit the five known native directory keys through the
 existing private-key/edit boundary; export continues omitting all settings.
-Actual Controller composition and the real joint store assertion follow in C1.
+Readonly restart admission remains a separate stored-agreement certificate;
+current Copilot nonterminal cold records stay closed until that certificate exists.

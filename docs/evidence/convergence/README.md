@@ -5212,3 +5212,94 @@ capture layout. Historical earlier capture loss and root producer ledger excepti
 remain unchanged. Current unit ledgers/docs stayed frozen until completed audit.
 No hermetic/account/GUI/native writer/release/P4 proof. Official quota72used28remaining,
 ordinaryallowed/reset2unused; goalactive and next C1/C2 dispatched in dependency order.
+
+## Copilot Controller C1 — locally accepted8122556
+
+BASE026c724→8122556554fd9a5d9996768effc5b9006c1486e2, exactly6files/403insertions/
+30deletions. Dedicated owning registry/Adapter association, ConfigPlan enabled
+physical preflight/disabled home reservation, strict authenticated profile route,
+all-runtime raw retention/shutdown/receipt/persistence retry and undefined source
+with exact copilot-rpc aggregate denial. Public unsupported model/routing trial/
+standalone trial/publication preview+blocked commit allocate no canonical Task/Run/
+Adapter Session/native producer. Actual final assertCurrent reads current canonical
+Task/Run/config selection/session/workspace/invocation/lease/cancellation/observer/
+start/control document+row and complete Adapter/InteractionStore tuple in one
+synchronous transaction AFTER external fence/clock callbacks. Shared pure predicate
+extraction preserves Codex/OpenCode/Devin call order; Pi separate guard unchanged.
+Two real fixture families share only proven exact service/error retained-stop and
+raw/catalog storage safety; provider descendant/capture/teardown remains local.
+
+Source WIP29 SHA d106ee8e03c953e40ff788fe0e00ab85ca2d98c24d4b74e755c2152bbbac06d9
+maps28 C1+explicit C2restart1, current56/control28. OldDevin73 wholefile and protocol
+arrays Copilotb1165204a82187ded7349213f8f4a63a56bc77dec085f8d3af59e5e8bdf6456b /
+Devin920166736660a0eb6db195648175e8e211e2643e096041e8690b4c0ac69ee772 unchanged.
+Root independent source/table/scalar/target map:
+/tmp/dispatcher-copilot-controller-c1-root-source-preservation-20261025.json.
+Explicit API adaptations: real STARTING/reserveLocalStart/ExecutionSelection;
+terminal idle setup only for idle drain; global flag→all-owning-profile disable;
+actual safe ProfileConsoleView; wrong-version9.9.9 accepted-runtime outcomeunknown
+while original oneproducer/no create/send/replacement remains. No native store
+private API, artificial catalog/default/entitlement or runtime/client/schema change.
+
+Original28failure behavioral RED is loaded but many paths were blocked at missing
+composition; not28 independently exercised purposes. Original build/private-field,
+stale-dist manifest, public payload/schema/verification, wrong open spy and lint
+setup failures remain. Final workspace/config reentry RED failed later authority
+code instead of final SCOPE_CHANGED, then corrected. HUMAN_ACTIVE row mutation
+caused SQL CHECK error, not a send: original claims retained/corrected Linear
+99109762/root trace SHA669f7671... and wiredbf8f3e1...zero sends. Separate corrected
+lawfulHUMAN RED returnedRUNNING and actual wiree5486b36...sentonce; final direct row/
+document agreement plus workspace/config revision checks cover eleven finalseams.
+All original failed outputs/trace/source remain, no deadline/worker/cache/assertion
+weakening or unchanged full retry. Diagnostic noise M1 remains, no suppression.
+
+Final build/lint/focus14files1121 and ONE mise exec -- pnpm check pass204files4132
+plus all build/typecheck/lint/boundary checks. Command UTC2026-10-25T22:53:01.496374
+..22:56:20.989191, wall199.4920095s, logSHA
+7e71aebf639c98f84c5804d5336358f897017040542ac551a7699ca56377c6b1.
+Evidence /tmp/dispatcher-copilot-controller-c1-evidence-20261025. Command ran at
+BASE026c724 with six frozen changed files, exactly equal committed8122556; not a
+claim of clean committed-HEAD full execution. Required independent review
+/tmp/dispatcher-copilot-controller-c1-task1-review-20261025.md fully read:Spec✅/
+QualityApproved0C/I/M1 inherited output noise, no suite rerun. Root cannot-verify
+cross-task checks resolved by actual audit/source preservation/primary checks and
+three source503 verification-only cells; all503 identity columns unchanged.
+
+Root /tmp/dispatcher-copilot-controller-c1-root-audit-20261025.json verifies28phases
+(12historicalv1/16v2),123584pre123584post copies/513external/151078identityrows/
+64digests32Gitobs/530trackedGit, all committed bytes agree; full4722input/39external
+prepost equal, direct700dist16buildinfo, primary HEAD/status/allthree dirty contents
+unchanged. C1 controlled full96trees56roots3806fileRefs verified; across phases335
+whole-tree snapshots13333fileRefs912owned admin references,7707unique content payloads/
+14485capture events. Older capture shapes are explicit:1540legacy content records/
+124legacy events lack retained length; producer225executable pins plus459retained
+members do not imply original per-member digest declarations. Other-provider/native
+format exclusions remain; node_modules/runtime payload/globalGit excluded. Initial
+build4compiled outputs and source-map generator's own output are intended recorded
+deltas; fullstrict freeze passed. Root audit inspector initially misclassified
+output mutation/legacy identity schemas; failed attempt1..4 scripts retained,
+corrected to actual schemas without test rerun or dropping final requirements.
+
+Full report was frozen SHA4b180ef61da92c98e917ca9efdbbde2ff42499740d2c5193f2a819a7c3640373;
+after gate only its status line and completion addendum changed to
+8f0fedd7c8454c34400828a857ec28ebf9fb3819a4a336ecef1a6da96c062094. Root comparison
+/tmp/dispatcher-copilot-controller-c1-root-report-freeze-comparison-20261025.json
+preserves that exact difference; self-review stayed frozen. All code/root ledgers/
+external gate inputs unchanged during full. Current code and repository tracked
+inputs match committed blobs. No current final input/capture waiver.
+
+NEW historical exception under root rulings4/5: initial removed fixture Git object/
+managed-tree bytes and intermediate ignored dist/external/pure-command time are
+unrecoverable despite original executable/path/stat/native bytes and seed metadata.
+Early runs are partial, not exactly reproducible/hermetic; later complete captures
+are fresh executions and do not repair/replay originals. Full current C1 captures
+all controlled in-tree objects/admin refs before actual starts and after drain,
+hashes/sizes from same buffer with source stat separate. These are live-file byte
+observations, never an atomic DB backup/OS image. This follows user's explicit
+recorded-blocker alternative, not closure of the breach. Carry alongside old
+runtimeI3 and producer-ledger exception to CV14/final summary. Root primary original
+state preserved. No public push/globalidentity change; local committer notice remains
+for eventual separately authorized publication review. C2 readonly certificate next,
+all account/provider/GUI/writer/stop/history/continuation/release/P4/CI/rollback/
+wholebranch/remaining-development/formal Gates stay open. Latest official83used17
+remaining ordinaryallowed, two reset credits unused; user's nonstop goal active.

@@ -44,3 +44,13 @@ Read the root AGENTS.md plus relevant architecture/know-how and nested rules bef
 Capture original repo/config/package/lock/plan/brief/rulings/source503/live ledgers and any external scripts, plus generated executable/native/Git fixture bytes and full-path identity before the first assigned actual spawn. Keep exact argv/cwd/UTC/head/status/log/outputSHA/pre/post payloads/digests for commands; node_modules/runtime exclusions explicit. Root-owned ledgers/docs are frozen. Self-review and report evidence preparation must be complete and immutable before final one full gate; ask root for a new immutable external-path ruling if needed. Do not edit captured inputs during a gate. Source-only mappers are not behavioral tests; retain setup failures and all failed behavioral outputs separately. Do not reuse current passing baseline as RED, repeat unchanged tests, alter deadlines or worker/cache settings, or weaken cleanup/identity/authority assertions.
 
 Use actual package tools via mise: build, changed-file eslint, focused vitest paths discovered from repository config/rg, then one pnpm check after final frozen changed input. No per-task push/merge/global Git identity edits/primary checkout mutation. Commit only the six allowlisted implementation/test paths. Write full report to the designated SDD task-1-report.md with exact changes, source28+deferred1 and old cleanup/script maps, TDD, test evidence/limits, self-review, concerns and commit hash. Return status/commits/one-line checks/report path only. No subagents or helper reviewer; root dispatches the independent task review after handoff. Formal/provider/account/GUI/native writer/release/P4 Gates remain open.
+
+## Acceptance
+
+Task1 COMPLETE locally at8122556, required Spec/Quality Approved0C/I/M1 inherited
+logs. Source28/current56/C2deferred1 and oldDevin73/both arrays independently mapped;
+focused14/1121, one full204/4132/allnon-test pass. Root28phase/530Git/4722input/39external
+and primary audit clean; only report status/addendum changed aftergate, fullsnapshot
+frozen. Historical first-run partial Git/dist/external/time exception and original
+invalid control-row claim correction preserved, no reconstruction or final waiver.
+Next C2 only readonly certificate, no real/formal Gate claim or whole-goal completion.

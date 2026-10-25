@@ -1183,3 +1183,14 @@
   dropping settings alone does not protect console or plan before/after values.
   Keep precise leaf edits and private siblings, and reject parent replacement
   atomically without adding a wildcard for future unrelated settings.
+
+- A SessionControl document and its owning SQL row must agree at final native
+  admission. Reading only the document can miss row-state revocation. Run external
+  clock/lease/admission callbacks before the final direct snapshot; compare the
+  frozen selection's config revision and original Adapter workspace there too.
+- Generated managed-worktree fixtures depend on Git object/admin files as well as
+  README/index/refs. Capture the complete controlled tree after workspace creation
+  before relevant native admission, then after actual drain before teardown. Pin
+  retained buffer hash/length separately from original live-file stat size; these
+  copies are not an atomic database backup. Inspect actual wire/event identity
+  before interpreting a failed array-count assertion as a native send.

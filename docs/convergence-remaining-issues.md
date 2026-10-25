@@ -535,3 +535,28 @@ keys; preparation was synthetic, no account/server disclosure claim. Controller 
 must now implement the actual synchronous joint canonical+persisted owner decision,
 raw shutdown/storage barriers and source-denial; C2 owns original restart1. Existing
 historical I3/group/R020/security/retention/UI/performance/real/formal Gates remain.
+
+Copilot C1 locally complete8122556: actual dedicated Controller composition,
+ConfigPlan/private-home/preflight/profile lifecycle, true synchronous joint owner,
+raw acquisition/observer/result storage barriers, exact cached receipts/retry and
+undefined-source/aggregate-denial are implemented. Unsupported public catalog,
+routing/standalone trial/publication preview+blocked commit allocate no Task/Run/
+Adapter Session/native producer. Source29 maps28 C1+explicit C2restart1; current56
+adds28 controls; oldDevin73 wholefile and both fakeprotocol arrays exact. Independent
+Spec/Quality Approved0C/I/M1 inherited logs. Final focus14files1121 and one full
+204files4132tests/all non-test checks pass; root28phase/530Git/4722fullinput audit
+and source map clean, primary preserved. Only current report status/addendum changed
+AFTER gate, with original frozen report retained; no code/ledger/input gate drift.
+
+NEW historical C1 evidence exception: first temporary Git objects/managed-tree and
+intermediate dist/external/pure-wall provenance were not captured and are now
+unrecoverable. Original native executable identity/bytes, partial inputs and all
+failed outputs remain; root rulings4/5 apply the user's recorded-blocker alternative.
+Later complete v2 captures qualify current local code only, never repair or replay
+those originals. Final controlled96trees/56roots/3806files and all declared inputs
+verified. Initial HUMAN_ACTIVE SQL error was mistakenly described as a send; root
+verifiedzero sends and corrected commentary/Linear99109762. Separate lawfulHUMAN
+RED genuinely sentonce/returnedRUNNING; final row/document equality fixes it. These
+histories and earlier runtimeI3/group/R020 remain explicit CV14 follow-ups, not erased.
+C2 pure readonly restart certificate is next; all real/provider/UI/retention/delivery/
+Node/dependency/performance/CI/rollback/wholebranch/formal Gates remain open.
