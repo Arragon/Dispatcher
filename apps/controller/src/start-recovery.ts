@@ -76,3 +76,13 @@ export function isReadableManagedPiRun(database:DispatcherDatabase,run:Run):bool
     return binding.product==="pi"&&binding.backendId==="pi-rpc"&&binding.region==="global"&&typeof binding.nativeSessionId==="string"&&binding.nativeSessionId.length===36&&/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(binding.nativeSessionId)&&binding.nativeThreadId===undefined&&binding.parentSessionId===undefined;
   }catch{return false;}
 }
+
+/** Read-only Local ACP storage qualification never restores a native source or writer. */
+export function isReadableManagedDevinRun(database:DispatcherDatabase,run:Run):boolean {
+  try{
+    if(run.providerId!=="devin-local"||run.executionSelection?.backendId!=="devin-local-acp")return false;
+    const checked=checkedManagedRun(database,run);if(!checked)return false;
+    const {binding}=checked;
+    return binding.product==="devin-local"&&binding.backendId==="devin-local-acp"&&binding.region==="global"&&typeof binding.nativeSessionId==="string"&&binding.nativeSessionId.length>0&&binding.nativeSessionId.length<=512&&!Array.from(binding.nativeSessionId).some(character=>character.charCodeAt(0)<32||character.charCodeAt(0)===127)&&!binding.nativeSessionId.startsWith("unstarted:")&&binding.nativeThreadId===undefined&&binding.parentSessionId===undefined;
+  }catch{return false;}
+}
