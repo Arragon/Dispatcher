@@ -32,3 +32,5 @@ export * from "./opencode-execution.js";
 export {freezeExecutionSelection} from "./execution-selection.js";
 
 export {devinLocalAcpManifest,DevinLocalAcpExecutionBackend,type DevinLocalAcpExecutionScope} from "./devin-acp-execution.js";
+
+export {CopilotExecutionBackend,type CopilotExecutionScope} from "./copilot-execution.js";
