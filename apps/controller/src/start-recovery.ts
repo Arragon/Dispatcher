@@ -86,3 +86,13 @@ export function isReadableManagedDevinRun(database:DispatcherDatabase,run:Run):b
     return binding.product==="devin-local"&&binding.backendId==="devin-local-acp"&&binding.region==="global"&&typeof binding.nativeSessionId==="string"&&binding.nativeSessionId.length>0&&binding.nativeSessionId.length<=512&&!Array.from(binding.nativeSessionId).some(character=>character.charCodeAt(0)<32||character.charCodeAt(0)===127)&&!binding.nativeSessionId.startsWith("unstarted:")&&binding.nativeThreadId===undefined&&binding.parentSessionId===undefined;
   }catch{return false;}
 }
+
+/** Read-only Copilot storage qualification never restores a native source or writer. */
+export function isReadableManagedCopilotRun(database:DispatcherDatabase,run:Run):boolean {
+  try{
+    if(run.providerId!=="copilot"||run.executionSelection?.backendId!=="copilot-rpc")return false;
+    const checked=checkedManagedRun(database,run);if(!checked)return false;
+    const {binding}=checked;
+    return binding.product==="copilot"&&binding.backendId==="copilot-rpc"&&binding.region==="global"&&typeof binding.nativeSessionId==="string"&&binding.nativeSessionId.length>0&&binding.nativeSessionId.length<=512&&!Array.from(binding.nativeSessionId).some(character=>character.charCodeAt(0)<32||character.charCodeAt(0)===127)&&!binding.nativeSessionId.startsWith("unstarted:")&&binding.nativeThreadId===undefined&&binding.parentSessionId===undefined;
+  }catch{return false;}
+}
