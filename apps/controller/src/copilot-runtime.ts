@@ -21,7 +21,8 @@ function physical(path: string, directory = true): PathIdentity {
 export function assertCopilotRuntimeSettings(profile: CliAgentProfile, copilotHome: string): void { physical(profile.executable ?? "", false); physical(copilotHome); }
 interface RuntimeOptions {
   profile: CliAgentProfile; copilotHome: string; runnerId: string;
-  assertInput: (input: CliStartInput) => void; bindingFor: (nativeSessionId: string) => NativeBinding | undefined;
+  // One synchronous critical section owns canonical permission and the complete persisted tuple.
+  assertCurrent: (input: CliStartInput, expectedBinding: NativeBinding | undefined) => void; bindingFor: (nativeSessionId: string) => NativeBinding | undefined;
   factory?: (scope: CopilotExecutionScope, reference: ExecutionContextRef) => CopilotExecutionBackend;
 }
 interface Host {
@@ -70,9 +71,9 @@ export class CopilotExecutionRuntime implements CliAgentBackend {
   private closed = false; private cleanup?: Promise<RuntimeLocalDisconnectResult[]>; private receipts?: RuntimeLocalDisconnectResult[];
   constructor(original: RuntimeOptions) {
     try {
-      const { profile: originalProfile, copilotHome, runnerId, assertInput, bindingFor, factory } = { ...original }, profile = structuredClone(originalProfile);
-      if (!identifier(profile.id) || !identifier(runnerId) || typeof assertInput !== "function" || typeof bindingFor !== "function" || factory !== undefined && typeof factory !== "function") reject();
-      this.options = Object.freeze({ profile, copilotHome, runnerId, assertInput: assertInput.bind(original), bindingFor: bindingFor.bind(original), ...(factory ? { factory: factory.bind(original) } : {}) });
+      const { profile: originalProfile, copilotHome, runnerId, assertCurrent, bindingFor, factory } = { ...original }, profile = structuredClone(originalProfile);
+      if (!identifier(profile.id) || !identifier(runnerId) || typeof assertCurrent !== "function" || typeof bindingFor !== "function" || factory !== undefined && typeof factory !== "function") reject();
+      this.options = Object.freeze({ profile, copilotHome, runnerId, assertCurrent: assertCurrent.bind(original), bindingFor: bindingFor.bind(original), ...(factory ? { factory: factory.bind(original) } : {}) });
       assertCopilotRuntimeSettings(profile, copilotHome); this.paths = this.identities();
       this.nativeStoreRef = "native-store:" + createHash("sha256").update(JSON.stringify(["copilot", "global", ...this.paths.slice(1).map(value => [value.path, String(value.dev), String(value.ino)])])).digest("hex");
     } catch { throw new AdapterStartError("not-created", "COPILOT_RPC_SCOPE_CHANGED", "COPILOT_RPC_SCOPE_CHANGED"); }
@@ -94,7 +95,10 @@ export class CopilotExecutionRuntime implements CliAgentBackend {
   }
   private sync(callback: () => void, code: string): void {
     try { if (this.invoke(callback).value !== undefined) reject(code); }
-    catch (error) { if (error instanceof AdapterStartError && error.code === "COPILOT_RPC_CALLBACK_LIMIT") throw error; reject(code); }
+    catch (error) {
+      if (error instanceof AdapterContractError && ["COPILOT_RPC_CALLBACK_LIMIT", "COPILOT_RPC_IDENTITY_CHANGED"].includes(error.code)) reject(error.code, error instanceof AdapterStartError ? error.creationOutcome : "not-created");
+      reject(code);
+    }
   }
   private validate(input: CliStartInput, workspace: PathIdentity): void {
     if (this.closed) reject("COPILOT_RPC_LOCAL_CONNECTION_CLOSED");
@@ -105,12 +109,19 @@ export class CopilotExecutionRuntime implements CliAgentBackend {
       if (Object.hasOwn(n, "legacyModel") || Object.hasOwn(n, "modelSelection")) reject("MODEL_LEGACY_REVIEW_REQUIRED");
       const selection = freezeExecutionSelection(n.executionSelection, { profileId: this.options.profile.id, providerId: "copilot", backendId: this.backendId, selection: true, reasoning: false });
       if (!selection || selection.mode === "legacy" || selection.selectionType !== "explicit-model" || !validateExecutionBinding({ profileId: this.options.profile.id, providerId: "copilot", backendId: this.backendId, runnerId: this.options.runnerId, executionRef: ref }, selection, { repositoryId: ref.repositoryId, baseRevision: ref.baseRevision }).valid || ![n.runId, n.sessionId, n.commandId].every(identifier) || typeof n.prompt !== "string" || !n.prompt.trim() || Buffer.byteLength(n.prompt) > 196608 || n.approveTools !== false || !Array.isArray(input.args) || input.args.length || input.environment && Object.keys(input.environment).length || typeof input.beforePrompt !== "function" || typeof input.onBinding !== "function") reject("COPILOT_RPC_START_INVALID");
-      this.assertPaths(input.workspacePath, workspace); this.sync(() => this.options.assertInput(copy(input)), "COPILOT_RPC_SCOPE_CHANGED"); this.assertPaths(input.workspacePath, workspace);
+      this.assertPaths(input.workspacePath, workspace);
       if (this.closed) reject("COPILOT_RPC_LOCAL_CONNECTION_CLOSED");
     } catch (error) { if (error instanceof AdapterStartError) throw error; reject(); }
   }
+  private current(input: CliStartInput, workspace: PathIdentity, expectedBinding: NativeBinding | undefined): void {
+    this.validate(input, workspace);
+    // One trusted synchronous owner decides canonical permission and the complete persisted tuple.
+    this.sync(() => this.options.assertCurrent(copy(input), expectedBinding === undefined ? undefined : structuredClone(expectedBinding)), "COPILOT_RPC_SCOPE_CHANGED");
+    this.validate(input, workspace);
+  }
   private registered(entry: Host, allowClosed = false): void { if (!allowClosed && this.closed) reject("COPILOT_RPC_LOCAL_CONNECTION_CLOSED"); if (this.executions.get(entry.reference.id) !== entry) reject(); }
-  private persisted(entry: Host, allowClosed = false): void {
+  /** Observational projection only; this lookup never authorizes native input or facts. */
+  private diagnosticBinding(entry: Host, allowClosed = false): void {
     const binding = structuredClone(entry.binding); if (!binding || !entry.bindingPersisted) reject("COPILOT_RPC_IDENTITY_CHANGED", "unknown");
     const found = this.invoke(() => this.options.bindingFor(binding.nativeSessionId)).value;
     this.registered(entry, allowClosed); this.assertPaths(entry.workspacePath, entry.workspace);
@@ -126,13 +137,13 @@ export class CopilotExecutionRuntime implements CliAgentBackend {
   diagnostics(nativeSessionId: string): Record<string, unknown> {
     try {
       const entry = [...this.executions.values()].find(value => value.binding?.nativeSessionId === nativeSessionId); if (!entry) return {};
-      this.persisted(entry, true);
+      this.diagnosticBinding(entry, true);
       const closure = this.receipts?.find(receipt => receipt.executionRefId === entry.reference.id);
       return { executionRefId: entry.reference.id, localConnection: this.closed ? closure?.connection === "closed" ? "closed" : "unknown" : "open" };
     } catch { return {}; }
   }
   start(original: CliStartInput): CliTurn {
-    const input = capture(original), workspace = physical(input.workspacePath); this.validate(input, workspace);
+    const input = capture(original), workspace = physical(input.workspacePath); this.current(input, workspace, undefined);
     const reference = input.executionRef as Host["reference"], selection = input.nativeInput!.executionSelection!, token = Symbol("creation"), cancel = new AbortController();
     let ownsCreation = false, creationObserved = false, producerEntered = false, captured: Host | undefined, boundaryFailure: AdapterStartError | undefined;
     let pipeline = Promise.resolve(); const pending = new Set<Promise<unknown>>();
@@ -143,15 +154,18 @@ export class CopilotExecutionRuntime implements CliAgentBackend {
     };
     const guard = () => {
       try {
-        if (boundaryFailure) throw boundaryFailure; if (cancel.signal.aborted) reject("COPILOT_RPC_LOCAL_CONNECTION_CLOSED"); this.validate(input, workspace);
-        if (captured) {
-          this.registered(captured); if (captured.creator !== token || !isDeepStrictEqual(captured.reference, reference) || !isDeepStrictEqual(captured.selection, selection)) reject();
-          if (captured.bindingPersisted) {
-            this.persisted(captured); this.validate(input, workspace);
-            // Canonical callbacks may replace durable state; finish with tuple/physical/entry checks.
-            this.persisted(captured); this.registered(captured);
+        const local = () => {
+          if (boundaryFailure) throw boundaryFailure; if (cancel.signal.aborted) reject("COPILOT_RPC_LOCAL_CONNECTION_CLOSED"); this.validate(input, workspace);
+          if (captured) {
+            this.registered(captured);
+            if (captured.creator !== token || !isDeepStrictEqual(captured.reference, reference) || !isDeepStrictEqual(captured.selection, selection)) reject();
+            if (captured.bindingPersisted && !captured.binding) reject("COPILOT_RPC_IDENTITY_CHANGED", "unknown");
           }
-        }
+        };
+        local();
+        this.current(input, workspace, captured?.bindingPersisted ? captured.binding : undefined);
+        // No external lookup after the joint decision: only captured local fences may follow it.
+        local();
       } catch (error) { throw failure(error); }
     };
     const bounded = async <T>(work: Promise<T>, code: string): Promise<T> => {
@@ -185,7 +199,7 @@ export class CopilotExecutionRuntime implements CliAgentBackend {
           const id = binding.nativeSessionId;
           if (!identifier(id) || id.startsWith("unstarted:") || !isDeepStrictEqual(binding, { version: 1, product: "copilot", region: "global", profileId: scope.profileId, backendId: this.backendId, runnerId: scope.runnerId, nativeStoreRef: scope.nativeStoreRef, nativeSessionId: id, identityState: "bound", executionRefId: reference.id }) || captured!.binding) reject("COPILOT_RPC_IDENTITY_CHANGED", "unknown");
           captured!.binding = structuredClone(binding); return input.onBinding!(structuredClone(binding));
-        }, "COPILOT_RPC_BINDING_FAILED", () => { captured!.bindingPersisted = true; this.persisted(captured!); });
+        }, "COPILOT_RPC_BINDING_FAILED", () => { captured!.bindingPersisted = true; });
       } });
     })().catch(error => { throw failure(error); }));
     const lifetime = <T>(work: Promise<T>): Promise<T> => new Promise((resolve, fail) => {
@@ -193,7 +207,7 @@ export class CopilotExecutionRuntime implements CliAgentBackend {
       this.shutdown.signal.addEventListener("abort", closed, { once: true }); cancel.signal.addEventListener("abort", closed, { once: true });
       void work.then(resolve, fail).finally(() => { this.shutdown.signal.removeEventListener("abort", closed); cancel.signal.removeEventListener("abort", closed); }).catch(() => {}); if (this.closed || cancel.signal.aborted) closed();
     });
-    return new AcquiringTurn(acquire, work => this.track(work), lifetime, async () => { cancel.abort(); if (ownsCreation && captured?.creator === token) { captured.backend.beginShutdown(); await captured.backend.disconnectLocal(); } }, admitted, () => { if (boundaryFailure) throw boundaryFailure; if (this.closed || cancel.signal.aborted) throw failure(new AdapterStartError(producerEntered ? "unknown" : "not-created", "COPILOT_RPC_LOCAL_CONNECTION_CLOSED", "COPILOT_RPC_LOCAL_CONNECTION_CLOSED")); if (captured) { this.registered(captured); this.assertPaths(input.workspacePath, workspace); } }, async result => { await admitted(); if (result.providerSessionId !== undefined && result.providerSessionId !== captured!.binding!.nativeSessionId || result.state === "completed" && result.providerSessionId === undefined) reject("COPILOT_RPC_IDENTITY_CHANGED", "unknown"); }, failure);
+    return new AcquiringTurn(acquire, work => this.track(work), lifetime, async () => { cancel.abort(); if (ownsCreation && captured?.creator === token) { captured.backend.beginShutdown(); await captured.backend.disconnectLocal(); } }, admitted, () => { try { if (boundaryFailure) throw boundaryFailure; if (this.closed || cancel.signal.aborted) reject("COPILOT_RPC_LOCAL_CONNECTION_CLOSED"); if (captured) { this.registered(captured); this.assertPaths(input.workspacePath, workspace); } } catch (error) { throw failure(error); } }, async result => { await admitted(); if (result.providerSessionId !== undefined && result.providerSessionId !== captured!.binding!.nativeSessionId || result.state === "completed" && result.providerSessionId === undefined) reject("COPILOT_RPC_IDENTITY_CHANGED", "unknown"); }, failure);
   }
   async disconnectLocal(): Promise<RuntimeLocalDisconnectResult[]> {
     this.beginShutdown(); this.cleanup ??= (async () => {

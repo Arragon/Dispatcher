@@ -1,9 +1,10 @@
 import { chmodSync, existsSync, statSync, readdirSync, symlinkSync, readFileSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { isDeepStrictEqual } from "node:util";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
-import { MemorySessionStore, type AdapterSession, CopilotExecutionBackend, type CopilotExecutionScope, type CliStartInput, type CliAgentProfile } from "@dispatcher/adapters";
+import { AdapterContractError, MemorySessionStore, type AdapterSession, CopilotExecutionBackend, type CopilotExecutionScope, type CliStartInput, type CliAgentProfile } from "@dispatcher/adapters";
 import { CopilotAdapter } from "../../../packages/adapters/src/copilot-execution.js";
 import { CopilotRpcClient } from "../../../packages/adapters/dist/copilot.js";
 import type { ExecutionContextRef, ExecutionSelection, NativeBinding } from "@dispatcher/domain";
@@ -25,7 +26,17 @@ function fixture(mode: { skipBinding?: boolean; unawaitedBinding?: boolean; resu
   const root = realpathSync(mkdtempSync(join(tmpdir(), "dispatcher-copilot-runtime-"))); roots.push(root);
   const a = join(root, "a"), b = join(root, "b"), copilotHome = join(root, "home"), executable = join(root, "copilot");
   for (const path of [a, b, copilotHome]) mkdirSync(path); writeFileSync(executable, "fixture", { mode: 0o755 });
-  const persisted = new Map<string, NativeBinding>(), assertInput = vi.fn(); let unknown = false, wrongStore = false;
+  const persisted = new Map<string, NativeBinding>(), canonical = new Map<string, unknown>(), assertInput = vi.fn(); let unknown = false, wrongStore = false, allowed = true;
+  let beforeSnapshot: ((input: CliStartInput, expectedBinding: NativeBinding | undefined) => unknown) | undefined;
+  const facts = (input: CliStartInput) => structuredClone({ workspacePath: input.workspacePath, executionRef: input.executionRef, nativeInput: input.nativeInput });
+  const assertCurrent = function (this: unknown, input: CliStartInput, expectedBinding: NativeBinding | undefined): void {
+    const requested = facts(input), expected = structuredClone(expectedBinding);
+    // Hooks precede the final direct facts; return forbidden work intact for the runtime to own.
+    const raw: unknown = assertInput.call(this, input, expectedBinding); if (raw !== undefined) return raw as void;
+    const mutation = beforeSnapshot?.(input, expectedBinding); if (mutation !== undefined) return mutation as void;
+    if (!allowed || !isDeepStrictEqual(canonical.get(requested.executionRef!.id), requested)) throw Error("canonical owner changed");
+    if (expected && !isDeepStrictEqual(persisted.get(expected.nativeSessionId), expected)) throw new AdapterContractError("COPILOT_RPC_IDENTITY_CHANGED", "persisted owner tuple changed");
+  };
   const entries: Array<{ scope: CopilotExecutionScope; reference: ExecutionContextRef; backend: CopilotExecutionBackend; starts: ReturnType<typeof vi.spyOn>; disconnect: ReturnType<typeof vi.spyOn> }> = [];
   const factory = vi.fn((scope: CopilotExecutionScope, reference: ExecutionContextRef) => {
     const backend = new CopilotExecutionBackend({ scope, executionRef: reference });
@@ -45,13 +56,14 @@ function fixture(mode: { skipBinding?: boolean; unawaitedBinding?: boolean; resu
     const disconnect = vi.spyOn(backend, "disconnectLocal").mockImplementation(async () => ({ version: 1, connection: unknown ? "unknown" : "closed", ownedRoot: unknown ? "unknown" : "not-created", callbacks: unknown ? "unknown" : "drained", backgroundTools: "unknown", nativeSessionDeleted: false }));
     entries.push({ scope, reference, backend, starts, disconnect }); return backend;
   });
-  const runtime = new CopilotExecutionRuntime({ profile: { id: "p", alias: "Local", executable }, copilotHome, runnerId: "local", assertInput, bindingFor: id => persisted.get(id), factory });
+  const runtime = new CopilotExecutionRuntime({ profile: { id: "p", alias: "Local", executable }, copilotHome, runnerId: "local", assertCurrent, bindingFor: id => persisted.get(id), factory });
   const input = (id = "a", path = a): CliStartInput => {
     const selection: ExecutionSelection = { version: 1, mode: "manual", selectionType: "explicit-model", source: "explicit", profileId: "p", providerId: "copilot", backendId: "copilot-rpc", runnerId: "local", requestedModel: "chosen", configRevision: 1, contextFingerprint: "fixture", selectedAt: "2026-10-13T00:00:00.000Z", nativeParameters: {} };
-    return { executable, args: [], workspacePath: path, executionRef: { version: 1, id, kind: "managed-worktree", runnerId: "local", repositoryId: "repo", workspaceId: id, pathRef: "workspace:" + id, branch: "codex/" + id, baseRevision: "base" }, nativeInput: { version: 1, profileId: "p", backendId: "copilot-rpc", runId: "run-" + id, sessionId: "session-" + id, commandId: "observer-" + id, newSession: true, prompt: "literal", approveTools: false, executionSelection: selection }, beforePrompt: () => {}, onBinding: async binding => { persisted.set(binding.nativeSessionId, binding); } };
+    const value: CliStartInput = { executable, args: [], workspacePath: path, executionRef: { version: 1, id, kind: "managed-worktree", runnerId: "local", repositoryId: "repo", workspaceId: id, pathRef: "workspace:" + id, branch: "codex/" + id, baseRevision: "base" }, nativeInput: { version: 1, profileId: "p", backendId: "copilot-rpc", runId: "run-" + id, sessionId: "session-" + id, commandId: "observer-" + id, newSession: true, prompt: "literal", approveTools: false, executionSelection: selection }, beforePrompt: () => {}, onBinding: async binding => { persisted.set(binding.nativeSessionId, binding); } };
+    canonical.set(id, facts(value)); return value;
   };
-  const options = { profile: { id: "p", alias: "Local", executable }, copilotHome, runnerId: "local", assertInput, bindingFor: (id: string) => persisted.get(id), factory };
-  return { root, a, b, executable, copilotHome, runtime, input, factory, assertInput, entries, persisted, options, setUnknown: () => { unknown = true; }, setWrongStore: () => { wrongStore = true; } };
+  const options = { profile: { id: "p", alias: "Local", executable }, copilotHome, runnerId: "local", assertCurrent, bindingFor: (id: string) => persisted.get(id), factory };
+  return { root, a, b, executable, copilotHome, runtime, input, factory, assertInput, entries, persisted, options, setBeforeSnapshot: (hook: typeof beforeSnapshot) => { beforeSnapshot = hook; }, setAllowed: (value: boolean) => { allowed = value; }, setUnknown: () => { unknown = true; }, setWrongStore: () => { wrongStore = true; } };
 }
 it("lazily owns each exact managed execution without borrowing read/control qualification", async () => {
   const f = fixture(); expect(f.factory).not.toHaveBeenCalled();
@@ -178,8 +190,8 @@ it("reads caller getters once before cloning native selection", async () => {
 });
 it("captures original option getters once with their original callback receiver", async () => {
   const f = fixture(); let profileReads = 0, guardReads = 0, factoryReads = 0;
-  const guard = vi.fn(function (this: unknown) { expect(this).toBe(options); });
-  const options = { ...f.options, get profile(): CliAgentProfile { profileReads++; return profileReads === 1 ? f.options.profile : { ...f.options.profile, id: "replacement" }; }, get assertInput() { guardReads++; return guardReads === 1 ? guard : () => { throw Error("replacement"); }; }, get factory() { factoryReads++; return factoryReads === 1 ? f.factory : () => { throw Error("replacement"); }; } };
+  const guard = vi.fn(function (this: unknown, input: CliStartInput, expected: NativeBinding | undefined) { expect(this).toBe(options); return f.options.assertCurrent.call(this, input, expected); });
+  const options = { ...f.options, get profile(): CliAgentProfile { profileReads++; return profileReads === 1 ? f.options.profile : { ...f.options.profile, id: "replacement" }; }, get assertCurrent() { guardReads++; return guardReads === 1 ? guard : () => { throw Error("replacement"); }; }, get factory() { factoryReads++; return factoryReads === 1 ? f.factory : () => { throw Error("replacement"); }; } };
   const runtime = new CopilotExecutionRuntime(options), turn = runtime.start(f.input()); await turn.ready!();
   expect([profileReads, guardReads, factoryReads]).toEqual([1, 1, 1]); expect(guard).toHaveBeenCalled(); await runtime.disconnectLocal();
 });
@@ -221,10 +233,19 @@ it("routes the real owned producer through Runtime and Adapter before native inp
   "else if(m.method==='session.send'){fs.writeFileSync(path.join(root,'native-input'),JSON.stringify({bindingPersisted:fs.existsSync(path.join(root,'persisted')),args:process.argv.slice(2),cwd:process.cwd(),home:process.env.COPILOT_HOME,sessionId}));const messageId='wire-1';process.stdout.write(Buffer.concat([frame({jsonrpc:'2.0',id:m.id,result:{messageId}}),frame(event('user.message',{messageId,content:m.params.prompt})),frame(event('assistant.message',{messageId:'answer-1',originatingMessageId:messageId,content:'private-native-output',model})),frame(event('session.idle',{}))]));return;}emit({jsonrpc:'2.0',id:m.id,result});}",
   "process.stdin.on('data',chunk=>{buffer=Buffer.concat([buffer,chunk]);for(;;){const at=buffer.indexOf('\\r\\n\\r\\n');if(at<0)return;const size=Number(/Content-Length: (\\d+)/.exec(buffer.subarray(0,at).toString())[1]);if(buffer.length<at+4+size)return;const m=JSON.parse(buffer.subarray(at+4,at+4+size).toString());buffer=buffer.subarray(at+4+size);respond(m);}});setInterval(()=>{},1000);",
  ].join("\n"),{mode:0o755});chmodSync(f.executable,0o755);
- const runtime = new CopilotExecutionRuntime({ profile: f.options.profile, copilotHome: f.copilotHome, runnerId: "local", assertInput: f.assertInput, bindingFor: id => f.persisted.get(id) });
  class Store extends MemorySessionStore { override save(session: AdapterSession) { super.save(session); if (session.nativeBinding) { f.persisted.set(session.nativeBinding.nativeSessionId, session.nativeBinding); writeFileSync(join(f.root, "persisted"), "saved"); } } }
- const store = new Store(), adapter = new CopilotAdapter(f.options.profile, runtime, store), input = f.input(), observed: string[] = [];
- let active = true; const admission = vi.fn(() => { if (!active) throw Error("original managed owner revoked"); });
+ const store = new Store(), input = f.input(), observed: string[] = [];
+ let active = true;
+ const runtime = new CopilotExecutionRuntime({ profile: f.options.profile, copilotHome: f.copilotHome, runnerId: "local", bindingFor: id => f.persisted.get(id), assertCurrent(original, expectedBinding) {
+  const requested = structuredClone({ nativeInput: original.nativeInput, executionRef: original.executionRef, workspacePath: original.workspacePath }), expected = structuredClone(expectedBinding);
+  const raw: unknown = f.assertInput(original, expectedBinding); if (raw !== undefined) return raw as void;
+  // The actual Adapter reservation and durable session are this fixture owner's direct facts.
+  const n = requested.nativeInput!, current = store.load(n.sessionId);
+  if (!active || !current || current.state === "CANCELLED" || current.runId !== n.runId || current.profileId !== n.profileId || current.backendId !== n.backendId || current.nativeInvocationId !== n.commandId || !isDeepStrictEqual(current.executionRef, requested.executionRef) || !isDeepStrictEqual(current.executionSelection, n.executionSelection) || current.workspacePath !== requested.workspacePath || !isDeepStrictEqual(current.execution, { generation: 1, attempt: 1, leaseId: "lease" })) throw Error("canonical Adapter owner changed");
+  if (expected && (!isDeepStrictEqual(current.nativeBinding, expected) || !isDeepStrictEqual(f.persisted.get(expected.nativeSessionId), expected))) throw new AdapterContractError("COPILOT_RPC_IDENTITY_CHANGED", "persisted Adapter owner changed");
+ } });
+ const adapter = new CopilotAdapter(f.options.profile, runtime, store);
+ const admission = vi.fn(() => { if (!active) throw Error("original managed owner revoked"); });
  adapter.setNativeEventSink(event => { admission(); expect(event).toMatchObject({ generation: 1, attempt: 1, leaseId: "lease" }); expect(f.persisted.get(event.nativeSessionId)).toEqual(event.nativeBinding); observed.push(event.turn.state); }, invocation => {
   expect(invocation).toMatchObject({ runId: "run", profileId: "p", backendId: "copilot-rpc", generation: 1, attempt: 1, leaseId: "lease" });
   expect(store.load(invocation.sessionId)).toMatchObject({ state: "STARTING", executionRef: input.executionRef, nativeInvocationId: invocation.invocationId });
@@ -305,14 +326,14 @@ it.each(["version", "product", "region", "profileId", "backendId", "runnerId", "
 });
 it("uses the configured alias for Controller authority and one physical executable for producer scope and input", async () => {
  const f = fixture(), alias = join(f.root, "alias"); symlinkSync(f.executable, alias);
- const assertInput = vi.fn((input: CliStartInput) => { expect(input.executable).toBe(alias); });
- const runtime = new CopilotExecutionRuntime({ ...f.options, profile: { ...f.options.profile, executable: alias }, assertInput });
+ const assertInput = f.assertInput.mockImplementation((input: CliStartInput) => { expect(input.executable).toBe(alias); });
+ const runtime = new CopilotExecutionRuntime({ ...f.options, profile: { ...f.options.profile, executable: alias } });
  const input = f.input(); input.executable = alias; const turn = runtime.start(input); await turn.ready!();
  expect(f.entries[0]!.scope.executable).toBe(f.executable); expect(f.entries[0]!.starts.mock.calls[0]![0].executable).toBe(f.executable); expect(assertInput).toHaveBeenCalled(); await runtime.disconnectLocal();
 });
 it("rechecks executable alias identity after a callback replaces its target", async () => {
  const f = fixture(), alias = join(f.root, "alias"), other = join(f.root, "other"); symlinkSync(f.executable, alias); writeFileSync(other, "other", { mode: 0o755 });
- let replace = false; const runtime = new CopilotExecutionRuntime({ ...f.options, profile: { ...f.options.profile, executable: alias }, assertInput: () => { if (replace) { rmSync(alias); symlinkSync(other, alias); } } });
+ let replace = false; f.assertInput.mockImplementation(() => { if (replace) { rmSync(alias); symlinkSync(other, alias); } }); const runtime = new CopilotExecutionRuntime({ ...f.options, profile: { ...f.options.profile, executable: alias } });
  replace = true; const input = f.input(); input.executable = alias; expect(() => runtime.start(input)).toThrow(expect.objectContaining({ creationOutcome: "not-created" })); expect(f.factory).not.toHaveBeenCalled(); await runtime.disconnectLocal();
 });
 it("rejects a nonexecutable regular file before producer allocation", () => {
@@ -377,7 +398,7 @@ it("freezes getter-backed result once before awaiting pending terminal callback 
  expect(await turn.result()).toMatchObject({ summary: "original", providerSessionId: "native-a" }); expect([summaryReads, idReads, acquired]).toEqual([1, 1, 1]); await f.runtime.disconnectLocal();
 });
 it("fences current binding getter reentry that shuts down the runtime", async () => {
- const f = fixture(); let shutdown = false; const runtime = new CopilotExecutionRuntime({ ...f.options, bindingFor: id => { if (shutdown) runtime.beginShutdown(); return f.persisted.get(id); } });
+ const f = fixture(); let shutdown = false; const runtime = new CopilotExecutionRuntime(f.options); f.setBeforeSnapshot(() => { if (shutdown) runtime.beginShutdown(); });
  const turn = runtime.start(f.input()); await turn.ready!(); shutdown = true; await expect(turn.result()).rejects.toMatchObject({ creationOutcome: "unknown" }); await runtime.disconnectLocal();
 });
 it("bounds the aggregate readiness checkpoint across individually short event acknowledgements", async () => {
@@ -395,7 +416,7 @@ it("gives canonical assertions detached payloads without replacing captured sele
 });
 it("rejects replaced stored bindings after lookup reentry and before a native consumer", async () => {
  const f = fixture(), consumer = vi.fn(); let replace = false;
- const runtime = new CopilotExecutionRuntime({ ...f.options, bindingFor: id => { const original = f.persisted.get(id); if (replace && original) { replace = false; f.persisted.set(id, { ...original, nativeStoreRef: "replacement" }); } return original; } });
+ const runtime = new CopilotExecutionRuntime(f.options); f.setBeforeSnapshot(() => { const original = f.persisted.get("native-a"); if (replace && original) { replace = false; f.persisted.set("native-a", { ...original, nativeStoreRef: "replacement" }); } });
  const input = f.input(); input.onNativeEvent = consumer; const turn = runtime.start(input); await turn.ready!(); replace = true;
  expect(() => f.entries[0]!.starts.mock.calls[0]![0].onNativeEvent!({ state: "running", observedAt: "2026-10-25T00:00:00Z", nativeSessionId: "native-a" })).toThrow(expect.objectContaining({ creationOutcome: "unknown" }));
  expect(consumer).not.toHaveBeenCalled(); expect(runtime.diagnostics("native-a")).toEqual({}); await runtime.disconnectLocal();
@@ -427,11 +448,11 @@ it("includes callbacks enqueued during an awaited readiness checkpoint", async (
  finally { second.resolve(); await ready; await f.runtime.disconnectLocal(); }
 });
 it.each([false, true])("checks the persisted tuple after the final canonical Guard before native action (replace=%s)", async replace => {
- const f = fixture(), input = f.input(), consumer = vi.fn(); let armed = false, checks = 0, mutated = false, nativeAction = false;
+ const f = fixture(), input = f.input(), consumer = vi.fn(); let armed = false, mutated = false, nativeAction = false;
  input.onNativeEvent = consumer;
  input.beforePrompt = () => { if (f.persisted.has("native-a")) armed = true; };
  f.assertInput.mockImplementation(() => {
-  if (armed && ++checks === 2 && replace) { const binding = f.persisted.get("native-a")!; f.persisted.set("native-a", { ...binding, nativeStoreRef: "foreign" }); mutated = true; armed = false; }
+  if (armed && replace) { const binding = f.persisted.get("native-a")!; f.persisted.set("native-a", { ...binding, nativeStoreRef: "foreign" }); mutated = true; armed = false; }
  });
  wrapProducer(f, (producerInput, delegate) => delegate({ ...producerInput, beforePrompt: () => {
   producerInput.beforePrompt!();
@@ -451,10 +472,9 @@ it.each([false, true])("checks the persisted tuple after the final canonical Gua
 });
 it("retains canonical revocation checks after persisted binding lookup reentry before native action", async () => {
  const f = fixture(), input = f.input(); let armed = false, revoked = false, nativeAction = false;
- const runtime = new CopilotExecutionRuntime({ ...f.options, bindingFor: id => {
-  if (armed) { revoked = true; f.assertInput.mockImplementation(() => { throw Error("canonical authority revoked by lookup"); }); }
-  return f.persisted.get(id);
- } });
+ const runtime = new CopilotExecutionRuntime(f.options); f.setBeforeSnapshot(() => {
+  if (armed) { revoked = true; f.setAllowed(false); }
+ });
  input.beforePrompt = () => { if (f.persisted.has("native-a")) armed = true; };
  wrapProducer(f, (producerInput, delegate) => delegate({ ...producerInput, beforePrompt: () => { producerInput.beforePrompt!(); if (f.persisted.has("native-a")) nativeAction = true; } }));
  const turn = runtime.start(input);
@@ -463,4 +483,69 @@ it("retains canonical revocation checks after persisted binding lookup reentry b
   await expect(turn.result()).rejects.toMatchObject({ code: "COPILOT_RPC_SCOPE_CHANGED", creationOutcome: "unknown" });
   expect(revoked).toBe(true); expect(nativeAction).toBe(false);
  } finally { await runtime.disconnectLocal(); }
+});
+it.each([false, true])("rejects canonical revocation in the final binding lookup before native action (revoke=%s)", async revoke => {
+ const f = fixture(), input = f.input(), consumer = vi.fn(); let armed = false, allowed = true, revoked = false, nativeAction = false;
+ const runtime = new CopilotExecutionRuntime(f.options); f.setBeforeSnapshot(() => {
+  if (armed && revoke) { allowed = false; revoked = true; f.setAllowed(allowed); }
+ });
+ input.onNativeEvent = consumer; input.beforePrompt = () => { if (f.persisted.has("native-a")) armed = true; };
+ wrapProducer(f, (producerInput, delegate) => delegate({ ...producerInput, beforePrompt: () => {
+  producerInput.beforePrompt!();
+  if (f.persisted.has("native-a")) { nativeAction = true; void Promise.resolve(producerInput.onNativeEvent!({ state: "running", observedAt: "2026-10-25T00:00:00Z", nativeSessionId: "native-a" })).catch(() => {}); }
+ } }));
+ const turn = runtime.start(input);
+ try {
+  if (revoke) {
+   await expect(turn.ready!()).rejects.toMatchObject({ code: "COPILOT_RPC_SCOPE_CHANGED", creationOutcome: "unknown" });
+   await expect(turn.result()).rejects.toMatchObject({ code: "COPILOT_RPC_SCOPE_CHANGED", creationOutcome: "unknown" });
+   expect(revoked).toBe(true); expect(nativeAction).toBe(false); expect(consumer).not.toHaveBeenCalled();
+  } else { await turn.ready!(); expect((await turn.result()).state).toBe("completed"); expect(nativeAction).toBe(true); expect(consumer).toHaveBeenCalledOnce(); }
+ } finally { await runtime.disconnectLocal(); }
+});
+it.each([undefined, "not-a-function"])("requires the mandatory joint owner without an old callback fallback (%s)", invalid => {
+ const f = fixture(), old = vi.fn(), options = { ...f.options, assertCurrent: invalid, assertInput: old };
+ expect(() => new CopilotExecutionRuntime(options as unknown as ConstructorParameters<typeof CopilotExecutionRuntime>[0])).toThrow(expect.objectContaining({ code: "COPILOT_RPC_SCOPE_CHANGED", creationOutcome: "not-created" }));
+ expect(old).not.toHaveBeenCalled(); expect(f.factory).not.toHaveBeenCalled();
+});
+it("retains forbidden pre-snapshot owner thenable work rather than swallowing it", async () => {
+ const f = fixture(); let reads = 0, calls = 0, release!: () => void;
+ f.setBeforeSnapshot(() => ({ get then() { reads++; return (resolve: () => void) => { calls++; release = resolve; }; } }));
+ expect(() => f.runtime.start(f.input())).toThrow(expect.objectContaining({ code: "COPILOT_RPC_SCOPE_CHANGED", creationOutcome: "not-created" }));
+ await Promise.resolve(); expect([reads, calls]).toEqual([1, 1]); expect(f.runtime.hasActiveOperations()).toBe(true); expect(f.factory).not.toHaveBeenCalled();
+ const receipt = await f.runtime.disconnectLocal(); expect(receipt).toMatchObject([expect.objectContaining({ callbacks: "unknown", ownedRoot: "not-created" })]);
+ release(); await vi.waitFor(() => expect(f.runtime.hasActiveOperations()).toBe(false)); expect(await f.runtime.disconnectLocal()).toEqual(receipt);
+});
+it("rejects a bound asynchronous joint owner while preserving its raw lifetime and exact binding", async () => {
+ const f = fixture(), turn = f.runtime.start(f.input()), gate = Promise.withResolvers<void>(); await turn.ready!();
+ f.setBeforeSnapshot(() => gate.promise); const outcome = await turn.result().catch(error => error);
+ expect(outcome).toMatchObject({ code: "COPILOT_RPC_SCOPE_CHANGED", creationOutcome: "unknown" }); expect(f.persisted.get("native-a")).toMatchObject({ nativeSessionId: "native-a", executionRefId: "a" });
+ expect(f.runtime.hasActiveOperations()).toBe(true); const receipt = await f.runtime.disconnectLocal(); expect(receipt.some(row => row.callbacks === "unknown")).toBe(true);
+ gate.resolve(); await vi.waitFor(() => expect(f.runtime.hasActiveOperations()).toBe(false)); expect(await f.runtime.disconnectLocal()).toEqual(receipt);
+});
+it("passes detached expected binding and input to the joint owner", async () => {
+ const f = fixture(); let boundCalls = 0;
+ f.setBeforeSnapshot((input, expected) => { if (expected) { boundCalls++; expected.nativeStoreRef = "foreign"; input.executionRef!.id = "foreign"; input.nativeInput!.executionSelection!.requestedModel = "foreign"; } });
+ const turn = f.runtime.start(f.input()); await turn.ready!(); expect(await turn.result()).toMatchObject({ state: "completed", providerSessionId: "native-a" });
+ expect(boundCalls).toBeGreaterThan(0); expect(f.persisted.get("native-a")!.nativeStoreRef).not.toBe("foreign"); expect(f.runtime.diagnostics("native-a")).toEqual({ executionRefId: "a", localConnection: "open" }); await f.runtime.disconnectLocal();
+});
+it.each(["COPILOT_RPC_IDENTITY_CHANGED", "PRIVATE_OWNER_CODE"])("sanitizes joint owner errors while preserving only the narrow identity code (%s)", async code => {
+ const f = fixture(), turn = f.runtime.start(f.input()); await turn.ready!(); f.setBeforeSnapshot(() => { throw new AdapterContractError(code, "private-owner-secret"); });
+ const error = await turn.result().catch(error => error); expect(error).toMatchObject({ code: code === "COPILOT_RPC_IDENTITY_CHANGED" ? code : "COPILOT_RPC_SCOPE_CHANGED", creationOutcome: "unknown" }); expect(String(error)).not.toContain("private-owner-secret"); expect(String(error)).not.toContain("PRIVATE_OWNER_CODE"); await f.runtime.disconnectLocal();
+});
+it("uses independent binding lookup only for diagnostics and never for native authorization", async () => {
+ const f = fixture(), consumer = vi.fn(); let revoke = false;
+ const lookup = vi.fn((id: string) => { if (revoke) f.setAllowed(false); return f.persisted.get(id); });
+ const runtime = new CopilotExecutionRuntime({ ...f.options, bindingFor: lookup }), input = f.input(); input.onNativeEvent = consumer;
+ const turn = runtime.start(input); await turn.ready!(); expect(lookup).not.toHaveBeenCalled();
+ revoke = true; expect(runtime.diagnostics("native-a")).toEqual({ executionRefId: "a", localConnection: "open" }); expect(lookup).toHaveBeenCalledTimes(2);
+ expect(() => f.entries[0]!.starts.mock.calls[0]![0].beforePrompt!()).toThrow(expect.objectContaining({ code: "COPILOT_RPC_SCOPE_CHANGED", creationOutcome: "unknown" }));
+ expect(() => f.entries[0]!.starts.mock.calls[0]![0].onNativeEvent!({ state: "running", observedAt: "2026-10-25T00:00:00Z", nativeSessionId: "native-a" })).toThrow(expect.objectContaining({ creationOutcome: "unknown" }));
+ expect(consumer).not.toHaveBeenCalled(); await expect(turn.result()).rejects.toMatchObject({ creationOutcome: "unknown" }); await runtime.disconnectLocal();
+});
+it("rechecks physical and registry state after observational diagnostics lookup reentry", async () => {
+ const f = fixture(); let replace = false;
+ const runtime = new CopilotExecutionRuntime({ ...f.options, bindingFor: id => { const binding = f.persisted.get(id); if (replace) { replace = false; renameSync(f.copilotHome, f.copilotHome + "-old"); mkdirSync(f.copilotHome); } return binding; } });
+ const turn = runtime.start(f.input()); await turn.ready!(); replace = true; expect(runtime.diagnostics("native-a")).toEqual({});
+ await expect(turn.result()).rejects.toMatchObject({ code: "COPILOT_RPC_SCOPE_CHANGED", creationOutcome: "unknown" }); await runtime.disconnectLocal();
 });
