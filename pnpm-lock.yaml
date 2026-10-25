@@ -156,6 +156,9 @@ importers:
       '@dispatcher/shared':
         specifier: workspace:*
         version: link:../shared
+      vscode-jsonrpc:
+        specifier: 10.0.0
+        version: 10.0.0
       zod:
         specifier: 4.6.7
         version: 4.6.7
@@ -1782,6 +1785,10 @@ packages:
       jsdom:
         optional: true
 
+  vscode-jsonrpc@10.0.0:
+    resolution: {integrity: sha512-USSfxg0vDIpTQqlQBGxF3mBARyoS8cU7LHLpbYNh6dOJt32dlskxPWB0Irrh5TllTmyf7oNLAvqDqzklbwwnpA==}
+    engines: {node: '>=14.17.0'}
+
   w3c-xmlserializer@5.0.0:
     resolution: {integrity: sha512-o8qghlI8NZHU1lLPrpi2+Uq7abh4GGPpYANlalzWxyWteJOCsr/P+oPBA49TOLu5FTZO4d3F9MnWJfiMo4BkmA==}
     engines: {node: '>=18'}
@@ -3132,6 +3139,8 @@ snapshots:
       jsdom: 30.0.1
     transitivePeerDependencies:
       - msw
+
+  vscode-jsonrpc@10.0.0: {}
 
   w3c-xmlserializer@5.0.0:
     dependencies:
