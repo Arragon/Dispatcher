@@ -465,3 +465,15 @@ does not revive native source/mutations; actual Gates remain open. Next internal
 Copilot client113, then producer34/runtime41/WIPconfig17/service29; codec10 isolated
 seam/notice preparation is not target/client implementation. Remaining provider/UI/
 retention/delivery/CV13-14/group/R020/formal Gates and complete goal remain active.
+
+
+Current2026-10-25 Copilot internal client checkpoint:aa85671+80ab301 preserves all113
+source cases and16direct regressions, covering149/default200files3759tests and
+non-test gates pass. Independent review I1 pre-input unresolved permission was
+reproduced and fixed with meaningful RED; scoped re-review resolves it. Original
+client/codec installed-deployed MIT/SRI/graph and all-command/source/fixture byte
+audits pass; audit28 remains unchanged-version UTC20:01 snapshot, not security
+clearance. Producer34/runtime41/WIPconfig17/service29 still need integration; no
+package-root export/Controller/account activation. Group/EPERM/R020/CV13-14/formal
+Gates and whole goal remain active. Historical fixture identity/copy limits remain
+explicit in evidence ledger.

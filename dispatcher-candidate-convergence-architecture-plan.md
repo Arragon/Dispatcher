@@ -605,3 +605,6 @@ server profile。owned host/producer及精确分配observer随后保存105ef8b�
 **ACP Controller C1 回执**：175b2d4+bee6483 完成真实 owning runtime/Adapter/manifest、ConfigPlan 端点、canonical Guard 及目录原始工作/停机存储屏障。源29及先前 catalog exact-ID 真实 consumer 已补齐，重启源1归 C2。独立审查 I1 全局吞测试清理错误，经明确 service/error 登记及五项回归修复并复审解决；当前 Local73+发布69、最终197文件3536例与全部非测试门禁通过。root34次实际捕获/511Git/4652最终输入及主脏文件内容核验零错误；原历史脚本副本限制和非最终self-review漂移留证，不升级历史保证。下一 C2 纯只读证书/腐坏矩阵；Copilot147+41/WIP17+29仅输入准备，其他 provider/UI/retention/delivery/CV13-14及正式 Gates 继续开放。
 
 **ACP C2 回执**：b7d0651 完成窄只读存储证书与 constructor/reconcile 两处准入扩展；原 helper/其他 provider 谓词整个前缀不变。源重启1扩为两 Task 状态、86腐坏/5不透明正向/纯度验证，C1其余29及目录真实consumer保持；完整 Controller30源目的已覆盖。独立审查零Critical/Important，现有日志MinorCV14保留；聚焦428、最终198文件3630例与非测试门禁通过，root13次捕获/513Git/1068生成副本核验零错误。下一 Copilot client113，再producer34/runtime41/WIP17+29；codec10仅隔离接口/许可准备。原真实 Gates/group/R020/CV13/CV14仍开放，未激活个人账号/服务。
+
+
+**Copilot client回执**：aa85671+80ab301 仅内部协议客户端，源113整调用/表/预算不变，新增16回归，聚焦149/最终200文件3759例及非测试门禁通过。独立审查 I1 发送前权限窗口经真实子进程RED与粘性准入/最终写入围栏修复、范围复审解决；原有拒权ACK/resolved-hook/旁路控制保持。root原候选26次捕获及fix16次/517Git/全部最终输入和主脏文件内容核验零错误。codec10精确MIT/SRI及真实部署保持，旧28审计仅固定时点未变版本，不代表安全Gate。下一producer34复用canonical observer与500ms异步确认，再runtime41/WIP17+29；group/R020/CV13/CV14/真实Gates开放。

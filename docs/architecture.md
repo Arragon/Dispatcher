@@ -1825,3 +1825,17 @@ exclude C0/DEL/unstarted values, and carry no thread/parent fields. Qualificatio
 uses stored agreement only, preserves the prior provider predicates, and performs
 no physical/native/account read. Physical enabled admission remains independent;
 restart invalidates prior readable evidence and retains manual/unknown ownership.
+
+
+## Internal Copilot RPC client
+
+The internal Copilot client uses explicit executable/workspace/home and pinned
+CLI/protocol qualification with a strict bounded Content-Length ingress wrapper
+around the Node JSON-RPC codec. The owned root and original callback lifetimes
+remain separate from inherited pipe/background tool/writer release. New bootstrap
+persists the original known identity before further model qualification; primitive
+resume requires exact local metadata and grants no producer continuation. Read
+principals cannot gain mutation via options. Complete outgoing frames recheck the
+original authority after backpressure at stdin; unresolved pre-input permission
+facts remain sticky through model/idle ordering. This internal client provides
+no registered Controller source, account/catalog or native writer qualification.

@@ -1146,3 +1146,11 @@
   JavaScript string length. A256-symbol astral ID is512units; decomposed Unicode
   remains distinct and valid. Cold validation must preserve this grammar rather
   than import another provider's UUID/ses rule or normalize stored identity.
+
+
+- Apply exact-owner native permission facts before allowing an awaited model-read
+  response to authorize input. Keep unresolved pre-input facts separately from the
+  active written turn's denial/ACK state; a later idle or hook event in the same
+  buffer cannot erase an already observed unresolved condition. Check the retained
+  fact again at the final stdin sink, while preserving resolved-hook and sibling/
+  subagent qualification rules.

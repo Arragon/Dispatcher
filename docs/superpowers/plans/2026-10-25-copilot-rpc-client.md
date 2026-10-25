@@ -124,27 +124,27 @@ follow only after this internal client is independently accepted.
 
 **Steps/acceptance**
 
-- [ ] Read original604line source and complete two source tests. Inventory113 and
+- [x] Read original604line source and complete two source tests. Inventory113 and
   exact original fixture/assertion tables before edits, preserve147 split113+34.
-- [ ] Verify actual license/SRI/zero-proddep graph from official10 artifact and
+- [x] Verify actual license/SRI/zero-proddep graph from official10 artifact and
   add exact dependency with lifecycle scripts disabled. Inspect actual lock/package
   changes, preserve existing ACP SDK/Zod pins. No opaque dependency installation.
-- [ ] Port only loadable client with minimal actual Node codec/root imports. Preserve
+- [x] Port only loadable client with minimal actual Node codec/root imports. Preserve
   missing-entry setup failures as setup only. Capture meaningful behavioral RED
   (at least original raw child-env authority canary, plus any proven ownership/
   capture/capacity gap) before its fix; no retrospective baseline replay.
-- [ ] Implement current childExecutionEnvironment and captured owned root lifetime,
+- [x] Implement current childExecutionEnvironment and captured owned root lifetime,
   exact protocol/callback/write fences. Preserve113 bodies/tables/budgets, no new
   fallback/model/approval/remote/client profile API. Record every canonical adaptation.
-- [ ] Self-review actual used interfaces/callers; build then changed-file lint and
+- [x] Self-review actual used interfaces/callers; build then changed-file lint and
   focused source suites plus existing root/process contract tests. Derive actual
   paths from repository, not a guessed counterpart. Keep final inputs/self-review
   frozen and original generated native fixtures captured from the first execution.
-- [ ] Actual production deployment to isolated temporary destination, verify exact
+- [x] Actual production deployment to isolated temporary destination, verify exact
   installed/deployed codec version/package/License.txt and lock SRI/graph. Inspect
   fresh pnpm audit JSON, record pre-existing vs introduced advisories without
   fixing unrelated CV13 findings or claiming security Gate closure.
-- [ ] One final unchanged mise exec -- pnpm check with build/typecheck/lint/
+- [x] One final unchanged mise exec -- pnpm check with build/typecheck/lint/
   boundaries/all tests; failures preserved, no unchanged retries/test/worker/cache/
   timeout/lint weakening. Five-path scoped commit, final Git/pre/post input/fixture
   audit and complete assigned report; root required review/metadata afterward.

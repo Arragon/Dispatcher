@@ -4944,3 +4944,66 @@ MIT License/SRI/zero-proddeps verified, single-package advisory lookup{} time-sp
 This is only API/wire compatibility preparation, not113client/native/security Gate
 evidence. New codec/package/deployed notice and all source tests remain next task;
 no SDK/commercial CLI incorporation or package change in this C2 unit.
+
+
+## Internal Copilot RPC client acceptance (2026-10-25)
+
+aa856718625973b03a08818fddd3f16bcc405486+80ab301648b4d961344959452b437ac457aa95aa preserve internal
+client only. Source113 =76read/bootstrap+37prompt whole calls/bodies/tables/budgets
+remain exact; initial7 and fix9 direct cases add16, total129client. Producer34,
+runtime41 and WIPconfig17/service29 remain separate unfinished units. No package
+root exports/registration, schema or persisted-format change.
+
+Actual root-only stdio with filtered child environment, exact CLI1.0.97/protocol3,
+bounded ingress/final-write Guard, single bootstrap/local exact resume, known binding
+before qualification and correlated prompt/denial/abort facts retain source purpose.
+Full review found I1 pre-input unresolved permission could be ignored during model
+read; actual fake-child probe returned apparent success without denial. Fix1 adds
+sticky qualified pre-input permission admission/final-sink fence. Meaningful RED6
+and3 existing positive controls preceded fix; covering149 includes all source113,
+initial7,fix9 and existing20root/process cases. Same-buffer idle/hook-tail cannot
+erase unresolved pre-input facts; valid in-turn denial/ACK and resolved-hook,
+sibling/subagent controls remain. Scoped required re-review /tmp/dispatcher-copilot-client-task1-fix1-review-20261025.md addressesI1
+without new Critical/Important breakage. M1 inherited expected-service diagnostics
+remain parentCV14 harness work; no suppression/test weakening.
+
+One unchanged final mise exec -- pnpm check passes200files3759tests plus build/
+typecheck/lint/boundaries. UTC2026-10-25T20:21:04.197460+00:00 to2026-10-25T20:24:38.818653+00:00,
+wall214.624451041s; outputSHAed2e73d5aa6b4e59b781dc223df0e156e23f5e93462734f4600863f00eddd365. Evidence /tmp/dispatcher-copilot-client-fix1-evidence-20261025. Final source,
+self-review, external and generated inputs remain frozen; original candidate's
+200/3750 green and I1 diagnostic retained as superseded, not accepted proof.
+
+Only exact vscode-jsonrpc10.0.0 was added, published /node export; actual Microsoft
+MIT notice/package/entry/official tar SRI match installed and isolated relocated
+production dependency bytes, zero new transitive production nodes. ACP SDK1.8.0/
+Zod4.6.7 unchanged; no CopilotSDK/CLI/koffi incorporation. Fixed deployed source/dist
+match final tested bytes,1360regularfiles+6containedsymlinks/14833553bytes;102
+workspace hardlinks detached locally with all bytes preserved/zero shared inodes.
+No install/research rerun in fix; audit reused actual UTC20:01 snapshot against
+unchanged lock,28advisories6low17moderate5high0critical on unchanged BASEversions,
+no codec path. This does not clear security/NS068.
+
+Root historical audit /tmp/dispatcher-copilot-client-root-audit-20261025.json checks
+26actualcommands/121431pre121436post/104digests/1170externalcopies/961generated
+fixturefiles248executables/517Git,909final deploy directory originalcopies; zeroerrors.
+Root fixed audit /tmp/dispatcher-copilot-client-fix1-root-audit-20261025.json checks
+16commands/74768pre/74768post/64digests/
+1121externalcopies/1023generatedfiles
+271executables,517Git/4673finalinputs/
+692dist/16buildinfo; zeroerrors and primary HEAD/status/all3
+dirty content hashes preserved. Static root source map and prior120 cases verified.
+
+Limitations retained: early deployment directory argv had no unique per-command
+copies; final909 inputs do. Native scripts have unique mkdtemp names and manifest
+byte proof, no original absolute-path identity record. Static inspectors initially
+failed on as-const AST and artifact after.files schema, corrected actual inspectors
+retained without production/test changes. Initial dependency inspection false
+/tmp-vs-/private/tmp escape, quoted-lock parser and workspace hardlinks have retained
+failed outputs and exact subsequent corrections. Runtime binaries/node_modules
+excluded from whole-input capture; selected codec bytes separately checked, no
+hermetic/account/provider/GUI/VSCode/service/writer/release/formal Gate claim.
+
+CV10 acceptance 6fcee9f9-0d38-4c10-ad36-3d26654db812 and umbrella 718e47ea-2888-42b9-8548-083724701058 saved and
+exact bodies read back. Goal remains active; source503 identities unchanged. Next
+producer34 uses actual canonical allocation/durable observer, then runtime41 and
+config17/service29. Group/EPERM/R020/CV13/CV14 and all real Gates remain open.
