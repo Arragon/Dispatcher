@@ -1770,3 +1770,21 @@ probe retains its existing stdout cap, independently bounds stderr and validates
 UTF-8 after drain. The model query has independent 1MiB stream bounds and a whole
 query deadline. Cleanup uncertainty wins over usable data, cancellation or timeout.
 This catalog is internal until explicit runtime/profile/Controller composition.
+
+
+## Internal Devin managed runtime
+
+The Controller-side runtime routes one exact managed execution to the real ACP
+producer through NativeRuntimeHosts. It captures canonical selection and physical
+scope, reserves original callback work before reentry, awaits durable binding/
+facts, and checks persisted ownership before readiness and result publication.
+Raw producer and runtime acquisition/callback/result work survive public waiter
+rejection. Local cleanup preserves original host receipts and appends separately
+scoped runtime callback uncertainty; late settlement cannot upgrade cached unknown.
+
+Forced cancellation after producer entry reports unknown until actual outcome
+proof is available, including the interval before a binding reply. Result data is
+captured before awaited authority and identity checks, and public output uses only
+that validated snapshot. This internal runtime exposes no native source, history,
+continuation or writer control. ConfigPlan/factory/Controller registration follows
+separately and does not arise merely from its compiled package-root exports.

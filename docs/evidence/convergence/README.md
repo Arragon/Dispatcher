@@ -4718,3 +4718,57 @@ Controller30+lookup1; no publicprofile/account/service activation. Source503
 immutable identities/decisions retained. Group/EPERM/R020/CV13audit28/native/
 account/GUI/writer/release/parentCV14 remainopen. Quota92used8remaining,allowed,
 reset2unused; continuing latestgoal.
+
+
+### 2026-10-25 Devin managed runtime locally complete
+
+TaskBASE90041be; sourcea3a4e66 and fixc76d315ab0aa89dfbdf41decd945f1e61733d40f.
+Three taskpaths: runtime/test and two named real producer class/scope root exports;
+fix onlyruntime/test. Current NativeRuntimeHosts and real producer own their
+boundaries. Canonical selection/physical owner/callback receiver capture, reserved
+original work, asyncdurability500ms/ownership rechecks and raw acquisition/ready/
+result retention guard the internal route. Sourcealwaysundefined; native control/
+history/continuation/quiescence/writer remainunqualified. Originalhost receipts
+intact, owncallbackunknown appended separately with no inventedidentity/PID.
+
+Independent taskreview found I1forcedpublicabort couldsaynotcreated after
+session/new-written/pre-binding, and I2getter/sharedresult couldchange after
+validation. Bothfixed inround1; scopedreview confirmsADDRESSED/no newCritical/
+Important. Ordinaryproduceroutcomeproof stays unchanged; forcedabort afterentry
+isunknown, preentrynotcreatedcontrol remains. Result capturedbefore awaitedfinish
+andvalidatedsnapshot alone returned. /tmp/dispatcher-devin-acp-runtime-task1-fix1-review-20261025.md.
+
+Source19definitions28expandedwholecanonicalASTstatements includingparameter tables
+preserved; prior47definitions95cases+helperprefix exactexcepttypeimport. Current
+106=source28+78regressions/controls. RED6fail/100pass, GREEN106/106, compat3/278;
+actualcreate-ignore localfixture proveswrittencreateinterval. Finalfix1-final-check
+`mise exec -- pnpm check` passes195files3369tests andbuild/typecheck/lint/boundaries,
+Vitest137.50s wall156.27945525s, UTC2026-10-25T18:28:54.077694Z→18:31:30.357314Z,
+logSHA25cc711f73a455c6417b5cca22a169ea98f16ce13f059cb9af7904f02b348bad.
+Evidence /tmp/dispatcher-devin-acp-runtime-fix1-evidence-20261025. Earlier6/406
+focus and3357/3358gates are retainedonsupersededbytes, notfinalpayloadclaim.
+
+Root /tmp/dispatcher-devin-acp-runtime-fix1-root-audit-20261025.json independently
+checks52actualcommandrecords240903pre+240908post/208digests/42externalinputs,
+506trackedGit matchingfinalprepost/live and4635inputs/688liveDist/16buildinfo,
+zeroerrors. AssignedignoredreportMarkdown aftergate onlyliveinputdrift; dirty
+primaryunchanged. Sharedfixture/fiveexistingfocusfiles exact toBASE. Rootwholecase/
+priorhelper proofs retained; mapSHAf1d48d742886bd6e6b64e54630edfe2e1d71ec5d085fb912e0cc9d016d44915e.
+Historical8basenamecollisions matcheddeclaredprehashes/retainedworking or earlier
+snapshot/frozenGitbytes: byteequivalence, NOToriginaluniquecaptureguarantee. New
+fix copiesexternalinputsunderfull-pathhashdirs atcommandstart. Nohermeticclaim.
+
+Initial loadable30:27sourcepassed, onecanonicalfreezesanitizationporterror plus
+twoactualasync/durableREDs, then30GREEN; no retrospectivebaseline replay. Further
+reentrant/raw/getter/capacity REDs, compiler/lint failures andoriginalhostreceipt
+factloss RED retained; finalcorrection onlynarrowcleanupbranch thennewgate. No
+oldassertion/worker/timeout/cache/lint weakening. Quota-terminatedagent leftclean
+BASE; officialavailability laterverified andsamefixround resumed, no resetused.
+
+OriginalMinorM1expectedfixture/service/SDKnoise remainsCV14, no pristineclaim or
+production suppression. Rootallcannotverifylocalscopeitems resolved; no real
+native/account/GUI/writer/service/releaseGate. LinearCV10e3f0045f-1be9-4224-a283-632bb765cd65/
+umbrellac7c1f534-3774-45ef-b639-4a2bd5195afa saved/readback. Nextatomicfactory/
+config17 thenController30+lookup1/coldreadonly/storagefences; source503 immutable
+identities/decisions preserved. Group/EPERM/R020/CV13audit28/formalGates/CV14open.
+Officialquota4used96remaining allowed/reset2unused, fullgoalcontinues.

@@ -33,7 +33,7 @@ are not passing totals; all28 source purposes require explicit mapping.
   Full profile/providerdevin-local/backenddevin-local-acp/runner/managed reference
   ownership. One managed NEW Session; reject providerSessionId even undefined-owned
   property, cloud/default/legacy model, args/env overrides/approveTools/resume.
-- Capture original options/profile/dataHome/configHome/runner/signal-bearing input/
+- Capture original options/profile/dataHome/configHome/runner/input/
   callbacks with original receivers and cloned data before awaits. Recheck physical
   executable/homes/workspace and full reference/selection/current authority around
   every owning callback/await. Caller or callback mutation cannot rewrite admitted
@@ -124,21 +124,21 @@ are not passing totals; all28 source purposes require explicit mapping.
 
 **Steps and acceptance**
 
-- [ ] Read frozen source/current modules and map28 source cases/adaptations.
-- [ ] Port source tests and meaningful loadable RED for actual contract gaps;
+- [x] Read frozen source/current modules and map28 source cases/adaptations.
+- [x] Port source tests and meaningful loadable RED for actual contract gaps;
   missing import/unimplemented stub is setup evidence only. Preserve source-shaped
   baseline normally successful behavior before claiming safety RED.
-- [ ] Implement narrow runtime and two named root exports; reuse current canonical
+- [x] Implement narrow runtime and two named root exports; reuse current canonical
   owner checks/host lifetime, original callback raw tracking and required async
   acknowledgements. No copy of protocol/Adapter state machine or service activation.
-- [ ] Complete self-review/named caller checks BEFORE finalfreeze. Build, changed
+- [x] Complete self-review/named caller checks BEFORE finalfreeze. Build, changed
   filelint, source/body/fixture map, then focused actual paths verified beforeplan:
   `mise exec -- pnpm vitest run apps/controller/test/devin-runtime.test.ts apps/controller/test/pi-runtime.test.ts apps/controller/test/opencode-runtime.test.ts packages/adapters/test/devin-acp-execution.test.ts packages/adapters/test/devin-catalog.test.ts packages/runner/test/native-runtime-lifecycle.test.ts`.
   Existing five paths verified; the new Devin runtime test is created by this task.
-- [ ] One unchanged final `mise exec -- pnpm check`; build/typecheck/lint/boundaries/
+- [x] One unchanged final `mise exec -- pnpm check`; build/typecheck/lint/boundaries/
   tests required. Preserve failures, report actual reason/source drift; root rules
   on genuine behavior changes, never silent policy/test weakening/unchanged retry.
-- [ ] Commit only three scoped files; actual final pre/post/Git byte/source map
+- [x] Commit only three scoped files; actual final pre/post/Git byte/source map
   audit, reportRED/GREEN/commands/logs/noise/remaining Gates to assigned report path.
   No worker subagents/reviewer/docs/Linear/native/push/merge. Root required review.
 
@@ -146,3 +146,15 @@ are not passing totals; all28 source purposes require explicit mapping.
 and pending catalog exact-ID/noSession1 through current routing trial, plus cold
 readonly storage certificate/raw-operation storage/profile fences. No automatic
 continuation/native tool or writer qualification implied by this runtime unit.
+
+
+## Final local acceptance
+
+Sourcea3a4e66 plus fix1c76d315ab0aa89dfbdf41decd945f1e61733d40f. Independent
+review I1/I2 creation-abort/result-capture issues fixed and scoped re-review
+ADDRESSED/no new Critical/Important. Original source28 and prior95 helpers/cases
+preserved; current106, compatibility278, final195/3369 all non-test gates pass.
+Root full actual input/Git/source audit passes with explicit historical basename
+capture limitation. Original host receipts stay intact and runtime own callback
+uncertainty appends separately. Source undefined, no native capability promotion.
+Configuration/factory/Controller composition and formal Gates remain separate.

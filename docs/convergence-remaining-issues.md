@@ -242,8 +242,15 @@ callers. Root35captures/161631pre+161635post/503trackedGit and source/fixture
 maps pass, onlypostgateignoredreportMarkdown differs. Native qualification is
 not established; originalM1diagnosticnoise remainsCV14.
 
-Next: Devin Local runtime28, atomic config/factory17, Controller30 and the
-pending exact-ID/no-Session case through real canonical routing trial,
+Managed runtime a3a4e66+c76d315 is locally complete after two Important review
+fixes: forced pre-binding abort outcome and result capture before validation.
+Source28/prior95 assertion preservation,106runtime/278compatibility, finaldefault
+195/3369 and root52records/240903pre+240908post/506Git audit pass. Eighthistorical
+externalbasename collisions retain explicit provenance limits; newfix uses unique
+copies. Internal runtime source remainsundefined, no registration/nativequalification.
+
+Next: atomic Devin Local config/factory17, Controller30 and the pending
+exact-ID/no-Session case through real canonical routing trial,
 remaining native providers, unresolved shared group safety and original
 provider/GUI/writer/service/release qualification.
 Current native integration uses fixtures only; no real account/config/service activation

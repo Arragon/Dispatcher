@@ -596,3 +596,6 @@ server profile。owned host/producer及精确分配observer随后保存105ef8b�
 
 
 **ACP catalog回执**：a10a2c1+1338913完成内部canonical目录29直接源例，1过时modelInfo exact-ID/no-Session留真实后续Controller组合。独立审查I1版本stderr缺口经共享helper严格选项窄修/回归/范围复审确认解决；当前目录65、helper46，最终194文件3263例及所有非测试门禁通过，root35次输入捕获/503Git/source fixture映射核验通过。旧helper实际23例全保留，Unicode精确排序修复已留RED。下一runtime28、原子config/factory17、Controller30+lookup1；未激活真实profile/account/service，正式Gates/CV13/CV14保持开放。
+
+
+**ACP runtime回执**：a3a4e66+c76d315完成独立managed runtime；原28源例、prior95断言/helper保持，当前106、兼容278、最终195文件3369例及全部非测试门禁通过。独立审查I1创建取消unknown/I2结果先捕获再验证均经修复与范围复审解决；原host事实保留并追加runtime callback未知行。root52次真实捕获/506Git/source与最终输入核验零错误，历史8个外部basename碰撞仅证明保留字节等价而不升级原始捕获保证，新fix唯一副本解决后续问题。下一原子config/factory17，再Controller30+lookup1与cold readonly/实际存储护栏；无个人profile或服务激活，group/R020/CV13/CV14/正式Gates继续开放。

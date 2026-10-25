@@ -1113,3 +1113,18 @@
 - Opaque Unicode selectors need a deterministic total order for content hashes.
   Locale collation can equate distinct composed/decomposed strings; binary string
   ordering preserves exact identities and revision stability without normalization.
+
+
+- Missing native binding is not creation-absence proof. A public cancellation can
+  beat a pending create response after the mutation was written; retain unknown
+  once producer work entered unless the actual outcome was proven. Keep ordinary
+  producer proof separate from conservative forced-waiter cancellation.
+- Capture getter-backed/shared result objects before awaiting authority or identity
+  validation. Validate and return that same plain snapshot; cloning afterward can
+  publish different data from the identity that passed the checks.
+- Preserve original endpoint receipt facts when a higher layer still owns work.
+  Append its separately scoped uncertainty rather than rewriting the endpoint's
+  observed callback state, and cache the combined result without later promotion.
+- External command inputs need unique full-path retention keys. Basename-only copies
+  can overwrite each other; matching retained snapshots to declared hashes proves
+  byte equivalence and must not be called an original per-command unique capture.
