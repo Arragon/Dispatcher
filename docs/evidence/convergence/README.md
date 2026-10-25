@@ -5079,3 +5079,43 @@ readback. No dependency mutation; those advisory minima are not latest/security
 clearance. Whole goal active: next runtime41 actual producer raw-status consumer,
 then atomic config/factory17, Controller29/pure restart certificate. Group/EPERM/
 R020/CV13-14 and all actual provider/account/GUI/service/writer/release Gates open.
+
+## Copilot runtime candidate and owning Devin verification follow-up
+
+Candidate94da9c1+1652a79+73f0c33, not whole-task acceptance. Required Fix2 review
+/tmp/dispatcher-copilot-runtime-task1-fix2-review-20261025.md resolves I1/N1 with
+zero newCritical/Important; direct final canonical tuple mutation and final lookup
+revocation failures retained. One mandatory synchronous assertCurrent now owns
+canonical permission plus the exact persisted tuple; pure local fences follow.
+Diagnostics-only lookup grants no input. Actual default Adapter reservation,
+invocation/generation/attempt/lease, managed selection/reference/workspace/store
+owner is exercised; future Controller C1 must implement the real joint assertion.
+
+Source41 titles/full tables/script array and prior103 purposes/tables/164matcher
+expressions verified by independent AST. All original100 scalar occurrences
+retained; only later fix1 counter scaffolding/error text retired with explicit
+mapping. Current114 runtime/10focused761/build/lint pass; old whole-test-prefix is
+false after mandatory API migration. Same report includes all RED/GREEN/inputs.
+Root fix2 audit10runs46990pre/post/40digests149external/24fixturecopies8manifests/
+20Gitobservations/523Git/4699finalinputs700dist16buildinfo, zeroerrors; final
+focused/external snapshots frozen and committed bytes agree. Primary HEAD/status/
+all3dirty contents preserved. Fix1 and original candidate audits/failures retained.
+
+Required full gate remains red:202files201pass1fail,3967tests3966pass1fail; unchanged
+Devin observer-entry predicate at:160, before its cleanup assertions. No unchanged
+full retry. Separate owning plan2026-10-25-devin-entry-phase will retain59 source
+purposes, actual-open setup/error barrier and unchanged post-open1s/native budgets,
+then one changed-source full gate covers both. Controlled actual stdio baseline
+open401ms/entry406ms versus1200ms version delay open1613ms/entry1617ms proves a
+structural setup/poll assumption only, not historical OS/R020 causation. Probe
+outputSHA72343f01063853aff434615459c6518b6fea0b858d2b3e6eb4b4651e51d4a4b2,
+4698pre/post equal and14original generated file copies independently verified.
+
+First exploratory green43 native identity/bytes/files/receipt were discarded;
+original source/log retained. Explicit root historical CV14 exception forbids
+initial-run/release attribution, reconstructed proof or another missing final
+capture. Later contemporaneous captures have outer root hashes and per-original-
+absolute-file-path hashes; they prove their own runs. M2 existing log noise stays
+deferred without suppression. I2 still blocks Task1 completion; no source503
+acceptance/real provider/account/GUI/writer/release/P4 promotion. Quota59used41left,
+ordinaryallowed/reset2unused. Goal and remaining plans continue.

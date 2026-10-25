@@ -494,3 +494,15 @@ retry or test/helper/deadline/worker/cache change. No retained open error distin
 delay/failure, no claim of R020's same cause or resolution. Failed12 ephemeral native
 bytes unavailable; original source/output retained. This remains follow-up alongside
 existing loader/group/security/performance/native/formal Gates; whole goal active.
+
+Copilot runtime candidate94da9c1+1652a79+73f0c33 is not yet accepted. Required
+Fix2 review resolves I1/N1 without newCritical/Important after replacing alternating
+callbacks with one mandatory joint canonical/persisted owner decision. Runtime114,
+focused10/761, build/lint pass; source41 and prior103 purposes/tables/164assertions
+retained with explicit API migration, no false old-prefix claim. Future Controller
+C1 must implement actual joint store checks. Original full202/3967 retained one
+unchanged Devin entry-poll failure; I2 is owned by2026-10-25-devin-entry-phase,
+with actual controlled-delay evidence and unchanged post-open wait/native budgets.
+Historical OS/R020 cause remains unknown. I3 lost first exploratory native bytes
+remain an explicit CV14 exception, not fixed; M2 prior negative-path logs deferred.
+No config/service/account/native/writer/formal activation, goal remains active.

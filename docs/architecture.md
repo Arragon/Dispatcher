@@ -1852,3 +1852,21 @@ callback slots and creation admission are reserved before caller reentry, while
 public cancellation retains underlying work and immutable unknown cleanup. Native
 stop remains unqualified. The internal Adapter grants no catalog, account, source
 or writer qualification; Controller runtime/profile registration follows separately.
+
+## Internal Copilot managed runtime
+
+The internal Controller runtime owns one exact managed Copilot producer through
+NativeRuntimeHosts, with physical executable/home/workspace identity, creator,
+selection and complete binding fences. Its mandatory synchronous assertCurrent
+owner checks canonical permission and the expected persisted binding in one
+critical section. Only pure local fences follow that decision; an independent
+binding lookup cannot authorize input. Diagnostics retains its separate observed
+binding lookup and grants no control. The future Controller service consumer must
+implement the joint assertion over its real canonical and persisted store.
+
+Raw acquisition, result and callbacks survive public cancellation; bounded
+acknowledgements and aggregate checkpoints preserve immutable unknown receipts.
+Result bytes are copied before owner callbacks. Source remains undefined and
+native control, continuation, catalog and writer release remain unqualified.
+The code has scoped review and focused verification; required full verification
+is pending the separately owned Devin test setup/observation correction.

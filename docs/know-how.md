@@ -1163,3 +1163,12 @@
 - An observation failure may close the local connection itself. Preserve that
   cause so the final result remains failed instead of reporting user cancellation;
   a closed transport does not identify who requested cancellation.
+
+- Two independently mutating callbacks cannot validate each other's final state
+  through finite alternating checks. Put canonical permission and the expected
+  persisted tuple in one synchronous owning assertion, then perform only pure
+  local physical/registry fences. The owner must actually read both current
+  facts; a signature or a no-op double does not establish that contract.
+- Pure local failures after producer entry still need the entry-aware unknown
+  outcome mapper. A before-result path check must not report not-created merely
+  because it runs outside the awaited result/callback error wrapper.

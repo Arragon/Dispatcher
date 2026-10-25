@@ -611,3 +611,5 @@ server profile。owned host/producer及精确分配observer随后保存105ef8b�
 
 
 **Copilot producer回执**：66789bd 完成内部canonical producer/Adapter及实际Copilot分配身份模式，源34目的/表/标量和18规范化函数体保持，16/20两处真实observer/Adapter适配单列。旧84观察器完整前缀不变并补35，当前73+119；独立审查零Critical/Important，默认201文件3867例及非测试门禁通过。root18次捕获/520Git/全部代码检查输入核验零错误；全快照因root冻结后台账变更为false，仅精确元数据SHA对例外，不掩盖或重跑。保留无改动Devin1s等待失败611/612及未知原因，原始捕获键说明已追加纠正。下一runtime41，再原子config/factory17与Controller29/纯只读恢复；group/R020/CV13-14/实际Gates开放。
+
+**Copilot runtime候选，尚未完成**：94da9c1+1652a79+73f0c33保留41源目的与103既有展开目的/完整表/164断言表达式，当前114/聚焦10文件761及build/lint通过。独立审查I1最终授权改绑定、fix1新增N1最终查询撤权，经强制内部assertCurrent联合canonical+persisted决策与主动变更回归修复，Fix2零新增Critical/Important；Controller实际consumer尚未接入。原完整gate202文件3967例有一项未改动Devin1秒进入断言失败，所有非测试门禁通过；I2待独立test-phase计划，未无改动重跑。受控1200ms版本延迟证明合法open可超过该1秒，不能反推历史OS/R020原因。首个探索性假子进程字节丢失作为CV14历史例外保留，禁止重建冒充首跑证明；最终原始捕获及root输入核验有效。先完成Devin验证修复，再atomic config/factory17和Controller29/只读恢复；其余任务/正式Gates保持开放。
