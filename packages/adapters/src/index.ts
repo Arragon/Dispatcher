@@ -34,3 +34,5 @@ export {freezeExecutionSelection} from "./execution-selection.js";
 export {devinLocalAcpManifest,DevinLocalAcpExecutionBackend,type DevinLocalAcpExecutionScope} from "./devin-acp-execution.js";
 
 export {copilotManifest,CopilotExecutionBackend,type CopilotExecutionScope} from "./copilot-execution.js";
+
+export {readCursorLocalSessions,locateCursorLocalSession,isCursorLocalSessionId,cursorLocalReadVersion,type CursorLocalReadScope,type CursorLocalReadInput,type CursorLocalSessionInventory} from "./cursor-native-history.js";

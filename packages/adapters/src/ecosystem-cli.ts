@@ -1,3 +1,4 @@
+import {isCursorLocalSessionId} from "./cursor-native-history.js";
 import { childExecutionEnvironment } from "@dispatcher/shared";
 import {assertSessionModelBinding,freezeExecutionSelection,sessionModel} from "./execution-selection.js";
 import {turnExecutionResource} from "./execution-resource.js";
@@ -197,6 +198,7 @@ export interface CliProviderDefinition {
   authArgs: string[];
   environmentKey?: string;
   supportsResume: boolean;
+  assertResumeId?: (value: string) => void;
   strictLifecycle?: boolean;
   requireExecutionEvidence?: boolean;
   newSessionId?: () => string;
@@ -244,6 +246,7 @@ export const kiroManifest: AdapterManifest = {
 
 const cursorDefinition: CliProviderDefinition = {
   catalogProvider: "cursor",
+  assertResumeId: value => { if(!isCursorLocalSessionId(value))throw new AdapterContractError("CURSOR_LOCAL_SESSION_ID_INVALID","CURSOR_LOCAL_SESSION_ID_INVALID"); },
   manifest: cursorManifest,
   defaultExecutable: "cursor-agent",
   versionArgs: ["--version"],
@@ -399,6 +402,7 @@ export class StructuredCliAdapter implements AgentAdapter {
       assertSessionModelBinding(this.store.load(sessionId),expected);
       freezeExecutionSelection(session.executionSelection,{profileId:this.profile.id,providerId:this.manifest.id,backendId:this.manifest.backends[0]!.id,selection:this.supportsExecutionSelection,reasoning:false,legacyModel:true});
       if (!session.providerSessionId) throw new AdapterContractError("SESSION_NOT_RESUMABLE", `${this.manifest.displayName} did not emit a provider session id`);
+      this.definition.assertResumeId?.(session.providerSessionId);
       const environment = await this.environment();
       const executable = await this.executable();
       if (this.cancelled.has(sessionId)||this.require(sessionId).state === "CANCELLED") throw new AdapterContractError("SESSION_CANCELLED", "Session was cancelled before the next turn started");
