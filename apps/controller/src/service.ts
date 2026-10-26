@@ -9,9 +9,9 @@ import {NativeHistoryService,NativeHistoryError} from "./native-history.js";
 import {nativeSessionView} from "./native-session-view.js";
 import {isGuardedControllerStart,isReadableManagedCodexRun,isReadableManagedOpenCodeRun,isReadableManagedPiRun,isReadableManagedDevinRun,isReadableManagedCopilotRun} from "./start-recovery.js";
 import {parseNativeModelDefaultReview,qualifyNativeModelDefault,readNativeModelDefaultEvidence} from "./model-defaults.js";
-import {isExecutionContextRef,type NativeBinding,type InteractionCapabilities,type NativeResponse,type RunGitDelivery,type ScmDeliverySelection,type MutationFence,type ExecutionContextRef} from "@dispatcher/domain";
+import {isExecutionContextRef,type NativeBinding,type InteractionCapabilities,type NativeResponse,type RunGitDelivery,type ScmDeliverySelection,type MutationFence,type ExecutionContextRef,type NativeControlView} from "@dispatcher/domain";
 import {NativeInteractions,InteractionGuardError,type ControllerInteractionOperation,type InteractionPrincipal} from "./native-interactions.js";
-import {AdapterAdmissionError,assertAdapterWriteAdmission,type AdapterStartOutcome} from "@dispatcher/adapters";
+import {AdapterAdmissionError,getInteractionPort,assertAdapterWriteAdmission,type AdapterStartOutcome} from "@dispatcher/adapters";
 import { resolveProfileExecutionContext } from "./execution-context.js";
 import { ProfileProbeService } from "./profile-probes.js";
 import { CredentialContext } from "./credential-context.js";
@@ -166,7 +166,7 @@ import {
   type TaskPlatformAdapter,
 } from "@dispatcher/integrations";
 import { LlmRuntime, LlmRuntimeError, type FetchLike, type LlmConfiguration, type LlmRole } from "@dispatcher/llm-runtime";
-import { createLogger, redactValue } from "@dispatcher/observability";
+import { createLogger, redactValue, redactNativePayload } from "@dispatcher/observability";
 import { DispatcherDatabase, InteractionStore, RevisionConflictError, type JsonValue } from "@dispatcher/persistence";
 import { EmbeddedRunner, EventBus, LeaseFenceError, LocalGitDelivery, LocalGitDeliveryError, ProcessManager, RemoteRunnerServer, RunnerEnrollmentAuthority, RunnerLeaseAuthority, RunnerRegistry, VerificationRegistry, reconcileRunnerState, type RunnerEnrollmentRecord, type RunnerEvents, type RuntimeLocalDisconnectResult } from "@dispatcher/runner";
 import {
@@ -4802,8 +4802,25 @@ export class ControllerService {
         return {run,contract,nativeSession:null,nativeSessionError:{code:"NATIVE_SUMMARY_UNAVAILABLE",status:error.code==="FORBIDDEN"?403:409}};
       }
       let capabilities:InteractionCapabilities|undefined;
-      try {const binding=hasSession?store.binding(run.sessionId):undefined;capabilities=binding?this.nativePort(binding)?.capabilities():undefined;}catch{/* An invalid declaration cannot qualify any capability. */}
+      try {
+        const binding=hasSession?store.binding(run.sessionId):undefined,port=binding?this.nativePort(binding):undefined;
+        if(port){
+          if(this.nativeRuntime(run.profileId))capabilities=port.capabilities();
+          else {const adapter=this.agentAdapters.get(run.profileId);if(adapter?.interaction===port)capabilities=getInteractionPort(adapter)?.capabilities();}
+        }
+      }catch{/* An invalid declaration cannot qualify any capability. */}
       return {run,contract,nativeSession:nativeSessionView(this.database,run,capabilities,this.now())};
+    });
+    this.app.get<{Params:{id:string}}>("/api/runs/:id/control",async(request,reply)=>{
+      const run=this.database.getEntity<JsonValue>("run",request.params.id) as unknown as Run|undefined;
+      if(!run)return reply.code(404).send({code:"RUN_NOT_FOUND"});
+      const store=new InteractionStore(this.database),hasSession=typeof run.sessionId==="string"&&run.sessionId.length>0;
+      const fullFence=hasSession?this.nativeInteractions.fenceFor(run,"control-read"):undefined;
+      if(fullFence&&(store.binding(run.sessionId)||this.database.getEntity("session",run.sessionId)||this.database.getEntity("adapter-session",run.sessionId)))this.nativeInteractions.assertInteraction(this.principalFor(request),"collect",fullFence);
+      const view=nativeSessionView(this.database,run,undefined,this.now()),control=view.identity==="bound"&&hasSession?store.control(run.sessionId):undefined;
+      const fence=control&&fullFence?{runId:fullFence.runId,sessionId:fullFence.sessionId,generation:fullFence.generation,leaseId:fullFence.leaseId,expectedTaskRevision:fullFence.expectedTaskRevision,expectedCurrentRunId:fullFence.expectedCurrentRunId,expectedControlRevision:fullFence.expectedControlRevision,expectedControlEpoch:fullFence.expectedControlEpoch}:null;
+      // Capability metadata cannot stand in for the missing live release/reclaim coordinator.
+      return redactNativePayload({version:1,runId:run.id,profileId:run.profileId,generation:run.generation,attempt:run.attempt,control:control??null,fence,mutationAvailable:false,reasonCode:control?"NATIVE_CONTROL_COORDINATOR_UNAVAILABLE":"NATIVE_CONTROL_UNAVAILABLE"} satisfies NativeControlView);
     });
     this.app.get<{Params:{id:string};Querystring:{cursor?:string;limit?:string}}>("/api/runs/:id/history",async(request,reply)=>{
       const principal=this.principalFor(request);
