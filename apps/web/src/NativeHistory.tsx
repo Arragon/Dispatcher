@@ -114,7 +114,7 @@ export function TaskNativeHistory({taskId,runId,run,view,headerReady}:TaskHistor
   else if(!validNativeSessionView(view))reason="原生会话摘要缺失或格式无效。";
   else if(view.identity!=="bound"||!view.binding)reason=({legacy:"未绑定原生会话。",unbound:"未绑定原生会话。",deleted:"原生会话已删除。",unreachable:"原生会话暂不可达。",conflict:"原生会话身份冲突，待核对。",bound:"缺少原生绑定。"})[view.identity];
   else if(view.runId!==run.id||view.sessionId!==run.sessionId||view.profileId!==run.profileId||view.generation!==run.generation||view.attempt!==run.attempt||view.binding.profileId!==run.profileId||view.binding.runnerId!==run.runnerId||view.execution.runnerId!==undefined&&view.execution.runnerId!==run.runnerId||!text(run.providerSessionId)||view.binding.nativeSessionId!==run.providerSessionId)reason="运行与已保存的原生绑定不匹配。";
-  else if(!view.control||view.control.state==="CONFLICT"||view.state==="deleted"||view.state==="unreachable")reason="原生控制或会话状态不可确认，请核对原生客户端。";
+  else if(!view.control||view.state==="deleted"||view.state==="unreachable")reason="原生控制或会话状态不可确认，请核对原生客户端。";
   else {
     const reads=view.capabilities.filter(capability=>capability.name==="historyRead");
     if(reads.length!==1||reads[0]?.support!=="supported")reason=reads.length===1&&reads[0]?.support==="unsupported"?"服务端不支持读取此会话的历史。":"服务端尚未确认此会话的历史读取能力。";

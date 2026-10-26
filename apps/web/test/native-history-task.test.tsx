@@ -111,3 +111,27 @@ it("drops late selected-Run responses and closes late responses after deliberate
 });
 
 it("reads supported bound history even when native activity is unknown without enabling native control",async()=>{const fixture=setup({run,nativeSession:{...view,state:"unknown"}});await ready();open();await screen.findByText("visible native transcript");expect(fixture.historyRequests()).toHaveLength(1);expect(screen.getByText(/原生接管与交还暂不可用/)).toBeTruthy();expect(screen.queryByRole("button",{name:/接管|交还|继续会话|中断/})).toBeNull();});
+
+it("deliberately reads exact bound supported history under control CONFLICT without enabling writer actions",async()=>{
+ const fixture=setup({run,nativeSession:{...view,control:{...view.control!,state:"CONFLICT"}}});await ready();
+ expect(fixture.historyRequests()).toHaveLength(0);expect(screen.queryByLabelText("只读会话历史")).toBeNull();
+ expect((screen.getByRole("button",{name:"查看只读历史"}) as HTMLButtonElement).disabled).toBe(false);open();await screen.findByText("visible native transcript");
+ expect(fixture.historyRequests()).toHaveLength(1);expect(screen.getByText(/原生接管与交还暂不可用/)).toBeTruthy();expect(screen.queryByRole("button",{name:/接管|交还|继续会话|中断/})).toBeNull();
+});
+it("clears retained and late history on a new CONFLICT control tuple and requires deliberate reopening",async()=>{
+ const fixture=setup();await ready();open();await screen.findByText("visible native transcript");let resolve!:(value:unknown)=>void;
+ fixture.setHistory(()=>new Promise(done=>{resolve=done;}));fireEvent.click(screen.getByRole("button",{name:"刷新只读历史"}));await waitFor(()=>expect(fixture.historyRequests()).toHaveLength(2));
+ fixture.setHeader({run,nativeSession:{...view,control:{...view.control!,state:"CONFLICT",epoch:5,revision:9}}});await fixture.refresh();await screen.findByText("控制权：冲突，待核对");
+ expect(screen.queryByLabelText("只读会话历史")).toBeNull();expect(screen.queryByText("visible native transcript")).toBeNull();
+ expect((screen.getByRole("button",{name:"查看只读历史"}) as HTMLButtonElement).disabled).toBe(false);
+ await act(async()=>resolve({source:"native",page:{...page,entries:[{id:"late",kind:"user",text:"late old scope transcript"}]}}));
+ expect(screen.queryByText("late old scope transcript")).toBeNull();expect(screen.queryByLabelText("只读会话历史")).toBeNull();expect(fixture.historyRequests()).toHaveLength(2);
+ fixture.setHistory(async()=>({source:"native",page:{...page,entries:[{id:"reopened",kind:"assistant",text:"new qualified conflict scope"}]}}));open();await screen.findByText("new qualified conflict scope");
+ expect(fixture.historyRequests()).toHaveLength(3);expect(screen.queryByText("visible native transcript")).toBeNull();expect(screen.queryByText("late old scope transcript")).toBeNull();expect(screen.queryByRole("button",{name:/接管|交还|继续会话|中断/})).toBeNull();
+});
+it.each(["identity conflict","unknown historyRead","unsupported historyRead"] as const)("keeps %s unavailable under control CONFLICT with zero public reads",async condition=>{
+ const header={run:structuredClone(run),nativeSession:structuredClone(view)};header.nativeSession.control!.state="CONFLICT";
+ if(condition==="identity conflict")header.nativeSession.identity="conflict";else header.nativeSession.capabilities[0]!.support=condition==="unknown historyRead"?"unknown":"unsupported";
+ const fixture=setup(header);await screen.findByText("控制权：冲突，待核对");expect((screen.getByRole("button",{name:"查看只读历史"}) as HTMLButtonElement).disabled).toBe(true);
+ expect(screen.getByText(/只读历史不可用：/)).toBeTruthy();expect(fixture.historyRequests()).toHaveLength(0);expect(screen.queryByLabelText("只读会话历史")).toBeNull();
+});
