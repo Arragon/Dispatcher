@@ -319,3 +319,24 @@ it.each([["EPERM",false],["EACCES",false],["ESRCH",true]] as const)("requires st
  const spy=vi.spyOn(process,"kill").mockImplementation(()=>{throw Object.assign(new Error("controlled process observation"),{code});});
  try{expect(exited(process.pid)).toBe(absent);expect(observeRoot(process.pid)).toEqual({state:absent?"absent":"unknown",code});}finally{spy.mockRestore();}
 });
+
+it.each(["version","acp"] as const)("redacts a synchronous %s spawn exception without retry or substitute",async phase=>{
+ const f=fixture(),childProcess=createRequire(import.meta.url)("node:child_process") as typeof childProcessModule,originalSpawn=childProcess.spawn,attempts:string[][]=[];
+ const spy=vi.spyOn(childProcess,"spawn").mockImplementation(((file:string,args?:readonly string[],options?:childProcessModule.SpawnOptions)=>{
+  if(file===f.scope.executable){
+   attempts.push([...(args??[])]);writeFileSync(join(f.root,"sync-spawn-attempts"),JSON.stringify(attempts));
+   if(args?.[0]===(phase==="version"?"--version":"acp")){
+    captureFixture(f.root,"controlled-synchronous-spawn-fault",{phase,file,args,options:{cwd:options?.cwd,shell:options?.shell,detached:options?.detached,stdio:options?.stdio},fault:"injected ENOMEM; no actual OS failure or returned child handle"});
+    throw Object.assign(new Error("private-native-spawn-diagnostic-do-not-export"),{code:"ENOMEM"});
+   }
+  }
+  return originalSpawn.call(childProcess,file,args??[],options??{});
+ }) as typeof childProcess.spawn);syncBuiltinESMExports();
+ try{
+  await expect(api.readCursorLocalSessions({scope:f.scope})).rejects.toMatchObject({code:"CURSOR_LOCAL_RUNTIME_UNAVAILABLE",message:"CURSOR_LOCAL_RUNTIME_UNAVAILABLE"});
+  expect(attempts).toEqual(phase==="version"?[["--version"]]:[["--version"],["acp"]]);
+  expect(f.calls()).toEqual([]);expect(existsSync(join(f.root,"started"))).toBe(false);
+  if(phase==="version")expect(existsSync(join(f.root,"version-root"))).toBe(false);
+  else expect(exited(JSON.parse(readFileSync(join(f.root,"version-root"),"utf8")).pid)).toBe(true);
+ }finally{spy.mockRestore();syncBuiltinESMExports();}
+});

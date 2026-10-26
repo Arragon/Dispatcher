@@ -1,5 +1,5 @@
 import {childExecutionEnvironment} from "@dispatcher/shared";
-import {spawn} from "node:child_process";
+import {spawn,type ChildProcessWithoutNullStreams} from "node:child_process";
 import {realpathSync,statSync} from "node:fs";
 import {isAbsolute} from "node:path";
 import {Readable} from "node:stream";
@@ -59,9 +59,12 @@ async function readInventory(original:CursorLocalReadInput,findId?:string):Promi
  const environment=childExecutionEnvironment(process.env,{HOME:paths[2]!.path,PWD:paths[1]!.path});
  let version:string;
  try{version=await readOwnedNativeVersion({executable:paths[0]!.path,workspacePath:paths[1]!.path,environment,ownsGroup:false,strictOutput:{stderrMaxBytes:1048576},...(signal?{signal}:{}),timeoutMs:Math.max(1,deadline-performance.now()),failure:code=>failure(code==="exit-unconfirmed"?"CURSOR_LOCAL_CLEANUP_UNKNOWN":"CURSOR_LOCAL_RUNTIME_UNAVAILABLE")});}
- catch(error){if(error instanceof AdapterContractError&&error.code==="CURSOR_LOCAL_CLEANUP_UNKNOWN")throw error;guard();throw error;}
+ catch(error){if(error instanceof AdapterContractError&&error.code==="CURSOR_LOCAL_CLEANUP_UNKNOWN")throw error;guard();throw error instanceof AdapterContractError?error:failure("CURSOR_LOCAL_RUNTIME_UNAVAILABLE");}
  guard();if(version!==cursorLocalReadVersion)throw failure("CURSOR_LOCAL_VERSION_UNQUALIFIED");
- const child=spawn(paths[0]!.path,["acp"],{cwd:paths[1]!.path,env:environment,shell:false,detached:false,stdio:["pipe","pipe","pipe"]}),owner=new OwnedProcessRoot(child);
+ let child:ChildProcessWithoutNullStreams;
+ try{child=spawn(paths[0]!.path,["acp"],{cwd:paths[1]!.path,env:environment,shell:false,detached:false,stdio:["pipe","pipe","pipe"]});}
+ catch(error){if(error instanceof AdapterContractError)throw error;guard();throw failure("CURSOR_LOCAL_RUNTIME_UNAVAILABLE");}
+ const owner=new OwnedProcessRoot(child);
  let rejected:AdapterContractError|undefined,rejectRead!:(error:AdapterContractError)=>void,bytes=0,records=0,stderrBytes=0,allowedFrame:Buffer|undefined,allowedId:number|undefined,expectedResponseId:number|undefined,pipeFailed=false;
  const aborted=new Promise<never>((_,reject)=>{rejectRead=reject;});void aborted.catch(()=>{});
  const abort=(code:string)=>{rejected??=failure(code);rejectRead(rejected);};
