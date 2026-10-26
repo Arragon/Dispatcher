@@ -32,7 +32,7 @@
 
 ---
 
-### Task1: Qualify the repaired project stack
+### Task 1: Qualify the repaired project stack
 
 **Files:**
 - Modify: `package.json`, `apps/controller/package.json`, `apps/web/package.json` (only the specified pins/engine).
