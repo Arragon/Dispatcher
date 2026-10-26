@@ -1,4 +1,4 @@
-import type { NativeModelDefaultReviewV1 } from "@dispatcher/domain";
+import type { NativeControlView, NativeModelDefaultReviewV1 } from "@dispatcher/domain";
 import { configurationEdits } from "./config-edits.js";
 import type { QueryClient } from "@tanstack/react-query";
 
@@ -85,6 +85,10 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
 export interface SessionState {
   authenticated: boolean;
   principal: { id: string; roles: string[] };
+}
+
+export function readNativeControl(runId:string):Promise<NativeControlView> {
+  return api<NativeControlView>(`/api/runs/${encodeURIComponent(runId)}/control`);
 }
 
 export async function currentSession(): Promise<SessionState | undefined> {

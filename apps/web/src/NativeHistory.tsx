@@ -101,35 +101,44 @@ export function validNativeSessionView(value:unknown):value is RunNativeSessionV
   if(binding!==null&&(!record(binding)||!["product","region","profileId","backendId","runnerId","nativeSessionId"].every(key=>text(binding[key]))||!optionalText(binding.nativeThreadId)))return false;
   if(control!==null&&(!record(control)||!oneOf(control.state,["AUTOMATED","HANDOFF_REQUESTED","HUMAN","RECONCILING","CONFLICT"])||!counter(control.epoch)||!counter(control.revision)||!oneOf(control.exclusion,["native-enforced","cooperative","none"])))return false;
   if(!record(execution)||!oneOf(execution.kind,["managed-worktree","provider-self-hosted","provider-cloud","legacy"])||!["runnerId","worktree","branch","environmentRef"].every(key=>optionalText(execution[key])))return false;
-  if(!Array.isArray(value.capabilities)||!value.capabilities.every(capability=>record(capability)&&text(capability.name)&&oneOf(capability.support,["supported","unsupported","unknown"])&&optionalText(capability.level)))return false;
+  // Summary's existing label object has a prototype; those names are not safe unknown labels.
+  if(!Array.isArray(value.capabilities)||!value.capabilities.every(capability=>record(capability)&&text(capability.name)&&!Object.hasOwn(Object.prototype,capability.name)&&oneOf(capability.support,["supported","unsupported","unknown"])&&optionalText(capability.level)))return false;
+  if(!Array.isArray(value.access)||!value.access.every(access=>record(access)&&oneOf(access.surface,["desktop","ide","web","mobile","tui"])&&oneOf(access.availability,["unverified","unsupported"])))return false;
   if(value.observedAt!==null&&!text(value.observedAt))return false;
   return [value.requestedModel,value.reportedModel].every(model=>model===undefined||record(model)&&text(model.id)&&optionalText(model.reasoning));
 }
-interface TaskHistoryProps {taskId:string;runId:string|undefined;run:Run|undefined;view:RunNativeSessionView|undefined;headerReady:boolean}
+/** Match saved metadata without substituting Dispatcher identity for native identity. */
+export function nativeSessionMatchesRun(run:Run,view:RunNativeSessionView):boolean {
+  return view.runId===run.id&&view.sessionId===run.sessionId&&view.profileId===run.profileId&&view.generation===run.generation&&view.attempt===run.attempt&&(view.execution.runnerId===undefined||view.execution.runnerId===run.runnerId)&&(!view.binding||view.binding.profileId===run.profileId&&view.binding.runnerId===run.runnerId&&text(run.providerSessionId)&&view.binding.nativeSessionId===run.providerSessionId);
+}
+/** Preserve the bound reader's exact tuple; observation timestamps and models are not identity. */
+export function nativeSessionScopeKey(taskId:string,runId:string,run:Run,view:RunNativeSessionView):string {
+  const binding=view.binding,control=view.control;
+  return JSON.stringify([taskId,runId,run.sessionId,run.profileId,run.generation,run.attempt,run.providerSessionId,run.runnerId,binding?.product??null,binding?.region??null,binding?.profileId??null,binding?.backendId??null,binding?.runnerId??null,binding?.nativeSessionId??null,binding?.nativeThreadId??null,control?.state??null,control?.epoch??null,control?.revision??null,control?.exclusion??null,view.capabilities.filter(capability=>capability.name==="historyRead").map(capability=>[capability.support,capability.level??null])]);
+}
+interface TaskHistoryProps {taskId:string;runId:string|undefined;run:Run|undefined;view:RunNativeSessionView|undefined;headerReady:boolean;open:boolean;onOpenChange:(open:boolean)=>void}
 /** The server qualifies reads; this UI only matches its current public projection to the selected saved Run. */
-export function TaskNativeHistory({taskId,runId,run,view,headerReady}:TaskHistoryProps):React.JSX.Element {
+export function TaskNativeHistory({taskId,runId,run,view,headerReady,open,onOpenChange}:TaskHistoryProps):React.JSX.Element {
   let reason:string|undefined;
   if(!headerReady)reason="当前任务或运行快照尚未成功读取。";
   else if(!run||!runId||run.id!==runId||run.taskId!==taskId)reason="运行与当前任务或所选记录不匹配。";
   else if(!validNativeSessionView(view))reason="原生会话摘要缺失或格式无效。";
   else if(view.identity!=="bound"||!view.binding)reason=({legacy:"未绑定原生会话。",unbound:"未绑定原生会话。",deleted:"原生会话已删除。",unreachable:"原生会话暂不可达。",conflict:"原生会话身份冲突，待核对。",bound:"缺少原生绑定。"})[view.identity];
-  else if(view.runId!==run.id||view.sessionId!==run.sessionId||view.profileId!==run.profileId||view.generation!==run.generation||view.attempt!==run.attempt||view.binding.profileId!==run.profileId||view.binding.runnerId!==run.runnerId||view.execution.runnerId!==undefined&&view.execution.runnerId!==run.runnerId||!text(run.providerSessionId)||view.binding.nativeSessionId!==run.providerSessionId)reason="运行与已保存的原生绑定不匹配。";
+  else if(!nativeSessionMatchesRun(run,view))reason="运行与已保存的原生绑定不匹配。";
   else if(!view.control||view.state==="deleted"||view.state==="unreachable")reason="原生控制或会话状态不可确认，请核对原生客户端。";
   else {
     const reads=view.capabilities.filter(capability=>capability.name==="historyRead");
     if(reads.length!==1||reads[0]?.support!=="supported")reason=reads.length===1&&reads[0]?.support==="unsupported"?"服务端不支持读取此会话的历史。":"服务端尚未确认此会话的历史读取能力。";
   }
   if(reason||!run||!view?.binding||!view.control)return <section className="detail-section" aria-label="原生历史读取"><h3>原生历史读取</h3><button disabled>查看只读历史</button><Notice>只读历史不可用：{reason}</Notice></section>;
-  const binding=view.binding,control=view.control;
-  const scopeKey=JSON.stringify([taskId,runId,run.sessionId,run.profileId,run.generation,run.attempt,run.providerSessionId,run.runnerId,binding.product,binding.region,binding.profileId,binding.backendId,binding.runnerId,binding.nativeSessionId,binding.nativeThreadId??null,control.state,control.epoch,control.revision,control.exclusion,view.capabilities.filter(capability=>capability.name==="historyRead").map(capability=>[capability.support,capability.level??null])]);
-  return <TaskHistoryContents key={scopeKey} runId={run.id} nativeSessionId={binding.nativeSessionId} scopeKey={scopeKey}/>;
+  const scopeKey=nativeSessionScopeKey(taskId,run.id,run,view);
+  return <TaskHistoryContents key={scopeKey} runId={run.id} nativeSessionId={view.binding.nativeSessionId} scopeKey={scopeKey} open={open} onOpenChange={onOpenChange}/>;
 }
 function validPublicPage(page:unknown,nativeSessionId:string):page is HistoryPage {
   if(!record(page)||page.version!==1||page.nativeSessionId!==nativeSessionId||!text(page.source)||!oneOf(page.state,["available","deleted","unreachable","unsupported","unknown"])||!oneOf(page.completeness,["complete","partial","unknown"])||!oneOf(page.range,["native-history","summary-only","retained-range"])||!optionalText(page.nextCursor)||page.truncation!==undefined&&typeof page.truncation!=="string"||page.gaps!==undefined&&(!Array.isArray(page.gaps)||!page.gaps.every(gap=>typeof gap==="string")))return false;
   return Array.isArray(page.entries)&&page.entries.length<=50&&page.entries.every(entry=>record(entry)&&text(entry.id)&&typeof entry.text==="string"&&typeof entry.kind==="string"&&Object.hasOwn(kinds,entry.kind)&&optionalText(entry.turnId)&&(entry.truncated===undefined||typeof entry.truncated==="boolean")&&(entry.occurredAt===undefined||typeof entry.occurredAt==="string"&&Number.isFinite(Date.parse(entry.occurredAt))));
 }
-function TaskHistoryContents({runId,nativeSessionId,scopeKey}:{runId:string;nativeSessionId:string;scopeKey:string}):React.JSX.Element {
-  const [open,setOpen]=useState(false);
+function TaskHistoryContents({runId,nativeSessionId,scopeKey,open,onOpenChange}:{runId:string;nativeSessionId:string;scopeKey:string;open:boolean;onOpenChange:(open:boolean)=>void}):React.JSX.Element {
   async function readPage(request:{cursor?:string;limit:number}):Promise<HistoryPage> {
     const query=new URLSearchParams({limit:String(request.limit)});
     if(request.cursor!==undefined)query.set("cursor",request.cursor);
@@ -137,5 +146,5 @@ function TaskHistoryContents({runId,nativeSessionId,scopeKey}:{runId:string;nati
     if(!record(response)||response.source!=="native"||!validPublicPage(response.page,nativeSessionId))throw new Error("INVALID_PUBLIC_HISTORY");
     return response.page;
   }
-  return <section className="detail-section" aria-label="原生历史读取"><h3>原生历史读取</h3><div className="detail-toolbar"><button onClick={()=>setOpen(value=>!value)}>{open?"关闭只读历史":"查看只读历史"}</button></div>{open&&<NativeHistory nativeSessionId={nativeSessionId} scopeKey={scopeKey} sourceKind="native" readPage={readPage}/>}</section>;
+  return <section className="detail-section" aria-label="原生历史读取"><h3>原生历史读取</h3><div className="detail-toolbar"><button onClick={()=>onOpenChange(!open)}>{open?"关闭只读历史":"查看只读历史"}</button></div>{open&&<NativeHistory nativeSessionId={nativeSessionId} scopeKey={scopeKey} sourceKind="native" readPage={readPage}/>}</section>;
 }
