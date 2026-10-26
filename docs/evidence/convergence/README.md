@@ -5389,3 +5389,69 @@ local Copilot client/producer/runtime units remain their recorded reviewed scope
 NextCursor locator/resume46, then Devinv3/UI/retention/delivery/Node/dependency/perf/
 wholebranch/CI/formal work. Latest official91used9remaining ordinaryallowed=true,
 reset2unused; latest nonstop goal continues, no obsolete stop threshold applied.
+
+## Cursor inventory/exact resume — locally accepted88265e9
+
+BASE5fbefc4→6d01f89507a36b4de47467137ac76574109c103e→
+88265e9dd0fb6902674527d55a539f1f4bf4700a, exactly4paths. Restores original root
+metadata API/types with existing SDK1.8 codec/root owner/environment and actual
+CursorDefinition exact-ID consumer before credentials. Only initialize/session/list;
+metadata sessionId/cwd, bounded100/page10pages1000/1MiB64records, literal opaque IDs,
+exact physical scope and unknown cleanup preserved. No Controller source/history/
+writer registration or installed Cursor/account/protocol qualification.
+
+Source26decl46→current37decl73 (27regressions). Root AST independently verifies all
+seven original parameter tables byteexact; only title mapping is the explicit
+canonical pre-snapshot MODEL_SNAPSHOT_UNKNOWN refusal with zero credentials/backend
+and historical Session bytes unchanged. NativeInput assertions map actual argv/
+stored choice, no unused mirror. Original fake construction call4413bytes including
+one indent SHA f2768537292755dfdd662c7485f69d4fc6470e1780ede969e25b77b4a14fd28e;
+array literal4361 and unindented call4412 separately exact. Root corpus/source maps:
+/tmp/dispatcher-cursor-inventory-root-{corpus,source-preservation}-20261025.json.
+No source503 row added/removed or identity/owner changed; four verification cells updated.
+
+Final focus8files304tests, build/changed lint pass. First full206/4304 applies only
+6d01f89. During that frozen gate, implementer raised raw synchronous spawn exception
+edge. Root verified actual Node24.21 internal branch (SHAace05809adf0d02482984f6b9fb8418b3c788df2d8fb8fec3527bfcfd7465d2f);
+two controlled ENOMEM/private-diagnostic REDs now cover actual version/ACP call sites.
+Separate correction keeps typed guards/cleanup unknown/no retry and shared helpers
+unchanged. Changed-input full2, never an unchanged retry, passes206files4306tests/
+all non-test gates. UTC2026-10-25T23:58:49.088864..2026-10-26T00:02:29.879760,
+command wall220.789822459s, logSHA
+07f6b512f4922f26cd42fd299aae039aa8864a09bbf0fe845d479cca5938cb51.
+Execution HEAD6d01f89+two frozen changed files equals final88265e9, not clean final
+candidate CV14 qualification. Independent gpt-6-astra task review fully read:
+/tmp/dispatcher-cursor-inventory-task1-review-20261025.md, Spec✅/QualityApproved0C/I/M.
+
+Root19run audit /tmp/dispatcher-cursor-inventory-root-audit-20261025.json verifies
+90100pre90104post source copies419+419external/180204identityrows/90digests38Git,
+535trackedGit committed bytes and protected primary, zeroerrors. Full4744source/
+29external frozen;704currentdist16buildinfo vs2004historical compiled paths,
+52reemit stat changes byteidentical and commonGit unchanged.2381Cursor manifests/
+7365payloads;580other managed tree snapshots23714fileRefs1680adminrefs;13174content/
+25550captureevent references verified. Other-provider formats remain explicit:
+150producer exe pins306retained members are not per-member original digest claims.
+Only build output deltas occurred during checks, no external tooling/list drift.
+Final report bookkeeping and root ledger update occur after gate; exact report
+comparisons retained in /tmp/dispatcher-cursor-inventory-root-report-*.patch.
+
+First native generated input bytes/stat/mode/scope/calls retained before execution
+at23:42:48.725Z, red-environment/37roots150manifests; normal version lacks independent
+PID/pipe telemetry, and old helper boolean does not prove ESRCH. These remain
+API/code-path outcomes with recorded limitations, not replayed physical receipts.
+Outside-array actual lifecycle instrumentation and strict PID classification added
+before later checks; final323manifests60roots700unique recorded lifecycle events,
+271absent/4present strict observations/0real unknownerrno. Four present observations
+belong to two inherited children before their natural exit; later exit never promotes
+CLEANUP_UNKNOWN. The EPERM/EACCES and ENOMEM regressions are injected faults, not
+observed OS failures. Root observation audit verifies exact source fields/bytes:
+/tmp/dispatcher-cursor-inventory-root-observation-audit-20261025.json. No current
+missing generated payload/unresolved controlled root/pipe found. Earlier C1/oldI3
+historical losses, group/R020, logging/committer and formal Gates stay open; current
+Node/runtime/node_modules/globalGit exclusions and non-atomic capture limits remain.
+
+NextDevinv3 now source74 (native53+Config13+Controller8) with current final Guard/
+STARTING reservation preserved, then UI history14 and other controls/retention/
+security/Node/perf/wholebranch/CI/formal work. Goal remains active. Official98used2
+remaining ordinaryallowed=true/reset2unused; tool prohibits Codex UI automation and
+quota API is readonly, manual-reset request pending, no bypass or obsolete stop rule.

@@ -35,3 +35,14 @@ Open formal/account/installed protocol/GUI/full native history/source/writer/con
 
 
 Verification tooling must be complete and immutable BEFORE each running check, including intermediate focused tests: do not edit the executed wrapper or declared-input list while a command is active. New metadata/rulings use a fresh immutable path then the list is updated only after the prior command finishes. C2 recorded an intermediate metadata-only delta with original versions; do not repeat that process breach. Root docs/all liveledgers are frozen from dispatch. Reuse current C2run-v2 with pre+post external payload copies, direct/historical dist counts separated, first generated native bytes retained and fullstrictfreeze; record existing output generators as actual outputs. Report full source46/canonical exception and actual API maps, commands/TDD/retained inputs/limits/selfreview/commit in the designated SDD task-1-report.md; return shortstatus/commits/checks/concerns/reportpath. No subagents or helper reviewer; root supplies independent task review. No final or historical missing-input waiver.
+
+## Acceptance
+
+Task1 locally complete6d01f89+88265e9, independent Spec/Quality0C/I/M and root19run/
+535Git/source46tables+call/first-final observation audits clean. Current73 (46+27),
+focus8/304, finalchangedfull206/4306/allnon-test. Earlierfull4304/6d retained;
+synchronous spawn raw diagnostic corrected in separate commit under ruling4.
+Rulings2/3 keep first-version independent telemetry/oldPID boolean limitations honest;
+final data includes strict classified observations, no native writer inference. Full
+code/tool/list frozen, only later report/root ledger bookkeeping. Source503immutable,
+formal and unrelated development remain; nextDevin74 and goalactive.

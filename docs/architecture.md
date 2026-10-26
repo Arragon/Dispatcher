@@ -944,6 +944,13 @@ Codex, Cursor/Kiro and native adapters retain live handles across profile
 additions; replacing, disabling or removing an active profile is rejected.
 Cursor workspace trust requires an explicit `trustWorkspace` choice; blanket
 tool approval independently requires an explicit `approveTools` choice.
+Cursor also exposes a bounded metadata-only library locator for the pinned ACP
+inventory version. It uses the existing codec and root owner with explicitly scoped
+HOME/workspace and filtered child environment; it restores no transcript or writer
+capability. Its pure exact-ID predicate guards the existing CLI resume path before
+credentials. Historical sessions without a model snapshot retain the canonical
+refusal instead of borrowing today's profile default. Synchronous native allocation
+errors are normalized at this owning boundary without retries or invented receipts.
 
 Installation/capability probes remain separate from authentication. pi can
 check a selected model's readiness without refreshing or exporting credentials;

@@ -1205,3 +1205,11 @@
   loaded wrapper. Retain both versions and label that run accurately; final checks
   must use the completed immutable tooling. Default client UUIDs also do not narrow
   a supported wider opaque storage-ID contract or prove external provenance.
+
+- A native allocation function can throw synchronously before a root owner exists.
+  An async error handler alone cannot normalize that diagnostic. Catch at the
+  owning API boundary, preserve existing typed scope/abort/cleanup uncertainty,
+  and avoid retry or an invented cleanup receipt. Observe actual child lifecycle
+  separately from API return. A test's signal0 helper must classify only ESRCH as
+  absent; EPERM and other errors remain unknown even when older helpers returned
+  a boolean. Later direct events never reconstruct missing earlier telemetry.

@@ -582,3 +582,18 @@ C1 historical irrecoverable inputs/runtimeI3/group/R020/log/identity issues rema
 Cursor locator/exact resume46, Devinv3, UI/retention/delivery/security/Node/performance/
 CI/wholebranch/realprovider/formal Gates still open. Goal continues, no paid/cloud
 or personal/default native home activated.
+
+Cursor locally complete6d01f89+88265e9: source46→73, actual existing send selector
+hook and bounded metadata library, current canonical missing-model refusal preserved.
+Independent Spec/Quality0C/I/M; finalfocus8/304, changed-finalfull206/4306/non-test
+pass, root19run/535Git/4744source29external/source-table/script-byte/primary audits
+clean. Firstfull4304 retained old candidate; synchronous native allocation redaction
+fixed under ruling4 with two real call-site injected controls and no shared changes.
+Source503 identities/owners fixed, only four verification cells updated. First version
+independent telemetry and old non-strict PID booleans remain unavailable/unproven;
+final direct strict observations do not rewrite that history or grant writer release.
+No account/protocol/Controller source/history/native writer enabled. Existing losses/
+group/R020/committer/log/realprovider/GUI/release/P4/CI remain. NextDevinv3 source74
+includes previously omitted Config13/Controller8; UI14/othercontrol/retention/security/
+Node/performance/wholebranch continue. Free-reset manual request pending because
+Codex UI is tool-restricted, not a paused goal; official98used2remaining stillallowed.
