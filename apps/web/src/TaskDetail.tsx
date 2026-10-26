@@ -1,5 +1,6 @@
 import {LocalResultReview} from "./LocalResultReview.js";
 import {NativeSessionSummary} from "./NativeSessionSummary.js";
+import {TaskNativeHistory,validNativeSessionView} from "./NativeHistory.js";
 import { RoutingDecision } from "./RoutingDecision.js";
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -67,7 +68,7 @@ export function TaskDetail({id,fallback,profiles,onClose,refresh}:{id:string;fal
         <Lines items={savedResult.files} empty="没有文件变更"/>
       </>:result.error instanceof ApiError&&result.error.code==="RUN_RESULT_UNAVAILABLE"?<p>尚无本地结果回执。</p>:result.error?<Notice tone="error">结果读取失败。<button onClick={()=>void result.refetch()}>重试读取结果</button></Notice>:<p>运行结束后读取本地结果。</p>}{data.deliveries?.filter(delivery=>(!runId||delivery.runId===runId)&&!(savedResult?.deliveryType==="pull-request"&&delivery.id===confirmedPr?.id)).map(delivery=><p key={delivery.id}>{delivery.kind} · {delivery.state}{safeLink(delivery.url)&&<> · <a href={safeLink(delivery.url)} target="_blank" rel="noreferrer">查看交付</a></>}</p>)}<Notice>Run 完成、验证通过与任务验收分别记录；任务为 REVIEW 时仍需人工验收。</Notice></section>
       {run&&savedResult?.deliveryType==="none"&&<LocalResultReview key={`${run.id}:${run.generation}`} run={run} taskRevision={data.revision} taskState={data.document.state} view={result.data?.review} refresh={reload}/>}
-      {run&&<><NativeSessionSummary view={runQuery.data?.nativeSession}/><UsagePanel key={run.id} runId={run.id}/></>}
+      {run&&<><NativeSessionSummary view={validNativeSessionView(runQuery.data?.nativeSession)?runQuery.data.nativeSession:undefined}/><TaskNativeHistory taskId={id} runId={runId} run={run} view={runQuery.data?.nativeSession} headerReady={query.isSuccess&&runQuery.isSuccess&&!query.error&&!runQuery.error&&data.document.id===id}/><UsagePanel key={run.id} runId={run.id}/></>}
       <TaskActions key={`${id}:${data.revision}:${currentId}:${activeRun?.state}:${activeRun?.lastActivityAt}`} task={task} {...(actionsRun?{run:actionsRun}:{})} profiles={profiles} refresh={reload} publicationTask={Boolean(data.executionIntent)}/>
     </>}
     {task&&<><button disabled={busy||!data||(!task.archivedAt&&(data.runPage?.hasActiveRun??Boolean(data.runs?.some(entry=>!terminalStates.has(entry.state)))))} onClick={()=>void archive()}>{busy?"处理中…":task.archivedAt?"恢复到当前项目":"归档任务"}</button><p className="muted">归档保留全部执行记录；存在未结束运行时不能归档。</p></>}
