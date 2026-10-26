@@ -5824,3 +5824,80 @@ normal suite loopback fixtures are separately transient. No provider/model/GUI/
 physical-stop/writer/release/RHIZA formal Gate is closed. Current CV09/CV11/global
 scope remains open for Web source15/Handoff10/Slack, retention/delivery/recovery/
 performance and final candidate. No reset/push/merge/cleanup was performed.
+
+
+## CV-11d canonical saved-session and readonly control UI (2026-10-26)
+
+Locally accepted code a54c654c38354ca1ef3c540639dc87dce4b80f38 plus fix
+176a1b60dfe0493f25889bd48f6b6bc94b9b47da. Nine Web product/test paths restore
+original Panel15 expanded purposes and Handoff10 callback contracts through the
+current TaskDetail Run/header/SSE owner. One shared JSON identity/scope predicate
+and one deliberately opened existing history viewer preserve current qualification,
+CONFLICT readability, encoded bounded pagination and late-response discard. Display
+freshness is a copy only; a fresh control opening has its own query identity and
+exact Run/control/fence/lease guard. Live Handoff remains qualified=false and has
+no mutation callbacks. No backend/native authority/schema/auth/config change.
+
+Original Panel12 declarations/15 expanded purposes retain all38 assertions and
+now41 after current selector/fixture adaptations; all10 original Handoff bodies/
+32assertions are byte-exact. Panel24/Handoff12/actual-parent64 now100 cases;
+unchanged Summary3/history14/current history-parent and other current suites remain
+protected. Material report changes clear choices, pending prior openings cannot
+supply current control, malformed/prototype capability names fail safely while
+ordinary unknown names remain readable. Root prototype ruling and all meaningful
+RED/failed fixture/build iterations remain in the report; no test weakened.
+
+Initial related233/default217files4651 passed and full review was SpecPASS/
+Approved0C0I1M. Root actual compiled/auth browser then found I1: inner Escape also
+closed TaskDetail and lost trigger focus. Root plan amendment7bc6d4d permitted
+ninth path Drawer at the real shared boundary. Fix adds only stopPropagation in
+existing onCancel; meaningful actual-parent RED1failed63passed becomes64passed,
+with ordinary outer cancellation/close intact. Final related11files235/build/
+2pathESLint and ONE changed-code default pnpm check pass217files4653 plus all
+non-test checks. UTC20:47:16.573973→20:51:10.414386, wall233.839583s;
+logSHA859f560b223389ceeeced29024bcbb97239ce7247bb2b335aec9eb602c58b49c.
+No default workers/deadlines/caches/suppressions changed. Final report48845bytes,
+SHA85c47050fb1d6f39ba5d5e45d68a94445c877dd253f6763b2b7beb5f2c1ddefc;
+original35981byte and pregate45552byte prefixes preserved. Scoped review0C/I/M,
+I1ADDRESSED in code, SHAa568a5d8455d23bed633c22f6cd4d44bc45d4ea038ed7c41462415ec1af8a7ab.
+
+Root command audit initial19phases182664source780external76cache190Git/552protected;
+fix9phases86562source414external36cache90Git/558protected, exact tested/current/
+index/committed payloads. Initial artifact27770identityrows771UIrecords2529requests/
+2498responses660HTML; fix25475identityrows328UIrecords1332request/response/rawbody
+pairs304HTML65intermediateDOMs. Original25 mappings and all seven other original
+product/test payloads remain exact. Root inspector attempts1/2 incorrectly assumed
+Git bookkeeping invariant across intended commit/stage; failed scripts retained,
+corrected for exact git argv and independently checked index blobs. No product/
+fixture/output alteration or rerun repaired those inspector assumptions.
+
+Initial actual browser retained79HTTPrecords20rawbodies,6controlGET zero SQL/native
+deltas, two encoded history GETs and7point-tree snapshots19file refs. A distinct new
+RECONCILING response preceded the held old HUMAN response; sampled UI stayed current
+when old response released. Root fixed-code repeat verified actual ready/loading
+inner Escape keeps TaskDetail and restores its control trigger, desktop1280x1000/
+mobile390x844; ordinary inner close, outer Escape/close and same history entry work.
+Both mobile dialogs client/scroll389,page390/390. Real fixture run.changed/SSE→
+header404 clears native summary/control/history without reload. Fixed repeat91HTTP
+records23rawbody digests,6controlGET zero SQL/native deltas and5point-tree copies/
+13file refs; final native writes0. Wrapperexit0/strictfreeze true109.631060s,
+4810source34external pre/post payloads; all raw copies verified. Own PID39939 ESRCH,
+port50194 closed, tab4closed/viewportreset (initial PID97685/63294/tab3 likewise).
+
+Evidence: /tmp/dispatcher-native-control-ui-task1-evidence-20261026/, separate
+-task1-fix1-evidence-, both -browser- directories and /tmp/dispatcher-native-control-ui-
+root-*-audit/artifacts/preservation JSON/scripts. Full initial and scoped immutable
+review reports in /tmp. Browser DOM/HTML/screenshots/raw API bodies and actual DB
+point-read trees are preserved; these are not atomic DB backups. Native metadata
+reads are separately counted; only controlGET has zero native/SQL deltas. No raw
+SSE-frame or continuous rendering-flash monitor was captured. No real account,
+provider/model/native GUI/writer/physical-stop/release/RHIZA Gate is inferred.
+
+Deferred M1: existing205negative-fixture level50 log records and inferred local Git
+identity remain CV14. Additional root observation: a later outer close-button
+sequence closed TaskDetail but left BODY focus; no baseline comparison/cause or
+broader top-level focus restoration claim. Retained outer-close-button.json is
+CV14 triage, not the fixed nested I1. All503 immutable seven columns stay exact;
+only8existing CV11 verification cells append this scope. Native-control UI local
+increment is complete; CV11 Slack/other original purposes, retention/delivery,
+recovery/performance and whole-candidate/real Gates remain open. No reset/push/merge.

@@ -1250,3 +1250,19 @@
 - TextDecoder's default BOM handling removes a leading U+FEFF. When retaining a
   literal UTF-8 prefix of native text, preserve the BOM explicitly and avoid an
   incomplete final code point; continue budgeting escaped whole-page JSON bytes.
+
+
+- A control dialog opening needs its own query identity. Refetch-on-mount alone can
+  share a still-pending prior opening; close/reopen must not present its old HUMAN
+  snapshot. Keep full Run/session/generation/lease/fence validation, and unmount
+  control/history synchronously when the canonical header or identity is revoked.
+  Saved timestamp/model updates alone must not create a new history scope.
+- Native freshness presentation and history qualification are separate. A display
+  copy may mark old/future observations unknown without changing the saved scope
+  or making CONFLICT alone unreadable. Readonly control projection never provides
+  handoff authority; live UI must omit mutation callbacks, not trust a display flag.
+- React can propagate a dialog cancel synthetically to an enclosing dialog even
+  when the native cancel event does not bubble. The owning Drawer must prevent
+  default, stop propagation and invoke its own close callback; native focus cleanup
+  stays there. Verify real Escape/top-layer/focus in a browser, since jsdom cancel
+  dispatch and explicit HTMLElement.focus do not implement native modal behavior.

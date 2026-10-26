@@ -636,3 +636,19 @@ logger noise is explicitly deferred to CV14 along with inferred local Git identi
 and historical capture limits. No production logging suppression or migration/
 credential/native activation. Next UI integrates canonical header and the one
 history viewer; retention/delivery/recovery/performance/full branch work continues.
+
+
+2026-10-26 canonical saved-session/control UI locally accepted a54c654+176a1b6:
+originalPanel15/Handoff10 and protected Summary3/history14/current parent preserved;
+actualTask64/related235/default217files4653/non-test pass, independent full review
+and scoped I1 re-review complete. Initial browser Escape defect was not waived:
+real shared Drawer cancel propagation fixed after RED1fail63pass; actual compiled
+ready/loading/desktop390 repeat keeps parent and restores control trigger. Existing
+unique bounded history and actual SSE404 clearing remain. Production is readonly,
+qualified=false/no mutation callbacks; no native authority or real Gate granted.
+Root source/raw/cache/Git/primary503 audits pass;8verification cells only, original
+identities/owners fixed. Prior failure evidence remains. M1 expected negative logs/
+local Git identity and an unqualified outer-close BODY-focus observation are CV14
+triage; nested I1 resolved. Slack, retention/delivery49, recovery/performance/CV13,
+wholebranch/CI/release and real-provider/GUI/writer/formal Gates still open. Next
+CV12 G5 preparation remains external-only until fresh dispatch; user declines reset.
