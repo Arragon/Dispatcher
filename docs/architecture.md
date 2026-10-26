@@ -1925,3 +1925,21 @@ invalidate old observations and recover nonterminal records as manual unknown/
 Runner unavailable. Existing pending SENDING start receipts become UNKNOWN;
 no native connection, source, Session, writer or mutation authority is restored.
 Enabled live profile construction still has its separate physical preflight.
+
+## Historical profile capability evidence
+
+The existing authenticated profile list/detail adds a pure ProfileInteractionView
+beside current probe/resource/action facts. Archived version/scope/evidence can
+qualify historical results only; current installation/authentication/capability
+and surface status remain unknown. Controller omits private tuple references,
+paths, arbitrary instructions and invalid timestamp text. The account capability
+panel separates runtime from GUI levels, keeps backend/region/entry filters
+independent, and revokes current success on invalidation or failed/mismatched
+headers. Existing SSE refreshes both list and selected detail; configuration
+changes retain explicit ConfigPlan review/apply.
+
+The exact checked-in archive is copied during the Controller build to its own
+collocated dist resource. A descriptor-bounded512KiB+1 loader closes on every
+path and does not search checkout docs or cwd. Existing staging carries dist;
+source-import tests may have no asset, while the compiled/deployed module owns
+its default resource after relocation. The raw archive has no public route.

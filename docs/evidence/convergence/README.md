@@ -5668,3 +5668,83 @@ exact. This local history unit is complete; parentCV11 remains In Progress for
 profile capabilities, control/handoff/Slack and remaining source purposes. Goal
 active; next capability6+Agents8 and retention/delivery/recovery/final-candidate work
 remain. Latest official quota41used59remaining/allowed/reset2unused; no reset consumed.
+
+## CV-11c historical profile capabilities in current account detail
+
+Codee9edf1a566fd6b6b3e3298b8f0d142d6ffe382f7,BASEeea21a4bf074a8e7e36b8e3716ba792201e5f1b4:
+exact12paths restore original Controller6/Web8 purposes with pure optional domain
+DTO, safe historical projection, existing authenticated profile list/detail,
+readonly current account tab and one collocated build asset.16C assertions exact;
+24/25W assertions exact, one English enable selector adapted to current localized
+ConfigPlan review/explicit apply; every original scalar/table/status purpose stays.
+Original stage5 remains exact4019byte prefix, SHA7e157d5ad09aa0474f77a281e7c5cac374d43b1428b6ac85aae93f9104ad91ee.
+Exact source archive20rows97173B/SHA408104cf2b7e7b0d850d4f82b9ed1f8d83b0046197b2eb1b179b2d27ee94b2d2
+and schema15159B/SHAc2c31f08e607c7a04b062f017964930f9b7c2ba63691493fd04cb430d1514e4a
+are retained; no archive fact grants current account/runtime/GUI authority.
+
+Self-review meaningful REDs caught malformed support/prototype lookup, archive
+level object coercion and parseable path-bearing optional timestamp. Strict string
+qualification/own-key lookup and ISO timestamp omission guards preserve legitimate
+source dates and prevent disclosure/crashes. Loader reads at most524289bytes through
+one closed descriptor; source missing asset returnsunknown, compiled/relocated default
+loads own20rows. Build helper is import-pure/cwd-independent, copies exact bytes after
+validation, and existing stage script/dependencies/lock/CI remain unchanged.
+
+Final related9files96/build/lint pass. One changed-code default `mise exec -- pnpm check`
+passes213files4525 plus build/typecheck/lint/boundaries, UTC2026-10-26T18:26:57.663486–
+18:30:39.708798,222.040528s. Output SHA79299aa01ea29157a62a192c4d3e6477e8226eceea0004bf8d25b3205d23d5fe.
+Captured source/dist/external hashes unchanged; only known Vitest cache output changed,
+actual pre/post bytes retained. Tested/precommit/committed/postcommit12payloads equal.
+Fresh combined SpecPASS/APPROVE0C/I/M, full report read:
+/tmp/dispatcher-profile-capability-ui-task1-review-20261026.md
+SHA75b9b483e2df019b33433f86b1f061739cdb88890fe6fa72489ff68f5ab979ef.
+
+Actual isolated offline production deploy reuses108packages/0downloads, relocates
+runtime, resolves from its owning package with NODE_PATH/NODE_OPTIONS empty. Exact
+archive and final compiled projection/service match full-gate inputs. Source dependency
+state before/after bytes match. Authenticated list/detail for disabledronna have
+SQL total_changes19→19,revision2→2,nativeFactory0/probe0, no private refs/path or raw
+archive response; raw URLs return SPA HTML, not claimed404. All stage/deploy/relocated
+file bytes/stat/link records and actual API bodies retained before own directory removal.
+No clean-source release admission or installed service/native account activation.
+
+Root audit /tmp/dispatcher-profile-capability-ui-root-audit-20261026.json verifies25runs,
+119677pre+119682post source copies,466+466external,239359source+932external identity
+rows/225digests50Git, exact12committed paths and protected primary. Root artifact audit
+/tmp/dispatcher-profile-capability-ui-root-artifacts-20261026.json verifies source
+purposes/archive/schema/stage prefix/report prefix,26Vitest-cache pre+26post and23state
+pre+23post payloads,38173own fixture rows,107Web DOM files (85with433recorded requests;
+22DOM-only)/282066DOMbytes,37935deployment file refs1290link refs,12986installed files737links.
+References overlap across phases/trees, not unique files. Root inspector initially
+assumed every Web fixture had requests; original failed script retained, then corrected
+the inspector to distinguish the two actual formats. No product/test/evidence rewrite.
+
+Initial three phases retain pnpm-state hash/identity only. Initial build-v1 product
+exit0 but wrapper86/strictfreeze false remains unchanged after package-script metadata
+updated that state. Preimage3959B/SHAa5abd96ca7a1e67e238660d62f0a66e186ae02b57e46ced260525e4ffb82770d
+is absent. Post33c12155d2c52b59ba1eec650c984fc6278cb3a255e31c93a5982fb74086aed5 bytes
+were observed/retained later; this does not recover earlier capture or promote its
+freeze. Later wrappers copy actual state pre/post and still reject unexpected changes.
+Initial availability/behavior/malformed/type/lint/helper-Web-export failures retained;
+all corrected commands follow changed inputs. No unchanged suite rerun or softened control.
+
+Root actual compiled Controller/auth/publicHTTP/browser desktop+390px passes: original
+historical version with unknown installation/login/runtime/GUI, concrete backend reason,
+independent backend/region/entry filters retaining backend methods, no panel actions/links
+or private account path.390document/body width390,panel client/scroll316, no horizontal
+overflow. Synthetic own ConfigPlan removal and existing profile.changed SSE cause actual
+automatic detailGET404 and explicit current-header-unverified state; no manual reload.
+SSE frame bytes were not intercepted; request/event/refetch/DOM are the actual observations.
+EightAPI GETs,zeroAPI mutations/nativeFactory/nativeWrite. Browser wrapper exits0,
+strictfreeze true215.124619s,4789pre/post source/dist inputs and62external raw copies
+verified,5tool hashes match. Five DB point-read snapshot trees/13file refs retained,
+not atomic backups. Own PID66062 absent-ESRCH, viewport reset and temporary tab closed.
+Raw evidence/screenshots: /tmp/dispatcher-profile-capability-ui-browser-20261026.
+This proves the controlled account path, not a current-positive native/provider/GUI/
+writer/release/P4 Gate. Positive revocation is separately controlled UI-test evidence.
+
+Only9existing source503 verification cells updated; all503identity/owner/decision cells
+stay exact. The capability increment is locally complete; CV11/control/handoff/Slack,
+retention/delivery/recovery and final candidate/Gates remain open. Latest quota70used/
+30remaining/ordinaryallowed/reset2unused; no reset consumed. SchemeB D registration is
+in INH1986 commentd94699d4 (exact-readback), separate from this local implementation.
