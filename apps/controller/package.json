@@ -6,7 +6,7 @@
   "bin": { "dispatcher": "./dist/cli.js" },
   "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node ../../scripts/copy-native-capability-evidence.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run test",
     "dev": "tsx src/cli.ts",

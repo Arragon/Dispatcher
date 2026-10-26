@@ -1,3 +1,4 @@
+import {ProfileInteractionPanel} from "./ProfileInteractionPanel.js";
 import type {EvidenceState,ProfileConsoleView,NativeSessionConsoleView} from "@dispatcher/domain";
 import { lazy, Suspense, useEffect, useState } from "react";
 import Ajv2020 from "ajv/dist/2020.js";
@@ -69,7 +70,7 @@ export default function AgentsPage(): React.JSX.Element {
   const [editor,setEditor]=useState(false);
   const query = useQuery({ queryKey: ["adapter-manifests"], queryFn: () => api<{ manifests: Manifest[] }>("/api/adapters/manifests"), retry: false });
   const profiles = useQuery({ queryKey: ["agent-profiles"], queryFn: () => api<{ revision?:number; profiles: ProfileView[]; sessions: SessionView[] }>("/api/agents/profiles"), retry: false });
-  useEffect(()=>subscribeToEvents(()=>void profiles.refetch()),[profiles.refetch]);
+  useEffect(()=>subscribeToEvents(()=>{void profiles.refetch();if(detailId)void accountDetail.refetch();}),[profiles.refetch,accountDetail.refetch,detailId]);
   const compatibility = useQuery({ queryKey: ["adapter-compatibility"], queryFn: () => api<{ matrix: CompatibilityRow[] }>("/api/adapters/compatibility"), retry: false });
   const [drawer, setDrawer] = useState<"add" | "trial" | ProfileView>();
   const [accountStep,setAccountStep]=useState(0);
@@ -164,7 +165,8 @@ export default function AgentsPage(): React.JSX.Element {
     : selected.secretFields.includes("credentialRef") ? selected.id : undefined;
   const filtered = configuredProfiles.filter((profile) => (!runnerFilter||profile.runnerId===runnerFilter)&&(!search || `${profile.alias} ${profile.provider}`.toLowerCase().includes(search.toLowerCase())) && (filter === "all" || (filter === "enabled" ? profile.state !== "DISABLED" : profile.state === "DISABLED")));
   const enabledCount = configuredProfiles.filter((profile) => profile.state !== "DISABLED").length;
-  const detailProfile=detailId?(accountDetail.data?.profile??configuredProfiles.find(profile=>profile.id===detailId)):undefined;
+  const detailHeaderReady=accountDetail.isSuccess&&!accountDetail.error&&accountDetail.data?.profile?.id===detailId;
+  const detailProfile=detailId?(accountDetail.data?.profile?.id===detailId?accountDetail.data.profile:configuredProfiles.find(profile=>profile.id===detailId)):undefined;
   const currentSession=sessionDetail?(profiles.data.sessions.find(session=>session.id===sessionDetail.id)??sessionDetail):undefined;
   return <section>
     {!detailId&&<>
@@ -212,7 +214,7 @@ export default function AgentsPage(): React.JSX.Element {
       {detailTab==="account"&&<article className="panel"><h2>账号与登录</h2><p>账号 ID：{detailProfile.id} · 配置版本：{detailProfile.configRevision??"未知"}</p><p>{loginResults[detailProfile.id]??evidenceText(detailProfile.authentication)}</p><Notice>原生账号目录与凭据保留在所属设备。编辑保留隐藏值，只有明确填写的新值才会替换。</Notice><button onClick={()=>setEditor(true)}>编辑此账号配置</button><AccountQuotaPanel key={detailProfile.id} profileId={detailProfile.id}/></article>}
       {detailTab==="runtime"&&<article className="panel"><h2>执行设置</h2><dl className="details-grid"><div><dt>执行设备</dt><dd>{detailProfile.runnerId}</dd></div><div><dt>账号默认模型</dt><dd>{detailProfile.defaultModel?.id??"沿用原生配置"}</dd></div><div><dt>执行支持</dt><dd>{detailProfile.executionSupport?({"local-ready":"本机就绪","remote-ready":"远程就绪",unverified:"尚未验证",unsupported:"当前不支持"}[detailProfile.executionSupport]):"尚未验证"}</dd></div></dl><p>模型与参数在运行时冻结。配置选择不等于运行已确认。</p><div className="secure-actions"><button onClick={()=>setEditor(true)}>编辑执行配置</button><Link className="button-link" to={`/publish?profile=${encodeURIComponent(detailProfile.id)}`}>发布并预检</Link></div></article>}
       {detailTab==="models"&&<article className="panel"><h2>账号原生模型</h2><p>目录需要账号与项目上下文。模型访问权限、价格与额度分别验证。</p><Link className="button-link primary" to={`/models?profile=${encodeURIComponent(detailProfile.id)}`}>打开此账号的原生模型目录</Link></article>}
-      {detailTab==="capabilities"&&<article className="panel"><h2>能力与限制</h2><p>{detailProfile.capabilities?.join(" · ")||"尚未提供能力证据"}</p>{compatibility.data?.matrix.filter(row=>row.adapterId===(detailProfile.adapterId??detailProfile.provider)).map(row=><div key={row.backendId}><h3>{row.backendId}</h3><p>{row.capabilities.join(" · ")}</p>{Object.entries(row.unsupportedReasons).map(([capability,reason])=><p key={capability}>{capability}：{reason}</p>)}</div>)}<Notice>原生会话的回复、取消与续接按当前会话证据开放；工具能力声明不代表当前账号已经登录或可执行。</Notice></article>}
+      {detailTab==="capabilities"&&<article className="panel"><h2>能力与限制</h2><ProfileInteractionPanel key={detailId} view={detailProfile.interaction} headerReady={detailHeaderReady}/><p>{detailProfile.capabilities?.join(" · ")||"尚未提供能力证据"}</p>{compatibility.data?.matrix.filter(row=>row.adapterId===(detailProfile.adapterId??detailProfile.provider)).map(row=><div key={row.backendId}><h3>{row.backendId}</h3><p>{row.capabilities.join(" · ")}</p>{Object.entries(row.unsupportedReasons).map(([capability,reason])=><p key={capability}>{capability}：{reason}</p>)}</div>)}<Notice>原生会话的回复、取消与续接按当前会话证据开放；工具能力声明不代表当前账号已经登录或可执行。</Notice></article>}
       <Notice>检查证据只代表所示时间的原生状态；外部切换账号或升级工具后需重新检查。</Notice><p role="status">{message}</p>
     </>)}
     {activation&&<Drawer title="审阅派发状态变更" onClose={()=>setActivation(undefined)}><p>{activation.alias} · {activation.enabled?"启用派发":"停用派发"}</p><p>风险：{activation.plan.risk} · {activation.plan.changes.length} 项变更</p><ul>{activation.plan.changes.map((change,index)=><li key={index}>{change.path}</li>)}</ul><Notice>确认后通过配置计划生效。活动账号若无法安全变更，服务端会拒绝本次应用。</Notice><button className="primary" disabled={busy} onClick={()=>void applyActivation()}>确认并应用派发变更</button><p role="status">{message}</p></Drawer>}

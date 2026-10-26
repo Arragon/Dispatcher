@@ -13,6 +13,7 @@ export interface ProfileConsoleView {
   defaultModel?:{id:string;selectable?:boolean;reason?:string};configuration:{complete:boolean;missingFields:string[]};
   executionSupport:"local-ready"|"remote-ready"|"unverified"|"unsupported";actions:Record<string,ActionAvailability>;
   limitations:string[];
+  interaction?:ProfileInteractionView;
 }
 export interface NativeSessionConsoleView {
   id:string;runId:string;profileId?:string;state:string;createdAt:string;updatedAt:string;
@@ -20,3 +21,15 @@ export interface NativeSessionConsoleView {
   stopState:"none"|"requested"|"unconfirmed"|"confirmed";
   actions:Record<"input"|"cancel"|"refresh",ActionAvailability>;
 }
+
+export interface ProfileInteractionEvidence {
+  name:string;support:"supported"|"unsupported"|"unknown";
+  historicalSupport?:"supported"|"unsupported"|"unknown";
+  evidenceLevel?:"documented"|"installed-probed"|"runtime-verified"|"ui-roundtrip-verified";verifiedAt?:string;
+}
+export interface ProfileInteractionRow {
+  backendId:string;region:string;installedVersion:string|null;invalidationReason:string;
+  installation:"supported"|"unsupported"|"unknown";authentication:"supported"|"unsupported"|"unknown";
+  capabilities:ProfileInteractionEvidence[];surfaces:ProfileInteractionEvidence[];nextVerification:string;
+}
+export interface ProfileInteractionView {version:1;rows:ProfileInteractionRow[]}

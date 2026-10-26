@@ -1,0 +1,2406 @@
+{
+  "version": 1,
+  "observedAt": "2026-10-07T13:14:36.547814+00:00",
+  "rows": [
+    {
+      "id": "codex:global:codex-exec-json",
+      "product": "codex",
+      "region": "global",
+      "profileId": "ronna",
+      "backendId": "codex-exec-json",
+      "installedVersion": "0.160.1",
+      "nativeStoreRef": "native-store:c0c8838d40a744ae2958ae922a505574df6bb0392bf581cd955c51bed1b75f66",
+      "scopeFingerprint": "4716c502cf218d5d5bfdfcd6894b059354640e84efbd127ced68cf07227358b8",
+      "capabilities": {
+        "durableIdentity": {
+          "version": 1,
+          "support": "unknown",
+          "level": "installed-probed",
+          "scopeFingerprint": "4716c502cf218d5d5bfdfcd6894b059354640e84efbd127ced68cf07227358b8",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "historyRead": {
+          "version": 1,
+          "support": "unknown",
+          "level": "installed-probed",
+          "scopeFingerprint": "4716c502cf218d5d5bfdfcd6894b059354640e84efbd127ced68cf07227358b8",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "sameSessionContinue": {
+          "version": 1,
+          "support": "unknown",
+          "level": "installed-probed",
+          "scopeFingerprint": "4716c502cf218d5d5bfdfcd6894b059354640e84efbd127ced68cf07227358b8",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "liveSteer": {
+          "version": 1,
+          "support": "unknown",
+          "level": "installed-probed",
+          "scopeFingerprint": "4716c502cf218d5d5bfdfcd6894b059354640e84efbd127ced68cf07227358b8",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "interruptTurn": {
+          "version": 1,
+          "support": "unknown",
+          "level": "installed-probed",
+          "scopeFingerprint": "4716c502cf218d5d5bfdfcd6894b059354640e84efbd127ced68cf07227358b8",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "nativeApproval": {
+          "version": 1,
+          "support": "unknown",
+          "level": "installed-probed",
+          "scopeFingerprint": "4716c502cf218d5d5bfdfcd6894b059354640e84efbd127ced68cf07227358b8",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "observeExternalChanges": {
+          "version": 1,
+          "support": "unknown",
+          "level": "installed-probed",
+          "scopeFingerprint": "4716c502cf218d5d5bfdfcd6894b059354640e84efbd127ced68cf07227358b8",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "releaseControl": {
+          "version": 1,
+          "support": "unknown",
+          "level": "installed-probed",
+          "scopeFingerprint": "4716c502cf218d5d5bfdfcd6894b059354640e84efbd127ced68cf07227358b8",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "reclaimControl": {
+          "version": 1,
+          "support": "unknown",
+          "level": "installed-probed",
+          "scopeFingerprint": "4716c502cf218d5d5bfdfcd6894b059354640e84efbd127ced68cf07227358b8",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "restartReattach": {
+          "version": 1,
+          "support": "unknown",
+          "level": "installed-probed",
+          "scopeFingerprint": "4716c502cf218d5d5bfdfcd6894b059354640e84efbd127ced68cf07227358b8",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        }
+      },
+      "surfaces": {
+        "desktop": {
+          "version": 1,
+          "support": "unknown",
+          "level": "installed-probed",
+          "scopeFingerprint": "4716c502cf218d5d5bfdfcd6894b059354640e84efbd127ced68cf07227358b8",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "ide": {
+          "version": 1,
+          "support": "unknown",
+          "level": "installed-probed",
+          "scopeFingerprint": "4716c502cf218d5d5bfdfcd6894b059354640e84efbd127ced68cf07227358b8",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "web": {
+          "version": 1,
+          "support": "unknown",
+          "level": "installed-probed",
+          "scopeFingerprint": "4716c502cf218d5d5bfdfcd6894b059354640e84efbd127ced68cf07227358b8",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "mobile": {
+          "version": 1,
+          "support": "unknown",
+          "level": "installed-probed",
+          "scopeFingerprint": "4716c502cf218d5d5bfdfcd6894b059354640e84efbd127ced68cf07227358b8",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "tui": {
+          "version": 1,
+          "support": "unknown",
+          "level": "installed-probed",
+          "scopeFingerprint": "4716c502cf218d5d5bfdfcd6894b059354640e84efbd127ced68cf07227358b8",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        }
+      },
+      "nextVerification": "Verify canonical native binding projection, then read the exact thread through read-only thread/read; independently test Desktop discovery and writer release/reclaim."
+    },
+    {
+      "id": "codex:global:codex-app-server",
+      "product": "codex",
+      "region": "global",
+      "profileId": "ronna",
+      "backendId": "codex-app-server",
+      "installedVersion": "0.160.1",
+      "nativeStoreRef": "native-store:c0c8838d40a744ae2958ae922a505574df6bb0392bf581cd955c51bed1b75f66",
+      "scopeFingerprint": "1d68eb441334813f563cb10211749451285d1bcb952c387910d242d7ed0dd328",
+      "capabilities": {
+        "durableIdentity": {
+          "version": 1,
+          "support": "unknown",
+          "level": "installed-probed",
+          "scopeFingerprint": "1d68eb441334813f563cb10211749451285d1bcb952c387910d242d7ed0dd328",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "historyRead": {
+          "version": 1,
+          "support": "unknown",
+          "level": "installed-probed",
+          "scopeFingerprint": "1d68eb441334813f563cb10211749451285d1bcb952c387910d242d7ed0dd328",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "sameSessionContinue": {
+          "version": 1,
+          "support": "unknown",
+          "level": "installed-probed",
+          "scopeFingerprint": "1d68eb441334813f563cb10211749451285d1bcb952c387910d242d7ed0dd328",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "liveSteer": {
+          "version": 1,
+          "support": "unknown",
+          "level": "installed-probed",
+          "scopeFingerprint": "1d68eb441334813f563cb10211749451285d1bcb952c387910d242d7ed0dd328",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "interruptTurn": {
+          "version": 1,
+          "support": "unknown",
+          "level": "installed-probed",
+          "scopeFingerprint": "1d68eb441334813f563cb10211749451285d1bcb952c387910d242d7ed0dd328",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "nativeApproval": {
+          "version": 1,
+          "support": "unknown",
+          "level": "installed-probed",
+          "scopeFingerprint": "1d68eb441334813f563cb10211749451285d1bcb952c387910d242d7ed0dd328",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "observeExternalChanges": {
+          "version": 1,
+          "support": "unknown",
+          "level": "installed-probed",
+          "scopeFingerprint": "1d68eb441334813f563cb10211749451285d1bcb952c387910d242d7ed0dd328",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "releaseControl": {
+          "version": 1,
+          "support": "unknown",
+          "level": "installed-probed",
+          "scopeFingerprint": "1d68eb441334813f563cb10211749451285d1bcb952c387910d242d7ed0dd328",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "reclaimControl": {
+          "version": 1,
+          "support": "unknown",
+          "level": "installed-probed",
+          "scopeFingerprint": "1d68eb441334813f563cb10211749451285d1bcb952c387910d242d7ed0dd328",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "restartReattach": {
+          "version": 1,
+          "support": "unknown",
+          "level": "installed-probed",
+          "scopeFingerprint": "1d68eb441334813f563cb10211749451285d1bcb952c387910d242d7ed0dd328",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        }
+      },
+      "surfaces": {
+        "desktop": {
+          "version": 1,
+          "support": "unknown",
+          "level": "installed-probed",
+          "scopeFingerprint": "1d68eb441334813f563cb10211749451285d1bcb952c387910d242d7ed0dd328",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "ide": {
+          "version": 1,
+          "support": "unknown",
+          "level": "installed-probed",
+          "scopeFingerprint": "1d68eb441334813f563cb10211749451285d1bcb952c387910d242d7ed0dd328",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "web": {
+          "version": 1,
+          "support": "unknown",
+          "level": "installed-probed",
+          "scopeFingerprint": "1d68eb441334813f563cb10211749451285d1bcb952c387910d242d7ed0dd328",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "mobile": {
+          "version": 1,
+          "support": "unknown",
+          "level": "installed-probed",
+          "scopeFingerprint": "1d68eb441334813f563cb10211749451285d1bcb952c387910d242d7ed0dd328",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "tui": {
+          "version": 1,
+          "support": "unknown",
+          "level": "installed-probed",
+          "scopeFingerprint": "1d68eb441334813f563cb10211749451285d1bcb952c387910d242d7ed0dd328",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        }
+      },
+      "nextVerification": "Verify canonical native binding projection, then read the exact thread through read-only thread/read; independently test Desktop discovery and writer release/reclaim."
+    },
+    {
+      "id": "opencode:global:opencode-cli-json",
+      "product": "opencode",
+      "region": "global",
+      "profileId": "opencode",
+      "backendId": "opencode-cli-json",
+      "installedVersion": "2.0.22",
+      "nativeStoreRef": "unverified:opencode:global",
+      "scopeFingerprint": "6a1a13d1156dd5bad0a9c58e493238eaae8911b8fc29ba2890aea97530b9a9ac",
+      "capabilities": {
+        "durableIdentity": {
+          "version": 1,
+          "support": "unknown",
+          "level": "installed-probed",
+          "scopeFingerprint": "6a1a13d1156dd5bad0a9c58e493238eaae8911b8fc29ba2890aea97530b9a9ac",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "historyRead": {
+          "version": 1,
+          "support": "unknown",
+          "level": "installed-probed",
+          "scopeFingerprint": "6a1a13d1156dd5bad0a9c58e493238eaae8911b8fc29ba2890aea97530b9a9ac",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "sameSessionContinue": {
+          "version": 1,
+          "support": "unknown",
+          "level": "installed-probed",
+          "scopeFingerprint": "6a1a13d1156dd5bad0a9c58e493238eaae8911b8fc29ba2890aea97530b9a9ac",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "liveSteer": {
+          "version": 1,
+          "support": "unknown",
+          "level": "installed-probed",
+          "scopeFingerprint": "6a1a13d1156dd5bad0a9c58e493238eaae8911b8fc29ba2890aea97530b9a9ac",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "interruptTurn": {
+          "version": 1,
+          "support": "unknown",
+          "level": "installed-probed",
+          "scopeFingerprint": "6a1a13d1156dd5bad0a9c58e493238eaae8911b8fc29ba2890aea97530b9a9ac",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "nativeApproval": {
+          "version": 1,
+          "support": "unknown",
+          "level": "installed-probed",
+          "scopeFingerprint": "6a1a13d1156dd5bad0a9c58e493238eaae8911b8fc29ba2890aea97530b9a9ac",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "observeExternalChanges": {
+          "version": 1,
+          "support": "unknown",
+          "level": "installed-probed",
+          "scopeFingerprint": "6a1a13d1156dd5bad0a9c58e493238eaae8911b8fc29ba2890aea97530b9a9ac",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "releaseControl": {
+          "version": 1,
+          "support": "unknown",
+          "level": "installed-probed",
+          "scopeFingerprint": "6a1a13d1156dd5bad0a9c58e493238eaae8911b8fc29ba2890aea97530b9a9ac",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "reclaimControl": {
+          "version": 1,
+          "support": "unknown",
+          "level": "installed-probed",
+          "scopeFingerprint": "6a1a13d1156dd5bad0a9c58e493238eaae8911b8fc29ba2890aea97530b9a9ac",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "restartReattach": {
+          "version": 1,
+          "support": "unknown",
+          "level": "installed-probed",
+          "scopeFingerprint": "6a1a13d1156dd5bad0a9c58e493238eaae8911b8fc29ba2890aea97530b9a9ac",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        }
+      },
+      "surfaces": {
+        "desktop": {
+          "version": 1,
+          "support": "unknown",
+          "level": "installed-probed",
+          "scopeFingerprint": "6a1a13d1156dd5bad0a9c58e493238eaae8911b8fc29ba2890aea97530b9a9ac",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "ide": {
+          "version": 1,
+          "support": "unknown",
+          "level": "installed-probed",
+          "scopeFingerprint": "6a1a13d1156dd5bad0a9c58e493238eaae8911b8fc29ba2890aea97530b9a9ac",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "web": {
+          "version": 1,
+          "support": "unknown",
+          "level": "installed-probed",
+          "scopeFingerprint": "6a1a13d1156dd5bad0a9c58e493238eaae8911b8fc29ba2890aea97530b9a9ac",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "mobile": {
+          "version": 1,
+          "support": "unknown",
+          "level": "installed-probed",
+          "scopeFingerprint": "6a1a13d1156dd5bad0a9c58e493238eaae8911b8fc29ba2890aea97530b9a9ac",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "tui": {
+          "version": 1,
+          "support": "unknown",
+          "level": "installed-probed",
+          "scopeFingerprint": "6a1a13d1156dd5bad0a9c58e493238eaae8911b8fc29ba2890aea97530b9a9ac",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        }
+      },
+      "nextVerification": "models --standalone returned zero bytes in LP03. Inspect v2 installed server/API contract and exact native store before any session or model request."
+    },
+    {
+      "id": "opencode:global:opencode-v2-server",
+      "product": "opencode",
+      "region": "global",
+      "profileId": "opencode",
+      "backendId": "opencode-v2-server",
+      "installedVersion": "2.0.22",
+      "nativeStoreRef": "unverified:opencode:global",
+      "scopeFingerprint": "5f32dcce83fdefb59144c3e0f354120f984b9e20654b990ee5bd2724bb9cd561",
+      "capabilities": {
+        "durableIdentity": {
+          "version": 1,
+          "support": "unknown",
+          "level": "installed-probed",
+          "scopeFingerprint": "5f32dcce83fdefb59144c3e0f354120f984b9e20654b990ee5bd2724bb9cd561",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "historyRead": {
+          "version": 1,
+          "support": "unknown",
+          "level": "installed-probed",
+          "scopeFingerprint": "5f32dcce83fdefb59144c3e0f354120f984b9e20654b990ee5bd2724bb9cd561",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "sameSessionContinue": {
+          "version": 1,
+          "support": "unknown",
+          "level": "installed-probed",
+          "scopeFingerprint": "5f32dcce83fdefb59144c3e0f354120f984b9e20654b990ee5bd2724bb9cd561",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "liveSteer": {
+          "version": 1,
+          "support": "unknown",
+          "level": "installed-probed",
+          "scopeFingerprint": "5f32dcce83fdefb59144c3e0f354120f984b9e20654b990ee5bd2724bb9cd561",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "interruptTurn": {
+          "version": 1,
+          "support": "unknown",
+          "level": "installed-probed",
+          "scopeFingerprint": "5f32dcce83fdefb59144c3e0f354120f984b9e20654b990ee5bd2724bb9cd561",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "nativeApproval": {
+          "version": 1,
+          "support": "unknown",
+          "level": "installed-probed",
+          "scopeFingerprint": "5f32dcce83fdefb59144c3e0f354120f984b9e20654b990ee5bd2724bb9cd561",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "observeExternalChanges": {
+          "version": 1,
+          "support": "unknown",
+          "level": "installed-probed",
+          "scopeFingerprint": "5f32dcce83fdefb59144c3e0f354120f984b9e20654b990ee5bd2724bb9cd561",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "releaseControl": {
+          "version": 1,
+          "support": "unknown",
+          "level": "installed-probed",
+          "scopeFingerprint": "5f32dcce83fdefb59144c3e0f354120f984b9e20654b990ee5bd2724bb9cd561",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "reclaimControl": {
+          "version": 1,
+          "support": "unknown",
+          "level": "installed-probed",
+          "scopeFingerprint": "5f32dcce83fdefb59144c3e0f354120f984b9e20654b990ee5bd2724bb9cd561",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "restartReattach": {
+          "version": 1,
+          "support": "unknown",
+          "level": "installed-probed",
+          "scopeFingerprint": "5f32dcce83fdefb59144c3e0f354120f984b9e20654b990ee5bd2724bb9cd561",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        }
+      },
+      "surfaces": {
+        "desktop": {
+          "version": 1,
+          "support": "unknown",
+          "level": "installed-probed",
+          "scopeFingerprint": "5f32dcce83fdefb59144c3e0f354120f984b9e20654b990ee5bd2724bb9cd561",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "ide": {
+          "version": 1,
+          "support": "unknown",
+          "level": "installed-probed",
+          "scopeFingerprint": "5f32dcce83fdefb59144c3e0f354120f984b9e20654b990ee5bd2724bb9cd561",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "web": {
+          "version": 1,
+          "support": "unknown",
+          "level": "installed-probed",
+          "scopeFingerprint": "5f32dcce83fdefb59144c3e0f354120f984b9e20654b990ee5bd2724bb9cd561",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "mobile": {
+          "version": 1,
+          "support": "unknown",
+          "level": "installed-probed",
+          "scopeFingerprint": "5f32dcce83fdefb59144c3e0f354120f984b9e20654b990ee5bd2724bb9cd561",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "tui": {
+          "version": 1,
+          "support": "unknown",
+          "level": "installed-probed",
+          "scopeFingerprint": "5f32dcce83fdefb59144c3e0f354120f984b9e20654b990ee5bd2724bb9cd561",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        }
+      },
+      "nextVerification": "models --standalone returned zero bytes in LP03. Inspect v2 installed server/API contract and exact native store before any session or model request."
+    },
+    {
+      "id": "copilot:global:copilot-cli",
+      "product": "copilot",
+      "region": "global",
+      "profileId": "unqualified",
+      "backendId": "copilot-cli",
+      "installedVersion": null,
+      "nativeStoreRef": "unverified:copilot:global",
+      "scopeFingerprint": "f47b8de373f2cf1bba084f2c95c4eafe057d3983d5033f8641f7cabac562d06b",
+      "capabilities": {
+        "durableIdentity": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "f47b8de373f2cf1bba084f2c95c4eafe057d3983d5033f8641f7cabac562d06b",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "historyRead": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "f47b8de373f2cf1bba084f2c95c4eafe057d3983d5033f8641f7cabac562d06b",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "sameSessionContinue": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "f47b8de373f2cf1bba084f2c95c4eafe057d3983d5033f8641f7cabac562d06b",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "liveSteer": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "f47b8de373f2cf1bba084f2c95c4eafe057d3983d5033f8641f7cabac562d06b",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "interruptTurn": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "f47b8de373f2cf1bba084f2c95c4eafe057d3983d5033f8641f7cabac562d06b",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "nativeApproval": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "f47b8de373f2cf1bba084f2c95c4eafe057d3983d5033f8641f7cabac562d06b",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "observeExternalChanges": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "f47b8de373f2cf1bba084f2c95c4eafe057d3983d5033f8641f7cabac562d06b",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "releaseControl": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "f47b8de373f2cf1bba084f2c95c4eafe057d3983d5033f8641f7cabac562d06b",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "reclaimControl": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "f47b8de373f2cf1bba084f2c95c4eafe057d3983d5033f8641f7cabac562d06b",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "restartReattach": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "f47b8de373f2cf1bba084f2c95c4eafe057d3983d5033f8641f7cabac562d06b",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        }
+      },
+      "surfaces": {
+        "desktop": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "f47b8de373f2cf1bba084f2c95c4eafe057d3983d5033f8641f7cabac562d06b",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "ide": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "f47b8de373f2cf1bba084f2c95c4eafe057d3983d5033f8641f7cabac562d06b",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "web": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "f47b8de373f2cf1bba084f2c95c4eafe057d3983d5033f8641f7cabac562d06b",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "mobile": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "f47b8de373f2cf1bba084f2c95c4eafe057d3983d5033f8641f7cabac562d06b",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "tui": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "f47b8de373f2cf1bba084f2c95c4eafe057d3983d5033f8641f7cabac562d06b",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        }
+      },
+      "nextVerification": "Read installed version and official protocol; verify exact native storage/account/backend identity, bounded history and independent same-session continuation/handoff gates."
+    },
+    {
+      "id": "pi:global:pi-rpc",
+      "product": "pi",
+      "region": "global",
+      "profileId": "pi",
+      "backendId": "pi-rpc",
+      "installedVersion": null,
+      "nativeStoreRef": "unverified:pi:global",
+      "scopeFingerprint": "7df1e6137956ed0496902d4eddf28375083d411fd1fbce4f80dd3378cf099124",
+      "capabilities": {
+        "durableIdentity": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "7df1e6137956ed0496902d4eddf28375083d411fd1fbce4f80dd3378cf099124",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "historyRead": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "7df1e6137956ed0496902d4eddf28375083d411fd1fbce4f80dd3378cf099124",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "sameSessionContinue": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "7df1e6137956ed0496902d4eddf28375083d411fd1fbce4f80dd3378cf099124",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "liveSteer": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "7df1e6137956ed0496902d4eddf28375083d411fd1fbce4f80dd3378cf099124",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "interruptTurn": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "7df1e6137956ed0496902d4eddf28375083d411fd1fbce4f80dd3378cf099124",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "nativeApproval": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "7df1e6137956ed0496902d4eddf28375083d411fd1fbce4f80dd3378cf099124",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "observeExternalChanges": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "7df1e6137956ed0496902d4eddf28375083d411fd1fbce4f80dd3378cf099124",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "releaseControl": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "7df1e6137956ed0496902d4eddf28375083d411fd1fbce4f80dd3378cf099124",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "reclaimControl": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "7df1e6137956ed0496902d4eddf28375083d411fd1fbce4f80dd3378cf099124",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "restartReattach": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "7df1e6137956ed0496902d4eddf28375083d411fd1fbce4f80dd3378cf099124",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        }
+      },
+      "surfaces": {
+        "desktop": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "7df1e6137956ed0496902d4eddf28375083d411fd1fbce4f80dd3378cf099124",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "ide": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "7df1e6137956ed0496902d4eddf28375083d411fd1fbce4f80dd3378cf099124",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "web": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "7df1e6137956ed0496902d4eddf28375083d411fd1fbce4f80dd3378cf099124",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "mobile": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "7df1e6137956ed0496902d4eddf28375083d411fd1fbce4f80dd3378cf099124",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "tui": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "7df1e6137956ed0496902d4eddf28375083d411fd1fbce4f80dd3378cf099124",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        }
+      },
+      "nextVerification": "Read installed version and official protocol; verify exact native storage/account/backend identity, bounded history and independent same-session continuation/handoff gates."
+    },
+    {
+      "id": "cursor:global:cursor-local-cli",
+      "product": "cursor",
+      "region": "global",
+      "profileId": "cursor",
+      "backendId": "cursor-local-cli",
+      "installedVersion": null,
+      "nativeStoreRef": "unverified:cursor:global",
+      "scopeFingerprint": "fd7ecf3df8676e2d0f2b29d38f1dfc21f2373a9ef9b3a064ec6a4660e3b27829",
+      "capabilities": {
+        "durableIdentity": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "fd7ecf3df8676e2d0f2b29d38f1dfc21f2373a9ef9b3a064ec6a4660e3b27829",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "historyRead": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "fd7ecf3df8676e2d0f2b29d38f1dfc21f2373a9ef9b3a064ec6a4660e3b27829",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "sameSessionContinue": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "fd7ecf3df8676e2d0f2b29d38f1dfc21f2373a9ef9b3a064ec6a4660e3b27829",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "liveSteer": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "fd7ecf3df8676e2d0f2b29d38f1dfc21f2373a9ef9b3a064ec6a4660e3b27829",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "interruptTurn": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "fd7ecf3df8676e2d0f2b29d38f1dfc21f2373a9ef9b3a064ec6a4660e3b27829",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "nativeApproval": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "fd7ecf3df8676e2d0f2b29d38f1dfc21f2373a9ef9b3a064ec6a4660e3b27829",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "observeExternalChanges": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "fd7ecf3df8676e2d0f2b29d38f1dfc21f2373a9ef9b3a064ec6a4660e3b27829",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "releaseControl": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "fd7ecf3df8676e2d0f2b29d38f1dfc21f2373a9ef9b3a064ec6a4660e3b27829",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "reclaimControl": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "fd7ecf3df8676e2d0f2b29d38f1dfc21f2373a9ef9b3a064ec6a4660e3b27829",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "restartReattach": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "fd7ecf3df8676e2d0f2b29d38f1dfc21f2373a9ef9b3a064ec6a4660e3b27829",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        }
+      },
+      "surfaces": {
+        "desktop": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "fd7ecf3df8676e2d0f2b29d38f1dfc21f2373a9ef9b3a064ec6a4660e3b27829",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "ide": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "fd7ecf3df8676e2d0f2b29d38f1dfc21f2373a9ef9b3a064ec6a4660e3b27829",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "web": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "fd7ecf3df8676e2d0f2b29d38f1dfc21f2373a9ef9b3a064ec6a4660e3b27829",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "mobile": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "fd7ecf3df8676e2d0f2b29d38f1dfc21f2373a9ef9b3a064ec6a4660e3b27829",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "tui": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "fd7ecf3df8676e2d0f2b29d38f1dfc21f2373a9ef9b3a064ec6a4660e3b27829",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        }
+      },
+      "nextVerification": "Read installed version and official protocol; verify exact native storage/account/backend identity, bounded history and independent same-session continuation/handoff gates."
+    },
+    {
+      "id": "cursor:global:cursor-my-machines",
+      "product": "cursor",
+      "region": "global",
+      "profileId": "unqualified",
+      "backendId": "cursor-my-machines",
+      "installedVersion": null,
+      "nativeStoreRef": "unverified:cursor:global",
+      "scopeFingerprint": "1205946609d801c06aff572fe1701e1cf074efa5f4a2be063ca0ddf1db37a6b8",
+      "capabilities": {
+        "durableIdentity": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "1205946609d801c06aff572fe1701e1cf074efa5f4a2be063ca0ddf1db37a6b8",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "historyRead": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "1205946609d801c06aff572fe1701e1cf074efa5f4a2be063ca0ddf1db37a6b8",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "sameSessionContinue": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "1205946609d801c06aff572fe1701e1cf074efa5f4a2be063ca0ddf1db37a6b8",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "liveSteer": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "1205946609d801c06aff572fe1701e1cf074efa5f4a2be063ca0ddf1db37a6b8",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "interruptTurn": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "1205946609d801c06aff572fe1701e1cf074efa5f4a2be063ca0ddf1db37a6b8",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "nativeApproval": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "1205946609d801c06aff572fe1701e1cf074efa5f4a2be063ca0ddf1db37a6b8",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "observeExternalChanges": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "1205946609d801c06aff572fe1701e1cf074efa5f4a2be063ca0ddf1db37a6b8",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "releaseControl": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "1205946609d801c06aff572fe1701e1cf074efa5f4a2be063ca0ddf1db37a6b8",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "reclaimControl": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "1205946609d801c06aff572fe1701e1cf074efa5f4a2be063ca0ddf1db37a6b8",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "restartReattach": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "1205946609d801c06aff572fe1701e1cf074efa5f4a2be063ca0ddf1db37a6b8",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        }
+      },
+      "surfaces": {
+        "desktop": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "1205946609d801c06aff572fe1701e1cf074efa5f4a2be063ca0ddf1db37a6b8",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "ide": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "1205946609d801c06aff572fe1701e1cf074efa5f4a2be063ca0ddf1db37a6b8",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "web": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "1205946609d801c06aff572fe1701e1cf074efa5f4a2be063ca0ddf1db37a6b8",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "mobile": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "1205946609d801c06aff572fe1701e1cf074efa5f4a2be063ca0ddf1db37a6b8",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "tui": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "1205946609d801c06aff572fe1701e1cf074efa5f4a2be063ca0ddf1db37a6b8",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        }
+      },
+      "nextVerification": "Read installed version and official protocol; verify exact native storage/account/backend identity, bounded history and independent same-session continuation/handoff gates."
+    },
+    {
+      "id": "qoder:cn:qoder-cn-cli-json",
+      "product": "qoder",
+      "region": "cn",
+      "profileId": "qoder-cn",
+      "backendId": "qoder-cn-cli-json",
+      "installedVersion": null,
+      "nativeStoreRef": "unverified:qoder:cn",
+      "scopeFingerprint": "81ad72f280a46cc9f0f8a9ef4bd2debb3560c9d5f9e80a5782f7be1cebb27bf4",
+      "capabilities": {
+        "durableIdentity": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "81ad72f280a46cc9f0f8a9ef4bd2debb3560c9d5f9e80a5782f7be1cebb27bf4",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "historyRead": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "81ad72f280a46cc9f0f8a9ef4bd2debb3560c9d5f9e80a5782f7be1cebb27bf4",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "sameSessionContinue": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "81ad72f280a46cc9f0f8a9ef4bd2debb3560c9d5f9e80a5782f7be1cebb27bf4",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "liveSteer": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "81ad72f280a46cc9f0f8a9ef4bd2debb3560c9d5f9e80a5782f7be1cebb27bf4",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "interruptTurn": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "81ad72f280a46cc9f0f8a9ef4bd2debb3560c9d5f9e80a5782f7be1cebb27bf4",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "nativeApproval": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "81ad72f280a46cc9f0f8a9ef4bd2debb3560c9d5f9e80a5782f7be1cebb27bf4",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "observeExternalChanges": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "81ad72f280a46cc9f0f8a9ef4bd2debb3560c9d5f9e80a5782f7be1cebb27bf4",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "releaseControl": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "81ad72f280a46cc9f0f8a9ef4bd2debb3560c9d5f9e80a5782f7be1cebb27bf4",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "reclaimControl": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "81ad72f280a46cc9f0f8a9ef4bd2debb3560c9d5f9e80a5782f7be1cebb27bf4",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "restartReattach": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "81ad72f280a46cc9f0f8a9ef4bd2debb3560c9d5f9e80a5782f7be1cebb27bf4",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        }
+      },
+      "surfaces": {
+        "desktop": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "81ad72f280a46cc9f0f8a9ef4bd2debb3560c9d5f9e80a5782f7be1cebb27bf4",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "ide": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "81ad72f280a46cc9f0f8a9ef4bd2debb3560c9d5f9e80a5782f7be1cebb27bf4",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "web": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "81ad72f280a46cc9f0f8a9ef4bd2debb3560c9d5f9e80a5782f7be1cebb27bf4",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "mobile": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "81ad72f280a46cc9f0f8a9ef4bd2debb3560c9d5f9e80a5782f7be1cebb27bf4",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "tui": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "81ad72f280a46cc9f0f8a9ef4bd2debb3560c9d5f9e80a5782f7be1cebb27bf4",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        }
+      },
+      "nextVerification": "Read installed version and official protocol; verify exact native storage/account/backend identity, bounded history and independent same-session continuation/handoff gates."
+    },
+    {
+      "id": "qoder:global:qoder-global-cli",
+      "product": "qoder",
+      "region": "global",
+      "profileId": "unqualified",
+      "backendId": "qoder-global-cli",
+      "installedVersion": null,
+      "nativeStoreRef": "unverified:qoder:global",
+      "scopeFingerprint": "2a9a923fb906e01de1bc24392e0a61201ad73f4cab601b3a6cbd312adfcc9300",
+      "capabilities": {
+        "durableIdentity": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "2a9a923fb906e01de1bc24392e0a61201ad73f4cab601b3a6cbd312adfcc9300",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "historyRead": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "2a9a923fb906e01de1bc24392e0a61201ad73f4cab601b3a6cbd312adfcc9300",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "sameSessionContinue": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "2a9a923fb906e01de1bc24392e0a61201ad73f4cab601b3a6cbd312adfcc9300",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "liveSteer": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "2a9a923fb906e01de1bc24392e0a61201ad73f4cab601b3a6cbd312adfcc9300",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "interruptTurn": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "2a9a923fb906e01de1bc24392e0a61201ad73f4cab601b3a6cbd312adfcc9300",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "nativeApproval": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "2a9a923fb906e01de1bc24392e0a61201ad73f4cab601b3a6cbd312adfcc9300",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "observeExternalChanges": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "2a9a923fb906e01de1bc24392e0a61201ad73f4cab601b3a6cbd312adfcc9300",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "releaseControl": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "2a9a923fb906e01de1bc24392e0a61201ad73f4cab601b3a6cbd312adfcc9300",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "reclaimControl": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "2a9a923fb906e01de1bc24392e0a61201ad73f4cab601b3a6cbd312adfcc9300",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "restartReattach": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "2a9a923fb906e01de1bc24392e0a61201ad73f4cab601b3a6cbd312adfcc9300",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        }
+      },
+      "surfaces": {
+        "desktop": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "2a9a923fb906e01de1bc24392e0a61201ad73f4cab601b3a6cbd312adfcc9300",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "ide": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "2a9a923fb906e01de1bc24392e0a61201ad73f4cab601b3a6cbd312adfcc9300",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "web": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "2a9a923fb906e01de1bc24392e0a61201ad73f4cab601b3a6cbd312adfcc9300",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "mobile": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "2a9a923fb906e01de1bc24392e0a61201ad73f4cab601b3a6cbd312adfcc9300",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "tui": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "2a9a923fb906e01de1bc24392e0a61201ad73f4cab601b3a6cbd312adfcc9300",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        }
+      },
+      "nextVerification": "Read installed version and official protocol; verify exact native storage/account/backend identity, bounded history and independent same-session continuation/handoff gates."
+    },
+    {
+      "id": "kiro:global:kiro-cli",
+      "product": "kiro",
+      "region": "global",
+      "profileId": "unqualified",
+      "backendId": "kiro-cli",
+      "installedVersion": null,
+      "nativeStoreRef": "unverified:kiro:global",
+      "scopeFingerprint": "4cf0883554e77003187d93c66b812648e89f48bf5e2f9485493b3a106d34a206",
+      "capabilities": {
+        "durableIdentity": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "4cf0883554e77003187d93c66b812648e89f48bf5e2f9485493b3a106d34a206",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "historyRead": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "4cf0883554e77003187d93c66b812648e89f48bf5e2f9485493b3a106d34a206",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "sameSessionContinue": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "4cf0883554e77003187d93c66b812648e89f48bf5e2f9485493b3a106d34a206",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "liveSteer": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "4cf0883554e77003187d93c66b812648e89f48bf5e2f9485493b3a106d34a206",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "interruptTurn": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "4cf0883554e77003187d93c66b812648e89f48bf5e2f9485493b3a106d34a206",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "nativeApproval": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "4cf0883554e77003187d93c66b812648e89f48bf5e2f9485493b3a106d34a206",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "observeExternalChanges": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "4cf0883554e77003187d93c66b812648e89f48bf5e2f9485493b3a106d34a206",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "releaseControl": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "4cf0883554e77003187d93c66b812648e89f48bf5e2f9485493b3a106d34a206",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "reclaimControl": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "4cf0883554e77003187d93c66b812648e89f48bf5e2f9485493b3a106d34a206",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "restartReattach": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "4cf0883554e77003187d93c66b812648e89f48bf5e2f9485493b3a106d34a206",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        }
+      },
+      "surfaces": {
+        "desktop": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "4cf0883554e77003187d93c66b812648e89f48bf5e2f9485493b3a106d34a206",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "ide": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "4cf0883554e77003187d93c66b812648e89f48bf5e2f9485493b3a106d34a206",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "web": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "4cf0883554e77003187d93c66b812648e89f48bf5e2f9485493b3a106d34a206",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "mobile": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "4cf0883554e77003187d93c66b812648e89f48bf5e2f9485493b3a106d34a206",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "tui": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "4cf0883554e77003187d93c66b812648e89f48bf5e2f9485493b3a106d34a206",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        }
+      },
+      "nextVerification": "Read installed version and official protocol; verify exact native storage/account/backend identity, bounded history and independent same-session continuation/handoff gates."
+    },
+    {
+      "id": "kiro:global:kiro-cloud",
+      "product": "kiro",
+      "region": "global",
+      "profileId": "unqualified",
+      "backendId": "kiro-cloud",
+      "installedVersion": null,
+      "nativeStoreRef": "unverified:kiro:global",
+      "scopeFingerprint": "eee949780e2514736e9abac32bd0b149e1aa898deb807c9eb5a468e3553bf5bb",
+      "capabilities": {
+        "durableIdentity": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "eee949780e2514736e9abac32bd0b149e1aa898deb807c9eb5a468e3553bf5bb",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "historyRead": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "eee949780e2514736e9abac32bd0b149e1aa898deb807c9eb5a468e3553bf5bb",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "sameSessionContinue": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "eee949780e2514736e9abac32bd0b149e1aa898deb807c9eb5a468e3553bf5bb",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "liveSteer": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "eee949780e2514736e9abac32bd0b149e1aa898deb807c9eb5a468e3553bf5bb",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "interruptTurn": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "eee949780e2514736e9abac32bd0b149e1aa898deb807c9eb5a468e3553bf5bb",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "nativeApproval": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "eee949780e2514736e9abac32bd0b149e1aa898deb807c9eb5a468e3553bf5bb",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "observeExternalChanges": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "eee949780e2514736e9abac32bd0b149e1aa898deb807c9eb5a468e3553bf5bb",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "releaseControl": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "eee949780e2514736e9abac32bd0b149e1aa898deb807c9eb5a468e3553bf5bb",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "reclaimControl": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "eee949780e2514736e9abac32bd0b149e1aa898deb807c9eb5a468e3553bf5bb",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "restartReattach": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "eee949780e2514736e9abac32bd0b149e1aa898deb807c9eb5a468e3553bf5bb",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        }
+      },
+      "surfaces": {
+        "desktop": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "eee949780e2514736e9abac32bd0b149e1aa898deb807c9eb5a468e3553bf5bb",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "ide": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "eee949780e2514736e9abac32bd0b149e1aa898deb807c9eb5a468e3553bf5bb",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "web": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "eee949780e2514736e9abac32bd0b149e1aa898deb807c9eb5a468e3553bf5bb",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "mobile": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "eee949780e2514736e9abac32bd0b149e1aa898deb807c9eb5a468e3553bf5bb",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "tui": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "eee949780e2514736e9abac32bd0b149e1aa898deb807c9eb5a468e3553bf5bb",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        }
+      },
+      "nextVerification": "Read installed version and official protocol; verify exact native storage/account/backend identity, bounded history and independent same-session continuation/handoff gates."
+    },
+    {
+      "id": "devin:global:devin-v3-api",
+      "product": "devin",
+      "region": "global",
+      "profileId": "unqualified",
+      "backendId": "devin-v3-api",
+      "installedVersion": null,
+      "nativeStoreRef": "unverified:devin:global",
+      "scopeFingerprint": "59bce2f8bcce9e993d08d3aa871f0af4642768ec2730a08993065a5b1866f0e0",
+      "capabilities": {
+        "durableIdentity": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "59bce2f8bcce9e993d08d3aa871f0af4642768ec2730a08993065a5b1866f0e0",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "historyRead": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "59bce2f8bcce9e993d08d3aa871f0af4642768ec2730a08993065a5b1866f0e0",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "sameSessionContinue": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "59bce2f8bcce9e993d08d3aa871f0af4642768ec2730a08993065a5b1866f0e0",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "liveSteer": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "59bce2f8bcce9e993d08d3aa871f0af4642768ec2730a08993065a5b1866f0e0",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "interruptTurn": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "59bce2f8bcce9e993d08d3aa871f0af4642768ec2730a08993065a5b1866f0e0",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "nativeApproval": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "59bce2f8bcce9e993d08d3aa871f0af4642768ec2730a08993065a5b1866f0e0",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "observeExternalChanges": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "59bce2f8bcce9e993d08d3aa871f0af4642768ec2730a08993065a5b1866f0e0",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "releaseControl": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "59bce2f8bcce9e993d08d3aa871f0af4642768ec2730a08993065a5b1866f0e0",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "reclaimControl": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "59bce2f8bcce9e993d08d3aa871f0af4642768ec2730a08993065a5b1866f0e0",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "restartReattach": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "59bce2f8bcce9e993d08d3aa871f0af4642768ec2730a08993065a5b1866f0e0",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        }
+      },
+      "surfaces": {
+        "desktop": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "59bce2f8bcce9e993d08d3aa871f0af4642768ec2730a08993065a5b1866f0e0",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "ide": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "59bce2f8bcce9e993d08d3aa871f0af4642768ec2730a08993065a5b1866f0e0",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "web": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "59bce2f8bcce9e993d08d3aa871f0af4642768ec2730a08993065a5b1866f0e0",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "mobile": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "59bce2f8bcce9e993d08d3aa871f0af4642768ec2730a08993065a5b1866f0e0",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "tui": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "59bce2f8bcce9e993d08d3aa871f0af4642768ec2730a08993065a5b1866f0e0",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        }
+      },
+      "nextVerification": "Read installed version and official protocol; verify exact native storage/account/backend identity, bounded history and independent same-session continuation/handoff gates."
+    },
+    {
+      "id": "devin:global:devin-local-acp",
+      "product": "devin",
+      "region": "global",
+      "profileId": "unqualified",
+      "backendId": "devin-local-acp",
+      "installedVersion": null,
+      "nativeStoreRef": "unverified:devin:global",
+      "scopeFingerprint": "fbc31cfaba1f9fd1006c27834181fa54fe0d0f710f43927bbc75a437a9dd7a56",
+      "capabilities": {
+        "durableIdentity": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "fbc31cfaba1f9fd1006c27834181fa54fe0d0f710f43927bbc75a437a9dd7a56",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "historyRead": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "fbc31cfaba1f9fd1006c27834181fa54fe0d0f710f43927bbc75a437a9dd7a56",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "sameSessionContinue": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "fbc31cfaba1f9fd1006c27834181fa54fe0d0f710f43927bbc75a437a9dd7a56",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "liveSteer": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "fbc31cfaba1f9fd1006c27834181fa54fe0d0f710f43927bbc75a437a9dd7a56",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "interruptTurn": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "fbc31cfaba1f9fd1006c27834181fa54fe0d0f710f43927bbc75a437a9dd7a56",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "nativeApproval": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "fbc31cfaba1f9fd1006c27834181fa54fe0d0f710f43927bbc75a437a9dd7a56",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "observeExternalChanges": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "fbc31cfaba1f9fd1006c27834181fa54fe0d0f710f43927bbc75a437a9dd7a56",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "releaseControl": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "fbc31cfaba1f9fd1006c27834181fa54fe0d0f710f43927bbc75a437a9dd7a56",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "reclaimControl": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "fbc31cfaba1f9fd1006c27834181fa54fe0d0f710f43927bbc75a437a9dd7a56",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "restartReattach": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "fbc31cfaba1f9fd1006c27834181fa54fe0d0f710f43927bbc75a437a9dd7a56",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        }
+      },
+      "surfaces": {
+        "desktop": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "fbc31cfaba1f9fd1006c27834181fa54fe0d0f710f43927bbc75a437a9dd7a56",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "ide": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "fbc31cfaba1f9fd1006c27834181fa54fe0d0f710f43927bbc75a437a9dd7a56",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "web": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "fbc31cfaba1f9fd1006c27834181fa54fe0d0f710f43927bbc75a437a9dd7a56",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "mobile": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "fbc31cfaba1f9fd1006c27834181fa54fe0d0f710f43927bbc75a437a9dd7a56",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "tui": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "fbc31cfaba1f9fd1006c27834181fa54fe0d0f710f43927bbc75a437a9dd7a56",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        }
+      },
+      "nextVerification": "Read installed version and official protocol; verify exact native storage/account/backend identity, bounded history and independent same-session continuation/handoff gates."
+    },
+    {
+      "id": "codebuddy:global:codebuddy-full-cli",
+      "product": "codebuddy",
+      "region": "global",
+      "profileId": "unqualified",
+      "backendId": "codebuddy-full-cli",
+      "installedVersion": null,
+      "nativeStoreRef": "unverified:codebuddy:global",
+      "scopeFingerprint": "600e5f550f6f193eac722706dd6869f03edacb34627bd2409a396288bde16a67",
+      "capabilities": {
+        "durableIdentity": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "600e5f550f6f193eac722706dd6869f03edacb34627bd2409a396288bde16a67",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "historyRead": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "600e5f550f6f193eac722706dd6869f03edacb34627bd2409a396288bde16a67",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "sameSessionContinue": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "600e5f550f6f193eac722706dd6869f03edacb34627bd2409a396288bde16a67",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "liveSteer": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "600e5f550f6f193eac722706dd6869f03edacb34627bd2409a396288bde16a67",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "interruptTurn": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "600e5f550f6f193eac722706dd6869f03edacb34627bd2409a396288bde16a67",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "nativeApproval": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "600e5f550f6f193eac722706dd6869f03edacb34627bd2409a396288bde16a67",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "observeExternalChanges": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "600e5f550f6f193eac722706dd6869f03edacb34627bd2409a396288bde16a67",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "releaseControl": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "600e5f550f6f193eac722706dd6869f03edacb34627bd2409a396288bde16a67",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "reclaimControl": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "600e5f550f6f193eac722706dd6869f03edacb34627bd2409a396288bde16a67",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "restartReattach": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "600e5f550f6f193eac722706dd6869f03edacb34627bd2409a396288bde16a67",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        }
+      },
+      "surfaces": {
+        "desktop": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "600e5f550f6f193eac722706dd6869f03edacb34627bd2409a396288bde16a67",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "ide": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "600e5f550f6f193eac722706dd6869f03edacb34627bd2409a396288bde16a67",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "web": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "600e5f550f6f193eac722706dd6869f03edacb34627bd2409a396288bde16a67",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "mobile": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "600e5f550f6f193eac722706dd6869f03edacb34627bd2409a396288bde16a67",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "tui": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "600e5f550f6f193eac722706dd6869f03edacb34627bd2409a396288bde16a67",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        }
+      },
+      "nextVerification": "Read installed version and official protocol; verify exact native storage/account/backend identity, bounded history and independent same-session continuation/handoff gates."
+    },
+    {
+      "id": "workbuddy:cn:workbuddy-cli-json",
+      "product": "workbuddy",
+      "region": "cn",
+      "profileId": "workbuddy",
+      "backendId": "workbuddy-cli-json",
+      "installedVersion": null,
+      "nativeStoreRef": "unverified:workbuddy:cn",
+      "scopeFingerprint": "c04b2a88ee89b93a03dc8b431ecd19700dce515b469b6a1254c19a66af0cefd9",
+      "capabilities": {
+        "durableIdentity": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "c04b2a88ee89b93a03dc8b431ecd19700dce515b469b6a1254c19a66af0cefd9",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "historyRead": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "c04b2a88ee89b93a03dc8b431ecd19700dce515b469b6a1254c19a66af0cefd9",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "sameSessionContinue": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "c04b2a88ee89b93a03dc8b431ecd19700dce515b469b6a1254c19a66af0cefd9",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "liveSteer": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "c04b2a88ee89b93a03dc8b431ecd19700dce515b469b6a1254c19a66af0cefd9",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "interruptTurn": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "c04b2a88ee89b93a03dc8b431ecd19700dce515b469b6a1254c19a66af0cefd9",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "nativeApproval": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "c04b2a88ee89b93a03dc8b431ecd19700dce515b469b6a1254c19a66af0cefd9",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "observeExternalChanges": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "c04b2a88ee89b93a03dc8b431ecd19700dce515b469b6a1254c19a66af0cefd9",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "releaseControl": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "c04b2a88ee89b93a03dc8b431ecd19700dce515b469b6a1254c19a66af0cefd9",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "reclaimControl": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "c04b2a88ee89b93a03dc8b431ecd19700dce515b469b6a1254c19a66af0cefd9",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "restartReattach": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "c04b2a88ee89b93a03dc8b431ecd19700dce515b469b6a1254c19a66af0cefd9",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        }
+      },
+      "surfaces": {
+        "desktop": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "c04b2a88ee89b93a03dc8b431ecd19700dce515b469b6a1254c19a66af0cefd9",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "ide": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "c04b2a88ee89b93a03dc8b431ecd19700dce515b469b6a1254c19a66af0cefd9",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "web": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "c04b2a88ee89b93a03dc8b431ecd19700dce515b469b6a1254c19a66af0cefd9",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "mobile": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "c04b2a88ee89b93a03dc8b431ecd19700dce515b469b6a1254c19a66af0cefd9",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "tui": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "c04b2a88ee89b93a03dc8b431ecd19700dce515b469b6a1254c19a66af0cefd9",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        }
+      },
+      "nextVerification": "Native continuation/authentication and storage isolation remain unqualified; require working native login without copying or decrypting credentials."
+    },
+    {
+      "id": "workbuddy:cn:workbuddy-cloud",
+      "product": "workbuddy",
+      "region": "cn",
+      "profileId": "unqualified",
+      "backendId": "workbuddy-cloud",
+      "installedVersion": null,
+      "nativeStoreRef": "unverified:workbuddy:cn",
+      "scopeFingerprint": "0f9f7343a12fa891467ee72b67a4113c139487717a4d22c1a9c9bce9cf01773a",
+      "capabilities": {
+        "durableIdentity": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "0f9f7343a12fa891467ee72b67a4113c139487717a4d22c1a9c9bce9cf01773a",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "historyRead": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "0f9f7343a12fa891467ee72b67a4113c139487717a4d22c1a9c9bce9cf01773a",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "sameSessionContinue": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "0f9f7343a12fa891467ee72b67a4113c139487717a4d22c1a9c9bce9cf01773a",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "liveSteer": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "0f9f7343a12fa891467ee72b67a4113c139487717a4d22c1a9c9bce9cf01773a",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "interruptTurn": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "0f9f7343a12fa891467ee72b67a4113c139487717a4d22c1a9c9bce9cf01773a",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "nativeApproval": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "0f9f7343a12fa891467ee72b67a4113c139487717a4d22c1a9c9bce9cf01773a",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "observeExternalChanges": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "0f9f7343a12fa891467ee72b67a4113c139487717a4d22c1a9c9bce9cf01773a",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "releaseControl": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "0f9f7343a12fa891467ee72b67a4113c139487717a4d22c1a9c9bce9cf01773a",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "reclaimControl": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "0f9f7343a12fa891467ee72b67a4113c139487717a4d22c1a9c9bce9cf01773a",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "restartReattach": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "0f9f7343a12fa891467ee72b67a4113c139487717a4d22c1a9c9bce9cf01773a",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        }
+      },
+      "surfaces": {
+        "desktop": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "0f9f7343a12fa891467ee72b67a4113c139487717a4d22c1a9c9bce9cf01773a",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "ide": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "0f9f7343a12fa891467ee72b67a4113c139487717a4d22c1a9c9bce9cf01773a",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "web": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "0f9f7343a12fa891467ee72b67a4113c139487717a4d22c1a9c9bce9cf01773a",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "mobile": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "0f9f7343a12fa891467ee72b67a4113c139487717a4d22c1a9c9bce9cf01773a",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "tui": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "0f9f7343a12fa891467ee72b67a4113c139487717a4d22c1a9c9bce9cf01773a",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        }
+      },
+      "nextVerification": "Native continuation/authentication and storage isolation remain unqualified; require working native login without copying or decrypting credentials."
+    },
+    {
+      "id": "grok:global:grok-cli-json",
+      "product": "grok",
+      "region": "global",
+      "profileId": "grok",
+      "backendId": "grok-cli-json",
+      "installedVersion": null,
+      "nativeStoreRef": "unverified:grok:global",
+      "scopeFingerprint": "845417b7f2e3713c74c8085610b033240cf4e77790fc3ef560236a1542b27f80",
+      "capabilities": {
+        "durableIdentity": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "845417b7f2e3713c74c8085610b033240cf4e77790fc3ef560236a1542b27f80",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "historyRead": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "845417b7f2e3713c74c8085610b033240cf4e77790fc3ef560236a1542b27f80",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "sameSessionContinue": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "845417b7f2e3713c74c8085610b033240cf4e77790fc3ef560236a1542b27f80",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "liveSteer": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "845417b7f2e3713c74c8085610b033240cf4e77790fc3ef560236a1542b27f80",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "interruptTurn": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "845417b7f2e3713c74c8085610b033240cf4e77790fc3ef560236a1542b27f80",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "nativeApproval": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "845417b7f2e3713c74c8085610b033240cf4e77790fc3ef560236a1542b27f80",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "observeExternalChanges": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "845417b7f2e3713c74c8085610b033240cf4e77790fc3ef560236a1542b27f80",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "releaseControl": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "845417b7f2e3713c74c8085610b033240cf4e77790fc3ef560236a1542b27f80",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "reclaimControl": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "845417b7f2e3713c74c8085610b033240cf4e77790fc3ef560236a1542b27f80",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "restartReattach": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "845417b7f2e3713c74c8085610b033240cf4e77790fc3ef560236a1542b27f80",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        }
+      },
+      "surfaces": {
+        "desktop": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "845417b7f2e3713c74c8085610b033240cf4e77790fc3ef560236a1542b27f80",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "ide": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "845417b7f2e3713c74c8085610b033240cf4e77790fc3ef560236a1542b27f80",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "web": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "845417b7f2e3713c74c8085610b033240cf4e77790fc3ef560236a1542b27f80",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "mobile": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "845417b7f2e3713c74c8085610b033240cf4e77790fc3ef560236a1542b27f80",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "tui": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "845417b7f2e3713c74c8085610b033240cf4e77790fc3ef560236a1542b27f80",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        }
+      },
+      "nextVerification": "Read installed version and official protocol; verify exact native storage/account/backend identity, bounded history and independent same-session continuation/handoff gates."
+    },
+    {
+      "id": "antigravity:global:antigravity-cli-json",
+      "product": "antigravity",
+      "region": "global",
+      "profileId": "antigravity",
+      "backendId": "antigravity-cli-json",
+      "installedVersion": null,
+      "nativeStoreRef": "unverified:antigravity:global",
+      "scopeFingerprint": "1e4e1a2a46ce9c579704b2c6cb5207df4b9643689a0827f51027e4fc2a4b0736",
+      "capabilities": {
+        "durableIdentity": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "1e4e1a2a46ce9c579704b2c6cb5207df4b9643689a0827f51027e4fc2a4b0736",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "historyRead": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "1e4e1a2a46ce9c579704b2c6cb5207df4b9643689a0827f51027e4fc2a4b0736",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "sameSessionContinue": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "1e4e1a2a46ce9c579704b2c6cb5207df4b9643689a0827f51027e4fc2a4b0736",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "liveSteer": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "1e4e1a2a46ce9c579704b2c6cb5207df4b9643689a0827f51027e4fc2a4b0736",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "interruptTurn": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "1e4e1a2a46ce9c579704b2c6cb5207df4b9643689a0827f51027e4fc2a4b0736",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "nativeApproval": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "1e4e1a2a46ce9c579704b2c6cb5207df4b9643689a0827f51027e4fc2a4b0736",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "observeExternalChanges": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "1e4e1a2a46ce9c579704b2c6cb5207df4b9643689a0827f51027e4fc2a4b0736",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "releaseControl": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "1e4e1a2a46ce9c579704b2c6cb5207df4b9643689a0827f51027e4fc2a4b0736",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "reclaimControl": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "1e4e1a2a46ce9c579704b2c6cb5207df4b9643689a0827f51027e4fc2a4b0736",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "restartReattach": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "1e4e1a2a46ce9c579704b2c6cb5207df4b9643689a0827f51027e4fc2a4b0736",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        }
+      },
+      "surfaces": {
+        "desktop": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "1e4e1a2a46ce9c579704b2c6cb5207df4b9643689a0827f51027e4fc2a4b0736",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "ide": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "1e4e1a2a46ce9c579704b2c6cb5207df4b9643689a0827f51027e4fc2a4b0736",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "web": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "1e4e1a2a46ce9c579704b2c6cb5207df4b9643689a0827f51027e4fc2a4b0736",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "mobile": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "1e4e1a2a46ce9c579704b2c6cb5207df4b9643689a0827f51027e4fc2a4b0736",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "tui": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "1e4e1a2a46ce9c579704b2c6cb5207df4b9643689a0827f51027e4fc2a4b0736",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        }
+      },
+      "nextVerification": "Read installed version and official protocol; verify exact native storage/account/backend identity, bounded history and independent same-session continuation/handoff gates."
+    },
+    {
+      "id": "zcode:global:zcode-cli-json",
+      "product": "zcode",
+      "region": "global",
+      "profileId": "zcode",
+      "backendId": "zcode-cli-json",
+      "installedVersion": null,
+      "nativeStoreRef": "unverified:zcode:global",
+      "scopeFingerprint": "f8a43afc362262262b2a908353d7a8244f105a91c8e01cdb3d7c8a47af1aed52",
+      "capabilities": {
+        "durableIdentity": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "f8a43afc362262262b2a908353d7a8244f105a91c8e01cdb3d7c8a47af1aed52",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "historyRead": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "f8a43afc362262262b2a908353d7a8244f105a91c8e01cdb3d7c8a47af1aed52",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "sameSessionContinue": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "f8a43afc362262262b2a908353d7a8244f105a91c8e01cdb3d7c8a47af1aed52",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "liveSteer": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "f8a43afc362262262b2a908353d7a8244f105a91c8e01cdb3d7c8a47af1aed52",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "interruptTurn": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "f8a43afc362262262b2a908353d7a8244f105a91c8e01cdb3d7c8a47af1aed52",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "nativeApproval": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "f8a43afc362262262b2a908353d7a8244f105a91c8e01cdb3d7c8a47af1aed52",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "observeExternalChanges": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "f8a43afc362262262b2a908353d7a8244f105a91c8e01cdb3d7c8a47af1aed52",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "releaseControl": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "f8a43afc362262262b2a908353d7a8244f105a91c8e01cdb3d7c8a47af1aed52",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "reclaimControl": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "f8a43afc362262262b2a908353d7a8244f105a91c8e01cdb3d7c8a47af1aed52",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "restartReattach": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "f8a43afc362262262b2a908353d7a8244f105a91c8e01cdb3d7c8a47af1aed52",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        }
+      },
+      "surfaces": {
+        "desktop": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "f8a43afc362262262b2a908353d7a8244f105a91c8e01cdb3d7c8a47af1aed52",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "ide": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "f8a43afc362262262b2a908353d7a8244f105a91c8e01cdb3d7c8a47af1aed52",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "web": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "f8a43afc362262262b2a908353d7a8244f105a91c8e01cdb3d7c8a47af1aed52",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "mobile": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "f8a43afc362262262b2a908353d7a8244f105a91c8e01cdb3d7c8a47af1aed52",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        },
+        "tui": {
+          "version": 1,
+          "support": "unknown",
+          "level": "documented",
+          "scopeFingerprint": "f8a43afc362262262b2a908353d7a8244f105a91c8e01cdb3d7c8a47af1aed52",
+          "reasonCode": "NATIVE_INTERACTION_GATE_PENDING"
+        }
+      },
+      "nextVerification": "Read installed version and official protocol; verify exact native storage/account/backend identity, bounded history and independent same-session continuation/handoff gates."
+    }
+  ]
+}
