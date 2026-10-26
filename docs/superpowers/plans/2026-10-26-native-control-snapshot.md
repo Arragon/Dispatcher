@@ -48,3 +48,29 @@
 - [ ] **Step6: Self-review and one default full gate.** Write full report/source map first; freeze all inputs. Run default `mise exec -- pnpm check` once on final changed code, retaining every pre/post payload, known output delta and earlier failure; no maxWorkers/deadline/skips changes. After passing, commit exactly tested three-path payloads, verify identical digests, append gate/commit handoff only after the command ends, return concise status. Fresh root review follows; no worker reviewer/helper. Root later handles acceptance metadata/Linear and the next UI unit.
 
 Self-review: one independently testable readonly API deliverable; every original18 and Review Focus has a named owning step. Scope excludes the UI that needs another state-ownership decision, and excludes real native writers. User already authorized continuous roadmap execution; this plan implements preserved behavior, with no new human approval pause. Cross-product scheme B remains a constraint rather than a claim of integrated RHIZA support.
+
+## Fix round1 ruling (after initial review, 2026-10-26)
+
+Initial code3fd1a36 passed214/4551 but independent review reproduced I1: getInteractionPort
+validates one capabilities() declaration, then service projects a second declaration that can
+claim supported historyRead without history(). This is not accepted. Preserve the complete
+original brief/report/initial gate/review and the focused experiment with their stated limits.
+
+Ruling: permit one fourth product path, `packages/adapters/src/interaction-contracts.ts`,
+to extract existing validation into `readInteractionCapabilities(port:NativeInteractionPort):InteractionCapabilities`.
+It calls the actual port's capabilities() once, applies the existing version/declaration/method/
+surface validation and returns that same validated declaration. Existing getInteractionPort
+delegates to it and still returns the same port/undefined with existing errors. The index
+already star-exports this module. No duplicate map, proxy/wrapped port, optional validation
+bypass or physical source change. Service consumes this returned snapshot only in the actual
+legacy branch. Current managed/runtime/source guards and the readonly route/DTO remain.
+
+Fix changes are limited to that Adapter helper, existing service callsite and appended compat
+tests. Meaningful changing-declaration RED must reproduce supported-without-method, then
+pin exactly one capabilities call and the first validated declaration for missing and valid
+history ports. Preserve all original46 assertions/tables and current5 bytes. Cover amended code
+with compat/current5/Adapter interaction-contract tests, existing related8-file group plus the
+Adapter contract file, build/lint, and one new default full gate on changed code. Original gate
+is retained rather than rerun unchanged. New fix artifacts/maps/manifests are versioned;
+report gets append-only fix evidence. M1 expected negative-path logger noise is deferred to
+CV14; no unrelated production/test logging cleanup in this fix. All other constraints remain.
