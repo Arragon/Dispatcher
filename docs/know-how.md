@@ -468,7 +468,7 @@
   journal. A reply belongs to its originating socket and must not be sent
   through a replacement connection.
 
-- Required runtime: Node.js 24.12+ and pnpm 11.19.
+- Required runtime: Node.js 24.22.1+ and pnpm 11.19.
 - `pnpm typecheck` builds project references first. Calling an individual
   package typecheck from a clean tree may otherwise lack referenced declarations.
 - Controller tests should pass a fake `SecretStore`; production construction on

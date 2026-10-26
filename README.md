@@ -13,7 +13,7 @@ delivery evidence.
 
 ## Local development
 
-Requirements: Node.js 24.12 or newer and pnpm 11.19.
+Requirements: Node.js 24.22.1 or newer and pnpm 11.19.
 
 ```bash
 pnpm install

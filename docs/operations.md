@@ -2,7 +2,7 @@
 
 ## Prerequisites and verification
 
-Use Node.js 24.12 or newer and pnpm 11.19.
+Use Node.js 24.22.1 or newer and pnpm 11.19.
 
 ```bash
 pnpm install --frozen-lockfile

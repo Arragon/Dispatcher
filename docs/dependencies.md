@@ -52,10 +52,41 @@ Existing node-pty lifecycle scripts ran in that isolated deployment; their actua
 script bytes/hashes are retained. No Controller/service smoke or host activation
 belongs to this attribution check.
 
-Current resolved audit exits1 with28 unrelated graph advisories (6low,17moderate,
-5high) for @vitest/mocker, brace-expansion, fast-uri, fastify, source-map-js,
-undici and vite. SDK/Zod have no entry in that result; this is not a clean
-workspace-security claim. Raw audit and primary-source checks are retained under
-/tmp/dispatcher-devin-acp-client-evidence-20261024; CV13 owns the remaining audit
-work. No suppression or unrelated upgrade was used. The native CLI/account and
-project-wide release license/qualification remain separate obligations.
+The retained pre-update audit exited 1 with 28 graph advisories (6 low,
+17 moderate, 5 high) for @vitest/mocker, brace-expansion, fast-uri, fastify,
+source-map-js, undici and vite. SDK/Zod had no entry in that result. Original
+raw audit and artifact evidence remain under
+/tmp/dispatcher-devin-acp-client-evidence-20261024.
+
+## CV13 project runtime and dependency security increment
+
+Project mise, CI and the supported Node minimum are 24.22.1. The actual installed
+Node executable reports builtin Undici 7.30.1 and OpenSSL 3.5.9. pnpm remains
+11.19.0; its compiled executable reports a separate bundled Node 26.0.0 runtime,
+whose internal dependencies are not qualified by the project Node update.
+
+Exact direct patches are Fastify 5.12.6, Vite 8.3.3 and Vitest 5.0.3. Vitest's
+mocker/spy family is 5.0.3. Existing compatible parent ranges resolve fast-uri
+3.1.9 and 4.2.3 and brace-expansion 5.0.12. Three exact-parent overrides resolve
+source-map-js 1.2.2 under css-tree 3.2.1 and postcss 8.5.28, and Undici 8.12.2
+under jsdom 30.0.1; all satisfy their existing parent ranges. Vite's updated resolution uses the
+Rolldown 1.2.15/platform binding and oxc types 0.155.0 family; Vitest requires
+why-is-node-running 3.2.1, removing its old siginfo/stackback dependencies.
+Other package versions and the esbuild/node-pty build allowlist are retained.
+
+The ordinary frozen install and resolved audit both exited 0; the audit reports
+324 dependencies and zero advisories in every severity. Resolved license families
+remain the nine listed above. Changed packages use MIT or BSD-3-Clause. Official
+registry tarballs match their SRI; host-selected changed package bytes, including
+packaged license/NOTICE files, match those archives. Other platform binding
+artifacts were checked as archives only. Unchanged esbuild's approved installer
+replaces bin/esbuild with its platform binary; that installed binary matches the
+owning native package rather than the tarball's wrapper script. Existing license
+obligations, including the SDK/Zod attribution above, remain in force.
+
+Raw registry, archive, installed graph/runtime, license, audit, lifecycle and
+isolated production attribution evidence is retained under
+/tmp/dispatcher-project-security-task1-evidence-20261026. The task report records
+the unchanged full gate and packaging results separately. These facts establish
+this scoped security increment, not exploit reachability, pnpm-binary security,
+real-account/provider acceptance or the remaining CV13/CV14 and formal Gates.
