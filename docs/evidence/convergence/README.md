@@ -5530,3 +5530,73 @@ explicit. Whole goal active; next scoped project Node/dependency security increm
 then UI14/other controls/retention/delivery/recovery/performance/wholebranch/CI.
 Current official quota snapshot15used85remaining/ordinaryallowedtrue/reset2unchanged;
 user said continue without reset, none consumed. No real-account/service activation.
+
+## CV13 project runtime/dependency security increment — locally accepted5cc7c05
+
+BASEc2b0520→5cc7c053c84fba2b66dfbc0a9c56a777b5e83953, exactly11 manifest/runtime/
+minimum/license paths, no application/test/public contract/database changes. Project
+and CI Node/minimum now24.22.1; actual builtinUndici7.30.1/OpenSSL3.5.9, old24.21/
+global/default/primary preserved. Original mise download/signature/checksums and
+installed Node tree retained; root verifies actual binary/LICENSE against archive
+SHA89c682593d76cd44233fa53b1563264e7de9cbb189cad169135c5b4fadfbc0a7.
+pnpm11.19 remains separately compiled with bundledNode26.0.0, security unqualified.
+
+Fastify5.12.6/Vite8.3.3/Vitest5.0.3 and compatible targeted fast-uri3.1.9/4.2.3,
+brace5.0.12/source-map-js1.2.2/undici8.12.2. Three existing-parent overrides only;
+all real ranges preserved.28added30removed package blocks; unchanged blocks exact.
+Vitest mocker/spy and why-is-node-running3 required graph, Rolldown1.2.15/oxc0.155
+and15platform bindings accounted,14archive-only. Earlier frozen prose16 corrected
+without rewriting inputs. Same9license families, actual audit0/324deps. No suppression,
+cross-major leaf forcing, allowBuilds or CI/gate command changes. Probe audit0 was
+preparation; this increment supplies actual installation/runtime attribution.
+
+Ordinary frozen install reused lifecycle state; no invented fresh install-script run.
+Actual isolated production deploy runs approved node-pty install/postinstall,108packages/
+93supply-chain entries, retained workspace/first+relocated runtime/locks and all payloads.
+Owning Fastify5.12.6/Web export/relocated runtime-contract1/no escaping links verified;
+source cache unchanged. This is package attribution, not clean-source release staging,
+new HTTP/PTY smoke/service/provider/account activation. Existing full suite provides
+controlled HTTP/PTY/recovery/admission regression, not real-native qualification.
+
+ONE standard full pnpm check passes209files4417tests/all non-test gates on the new
+stack, UTC2026-10-26T16:31:40.062443..16:35:33.118879,wall233.056128959s, logSHA
+568206219d123b1836bfdb633a3421d5fd8cb106b815bb459c17d4acec11b1ea.
+Execution c2b0520+frozen11 equals5cc7c05; clean exact-candidateCV14/CI remains later.
+Pipeline intentionally replaces48old/48new generated paths and changes5 common
+dist/buildinfo files (101deltas),12other reemit identities byte-identical. Non-generated
+source/tools/external/11deliverables frozen; full source+dist snapshot equality FALSE.
+One existing Vitest cache changed normally: preidentity only, post19873B payload retained
+SHA718b35e8cfa1e024648816bf922464450cca40db6a2ee3724ac705abd48171d4.
+Its19983B preimage is not retained; no replay, unchanged-module or hermetic claim.
+
+Fresh independent Spec/Quality0C/I/M, report
+/tmp/dispatcher-project-security-task1-review-20261026.md, read in full. Reviewer
+recomputes35tarball SRI/identity/license hashes,2791installed and1316deployed archive
+member bodies, real parent ranges/engines and raw gate/audit/license/deploy evidence.
+Root /tmp/dispatcher-project-security-root-audit-20261026.json verifies17runs,
+80907pre+80907post source payloads,1504+1504external,161814source/3008external
+identity rows,126digests34Git/540committed payloads;4760full inputs,704currentdist/
+16buildinfo, primary intact. Approved prepare/resolution mutation phases retain wrapper
+exit86/source deltas instead of being called passing frozen checks. Current generated
+fixtures23244identity rows and four existing families are verified within their layers.
+
+Root /tmp/dispatcher-project-security-root-artifacts-20261026.json independently checks
+12986installed files/737links,5tool binaries,85handoff digests,15479production inventory
+rows (14963file refs/516links), actual Node original binary/license/checksum, oldNode/
+global/primary pins and report append-only prefix. These inventory references include
+first/relocated overlap, not15479unique files. Root inspector first assumed generated
+path sets equal and failed on a removed old Vite asset; failed script retained, corrected
+intersection counts distinguish added/removed/changed, no product/test rerun or edits.
+
+Retained helper failures: quoted npm keyHTTP405, approved esbuild wrapper→actual native
+binary optimization, package.json export resolution. Each actual failed helper/output/
+artifact remains; corrections use real registry quoting/owning resolution/native bytes.
+General node_modules payload/OS/temp/pnpm-runtime/other-platform/formal limits remain,
+no blanket retention or causal claim about old EPERM/R020. Source503 identity/owner/
+decision stays exact; only7 existing verification cells updated, no new row invented.
+
+CV13 remains In Progress for other source/recovery/performance/security obligations;
+fresh readback CV14 is Backlog, not an implied status change. Old C1/I3/group/R020,
+logging/committer and real account/provider/GUI/writer/service/release Gates stay open.
+Goal active, no reset consumed. Next NativeHistory14 canonical Task integration, then
+profile capability6+Agents8 and other control/handoff/retention/delivery/remaining work.
