@@ -479,6 +479,12 @@ export function validateConfig(input: unknown): DispatcherConfig {
     if (profile.provider === "codex" && (typeof profile.settings?.codexHome !== "string" || !profile.settings.codexHome)) {
       throw new ConfigValidationError([`/agentProfiles/${profile.id}/settings/codexHome is required for Codex`]);
     }
+    if (profile.provider === "devin") {
+      const owner = profile.settings?.createAsUserId;
+      if (owner !== undefined && (typeof owner !== "string" || !owner.trim() || owner.length > 512 || /[\0\r\n]/.test(owner))) throw new ConfigValidationError(["Devin createAsUserId must be an explicit nonempty user ID"]);
+      const cap = profile.settings?.maxSessionAcu;
+      if (cap !== undefined && (typeof cap !== "number" || !Number.isSafeInteger(cap) || cap <= 0)) throw new ConfigValidationError(["Devin maxSessionAcu must be a positive native integer"]);
+    }
     if (profile.settings?.trustWorkspace !== undefined && (profile.provider !== "cursor" || typeof profile.settings.trustWorkspace !== "boolean")) throw new ConfigValidationError([`/agentProfiles/${profile.id}/settings/trustWorkspace must be a Cursor boolean`]);
     if (["cursor", "opencode", "grok", "pi", "antigravity", "zcode", "workbuddy-cli", "qoder-cn"].includes(profile.provider) && profile.settings?.approveTools !== undefined
       && (!["cursor", "opencode", "grok", "antigravity"].includes(profile.provider) || typeof profile.settings.approveTools !== "boolean")) {

@@ -393,6 +393,7 @@ interface EcosystemProfileBody extends ProfilePlanOptions {
   organizationId?: string;
   apiBase?: string;
   maxSessionAcu?: number;
+  createAsUserId?: string;
   provider?: "workbuddy" | "codebuddy";
   baseUrl?: string;
   healthPath?: string;
@@ -1518,6 +1519,7 @@ export class ControllerService {
         credentialRef: profile.credentialRef,
         ...(stringSetting(profile.settings?.apiBase) ? { apiBase: stringSetting(profile.settings?.apiBase)! } : {}),
         ...(typeof profile.settings?.maxSessionAcu === "number" ? { maxSessionAcu: profile.settings.maxSessionAcu } : {}),
+        ...(stringSetting(profile.settings?.createAsUserId) ? { createAsUserId: stringSetting(profile.settings?.createAsUserId)! } : {}),
       };
       this.agentAdapters.set(profile.id, new DevinAdapter(adapterProfile, this.options.devinBackendFactory?.(adapterProfile), store, resolveProviderCredential, this.options.integrationFetch as typeof fetch | undefined));
     }
@@ -2796,7 +2798,7 @@ export class ControllerService {
         ...(stringSetting(profile.settings?.model) ? { model: stringSetting(profile.settings?.model)! } : {}),
       },context.repository?{workspacePath:context.repository.root}:{});
       if (profile.provider === "devin" && profile.credentialRef && stringSetting(profile.settings?.organizationId)) {
-        const devinProfile: DevinProfileConfig = { id: profile.id, alias: profile.alias, organizationId: stringSetting(profile.settings?.organizationId)!, credentialRef: profile.credentialRef, ...(stringSetting(profile.settings?.apiBase) ? { apiBase: stringSetting(profile.settings?.apiBase)! } : {}), ...(typeof profile.settings?.maxSessionAcu === "number" ? { maxSessionAcu: profile.settings.maxSessionAcu } : {}) };
+        const devinProfile: DevinProfileConfig = { id: profile.id, alias: profile.alias, organizationId: stringSetting(profile.settings?.organizationId)!, credentialRef: profile.credentialRef, ...(stringSetting(profile.settings?.apiBase) ? { apiBase: stringSetting(profile.settings?.apiBase)! } : {}), ...(typeof profile.settings?.maxSessionAcu === "number" ? { maxSessionAcu: profile.settings.maxSessionAcu } : {}), ...(stringSetting(profile.settings?.createAsUserId) ? { createAsUserId: stringSetting(profile.settings?.createAsUserId)! } : {}) };
         const backend = this.options.devinBackendFactory?.(devinProfile);
         if (backend) { const health = await backend.health(); return { authenticated: health.ok, apiVersion: "v3", ...(health.diagnostic ? { diagnostic: health.diagnostic } : {}) }; }
         return probeDevinProfile(devinProfile, resolveCredential, this.options.integrationFetch as typeof fetch | undefined);
@@ -4254,7 +4256,11 @@ export class ControllerService {
         return request.params.provider === "cursor" ? probeCursorProfile(profile, resolveCredential) : probeKiroProfile(profile, resolveCredential);
       }
       if (request.params.provider === "devin") {
+        if (body.createAsUserId !== undefined && (typeof body.createAsUserId !== "string" || !body.createAsUserId.trim() || body.createAsUserId.length > 512 || /[\0\r\n]/.test(body.createAsUserId))) return reply.code(400).send({ code: "INVALID_DEVIN_ATTRIBUTION" });
+        if (body.maxSessionAcu !== undefined && (!Number.isSafeInteger(body.maxSessionAcu) || body.maxSessionAcu <= 0)) return reply.code(400).send({ code: "INVALID_DEVIN_ACU_LIMIT" });
+
         if (!body.organizationId || !body.credentialRef) return reply.code(400).send({ code: "DEVIN_PROFILE_REQUIRED" });
+        // Discovery checks credential health only; it does not create or attribute a session.
         return probeDevinProfile({ id: body.id ?? "discovered-devin", alias: body.alias, organizationId: body.organizationId, credentialRef: body.credentialRef, ...(body.apiBase ? { apiBase: body.apiBase } : {}), ...(body.maxSessionAcu ? { maxSessionAcu: body.maxSessionAcu } : {}) }, resolveCredential, this.options.integrationFetch as typeof fetch | undefined);
       }
       if (request.params.provider === "workbuddy-codebuddy") {
@@ -4309,8 +4315,11 @@ export class ControllerService {
       } else if (provider === "cursor" || provider === "kiro") {
         settings = { ...(body.executable ? { executable: body.executable } : {}), ...(body.model ? { model: body.model } : {}), ...(provider === "cursor" && body.approveTools !== undefined ? { approveTools: body.approveTools } : {}), ...(provider === "cursor" && body.trustWorkspace !== undefined ? { trustWorkspace: body.trustWorkspace } : {}) };
       } else if (provider === "devin") {
+        if (body.createAsUserId !== undefined && (typeof body.createAsUserId !== "string" || !body.createAsUserId.trim() || body.createAsUserId.length > 512 || /[\0\r\n]/.test(body.createAsUserId))) return reply.code(400).send({ code: "INVALID_DEVIN_ATTRIBUTION" });
+        if (body.maxSessionAcu !== undefined && (!Number.isSafeInteger(body.maxSessionAcu) || body.maxSessionAcu <= 0)) return reply.code(400).send({ code: "INVALID_DEVIN_ACU_LIMIT" });
+
         if (!body.organizationId || !credentialRef) return reply.code(400).send({ code: "DEVIN_PROFILE_REQUIRED" });
-        settings = { organizationId: body.organizationId, ...(body.apiBase ? { apiBase: body.apiBase } : {}), ...(body.maxSessionAcu ? { maxSessionAcu: body.maxSessionAcu } : {}) };
+        settings = { organizationId: body.organizationId, ...(body.apiBase ? { apiBase: body.apiBase } : {}), ...(body.maxSessionAcu ? { maxSessionAcu: body.maxSessionAcu } : {}), ...(body.createAsUserId ? { createAsUserId: body.createAsUserId } : {}) };
       } else if (provider === "workbuddy-codebuddy") {
         const local = localServiceProfile(body);
         if (!local) return reply.code(400).send({ code: "LOCAL_SERVICE_PROFILE_REQUIRED" });
