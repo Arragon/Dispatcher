@@ -24,6 +24,12 @@
 
 ## M0–M10 invariants
 
+- Native capabilities can change between reads. For legacy metadata projection,
+  use readInteractionCapabilities to validate and return one captured declaration
+  against its actual port. Calling capabilities() again after getInteractionPort
+  validates a different value and can report support without a callable. Keep the
+  original receiver/port and separate metadata from native mutation admission.
+
 - Do not pass `process.env` directly to task/provider/probe/verification/Git
   children. The CLI may hold DISPATCHER_OWNER_TOKEN and
   DISPATCHER_SECRET_STORE_KEY. Use childExecutionEnvironment after overlays;

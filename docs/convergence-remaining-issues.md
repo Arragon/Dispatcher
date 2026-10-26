@@ -625,3 +625,14 @@ CV13 recovery/performance/source tasks are NOT closed. Historical audit28 stays 
 not current installed status. Source503only7verification cells, identities/owners fixed.
 Fresh CV13InProgress/CV14Backlog; no status or reset operation. Next UI14 prepared,
 profile6+Agents8 actual ConfigPlan/localized route adaptation then other controls pending.
+
+
+2026-10-26 readonly control prerequisite3fd1a36+f06b81f locally accepted after
+I1 changing-declaration RED/fix/scoped re-review: source18/46assertions+tables/current5
+preserved, related543/default214files4553/non-test and root provenance/primary/503
+audits pass. New route stays readonly; Web NativeSessionPanel15/Handoff10 and all
+real control/provider/GUI/writer/Gates remain open. Initial M1 expected refusal
+logger noise is explicitly deferred to CV14 along with inferred local Git identity
+and historical capture limits. No production logging suppression or migration/
+credential/native activation. Next UI integrates canonical header and the one
+history viewer; retention/delivery/recovery/performance/full branch work continues.

@@ -5748,3 +5748,79 @@ stay exact. The capability increment is locally complete; CV11/control/handoff/S
 retention/delivery/recovery and final candidate/Gates remain open. Latest quota70used/
 30remaining/ordinaryallowed/reset2unused; no reset consumed. SchemeB D registration is
 in INH1986 commentd94699d4 (exact-readback), separate from this local implementation.
+
+
+## CV-09 / CV-11 prerequisite: readonly control snapshot (2026-10-26)
+
+Locally accepted source3fd1a36e164990f7483ba574a059ec92aa99cda5 plus fix
+f06b81fd76325faa8d1eb8affba9b414663d6ef0. Four product/test paths add a pure
+NativeControlView, restore authenticated GET /api/runs/:id/control with exact
+stored control/fence, and preserve the actual selected legacy Adapter declaration
+through shared readInteractionCapabilities. The handler has literal
+mutationAvailable:false, no commandId/store reference/native/capability/observation
+call or SQL write. Missing/empty legacy IDs remain unavailable; foreign retained
+owners are refused and activeRun mismatch withholds control/fence. New reads reflect
+saved epoch/revision; frozen Run contracts and current native runtime/observer/history
+boundaries remain. No Controller permission, migration/writer/lock or Web change.
+
+Original Controller source18 expanded purposes (15 declarations, tables2+3) and all46
+assertions/table values are exact in the new compat suite, with current5 unchanged.
+Only valid current selection/contract/background-worker/evidence fixture setup adapts.
+Initial gate214files4551 passed, then fresh review found I1: two capabilities reads
+could validate unknown then project supported without history(). The original actual
+API counterexample and complete initial review remain. Root9451d6c ruled the fourth
+Adapter helper path; one shared validator now returns its single captured declaration
+and getInteractionPort retains same-port/undefined/errors. Two meaningful RED cases
+cover missing and valid history methods with reversed declarations, then GREEN37/
+final related9files543 pass. A test-only no-this-alias lint failure was corrected with
+an actual receiver-identity boolean assertion; original source assertions and initial
+compat24603-byte prefix remain, no suppression/deadline/worker/cache change.
+
+Final one changed-code default mise exec -- pnpm check ran
+2026-10-26T19:39:37.475753Z→19:43:24.179424Z, wall226.703311458s:
+214files4553tests and build/typecheck/lint/boundaries pass. Log SHA256
+058e8c71ef063bc7d1d59ec8ef7b02315b2dbba91d767eb84ccdbcd71d461017;
+result SHA256 fec5fe07dc5e942fa628da3b1f585503da1bbd1be952cbb48487939b93148e18;
+pre SHA256 51e877b6e7accf52c282b8b5dae111d4b8f3803cd7068059b4e1e470f1ac44cd.
+Source/dist/external/tool bytes and Git state stayed frozen through that gate;
+normal Vitest results cache is the sole installed delta, with raw pre/post bytes.
+Actual gate/current/staged/commit payload digests match. Full report38229bytes/SHA
+225d1cc2f5ab9d60c6de259e3789a87fb8a7db7eec8420b529cb78a95334a0a3.
+Fresh scoped review I1ADDRESSED,0newCritical/Important/Minor, SHA
+36df3b37d8331d3b13d636a7f6100c61f0d819815a8613ba8edc80c3766f8649;
+initial task review and two CannotVerify items are resolved by the root audits and
+explicit bounded historical claims below. Deferred initial M1 remains for CV14.
+
+Root initial audit:7phases67118source224external28cache/state payloads70Git fields,
+66protected paths and three committed inputs; artifacts30593fixture identityrows,
+122SQLite point-read snapshots162responseJSON35finalraw bodies366DBstat references.
+Fix audit:8phases76752source2300external32cache/state80Git fields,65protected paths,
+four committed inputs and exact34736-byte pregate report prefix; artifacts37715
+fixture identityrows140pointreads185responseJSON/raw body pairs420DBstat references.
+Final gate itself has28pointreads37actual raw API bodies with matching metadata/test
+names. Every recorded payload/hash/stat size was checked; raw body equals its actual
+onSend UTF8 string. Primary19db456/status SHAe2b0831dd6179ef1fd38c6c59f4b8244f1a1d941258db33aaebfa91d820dc9ad
+and all three original dirty file contents remain. All503 immutable seven columns
+are exact; only service/old Controller source-test/Adapter contract verification cells
+change (CV13/CV09/CV09 owners retained); no row invented for new domain/test files.
+
+Evidence: /tmp/dispatcher-native-control-snapshot-task1-evidence-20261026/ and fix1/;
+root-audit/root-artifacts/root-primary JSON/scripts with matching task prefixes in
+/tmp; initial and scoped immutable review reports there. Failed root artifact
+inspector attempt1 assumed original18.test.ts was copied into fix1; it is correctly
+owned in the parent evidence area. The failed inspector is retained, lookup alone
+corrected, metadata rechecked; no product/test/payload rewrite or rerun occurred.
+
+Limits retained: initial exploration unwrapped; initial tool identities pre-only;
+early API bodies are actual strings without independent raw body files/test labels;
+early named SQLite reads are narrower than final enumerated tables. canonical_tasks
+may remain a null placeholder beside actual entities/task_contracts captures. SQLite
+files have stat references and point-read JSON, not raw atomic backups. The review
+experiment is a faithful post-execution transcript, not pre-frozen wrapper evidence.
+Later captures never repair missing historical claims. M1 expected refusal logger
+noise and inferred host-local Git identity remain CV14 publication/hygiene work.
+No browser/packaging/benchmark/operator service or real native account was started;
+normal suite loopback fixtures are separately transient. No provider/model/GUI/
+physical-stop/writer/release/RHIZA formal Gate is closed. Current CV09/CV11/global
+scope remains open for Web source15/Handoff10/Slack, retention/delivery/recovery/
+performance and final candidate. No reset/push/merge/cleanup was performed.
