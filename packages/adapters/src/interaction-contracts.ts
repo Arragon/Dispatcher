@@ -41,8 +41,7 @@ export interface NativeInteractionPort {
 }
 type CapabilityName=Exclude<keyof InteractionCapabilities,"version"|"surfaces">;
 const methods:Record<CapabilityName,keyof NativeInteractionPort>={durableIdentity:"inspect",historyRead:"history",sameSessionContinue:"continueTurn",liveSteer:"steer",interruptTurn:"interrupt",nativeApproval:"requestHandle",observeExternalChanges:"inspect",releaseControl:"release",reclaimControl:"attach",restartReattach:"attach"};
-export function getInteractionPort(adapter:{manifest:AdapterManifest;interaction?:NativeInteractionPort}):NativeInteractionPort|undefined {
-  const port=adapter.interaction;if(!port)return undefined;
+export function readInteractionCapabilities(port:NativeInteractionPort):InteractionCapabilities {
   if(typeof port.capabilities!=="function")throw new AdapterContractError("INVALID_INTERACTION_CONTRACT","Interaction port must declare versioned capabilities");
   const capabilities=port.capabilities();
   if(capabilities.version!==1)throw new AdapterContractError("INVALID_INTERACTION_CONTRACT","Interaction port version is unsupported");
@@ -50,6 +49,11 @@ export function getInteractionPort(adapter:{manifest:AdapterManifest;interaction
     if(!capabilities[capability]||capabilities[capability].version!==1||capabilities[capability].support==="supported"&&typeof port[method]!=="function")throw new AdapterContractError("INVALID_INTERACTION_CONTRACT",`${capability} requires a versioned declaration and ${method} method`);
   }
   if(Object.values(capabilities.surfaces).some(evidence=>evidence?.support==="supported")&&typeof port.access!=="function")throw new AdapterContractError("INVALID_INTERACTION_CONTRACT","Supported surface requires an access method");
+  return capabilities;
+}
+export function getInteractionPort(adapter:{manifest:AdapterManifest;interaction?:NativeInteractionPort}):NativeInteractionPort|undefined {
+  const port=adapter.interaction;if(!port)return undefined;
+  readInteractionCapabilities(port);
   return port;
 }
 export function requireInteractionCapability(port:NativeInteractionPort,capability:CapabilityName,scopeFingerprint:string):void {

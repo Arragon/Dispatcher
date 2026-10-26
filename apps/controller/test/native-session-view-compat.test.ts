@@ -136,3 +136,27 @@ it('keeps the frozen Run contract on a denied native summary',async()=>{
   expect(response.json()).toMatchObject({contract:{workspace:{repositoryId:"repo",baseCommit:"sha"}},nativeSession:null,nativeSessionError:{code:"NATIVE_SUMMARY_UNAVAILABLE",status:409}});
  }finally{await f.close();}
 });
+
+it.each([false,true])('projects the first validated declaration once when history callable is %s',async withHistory=>{
+ const f=await fixture();
+ try {
+  const supported=capabilities(),unknown:InteractionCapabilities={...supported,historyRead:{version:1,support:"unknown",level:"documented",scopeFingerprint:"scope"}};
+  const first=withHistory?supported:unknown,second=withHistory?unknown:supported;
+  let calls=0,receiverMatches=false;
+  const history=vi.fn(),access=vi.fn();
+  const interaction={capabilities(){receiverMatches=this===interaction;return ++calls===1?first:second;},access,...(withHistory?{history}:{})};
+  const registry=(f.service as unknown as {agentAdapters:Map<string,AgentAdapter>}).agentAdapters;
+  registry.set("profile",{interaction} as unknown as AgentAdapter);
+  f.store.saveObservation({sessionId:"session",observerGeneration:1,observerSequence:1,controlEpoch:1,observation:{version:1,id:"changing-declaration",nativeSessionId:binding.nativeSessionId,scopeFingerprint:"scope",observedAt:at,state:"idle",pendingTools:"none",pendingApprovals:"none",historyMode:"native-revision"}});
+  const before=f.db.handle.prepare("SELECT total_changes() AS count").get();
+  const response=await f.service.app.inject({url:`/api/runs/${run.id}`,headers});
+  expect(response.statusCode,response.body).toBe(200);
+  expect(response.json().nativeSession.capabilities.find((entry:{name:string})=>entry.name==="historyRead")).toEqual(withHistory?{name:"historyRead",support:"supported",level:"runtime-verified"}:{name:"historyRead",support:"unknown",level:"documented"});
+  expect(calls).toBe(1);
+  expect(receiverMatches).toBe(true);
+  expect(registry.get("profile")?.interaction).toBe(interaction);
+  expect(history).not.toHaveBeenCalled();
+  expect(access).not.toHaveBeenCalled();
+  expect(f.db.handle.prepare("SELECT total_changes() AS count").get()).toEqual(before);
+ }finally{await f.close();}
+});

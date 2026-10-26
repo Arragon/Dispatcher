@@ -11,7 +11,7 @@ import {isGuardedControllerStart,isReadableManagedCodexRun,isReadableManagedOpen
 import {parseNativeModelDefaultReview,qualifyNativeModelDefault,readNativeModelDefaultEvidence} from "./model-defaults.js";
 import {isExecutionContextRef,type NativeBinding,type InteractionCapabilities,type NativeResponse,type RunGitDelivery,type ScmDeliverySelection,type MutationFence,type ExecutionContextRef,type NativeControlView} from "@dispatcher/domain";
 import {NativeInteractions,InteractionGuardError,type ControllerInteractionOperation,type InteractionPrincipal} from "./native-interactions.js";
-import {AdapterAdmissionError,getInteractionPort,assertAdapterWriteAdmission,type AdapterStartOutcome} from "@dispatcher/adapters";
+import {AdapterAdmissionError,readInteractionCapabilities,assertAdapterWriteAdmission,type AdapterStartOutcome} from "@dispatcher/adapters";
 import { resolveProfileExecutionContext } from "./execution-context.js";
 import { ProfileProbeService } from "./profile-probes.js";
 import { CredentialContext } from "./credential-context.js";
@@ -4806,7 +4806,7 @@ export class ControllerService {
         const binding=hasSession?store.binding(run.sessionId):undefined,port=binding?this.nativePort(binding):undefined;
         if(port){
           if(this.nativeRuntime(run.profileId))capabilities=port.capabilities();
-          else {const adapter=this.agentAdapters.get(run.profileId);if(adapter?.interaction===port)capabilities=getInteractionPort(adapter)?.capabilities();}
+          else {const adapter=this.agentAdapters.get(run.profileId);if(adapter?.interaction===port)capabilities=readInteractionCapabilities(port);}
         }
       }catch{/* An invalid declaration cannot qualify any capability. */}
       return {run,contract,nativeSession:nativeSessionView(this.database,run,capabilities,this.now())};
