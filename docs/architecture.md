@@ -1460,6 +1460,16 @@ A five-second deadline aborts the original read context; a late result cannot
 return transcript or update persistence. HTTP close and owning native-host cleanup
 remain separate from native writer-release or actual-provider qualification.
 
+The canonical Task drawer opens this reader only on an explicit user action.
+It matches the successful current Run projection and saved native identity,
+requires server-supported historyRead, and clears its bounded window on a
+meaningful binding/control/capability change or current header failure. A valid
+CONFLICT control state alone does not revoke an authorized read; identity
+conflicts still refuse it. The new scope starts collapsed and must be reopened.
+The viewer retains plain text, source/range warnings and opaque cursors, with
+50 entries per request and at most ten pages/500 rows per explicit window.
+Saved NativeSessionSummary facts and native mutation availability stay separate.
+
 ## Diagnostic reads and registered checks
 
 The diagnostics snapshot combines saved account evidence, current transport

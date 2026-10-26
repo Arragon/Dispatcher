@@ -5600,3 +5600,71 @@ fresh readback CV14 is Backlog, not an implied status change. Old C1/I3/group/R0
 logging/committer and real account/provider/GUI/writer/service/release Gates stay open.
 Goal active, no reset consumed. Next NativeHistory14 canonical Task integration, then
 profile capability6+Agents8 and other control/handoff/retention/delivery/remaining work.
+
+## CV-11b canonical Task readonly native history
+
+Original viewer14 (12declarations with three-value source table) restored at
+cb137ee0843b883f7955c620ee6ec9cf5ea474ce; narrow control-read correction at
+1775798bfc3ec0a8e7f162ff63d289dafde86755. Four original increment paths only:
+NativeHistory.tsx, TaskDetail.tsx and the two history test files. Original
+9886-byte source14 test remains exact, SHA3e7f293d0c3cca2e7dbe14d90c9bc98569e86a59705c5c086487ce6312145503;
+Summary source/three tests, api and domain view remain unchanged. Original viewer
+semantics retain plain text/source warnings, explicit metadata phases,50/request,
+10pages/500rows per window, dedup/refresh/repeated-cursor and StrictMode settlement.
+The existing Task drawer uses successful exact bound Run projection plus server
+historyRead, escaped public GET only, deliberate opening, keyed clear/collapse on
+meaningful identity/control/qualification changes and current header errors.
+
+A post-browser read-contract assessment found root's unavailable “conflict” list
+ambiguous. Ruling3 preceded fix1: identity conflict remains denied; control
+CONFLICT alone does not revoke an otherwise qualified read. The server already
+authorizes reads before writer fences. Removed one veto clause, appended5tests,
+kept all prior integration assertions. RED two expected failures/80; related
+10files145pass/build/lint pass. Default changed-code `mise exec -- pnpm check`
+passed once:211files4497tests plus build/typecheck/lint/boundaries, UTC
+2026-10-26T17:43:28.210594–17:47:08.304467,220.093406s. Output SHA
+4d078e35c7188c578a24f75d3acd0780782da4767b49e731342007c3cd546684.
+Captured source/dist/external hashes equal; one normal Vitest result-cache output
+changed with actual pre/post bytes retained. Earlier4492-test gate/review and
+failed controlled fixtures remain separate immutable evidence, not rewritten.
+
+Original review and fresh scoped fix1 review approved,0open/new C/I/M. Full reports
+/tmp/dispatcher-native-history-ui-task1-review-20261026.md and
+/tmp/dispatcher-native-history-ui-fix1-review-20261026.md, both read in full. Root
+/tmp/dispatcher-native-history-ui-root-audit-fix1-20261026.json independently verifies
+5fixruns23850pre+23850post source payloads,86+86external/47700source+172external
+identity rows/45digests10Git observations, exact committed bytes/protected primary.
+/tmp/dispatcher-native-history-ui-root-artifacts-fix1-20261026.json verifies source14,
+Summary/TaskDetail/report prefixes,6cachepre+6post,198UIpayloads/1011exchanges/
+1086358DOMbytes,12986installed files737links and browser9542source/dist copies,
+40external copies/9digests. Original code/root audit reports remain separately retained.
+
+Actual compiled Web/Controller/auth/public HTTP browser fixture v4 passed on1775798:
+no public history before opening; literal HTML/Markdown with zero active links or
+markup; partial/summary/truncation warnings; opaque encoded cursor pagination;
+healthy manual header refresh keeps history without extra public reads; meaningful
+CONFLICT tuple clears/collapses, then explicit qualified reopen; close/reopen; and
+actual Run404 clears cached history and disables reading with a concrete reason.
+390px document/body widths390 and both history regions353client/scroll width, no
+horizontal overflow. Desktop/mobile screenshots, actual API response bodies,
+port pages, DOM, source/tool/cache inputs, helper and data retained under
+/tmp/dispatcher-native-history-ui-browser-v4-20261026 and task1-evidence/browser-v4.
+Browser command exits0/strictfreeze true,168.810778s, all captured source/dist/
+external/installed hashes unchanged. Six public history GETs plus four separate
+existing Run-header native metadata collections; native write count0. Synthetic
+HUMAN→CONFLICT transitions/removal affect only the owned temporary database.
+Seven point-read snapshot trees/19file references retained, not atomic backups.
+Owned service exits0/PID98962 absent-ESRCH; viewport reset and temporary tab closed.
+Real SSE injection was not a browser claim; settled SSE lifecycle remains covered
+by the retained integration tests. No real provider/account/native GUI/writer/
+service activation/release/P4 Gate closes from this fixture.
+
+Earlier fixture attempts retain original helper/data/logs: missing frozen contract
+(EXECUTION_CONTEXT_DRIFT), missing read-handle.inspect (INVALID_NATIVE_READ_HANDLE),
+and unknown/control-CONFLICT negative display before corrected contract and scoped
+read clarification. No product guards, deadlines, tests, workers or caches weakened.
+Only3existing source503 verification cells updated; all503identities/owners/decisions
+exact. This local history unit is complete; parentCV11 remains In Progress for
+profile capabilities, control/handoff/Slack and remaining source purposes. Goal
+active; next capability6+Agents8 and retention/delivery/recovery/final-candidate work
+remain. Latest official quota41used59remaining/allowed/reset2unused; no reset consumed.
