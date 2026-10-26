@@ -1,5 +1,27 @@
 # Durable Project Know-how
 
+## RHIZA integration ownership
+
+- Scheme B gives external-Agent physical execution to Dispatcher and business
+  Workflow/Evaluate/acceptance to RHIZA. Reuse the one ingress and existing native
+  Adapter/Runner boundaries; ordinary RHIZA Provider calls cannot conceal shell
+  execution. Pin the generated wire artifact, never import the other product's
+  TypeScript, database or credentials.
+- RHIZA's exact frozen target must bypass local automatic Policy selection without
+  weakening canonical admission. Preserve local manual/policy and none/commit/PR
+  behavior. An external protocol limited to code+PR does not imply other local
+  delivery modes or research/document Agent tasks are externally supported.
+- Compatibility and convergence branches can have different schema/writer catalogs.
+  Compare fixed source, SQL/afterApply, writer gates and original rollback fixtures
+  before adoption; a larger migration number is not evidence of compatibility.
+  Never renumber a live database, downgrade its writer gate or infer a live database
+  version from a checkout. Keep observation admission distinct from one-shot start
+  permission when reusing committed compatibility work.
+- Retrying an external business request means querying the original semantic key
+  and immutable receipt. New business rework needs an explicit new attempt; native
+  physical retry remains Dispatcher-owned. Accepted/ACK/terminal/idle and an empty
+  queue cannot substitute for execution, physical-stop or quiescence evidence.
+
 ## M0–M10 invariants
 
 - Do not pass `process.env` directly to task/provider/probe/verification/Git

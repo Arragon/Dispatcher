@@ -627,3 +627,43 @@ server profile。owned host/producer及精确分配observer随后保存105ef8b�
 **Devin v3局部开发回执**：45130fb+b091d6c在8路径恢复显式owner/整数ACU、原生字段/最小预算、ConfigPlan保存/预览/重启与有界只读port；保留当前最终Guard、STARTING预约、模型/资源和custom可选org边界。源74=53native13Config8Controller全部定位/参数表保持，两native按当前profile错误和预留行为适配。独立审查I1凭据取消时未创建类型、M1长BOM字面前缀均经6新故障/对照RED修复并范围复审解决，focus248/最终209文件4417测试及全部非测试门禁通过。root33run/539Git/4754source261external/source74及主脏区核验零错误，503仅7验收字段。原first23HTTP正文实际齐全已纠正推测，早期Controller stat/API遥测限制保留；未增加历史丢失或真实native资格。此前full1失败/full2旧候选保留，最终为451+冻结两文件等于b091，CV14清洁精确候选Gate另行。下一CV13项目Node/依赖安全补丁（隔离候选audit0仅准备），其后UI14/其他control/retention/delivery/恢复/性能/全分支与真实正式Gates；用户暂不重置，继续执行。
 
 **CV13项目安全增量回执**：5cc7c05在11路径对齐项目/CI/最低Node24.22.1，实际builtinUndici7.30.1/OpenSSL3.5.9、Fastify5.12.6/Vite8.3.3/Vitest5.0.3和兼容叶子补丁；真实安装audit0/324包、9许可族和独立生产部署归属通过，保留全部失败/原件。完整209文件4417测试及非测试门禁、独立Spec/Quality0C/I/M；root17run/540Git/4760source和原始Node/模块/生产清单/主脏区核验通过。101构建产物变化、既有Vitest缓存前像仅身份/后像原件明确，不冒充全快照相等或hermetic；pnpm独立Node26、14其他平台/真实/发布/性能恢复等不完成。503仅7验收字段；CV13仍InProgress/CV14实际Backlog，旧EPERM/R020不因新全量通过作因果关闭。下一NativeHistory14及其他原生UI/保留交付/恢复性能/全分支工作，goal持续且未重置。
+
+## 2026-10-26 已采纳方案 B 的边界覆盖（保留上文历史）
+
+依据[双项目架构](https://linear.app/inhandy/document/013da3a666f5)、
+[路线图](https://linear.app/inhandy/document/b15aa19a4b54)和
+[INH-1986 隔离归属登记](https://linear.app/inhandy/document/bea4a7dfe3e4)，
+RHIZA 外部 Agent 统一由 Dispatcher 执行。RHIZA 保留 Workflow、业务
+attempt/origin/审批、Context、Evaluate、成果接受及普通 Chat/Provider；
+Dispatcher 保留 canonical Task/Contract/Run、native Session/Harness/Adapter、
+Runner/进程/worktree、凭据、物理重试、控制和验证/交付事实。仅取消未来重复的
+RHIZA native Executor/第二调度器/CLI Provider fallback，不删除已有成果或测试。
+
+CV-02 的追加映射见 `docs/evidence/convergence/contract-decisions.md`：
+固定 D `8bbd07e65867d5bfa977e3897d0d0f9f41998179` 与兼容来源
+INH-1981～1985（最新诊断源码 `8d24717710079dc831fabfab8a57edb4296a67be`），
+逐项记录能力、原回归目的、source/evidence SHA、字段 owner、reuse/adapt/defer。
+当前 D source schema11/writer7 与兼容线 schema18/writer14 分别保留；本次只登记
+已提交来源，不合并移动 WIP、不预占迁移号、不迁移 live DB。正式组合前须固定双方
+cut，逐路径核对当前后续原生改动、beforePrompt/beforeObserve、实际 spawn fence、
+迁移/afterApply/writer 回滚和原断言，完成组合回归及独立审查后才可宣称集成。
+
+跨项目仅使用 Dispatcher 生成的版本化 wire artifact；不跨源码 import、不共享 DB/
+迁移/凭据。兼容来源现有 protocol1.1/artifact1.1.0 的 synthetic manifest 为
+`2cae1cc869c3c689a6f3ac11eaa6f5e87dddb9f9f0facb43b584349d672f2d74`，
+范围仅 code+PR；它未因本次文档更新成为 D 已实现接口。RHIZA exact 冻结选择不得
+再走自动 Policy；本地 manual/policy、none/commit/PR 继续保留。外部研究/文档 Agent
+若超出现有协议须明确拒绝或另走版本化扩展，不用普通 Provider 包装任意 shell。
+
+基础单工单真实验收 INH-1994 前移至 M24，不等待 M26/完整 X1/DP-010；完整
+Workflow 的 X1/DP-009b 仍在 M26 后，DP-010 原发布条件不变，Dispatcher 本地发布
+不新增 RHIZA M26 总前置。原 Done、真实 tuple/model/provider/PR/GUI/stop/recovery、
+M17 性能、M19 历史顺序和所有现有 Gate 均保持原证据范围；P01 Done 仅为归属与
+资源登记完成。已登记 RHIZA A/B/C 与 D 的独立 worktree、临时数据/端口/浏览器和
+重量级窗口，D 后续单元在其独占候选内继续；不改变原测试 worker、deadline 或跳过项。
+
+此覆盖为元数据与采纳约束，未改运行代码/锁文件/迁移。Profile 能力 UI 的局部验收
+已在 `8bbd07e` 记录：功能 `e9edf1a`，最终213文件4525测试及非测试门禁通过，
+独立审查0C/I/M；NativeHistory UI `cb137ee+1775798` 已验收。下一只读 Native
+Session 控制视图仍须保持现有 Summary/History 断言、fresh control snapshot 和
+零生产 mutation；其他 retention/delivery、恢复/性能、CV-14 与正式 Gate 继续执行。

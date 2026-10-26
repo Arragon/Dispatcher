@@ -4,6 +4,44 @@ This file is the concise implementation map for the frozen design in
 `agent-dispatcher-architecture-roadmap-v2026-09-15.md`. If the two disagree,
 the frozen design is authoritative.
 
+## Adopted RHIZA integration boundary (2026-10-26, scheme B)
+
+The [adopted cross-product architecture](https://linear.app/inhandy/document/013da3a666f5)
+and [roadmap](https://linear.app/inhandy/document/b15aa19a4b54) specialize the
+external-Agent ownership boundary. They are target constraints, not a claim that
+the current convergence candidate implements or qualifies the integration.
+RHIZA owns Workflow, business attempts/origin/approval, Context, Evaluate and
+accepted artifacts, plus its existing ordinary Chat/Provider calls. Dispatcher
+alone owns external-Agent canonical Task/Contract/Run, Native Session/Harness and
+Adapters, Runner/process/worktree, credentials, physical retries, native control,
+verification and delivery facts. RHIZA consumes one versioned Dispatcher ingress;
+it must not create another native Executor, scheduler or shell/CLI Provider fallback.
+
+Each product retains independent source, storage, migrations and credentials.
+Dispatcher owns the wire schema/artifact generation source; the RHIZA consumer pins
+its version and digest rather than importing Dispatcher TypeScript or its database.
+RHIZA's frozen exact Harness/model/options selection must not be routed through
+local Policy again. Existing local manual/policy and none/commit/PR paths retain
+their contracts. The fixed compatibility source currently exposes protocol 1.1 /
+artifact 1.1.0 for code+PR only; this is not a declaration that this candidate has
+adopted it. Unsupported external research/document tasks require explicit refusal
+or a separately reviewed versioned extension, never an implicit native fallback.
+
+One original semantic request key identifies one immutable receipt. A lost response
+is reconciled by that key; business rework is an explicit new attempt, while physical
+retry belongs to Dispatcher. Accepted is not started, cancel ACK is not physical stop,
+and terminal/idle/empty queues do not establish native quiescence. RHIZA independently
+accepts candidate artifacts after its own evaluation; a Dispatcher delivery fact does
+not advance a Workflow by itself.
+
+Basic single-work-order M24 acceptance (INH-1994) precedes M25/M26. Complete X1 /
+DP-009b remains after M26, and DP-010 release requirements remain intact. RHIZA M26
+is not a new global prerequisite for Dispatcher local release. Fixed source cuts,
+field ownership, test preservation and distinct migration/writer catalogs are recorded
+in `docs/evidence/convergence/contract-decisions.md`; moving WIP is never an
+integration baseline. Original Done records and real-provider/GUI/stop/recovery Gates
+retain their original scope.
+
 Task, provider, catalog, probe, verification and Git subprocesses use the shared
 child execution environment boundary. It removes Controller owner-token and
 SecretStore encryption-key variables after provider overrides (case-insensitive

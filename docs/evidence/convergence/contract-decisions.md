@@ -147,3 +147,65 @@ worker — the owning Runner supplies physical collection/cache/cleanup, while o
 scheduler avoids independent duplicate polls — a disconnected Controller leaves
 retained source facts to expire under the existing TTL until reconnection or
 explicit collection. Native read and refresh remain distinct RPC actions.
+
+## 2026-10-26 scheme B overlay: shared ownership and fixed sources
+
+Authority: [adopted architecture](https://linear.app/inhandy/document/013da3a666f5),
+[roadmap](https://linear.app/inhandy/document/b15aa19a4b54) and
+[P01 ownership/resource registration](https://linear.app/inhandy/document/bea4a7dfe3e4).
+The earlier sections preserve their historical source decisions. This overlay
+records integration requirements and reuse candidates; it does not certify a
+combined runtime. The 503 original disposition rows and their seven identity/owner
+columns are unchanged.
+
+### Authority by semantic field (names remain those of the frozen wire schema)
+
+| Facts/effects | Single owner | Consumer rule |
+| --- | --- | --- |
+| Workflow, business origin/attempt/approval, Context, Evaluate, accepted artifact | RHIZA | Dispatcher returns execution/candidate facts; RHIZA decides business acceptance. Ordinary Chat/Provider remains RHIZA-owned. |
+| Canonical Task/Contract/Run, native Session/Harness/Adapter, Runner/process/worktree, credentials and physical retry | Dispatcher | RHIZA uses one restricted consumer, with no duplicate native scheduler or CLI fallback. |
+| Exact external Harness/model/options/revisions/evidence policy | RHIZA freezes the business choice; Dispatcher admits the authorized exact execution and reports observed evidence | No second Policy selection. Requested/configured/observed/verified remain distinct. Local manual/policy paths are preserved. |
+| Semantic request key/hash and immutable receipt | Dispatcher owns canonical acceptance; RHIZA owns its durable intent/receipt association | Lost replies query the original key. Rework explicitly creates a new business attempt; no client-side physical retry. |
+| Job revision/cursor, native control/session/lease/generation, candidate tree/commit/PR/digest and required verification | Dispatcher | Validate current authority and original correlation; cancel ACK is not stop, terminal/idle/zero pending is not quiescence. RHIZA evaluates candidates separately. |
+| Wire schema/artifact generation | Dispatcher compatibility owner; RHIZA pins the generated artifact | No cross-product TypeScript, database, migration or credential sharing. Protocol extensions require explicit versioned review. |
+
+### Fixed source to capability, tests and migration/writer mapping
+
+Readback on 2026-10-26 verified the following Git commit objects and evidence-file
+digests. Historical check results below are read from those retained artifacts,
+not rerun or transferred to this candidate. INH-1981/1982/1984/1985 source commits
+are ancestors of the fixed compatibility source `8d24717710079dc831fabfab8a57edb4296a67be`;
+this observation does not appoint a moving branch HEAD as an integration cut.
+
+| Fixed source / evidence | Capability and preserved regression purposes | Schema / writer; owner | Disposition in convergence |
+| --- | --- | --- | --- |
+| D candidate `8bbd07e65867d5bfa977e3897d0d0f9f41998179` (functional Profile UI `e9edf1a566fd6b6b3e3298b8f0d142d6ffe382f7`) | Canonical local routing/delivery, admitted native runtimes and read-only UI. Latest local gate: 213 files / 4525 tests plus build/typecheck/lint/boundaries; source assertions and actual fixture browser evidence remain in their CV records. | Current source 11 / 7; D owns candidate service/persistence/domain/protocol integration and its lock/CI. | **Reuse** current canonical boundaries. New integration must preserve their full original regression purposes, not replace them with older source copies. |
+| INH-1981 `af039cfa441f0a9e86f1b0515d75a14f50bcc3d2`; evidence SHA `f116565dffe62082b5b2c08a3111ac55703e2e5d01f76d59c60f78fec9225485` | Ingress alignment, exact price/selection admission, shutdown drain and bounded canonical lookup. Retain every-step migration failure/retry/outer rollback, old-writer refusal, backup restore and original private16 DB/archive refusal. Historical gate 226 / 3249. | Upstream 1–11 unchanged, RHIZA 12–18 / writer 8–14; compatibility owner. | **Adapt** committed ingress delta to fixed D source. **Defer** adoption until schema/afterApply/writer/test differences are reconciled; never relabel or downgrade private16 data. |
+| INH-1982 `129c2c6408456285cdbc1e36c6dd075fd09860d6`; evidence SHA `935a4709d35c0082fb75d1e61be8895289d8d9336e1c2a7ed26277a0561bec6d` | OpenCode/Pi stored identity and raw-work lifecycle; original-key receipt/query/restart, unknown/manual snapshot/cursor, disabled versus revoked access. Historical gate 226 / 3416. | 18 / 14 unchanged; compatibility owner. | **Reuse/adapt** original receipts and read-only recovery through current native boundaries; never cold-resume or infer a new writer/model from restored identity. |
+| INH-1983 execution source `c4f509f5b6c971f07c3c567bbd145758334900a4`, diagnostic fix `8d24717710079dc831fabfab8a57edb4296a67be`; diagnostic evidence commit `30f6391db536b57710bf92138653dd7e69cc9d9a`, SHA `33dde6dc98ebab3aa83bf18661a1b68a95d3fc174e8ba6fc00369ba2fa65495b` | One-shot beforePrompt versus current beforeObserve, ACK→read barriers, every GET before/after authority checks, revoked/generation/lease/runtime/Adapter/target/account negatives and held-header diagnostics. Final historical gate 234 / 3864. | 18 / 14 unchanged; compatibility owner. | **Adapt** to current callback capture/raw lifecycle. Preserve write and observation admission separately; do not roll ACK back or weaken SENDING/start fences to make reads succeed. |
+| INH-1984 `f6e5dce9765342646d808336e1815afa77479f6e`; evidence commit `9204f830014fa7df54e22d7b36f282d80b393959`, SHA `6d5d47054a43b7f6e72c376dcbe02d00597681e41d771c956d38666bc387703e` | Default Codex version-probe and actual spawn authority; held real marker process, async guard raw settlement, direct/custom consumer and cleanup contracts. Historical gate 227 / 3445. | 18 / 14 unchanged; compatibility owner. | **Reuse/adapt** original authority across current spawn boundaries. Marker fixtures do not qualify installed Codex, a model or physical writer stop. |
+| INH-1985 `09fdfc6cfe8432ee3fe6193543c3134f23ca3318`; evidence commit `f4f9e201b1deca29c011970d50d0bd1f21b13d45`, SHA `a74506475c6f4074f22ae2e1a2345d397da749b7aa822c641a8f76777428fdb5` | Fixed ACP/root-only source `a3a4e66d2c393b39425e9ca27376ca80cb204b57`, write/observe receiver and raw-callback capture, pipe failure and reason-independent catalog identity; upstream assertions retained with explicit phase fixture mapping. Historical gate 234 / 3862. | 18 / 14 unchanged; compatibility owner. | **Adapt** only still-missing committed deltas; current D has later ACP/Copilot/Pi work. Do not overwrite it or duplicate an Adapter. Root-only probe-budget Minor and descendant/writer qualification remain explicit. |
+
+The evidence files above live at their fixed commits under `docs/evidence/rhiza/`;
+they are not asserted to exist in the D candidate. The compatibility artifact at
+`8d247177:packages/protocol/releases/rhiza/1.1.0/manifest.json` was read byte-for-byte:
+715 bytes, protocol 1.1 / artifact 1.1.0, SHA256
+`2cae1cc869c3c689a6f3ac11eaa6f5e87dddb9f9f0facb43b584349d672f2d74`,
+explicitly synthetic. Its current scope is code+PR. Unsupported external Agent
+task types are refused pending a versioned contract; existing local none/commit/PR
+support does not silently expand that scope.
+
+**Still deferred:** no committed compatibility delta is declared integrated by
+this metadata update. Before adoption, freeze both owners' cuts, compare per-path
+source and assertion purposes, preserve migrations1–11, explicitly resolve the
+12–18/writer8–14 catalog and rollback/refusal fixtures, and run the combined target
+and full gates with independent review. No next migration number is reserved here;
+no live database or credential is touched. D lock at the fixed cut is
+`223c9f52c496bb5d85b37b2daa151e9186dd14d1ae00dd5d26f3c82f0d6b28ea`.
+
+P01 completion registers isolated ownership/resources only. RHIZA A/B/C worktrees
+and heavy-test windows remain independently owned. Basic M24 single-order real
+acceptance (INH-1994) moves before M25/M26; complete X1/DP-009b remains after M26,
+DP-010 remains unchanged, and local Dispatcher release keeps its own Gates.
+Real tuple/model/PR/GUI/stop/recovery evidence, historical M19 ordering and M17
+performance requirements are not discharged by these source readbacks.
