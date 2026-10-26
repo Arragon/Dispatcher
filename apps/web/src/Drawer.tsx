@@ -11,7 +11,7 @@ export function Drawer({ title, onClose, children, variant = "drawer" }: { title
     dialog.showModal();
     return () => { dialog.close(); trigger?.focus(); };
   }, []);
-  return <dialog ref={ref} className={variant} aria-labelledby={id} onClick={(event) => { if (event.target === event.currentTarget) { const bounds = event.currentTarget.getBoundingClientRect(); if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) onClose(); } }} onCancel={(event) => { event.preventDefault(); onClose(); }}>
+  return <dialog ref={ref} className={variant} aria-labelledby={id} onClick={(event) => { if (event.target === event.currentTarget) { const bounds = event.currentTarget.getBoundingClientRect(); if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) onClose(); } }} onCancel={(event) => { event.preventDefault(); event.stopPropagation(); onClose(); }}>
     <header className="panel-heading"><h2 id={id}>{title}</h2><button type="button" aria-label="关闭" onClick={onClose}>关闭</button></header>
     <div className="drawer-body">{children}</div>
   </dialog>;

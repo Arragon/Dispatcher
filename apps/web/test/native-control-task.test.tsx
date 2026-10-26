@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import {useState} from "react";
 import {afterEach,expect,it,vi} from "vitest";
 import {act,cleanup,fireEvent,render,screen,waitFor,within} from "@testing-library/react";
 import {MemoryRouter} from "react-router-dom";
@@ -37,8 +38,10 @@ function setup(initial:unknown={run:structuredClone(run),nativeSession:structure
   else throw new Error(`Unexpected fixture route: ${url.pathname}`);
   const body=JSON.stringify(payload);responses.push({path,body,status});return new Response(body,{status});
  });
- render(<QueryClientProvider client={client}><MemoryRouter><TaskDetail id="task" profiles={[]} onClose={()=>undefined} refresh={async()=>undefined}/></MemoryRouter></QueryClientProvider>);
- return {client,setHeader(value:unknown,status=200){header=value;headerStatus=status;},setTaskStatus(status:number){taskStatus=status;},setControl(fn:typeof controlRead,status=200){controlRead=fn;controlStatus=status;},async refresh(){await act(async()=>{for(const listener of listeners)listener();await client.refetchQueries({queryKey:["run-detail",run.id]});});},controls:()=>requests.filter(request=>request.path.endsWith("/control")),histories:()=>requests.filter(request=>request.path.includes("/history"))};
+ const parentClose=vi.fn();
+ function TaskHost(){const [open,setOpen]=useState(true);return open?<TaskDetail id="task" profiles={[]} onClose={()=>{parentClose();setOpen(false);}} refresh={async()=>undefined}/>:null;}
+ render(<QueryClientProvider client={client}><MemoryRouter><TaskHost/></MemoryRouter></QueryClientProvider>);
+ return {client,parentClose,setHeader(value:unknown,status=200){header=value;headerStatus=status;},setTaskStatus(status:number){taskStatus=status;},setControl(fn:typeof controlRead,status=200){controlRead=fn;controlStatus=status;},async refresh(){await act(async()=>{for(const listener of listeners)listener();await client.refetchQueries({queryKey:["run-detail",run.id]});});},controls:()=>requests.filter(request=>request.path.endsWith("/control")),histories:()=>requests.filter(request=>request.path.includes("/history"))};
 }
 const ready=()=>screen.findByRole("button",{name:"查看原生控制状态"});
 async function openControl(){fireEvent.click(await ready());}
@@ -76,3 +79,17 @@ it.each(malformedHeaders)("hides malformed or crossed %s native metadata while g
 it("removes already displayed HUMAN after a control refresh denial without exposing the private error body",async()=>{const fixture=setup();await openControl();await screen.findByText("已交给你控制");snapshot("before refresh revocation");fixture.setControl(async()=>({message:"private revoked control",code:"PRIVATE_CONTROL_CODE"}),403);fireEvent.click(screen.getByRole("button",{name:"刷新控制快照"}));await screen.findByText("没有读取此控制快照的权限。");expect(screen.queryByText("已交给你控制")).toBeNull();expect(screen.queryByRole("button",{name:"只读核对交还条件"})).toBeNull();expect(screen.queryByText(/private revoked control|PRIVATE_CONTROL_CODE/)).toBeNull();});
 it("clears an already displayed HUMAN control snapshot on a cached Run header denial",async()=>{const fixture=setup();await openControl();await screen.findByText("已交给你控制");snapshot("before header revocation");fixture.setHeader({message:"private header diagnostic"},403);await fixture.refresh();await screen.findByText("没有读取此原生会话的权限。");expect(screen.queryByRole("dialog",{name:"原生会话控制"})).toBeNull();expect(screen.queryByText("已交给你控制")).toBeNull();expect(screen.queryByText(/private header diagnostic/)).toBeNull();expect(fixture.controls()).toHaveLength(1);});
 it("polls only control every thirty seconds while open and stops after close",async()=>{const fixture=setup();await ready();vi.useFakeTimers();try{fireEvent.click(screen.getByRole("button",{name:"查看原生控制状态"}));await act(async()=>{await vi.advanceTimersByTimeAsync(0);});expect(screen.getByText("已交给你控制")).toBeTruthy();expect(fixture.controls()).toHaveLength(1);await act(async()=>{await vi.advanceTimersByTimeAsync(29_999);});expect(fixture.controls()).toHaveLength(1);await act(async()=>{await vi.advanceTimersByTimeAsync(1);});expect(fixture.controls()).toHaveLength(2);closeControl();await act(async()=>{await vi.advanceTimersByTimeAsync(30_000);});expect(fixture.controls()).toHaveLength(2);expect(requests.filter(request=>request.path===`/api/runs/${encodeURIComponent(run.id)}`)).toHaveLength(1);expect(fixture.histories()).toHaveLength(0);}finally{vi.useRealTimers();}});
+
+it("cancels only the nested native control dialog and preserves its parent and trigger focus",async()=>{
+ const fixture=setup(),trigger=await ready();trigger.focus();fireEvent.click(trigger);await screen.findByText("已交给你控制");
+ const inner=screen.getByRole("dialog",{name:"原生会话控制"}),outer=screen.getByRole("dialog",{name:"Readonly native control task"});
+ // jsdom has no native modal focus handling: explicitly focus an actual inner DOM button before cancel.
+ const innerClose=within(inner).getByRole("button",{name:"关闭"});innerClose.focus();expect(document.activeElement).toBe(innerClose);snapshot("before inner native cancel");
+ const cancel=new Event("cancel",{bubbles:false,cancelable:true});fireEvent(inner,cancel);snapshot("after inner native cancel");
+ expect(cancel.defaultPrevented).toBe(true);expect(fixture.parentClose).not.toHaveBeenCalled();expect(screen.queryByRole("dialog",{name:"原生会话控制"})).toBeNull();expect(screen.getByRole("dialog",{name:"Readonly native control task"})).toBe(outer);expect(outer).toHaveProperty("open",true);expect(document.activeElement).toBe(trigger);
+ fireEvent(outer,new Event("cancel",{bubbles:false,cancelable:true}));expect(fixture.parentClose).toHaveBeenCalledOnce();expect(screen.queryByRole("dialog",{name:"Readonly native control task"})).toBeNull();
+});
+it("keeps ordinary single TaskDetail cancellation and close button behavior",async()=>{
+ const fixture=setup();await ready();const outer=screen.getByRole("dialog",{name:"Readonly native control task"}),cancel=new Event("cancel",{bubbles:false,cancelable:true});snapshot("before ordinary outer cancel");fireEvent(outer,cancel);snapshot("after ordinary outer cancel");expect(cancel.defaultPrevented).toBe(true);expect(fixture.parentClose).toHaveBeenCalledOnce();expect(screen.queryByRole("dialog",{name:"Readonly native control task"})).toBeNull();
+ cleanup();const closed=setup();await ready();snapshot("before ordinary outer close button");fireEvent.click(within(screen.getByRole("dialog",{name:"Readonly native control task"})).getByRole("button",{name:"关闭"}));expect(closed.parentClose).toHaveBeenCalledOnce();expect(screen.queryByRole("dialog",{name:"Readonly native control task"})).toBeNull();
+});
