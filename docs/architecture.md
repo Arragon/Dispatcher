@@ -910,7 +910,18 @@ provider output. Cursor and Kiro use verified headless CLI argv with structured
 stream output, no shell interpolation, and credentials resolved from
 `SecretStore` only into the child environment. Devin uses the official v3
 organization session API and maps suspended/waiting state, ACU consumption,
-and pull requests into canonical session/resource/artifact shapes. The
+and pull requests into canonical session/resource/artifact shapes. Explicit cloud
+human attribution and positive integer ACU limits flow through existing ConfigPlan
+settings; creation uses the minimum applicable configured/requested budget and
+validates exact HTTP organization/session/owner identity. Custom backend snapshots
+are captured once before validation and publication, retaining the supported optional
+organization contract. Pre-fetch preparation cancellation proves not-created only
+for creation; final admission stays separate and fetch-entered delivery remains
+uncertain. Untrusted write diagnostics are static and never justify a retry.
+The cloud library also exposes a bounded, scoped readonly history port with exact
+binding/evidence checks and partial coverage. This does not register a Controller
+cloud source or qualify mutations, native stop, writer ownership or GUI access.
+The
 WorkBuddy/CodeBuddy adapter uses an explicitly configured local HTTP contract;
 endpoint templates require `{sessionId}` as a complete path segment. Generic
 CLI keeps a fixed executable and argv template and grants only its declared

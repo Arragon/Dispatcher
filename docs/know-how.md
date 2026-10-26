@@ -1213,3 +1213,12 @@
   separately from API return. A test's signal0 helper must classify only ESRCH as
   absent; EPERM and other errors remain unknown even when older helpers returned
   a boolean. Later direct events never reconstruct missing earlier telemetry.
+
+- Bound credential preparation by the request signal without losing delivery-stage
+  information. Cancellation checks on both sides of the credential await belong
+  to the pre-fetch preparation scope. Only creation there proves not-created;
+  leave the final admission callback outside network normalization, and never
+  infer non-delivery after invoking fetch. Test both stages with explicit counters.
+- TextDecoder's default BOM handling removes a leading U+FEFF. When retaining a
+  literal UTF-8 prefix of native text, preserve the BOM explicitly and avoid an
+  incomplete final code point; continue budgeting escaped whole-page JSON bytes.

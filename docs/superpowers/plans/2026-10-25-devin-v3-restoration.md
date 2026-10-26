@@ -30,3 +30,14 @@ Exactly7 paths: packages/adapters/src/devin.ts; new packages/adapters/test/devin
 6. Commit only7allowlisted paths, clean handoff and full report with original/current mappings, exact commands/failed outputs, all inputs/digests/cleanup and privacy scope/unknowns. Root fresh independent transport/task review, source503 immutable503identity audit, docs/Linear updates afterward. No push/merge/global changes/primary worktree edits or actual cloud/account/writer/GUI/release qualification.
 
 Other development, original group/R020/historical evidence exceptions and all formal account/provider/GUI/writer/continuation/release/P4/CI/security/retention/wholebranch Gates remain open. This unit's goal is existing local code safety and faithfully retained74source purposes.
+
+## Local acceptance
+
+Task1 complete45130fb+b091d6c, source74 (53native13Config8Controller) and scoped8paths;
+root rulings1..7 preserve actual current contracts. Initial0C/1I/1M review fixed in
+round1, I1/M1 ADDRESSED/no scoped new breakage; loggingMinor remains final-review input.
+Finalfocus248/full209files4417/non-test passes; root33run/539Git/source74/primary and
+all final payload freezes verified. Original failures/old fulls/telemetry limits retained;
+no Controller cloud native source/writer or real-provider/account/Gate activation.
+Next security update is separate CV13 increment, original UI/control/retention/delivery/
+recovery/performance/formal and parentCV14 obligations remain active.

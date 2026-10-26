@@ -5455,3 +5455,78 @@ STARTING reservation preserved, then UI history14 and other controls/retention/
 security/Node/perf/wholebranch/CI/formal work. Goal remains active. Official98used2
 remaining ordinaryallowed=true/reset2unused; tool prohibits Codex UI automation and
 quota API is readonly, manual-reset request pending, no bypass or obsolete stop rule.
+
+## Devin v3 principal/readonly safety — locally accepted b091d6c
+
+Task BASE28f77a3→45130fb07b86a9d0f650ee16affe6720a4552b71→
+b091d6c399776b2685c208dfe5b901e7fb57910c, exactly8 authorized paths. Existing
+ConfigPlan/Controller composition validates explicit human owner and integer ACU,
+passes native fields/minimum budget, preserves invalid persisted bytes and rejects
+malformed discovery before I/O. HTTP org/session/owner attribution is exact;
+supported custom backend optionalorg remains, snapshots captured once before use.
+Current callback-aware input capture, final guards, STARTING duplicate reservation,
+execution selection/resource and canonical SESSION_PROFILE_MISMATCH remain.
+Readonly library port requires exact binding/runtime-qualified evidence and bounded
+GET projection; coverage stays partial, mutations/stop/writer/GUI unknown. No default
+Controller cloud source registration, account activation, DELETE or provider call.
+
+Root AST audit independently locates all source74=53native+13Config+8Controller,
+40 declarations, actual call hashes/locations and literal tables. Two native call
+adaptations preserve current foreign-profile error and unpromoted STARTING reservation;
+Controller8 uses actual existing ConfigPlan plus stronger zero-create/preview/export/
+restart checks. Source74 map byte-identical through the fix, SHA
+6cec874491ae2f3de46c8851ea9f24b478760a64feccca083a8379a9c90847dd.
+Root corpus /tmp/dispatcher-devin-v3-root-corpus-fix1-20261026.json has zero errors.
+Source503 identities/owners/decisions stay exact; only7 scoped verification cells
+updated, with whole original config/controller/start-intent suites still separately
+owned rather than promoted wholesale by this increment.
+
+Concrete raw fetch-write diagnostics are now static DEVIN_WRITE_UNAVAILABLE, while
+possibly-delivered uncertainty and Local-service response-lost behavior remain.
+Original full1 failed one current errorcode expectation, retained; root ruling5
+preserves current canonical code without weakening legacy tests. Full2 passed
+209files4411tests but independent review found prefetch cancellation classification
+and long BOM fidelity defects. Fix1 adds6 cases: RED4fail/2contrast-pass, focus12/248,
+build/lint/map pass; prefetch creation now typed not-created, final Guard and entered
+fetch uncertainty unchanged, literal BOM/astral prefix and byte/page bounds proven.
+Controlled signal spies assert requested10000ms and restore in finally; these are
+stage faults, not elapsed10s or raw physical cancellation proof.
+
+Changed-input final default pnpm check passes209files4417tests and all non-test
+gates. UTC2026-10-26T16:09:41.884680..16:13:27.206214, wall225.321203375s,
+logSHA9d6a5818afd7b1121647ccff6f7b76a6cd4c40a73418719caee836c7620db044.
+It ran HEAD45130fb plus frozen2file fix, equal committedb091d6c; this is not the
+later clean exact-candidate CV14 gate. Full1/full2 remain exact earlier evidence.
+Independent originalreview0C/1I/1M then scoped re-review I1/M1 ADDRESSED,
+QualityApproved0C/I/M: /tmp/dispatcher-devin-v3-task1-fix1-review-20261026.md.
+Existing Controller expected error/request log noise is deferred to branch review.
+
+Root /tmp/dispatcher-devin-v3-root-audit-fix1-20261026.json checks33 runs,
+156856pre+156856post source copies,3137+3137external,313712source identities,
+6274external identities,183digests/66Git observations and539committed Git payloads.
+Final4754source/261external frozen,704currentdist16buildinfo vs2004historical dist;
+all committed bytes agree and protected primary remains intact. Only allowed build
+output changes during checks, no input/tool drift.265Controller tree snapshots retain
+413original identity files plus126early retained files/124142528bytes;25LF JSONL
+files3632records/586raw data chunks13569467bytes;69918generated artifact identity
+rows verified. Other-provider controlled fixtures are independently verified under
+their recorded formats, not relabeled physical/account/Gate receipts.
+
+Early native HTTP first-run23 responses actually retain all23 raw bodies; the earlier
+missing-body hypothesis was corrected by decoding original data, no replay/waiver.
+Early Controller payloads lack original stat inventory/local inject JSONL; later
+actual captures add those layers and do not retroactively fill them. Root's first
+JSONL inspector incorrectly split legal U+2028; corrected LF parsing verifies raw
+records unchanged. Root's post-fix append-only report assumption also failed before
+edits because author updated Status after gate; full diffs and a precise Status-only
+prior-byte exception verified, all other prior report bytes remain. Model capacity
+after original full2 required root mechanical exact-index commit only; actual original
+agent resumed for fix1, no second writer/root implementation patch. Report/status/
+result bookkeeping after gate is separately retained. No new historical byte loss.
+
+Original C1/I3 losses, group/EPERM/R020, general logging/committer and formal Gates
+remain. Node/runtime/node_modules/globalGit exclusions and non-atomic captures are
+explicit. Whole goal active; next scoped project Node/dependency security increment,
+then UI14/other controls/retention/delivery/recovery/performance/wholebranch/CI.
+Current official quota snapshot15used85remaining/ordinaryallowedtrue/reset2unchanged;
+user said continue without reset, none consumed. No real-account/service activation.
