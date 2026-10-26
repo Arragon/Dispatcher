@@ -315,3 +315,73 @@ it("publishes the same captured custom snapshot identity that passed validation"
   const session = await adapter.start({ runId: "run", sessionId: "captured", workspacePath: "/workspace" });
   expect(session.providerSessionId).toBe("devin-exact"); expect(store.load("captured")?.providerSessionId).toBe("devin-exact"); expect(reads).toBe(1);
 });
+
+describe("Devin review cancellation stage and literal text regressions", () => {
+  it("proves creation not-created when its deadline is already aborted before credentials", async () => {
+    const deadline = new AbortController(); deadline.abort(new DOMException("private fixture deadline", "TimeoutError"));
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValueOnce(deadline.signal), resolve = vi.fn(credential), fetchImpl = capturedFetch(vi.fn<typeof fetch>()), guard = vi.fn();
+    try {
+      const backend = new HttpDevinBackend(profile, resolve, fetchImpl), pending = backend.create({ prompt: "task" }, guard);
+      retain({ phase: "controlled-deadline", stage: "before-credential", aborted: deadline.signal.aborted });
+      await expect(pending).rejects.toBeInstanceOf(adapters.AdapterStartError);
+      await expect(pending).rejects.toMatchObject({ creationOutcome: "not-created", code: "DEVIN_READ_CANCELLED" });
+      expect(timeout).toHaveBeenCalledExactlyOnceWith(10_000); expect(resolve).not.toHaveBeenCalled(); expect(guard).not.toHaveBeenCalled(); expect(fetchImpl).not.toHaveBeenCalled();
+    } finally { timeout.mockRestore(); }
+  });
+  it("proves a held credential deadline not-created with zero final guards or fetches", async () => {
+    const deadline = new AbortController(), ready = Promise.withResolvers<string>(), entered = Promise.withResolvers<void>();
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValueOnce(deadline.signal), fetchImpl = capturedFetch(vi.fn<typeof fetch>()), guard = vi.fn(), store = new MemorySessionStore();
+    const resolve = vi.fn(() => { entered.resolve(); return ready.promise; });
+    const adapter = new DevinAdapter(profile, undefined, store, resolve, fetchImpl);
+    const pending = adapter.start({ runId: "run", sessionId: "deadline-reserved", workspacePath: "/workspace", beforeSend: guard });
+    try {
+      const rejected = expect(pending).rejects.toMatchObject({ creationOutcome: "not-created", code: "DEVIN_READ_CANCELLED" });
+      await entered.promise; deadline.abort(new DOMException("private fixture deadline", "TimeoutError"));
+      retain({ phase: "controlled-deadline", stage: "credential-held", aborted: deadline.signal.aborted });
+      await rejected; await expect(pending).rejects.toBeInstanceOf(adapters.AdapterStartError);
+      expect(timeout).toHaveBeenCalledExactlyOnceWith(10_000); expect(resolve).toHaveBeenCalledTimes(1); expect(guard).not.toHaveBeenCalled(); expect(fetchImpl).not.toHaveBeenCalled();
+      expect(store.load("deadline-reserved")).toMatchObject({ state: "STARTING" }); expect(store.load("deadline-reserved")).not.toHaveProperty("providerSessionId");
+    } finally { ready.resolve("controlled-token"); await ready.promise; timeout.mockRestore(); }
+  });
+  it("proves creation not-created if cancellation reaches the post-credential check", async () => {
+    const deadline = new AbortController(), ready = Promise.withResolvers<string>();
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValueOnce(deadline.signal), fetchImpl = capturedFetch(vi.fn<typeof fetch>()), guard = vi.fn();
+    const backend = new HttpDevinBackend(profile, () => ready.promise, fetchImpl), pending = backend.create({ prompt: "task" }, guard);
+    try {
+      const rejected = expect(pending).rejects.toMatchObject({ creationOutcome: "not-created", code: "DEVIN_READ_CANCELLED" });
+      // The credential's abortable settles first; this queued abort precedes request's await continuation.
+      ready.resolve("controlled-token"); queueMicrotask(() => { deadline.abort(new DOMException("private fixture deadline", "TimeoutError")); retain({ phase: "controlled-deadline", stage: "credential-resolved-before-guard", aborted: true }); });
+      await rejected; expect(timeout).toHaveBeenCalledExactlyOnceWith(10_000); expect(guard).not.toHaveBeenCalled(); expect(fetchImpl).not.toHaveBeenCalled();
+    } finally { ready.resolve("controlled-token"); timeout.mockRestore(); }
+  });
+  it("keeps fetch-entered creation cancellation uncertain after one final guard", async () => {
+    const deadline = new AbortController(), entered = Promise.withResolvers<void>();
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValueOnce(deadline.signal), guard = vi.fn();
+    const fetchImpl = capturedFetch(vi.fn<typeof fetch>(() => { entered.resolve(); return new Promise(() => {}); }));
+    try {
+      const backend = new HttpDevinBackend(profile, credential, fetchImpl), pending = backend.create({ prompt: "task" }, guard);
+      const rejected = expect(pending).rejects.toMatchObject({ code: "DEVIN_READ_CANCELLED", message: "DEVIN_READ_CANCELLED" });
+      await entered.promise; expect(fetchImpl.mock.calls[0]![1]!.signal).toBe(deadline.signal); deadline.abort(new DOMException("private fixture deadline", "TimeoutError"));
+      retain({ phase: "controlled-deadline", stage: "fetch-entered", aborted: deadline.signal.aborted });
+      await rejected; await expect(pending).rejects.not.toHaveProperty("creationOutcome");
+      expect(timeout).toHaveBeenCalledExactlyOnceWith(10_000); expect(guard).toHaveBeenCalledTimes(1); expect(fetchImpl).toHaveBeenCalledTimes(1);
+    } finally { timeout.mockRestore(); }
+  });
+  it("keeps credential-held read cancellation generic and preserves its original signal", async () => {
+    const deadline = new AbortController(), entered = Promise.withResolvers<void>(), ready = Promise.withResolvers<string>(), fetchImpl = capturedFetch(vi.fn<typeof fetch>());
+    const backend = new HttpDevinBackend(profile, () => { entered.resolve(); return ready.promise; }, fetchImpl), pending = backend.get("devin-exact", deadline.signal);
+    try {
+      const rejected = expect(pending).rejects.toMatchObject({ code: "DEVIN_READ_CANCELLED", message: "DEVIN_READ_CANCELLED" });
+      await entered.promise; deadline.abort(new DOMException("private fixture deadline", "TimeoutError")); retain({ phase: "controlled-deadline", stage: "read-credential-held", aborted: true });
+      await rejected; await expect(pending).rejects.not.toHaveProperty("creationOutcome"); expect(fetchImpl).not.toHaveBeenCalled();
+    } finally { ready.resolve("controlled-token"); await ready.promise; }
+  });
+  it("retains a leading BOM and a valid multibyte prefix when truncating native text", async () => {
+    const f = readFixture(), text = "\uFEFF" + "🙂".repeat(6_000);
+    f.setPage({ items: [message({ message: text })] });
+    const page = await f.port.history(binding, { limit: 10 }), entry = page.entries[0]!;
+    expect(entry.text.startsWith("\uFEFF🙂")).toBe(true); expect(text.startsWith(entry.text)).toBe(true); expect(entry.text).not.toContain("\uFFFD");
+    expect(Buffer.byteLength(entry.text)).toBeGreaterThan(10_000); expect(Buffer.byteLength(entry.text)).toBeLessThanOrEqual(16_384);
+    expect(entry.truncated).toBe(true); expect(page.completeness).toBe("partial"); expect(Buffer.byteLength(JSON.stringify(page))).toBeLessThanOrEqual(262_144);
+  });
+});

@@ -140,15 +140,19 @@ export class HttpDevinBackend implements DevinBackend {
 
   private async request(path: string, init: RequestInit = {}, beforeSend?: () => void, creation = false): Promise<Response> {
     const signal = init.signal ?? AbortSignal.timeout(10_000);
-    checkRead(signal);
     let token: string;
-    try { token = await abortable(this.resolveCredential(this.profile.credentialRef), signal); }
-    catch {
-      if (signal.aborted) throw failure("DEVIN_READ_CANCELLED");
+    try {
+      checkRead(signal);
+      token = await abortable(this.resolveCredential(this.profile.credentialRef), signal);
+      checkRead(signal);
+    } catch {
+      if (signal.aborted) {
+        if (creation) throw new AdapterStartError("not-created", "DEVIN_READ_CANCELLED", "DEVIN_READ_CANCELLED");
+        throw failure("DEVIN_READ_CANCELLED");
+      }
       if (creation) throw new AdapterStartError("not-created", "START_PREPARATION_FAILED", "Devin credential is unavailable before creation");
       throw failure("DEVIN_CREDENTIAL_UNAVAILABLE");
     }
-    checkRead(signal);
     const options: RequestInit = {
       ...init,
       redirect: "error",
@@ -444,7 +448,7 @@ function retainMessage(message: string, jsonBytes: number): { text: string; trun
   while (low <= high) {
     const midpoint = Math.floor((low + high) / 2);
     // A streaming decode drops an incomplete final code point, preserving the native prefix.
-    const candidate = new TextDecoder().decode(raw.subarray(0, midpoint), { stream: true });
+    const candidate = new TextDecoder("utf-8", { ignoreBOM: true }).decode(raw.subarray(0, midpoint), { stream: true });
     if (Buffer.byteLength(JSON.stringify(candidate)) <= jsonBytes) { text = candidate; low = midpoint + 1; }
     else high = midpoint - 1;
   }
