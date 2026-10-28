@@ -1266,3 +1266,10 @@
   default, stop propagation and invoke its own close callback; native focus cleanup
   stays there. Verify real Escape/top-layer/focus in a browser, since jsdom cancel
   dispatch and explicit HTMLElement.focus do not implement native modal behavior.
+
+
+- Required acceptance evidence belongs in a durable task-owned directory outside
+  the OS temporary root. Disposable fixture workdirs may use /tmp, but copy actual
+  inputs, programs, outputs, state and identities before cleanup. An immutable Git
+  source extraction or a new successful run cannot recreate missing historical
+  command/fixture evidence; preserve that limitation and date new proof accurately.

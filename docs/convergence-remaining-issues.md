@@ -652,3 +652,15 @@ local Git identity and an unqualified outer-close BODY-focus observation are CV1
 triage; nested I1 resolved. Slack, retention/delivery49, recovery/performance/CV13,
 wholebranch/CI/release and real-provider/GUI/writer/formal Gates still open. Next
 CV12 G5 preparation remains external-only until fresh dispatch; user declines reset.
+
+
+2026-10-28 evidence availability: previous G5 agent ended on usage limit; current
+report and exactly5WIP paths survive, but its old /tmp evidence/preparation and
+three checked native-control UI raw directories are absent (cause unknown). G5
+final default gate has no retained result and remains NOT_VERIFIED/unaccepted.
+Historical accepted observations are not fresh raw-proof claims. New durable
+current-UTC verification proceeds without reconstructing lost records; CV14 retains
+the availability gap and final-candidate proof obligation. Primary original3dirty
+files/head/status still match; no source503 cells or product behavior changed by
+this record. Official ordinary usage is allowed again, reset credits still2;
+root did not operate a reset or alter the user's no-reset preference.

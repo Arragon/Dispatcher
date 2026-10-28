@@ -5901,3 +5901,25 @@ CV14 triage, not the fixed nested I1. All503 immutable seven columns stay exact;
 only8existing CV11 verification cells append this scope. Native-control UI local
 increment is complete; CV11 Slack/other original purposes, retention/delivery,
 recovery/performance and whole-candidate/real Gates remain open. No reset/push/merge.
+
+
+## Evidence availability correction (2026-10-28)
+
+The interrupted G5 worker has no final gate/commit handoff. HEAD remains37b575d
+with exactly5expected WIP files and the16335byte report retained. No matching old
+owned process remains. The old G5 task1 and preparation directories, plus native
+control UI initial/fix1/browser-fix1 raw directories, were checked and are now
+missing under /tmp. Cause is unknown; other historical temporary paths have not
+been exhaustively audited. Prior report/Linear/commit observations remain historical
+statements; their absent raw files cannot be independently replayed now. In
+particular the old G5 default gate is NOT_VERIFIED, not a pass. No past fixture,
+command/timestamp/tool version or missing failure is reconstructed.
+
+Current five WIP bytes/report/brief/ledger and fresh immutable Git extractions are
+preserved under /Users/wangdongxin/.codex/dispatcher-evidence/
+01a16430-9b3c-7eb2-876c-a3779ba39939/2026-10-28-delivery-url-rewrite.
+New actual RED/GREEN/default verification will use durable storage, fresh UTC and
+explicit provenance. It cannot repair historical gaps. CV14 must account for lost
+raw UI availability and perform durable current-candidate checks before final
+project/release acceptance. No source503 row/identity/owner/verification is changed
+by this availability correction, and no real native/provider/release Gate closes.
