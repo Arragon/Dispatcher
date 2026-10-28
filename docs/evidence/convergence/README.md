@@ -5923,3 +5923,68 @@ explicit provenance. It cannot repair historical gaps. CV14 must account for los
 raw UI availability and perform durable current-candidate checks before final
 project/release acceptance. No source503 row/identity/owner/verification is changed
 by this availability correction, and no real native/provider/release Gate closes.
+
+
+## CV-12 G5/D30 observed Git rewrite refusal local acceptance (2026-10-28)
+
+Code03185513235adafed6a841ff9bae0aae2377885c, parentcc96bed, is accepted for
+this one local D30 increment. Exactly3Workspace production and2test paths changed.
+The existing NUL/name-only rewrite predicate is shared by Snapshot and the owning
+Workspace delivery target; each keeps its own environment, error and no-origin
+policy. Delivery reads the same childExecutionEnvironment as the actual owning
+push, rejects insteadOf/pushInsteadOf (including inherited config) at the existing
+review/precommit/postcommit checks, with static INVALID_DELIVERY_REMOTE and shared
+8000ms/8192byte bounds. Runner production, commit/push receipts, exact SHA/refspec,
+hooks, abort/drain and no-force/no-follow-tags/no-submodule ownership stay intact.
+
+Fresh immutable source D30's retired UNSAFE_CANDIDATE_REMOTE is adapted to the
+current owner's INVALID_DELIVERY_REMOTE. All7original Runner and8candidate full
+assertion bodies remain exact. New owned SSH fixture logs actual argv and routes
+only known A/B paths to distinct local bare repositories. NEW RED14fail/18controls
+actually wrote4Brefs; no real network/provider/account was involved. GREEN exact6
+covering files85PASS/build/5pathESLint, then ONE new default mise exec -- pnpm check
+passed217files4670 plus build/typecheck/lint/boundaries. UTC2026-10-28T19:35:19.109158
+through19:39:53.307726, wall274.204157s; outputSHA256
+229d188c3167306260ef59f7688e866196c15e503d88a3164c0c8adc59fe8c95.
+Default workers, deadlines, caches and assertions were not weakened.
+
+Durable evidence E=/Users/wangdongxin/.codex/dispatcher-evidence/
+01a16430-9b3c-7eb2-876c-a3779ba39939/2026-10-28-delivery-url-rewrite;
+V=E/verification-v2. Full report33976bytes/SHA
+c2cd8e0067f0650abcafcb1d3c1a9cd9b12fd870f4730a7e31ae386e5bc7b0e9
+preserves both old16335 and pregate30323 prefixes. Independent full task review
+E/task-1-review-20261028.md is SpecCompliant/QualityApproved0C0I1M, SHA
+2da6a4f6ee5845a366ce826ab18849a34bbb337f47341e831086a33ba2abc6d7.
+Root read the full report/review, with no unchanged test rerun.
+
+Root audit R=E's sibling2026-10-28-root-audits: delivery-url-root-audit-v3.json
+validates11phases/6578source-external/15950dist/22cache rows,13722actual baseline
+raw dependency preimages and301884before/after dependency identity rows,264Git
+files,556protected tracked paths,7immutable Git extractions and exact5gate/current/
+staged/committed/current-after payloads. Primary19db456/three dirty files/status
+remain exact; all503 rows'8columns were unchanged before acceptance. Root inspector
+v1 wrongly treated intentional Git commit metadata as a check freeze; v2 assumed
+newline paths although Git used NUL. Failed versions are retained; v3 parses the
+actual operation/format without changing product, test or evidence.
+
+Independent delivery-url-fixture-audit-v1.json validates5247raw fixture files,
+43closed read-only SQLite integrity checks/receipts, physical HEAD/index/result/
+A-Brefs, four actual unsafe RED writes, four unchanged GREEN/gate refusal states
+and approved direct controls. Default native1679starts/1678completions have3358
+actual native stream files, all completed raw/base64 pairs equal; one deliberately
+cancelled push has actual0byte streams and no completion. The separate v2.1
+cancellation control preserves120streams. Earlier v2 RED/GREEN cancellation lacks
+completed stream capture; that limit remains. Runtime executable copies are
+excluded; selected/resolved hash/stat and293Mraw project dependencies are retained.
+Only the two Task1 suites have full fixture copies; four other covering suites
+have ordinary command output and frozen inputs, not all-fixture SQLite claims.
+
+Reviewer global-provenance/primary503 CannotVerify is now resolved at this bounded
+scope. Acceptance appends only4existing CV12 verification cells, preserving all7
+identity/source/decision/owner columns; no candidate-test row is added. DeferredM1
+205level50/40level40 expected-fixture diagnostics and inferred local Git identity
+stay CV14; no logger suppression was introduced. The external host-config mutation
+race after final check and before spawn is explicitly unsolved. Other48purposes,
+allCV12/G5, unavailable historical captures/current-candidate UI proof, RHIZA and
+real native/provider/model/GUI/writer/physical-stop/service/release Gates remain
+open. This new verification does not reconstruct the missing Oct26 gate or UI raws.

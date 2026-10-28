@@ -1273,3 +1273,15 @@
   inputs, programs, outputs, state and identities before cleanup. An immutable Git
   source extraction or a new successful run cannot recreate missing historical
   command/fixture evidence; preserve that limitation and date new proof accurately.
+
+- An effective Git remote URL does not freeze the endpoint of a later literal-URL
+  push: insteadOf/pushInsteadOf can redirect it again. Reject rewrite key names at
+  the existing reviewed/precommit/postcommit target boundary, using the same
+  inherited Git configuration environment as the actual delivery. Snapshot-only
+  GIT_* isolation would hide transport authority. Share only the pure name matcher;
+  preserve the consumers' error/no-origin policies and one shared timeout budget.
+  These asynchronous checks do not atomically freeze external host config changes
+  between final resolution and spawn. An endpoint regression needs distinct owned
+  A/B bare repositories and a routing SSH fixture; a one-endpoint stub cannot prove
+  absence of a write to a second endpoint. Preserve completed commits on postcommit
+  refusal rather than pretending the earlier physical effect disappeared.
