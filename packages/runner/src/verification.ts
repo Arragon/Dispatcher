@@ -34,7 +34,9 @@ export class VerificationRegistry {
     if (!command) throw new Error(`Verification command is not registered: ${commandId}`);
     const started = Date.now();
     if(signal?.aborted)return this.result(command,"failed",null,"",started);
-    const child=spawn(command.file,command.args,{cwd,shell:false,stdio:["ignore","pipe","pipe"],detached:process.platform!=="win32",env:childExecutionEnvironment(process.env,{PWD:cwd})});
+    const environment=childExecutionEnvironment(process.env,{PWD:cwd});
+    for(const name of Object.keys(environment))if(name.toUpperCase().startsWith("GIT_"))delete environment[name];
+    const child=spawn(command.file,command.args,{cwd,shell:false,stdio:["ignore","pipe","pipe"],detached:process.platform!=="win32",env:environment});
     const ownership=new OwnedProcessGroup(child);
     return new Promise<VerificationResult>((resolve,reject)=>{
       let output=Buffer.alloc(0),timedOut=false,limited=false,aborted=false;
