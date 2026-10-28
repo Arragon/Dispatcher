@@ -1312,3 +1312,11 @@
   outside dist and node_modules caches. Include those actual incremental inputs in
   pre/post raw capture. A later qualified typecheck can prove current state but
   cannot recover compiler preimages omitted from earlier checks.
+
+- Isolate registered verification at its existing Registry boundary: set the
+  actual child cwd/PWD and remove inherited case-insensitive GIT_ selectors from
+  a fresh environment. Keep native Git delivery's actual configuration context;
+  applying verification isolation there would hide transport authority. A retained
+  snapshot alone does not prove checks executed inside it. Private execution
+  provenance must qualify a completed proof; old unknown sends remain barriers
+  and old accepted facts remain historical facts without silently upgrading them.

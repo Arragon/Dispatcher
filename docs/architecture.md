@@ -1821,12 +1821,18 @@ remain separate. Native storage references/credential-like text are not projecte
 Canonical local-result approval applies only to a completed guarded local
 delivery.none Run. It compares the retired generation/lease as immutable identity
 and requires current Task/control/context/candidate proof; it never renews that
-lease or sends native input. Registered verification runs in the existing managed
-source environment with matching before/after content and a retained snapshot.
-The proof labels this basis separately from hermetic/native qualification.
+lease or sends native input. Registered canonical checks run in the isolated
+snapshot; their child environment removes inherited Git selectors and sets PWD
+to that snapshot. Source and snapshot identities are checked before and after.
+The private isolated-snapshot-v1 execution basis qualifies new completed proofs;
+the public matching-managed-source basis describes content identity, separately
+from hermetic/native qualification. Legacy completed proofs without that private
+basis remain unverified and require a fresh explicit verification key.
 Verification SENDING/UNKNOWN receipts do not replay; acceptance and its Task DONE
 transition share one database transaction. Historical verification remains
-readable; missing/newly changed proof cannot authorize acceptance.
+readable; missing/newly changed proof cannot authorize acceptance. Historical
+accepted receipts keep their original meaning. Automatic Run verification and
+HUMAN snapshot preparation remain separate lifecycle contracts.
 
 
 ## Internal Devin Local ACP execution
