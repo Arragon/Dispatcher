@@ -457,6 +457,15 @@
 - A Slack intervention thread binds to one task/run/session generation. Replies
   and buttons recheck binding revision and generation before resuming the
   original provider session; stale controls are conflicts.
+- SQLite JSON extraction and JavaScript decoding disagree on duplicate keys.
+  Exact conversation selection must recognize either tuple-key order before
+  rejecting an ambiguous selected row; a corrupt latest binding cannot become
+  absence and open an older/default route. Keep validation in the shared
+  Controller selector rather than individual notification consumers.
+- A successful threaded control notice is an external delivery fact. Recheck
+  current Run/control authority and the latest exact binding after await before
+  pinning its epoch; retain a concurrent WAITING_USER state. A lost authority
+  cannot undo the reply or authorize another native command.
 - Remote notifications are attention-only and idempotent. Deduplicate per
   task/state/generation with cooldown and do not stream routine activity.
 - Persist only normalized Slack Inbox records. Redact credential-shaped text

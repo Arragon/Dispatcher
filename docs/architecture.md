@@ -1047,6 +1047,19 @@ Literal credentials are redacted before Inbox persistence and receive a
 short-lived signed link to the Dashboard secure-input flow. Notifications are
 attention-only and cooldown-deduplicated.
 
+Controller-private `messaging-conversations.ts` owns exact Run/session/generation
+selection for continuation, attention, dispatch results, delivery feedback and
+HTTP input. It selects one newest tuple in SQLite, validates the bounded raw
+record and decoded binding, and treats a selected unreadable binding as a
+conflict. Only proven absence permits the existing default notification route.
+`native-control-notices.ts` drains the existing durable metadata intents in the
+serial attention job, at most ten candidates per cycle. It sends only to the
+exact binding and rechecks current Run, Session, Task, lease, physical control
+row and document before and after delivery. Epoch pinning and sent state share
+one transaction and preserve a newer WAITING_USER binding. NativeInteractions
+retains sole native command/control ownership; notification delivery grants no
+handoff, reclaim or input authority.
+
 ## Change rules
 
 - Add a state only by changing its domain contract and transition tests.
