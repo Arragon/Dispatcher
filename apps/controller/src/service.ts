@@ -1,3 +1,5 @@
+import {selectRunConversation} from "./messaging-conversations.js";
+import {NativeControlNotices} from "./native-control-notices.js";
 import {profileInteractionView,loadProfileEvidence} from "./profile-interaction-view.js";
 import {CanonicalLocalResults} from "./local-results.js";
 import {CodexExecutionRuntime} from "./codex-runtime.js";
@@ -516,6 +518,7 @@ export class ControllerService {
   readonly semanticWorkflows: SemanticWorkflowEngine;
   readonly messagingIdentity: MessagingIdentityService;
   readonly conversations: ConversationBindingService;
+  private readonly nativeControlNotices:NativeControlNotices;
   private readonly taskCompiler = new TaskContractCompiler();
   private readonly fleet = new FleetReadModel();
   private readonly fleetEvents = new CoalescingEventStream(512);
@@ -639,6 +642,7 @@ export class ControllerService {
     const messagingStore = new DatabaseMessagingStateStore(this.database);
     this.messagingIdentity = new MessagingIdentityService(messagingStore);
     this.conversations = new ConversationBindingService(messagingStore);
+    this.nativeControlNotices=new NativeControlNotices({database:this.database,conversations:this.conversations,conversationFor:run=>this.runConversation(run),connector:id=>this.connectors.get<MessagingAdapter>(id),clock:()=>this.now(),warn:(error,runId)=>this.app.log.warn({error:redactValue(error),runId},"native control notification delivery failed")});
     this.registerSemanticTools();
     this.events = new EventBus<RunnerEvents>(1_000, (error, topic) => {
       logger.error({ error: redactValue(error), topic }, "event handler failed");
@@ -3567,6 +3571,11 @@ export class ControllerService {
         this.app.log.warn({ error: redactValue(error), runId: run.id }, "attention notification will retry");
       }
     }
+    await this.notifyNativeControlAttention();
+  }
+
+  private notifyNativeControlAttention():Promise<void> {
+    return this.nativeControlNotices.drain();
   }
 
   private messagingWorkflowText(workflow: SemanticWorkflowRecord): string {
@@ -3578,9 +3587,7 @@ export class ControllerService {
   }
 
   private runConversation(run: Run): ConversationBinding | undefined {
-    return this.database.listEntities<JsonValue>("messaging-conversation")
-      .map((value) => value as unknown as ConversationBinding)
-      .find((binding) => binding.runId === run.id && binding.sessionId === run.sessionId && binding.generation === run.generation);
+    return selectRunConversation(this.database,run);
   }
 
   private async executeMessagingWorkflow(workflow: SemanticWorkflowRecord): Promise<SemanticWorkflowRecord> {
