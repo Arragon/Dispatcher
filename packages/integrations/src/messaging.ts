@@ -26,7 +26,7 @@ export interface NormalizedMessage {
   text: string;
   occurredAt: string;
   idempotencyKey: string;
-  action?: { id: string; value?: string; expectedRevision?: number; generation?: number };
+  action?: { id: string; value?: string; expectedRevision?: number; generation?: number; controlEpoch?: number };
 }
 
 export interface MessagingDelivery {
@@ -279,6 +279,7 @@ export class SlackMessagingConnector implements MessagingAdapter {
     const actionValue = typeof firstAction?.value === "string" ? firstAction.value : undefined;
     let parsedAction: Record<string, unknown> | undefined;
     if (actionValue) { try { parsedAction = JSON.parse(actionValue) as Record<string, unknown>; } catch { parsedAction = { value: actionValue }; } }
+    if (parsedAction && Object.hasOwn(parsedAction,"controlEpoch") && (!Number.isSafeInteger(parsedAction.controlEpoch) || (parsedAction.controlEpoch as number)<0)) throw new ConnectorError("INVALID_EVENT", "Slack control epoch is invalid", {retryable:false,operation:"ingress"});
     return {
       kind: "message",
       message: {
@@ -291,7 +292,7 @@ export class SlackMessagingConnector implements MessagingAdapter {
         text: String(event?.text ?? payload.text ?? parsedAction?.text ?? ""),
         occurredAt: this.now().toISOString(),
         idempotencyKey,
-        ...(firstAction ? { action: { id: String(firstAction.action_id ?? firstAction.block_id ?? "action"), ...(actionValue ? { value: actionValue } : {}), ...(typeof parsedAction?.expectedRevision === "number" ? { expectedRevision: parsedAction.expectedRevision } : {}), ...(typeof parsedAction?.generation === "number" ? { generation: parsedAction.generation } : {}) } } : {}),
+        ...(firstAction ? { action: { id: String(firstAction.action_id ?? firstAction.block_id ?? "action"), ...(actionValue ? { value: actionValue } : {}), ...(typeof parsedAction?.expectedRevision === "number" ? { expectedRevision: parsedAction.expectedRevision } : {}), ...(typeof parsedAction?.generation === "number" ? { generation: parsedAction.generation } : {}), ...(typeof parsedAction?.controlEpoch === "number" ? { controlEpoch: parsedAction.controlEpoch } : {}) } } : {}),
       },
     };
   }

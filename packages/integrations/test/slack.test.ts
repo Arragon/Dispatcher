@@ -171,3 +171,14 @@ describe("ConversationBinding optional control epoch", () => {
     expect(save).not.toHaveBeenCalled();
   });
 });
+
+it.each([0,7,undefined])("normalizes a signed Slack action's optional control epoch %s",async controlEpoch=>{
+  const body=JSON.stringify({type:"block_actions",user:{id:"U1"},channel:{id:"C1"},container:{message_ts:"10",thread_ts:"9"},actions:[{action_id:"workflow.approve",value:JSON.stringify({expectedRevision:3,generation:1,...(controlEpoch===undefined?{}:{controlEpoch})})}]});
+  const result=await connector().ingress(Buffer.from(body),signed(body));
+  expect(result.message?.action).toEqual({id:"workflow.approve",value:JSON.stringify({expectedRevision:3,generation:1,...(controlEpoch===undefined?{}:{controlEpoch})}),expectedRevision:3,generation:1,...(controlEpoch===undefined?{}:{controlEpoch})});
+  if(controlEpoch===undefined)expect(Object.hasOwn(result.message!.action!,"controlEpoch")).toBe(false);
+});
+it.each([-1,1.5,Number.MAX_SAFE_INTEGER+1,"2",null])("rejects invalid supplied signed Slack control epoch %j",async controlEpoch=>{
+  const body=JSON.stringify({type:"block_actions",user:{id:"U1"},channel:{id:"C1"},container:{message_ts:"10"},actions:[{action_id:"control",value:JSON.stringify({controlEpoch})}]});
+  await expect(connector().ingress(Buffer.from(body),signed(body))).rejects.toMatchObject({code:"INVALID_EVENT"});
+});

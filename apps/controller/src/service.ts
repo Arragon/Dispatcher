@@ -1,3 +1,4 @@
+import {NativeWorkflowAuthority} from "./native-workflow-authority.js";
 import {selectRunConversation} from "./messaging-conversations.js";
 import {NativeControlNotices} from "./native-control-notices.js";
 import {profileInteractionView,loadProfileEvidence} from "./profile-interaction-view.js";
@@ -244,6 +245,7 @@ interface MessagingResumeReceipt {
   sessionId: string;
   generation: number;
   interventionRevision: number;
+  controlEpoch?: number;
   principalId: string;
   connectorInstanceId: string;
   conversationId: string;
@@ -285,12 +287,15 @@ class DatabaseSessionStore implements SessionStore {
 }
 
 class DatabaseSemanticWorkflowStore implements SemanticWorkflowStore {
-  constructor(private readonly database: DispatcherDatabase) {}
+  constructor(private readonly database: DispatcherDatabase,private readonly beforeSave:(record:SemanticWorkflowRecord)=>void) {}
   get(id: string): SemanticWorkflowRecord | undefined {
     return this.database.getEntity<JsonValue>("semantic-workflow", id) as unknown as SemanticWorkflowRecord | undefined;
   }
   save(record: SemanticWorkflowRecord): void {
-    this.database.saveEntity("semantic-workflow", record.id, json(record), record.updatedAt);
+    this.database.transaction(()=>{
+      this.beforeSave(record);
+      this.database.saveEntity("semantic-workflow", record.id, json(record), record.updatedAt);
+    });
   }
 }
 
@@ -519,6 +524,7 @@ export class ControllerService {
   readonly messagingIdentity: MessagingIdentityService;
   readonly conversations: ConversationBindingService;
   private readonly nativeControlNotices:NativeControlNotices;
+  private readonly nativeWorkflowAuthority:NativeWorkflowAuthority;
   private readonly taskCompiler = new TaskContractCompiler();
   private readonly fleet = new FleetReadModel();
   private readonly fleetEvents = new CoalescingEventStream(512);
@@ -638,11 +644,18 @@ export class ControllerService {
     this.localResults=new CanonicalLocalResults(this.database,this.configuration,this.tasks,this.workspaces,join(options.dataDirectory,"verification-snapshots"),()=>this.now());
     this.applyRuntimeConfiguration(this.configuration.current().config);
     this.semanticTools = new SemanticToolRegistry({ highRiskRequiresConfirmation: this.configuration.current().config.policies.highRiskRequiresConfirmation });
-    this.semanticWorkflows = new SemanticWorkflowEngine(this.semanticTools, new DatabaseSemanticWorkflowStore(this.database));
+    this.semanticWorkflows = new SemanticWorkflowEngine(this.semanticTools, new DatabaseSemanticWorkflowStore(this.database,record=>{
+      if(record.state!=="EXECUTED"||record.toolName!=="run.history"||record.principal.channel!=="messaging")return;
+      const run=this.database.getEntity<JsonValue>("run",String(record.intent.arguments.target)) as unknown as Run|undefined;
+      if(!run)throw new ConnectorError("CONFLICT","Run authority is unavailable",{retryable:false});
+      // The final success fence and write share one transaction; FAILED remains owned by the engine.
+      this.nativeWorkflowAuthority.assert(record.id,run,record.principal,false);
+    }));
     const messagingStore = new DatabaseMessagingStateStore(this.database);
     this.messagingIdentity = new MessagingIdentityService(messagingStore);
     this.conversations = new ConversationBindingService(messagingStore);
     this.nativeControlNotices=new NativeControlNotices({database:this.database,conversations:this.conversations,conversationFor:run=>this.runConversation(run),connector:id=>this.connectors.get<MessagingAdapter>(id),clock:()=>this.now(),warn:(error,runId)=>this.app.log.warn({error:redactValue(error),runId},"native control notification delivery failed")});
+    this.nativeWorkflowAuthority=new NativeWorkflowAuthority({database:this.database,identities:this.messagingIdentity,interactions:this.nativeInteractions,conversationFor:run=>this.runConversation(run),clock:()=>this.now()});
     this.registerSemanticTools();
     this.events = new EventBus<RunnerEvents>(1_000, (error, topic) => {
       logger.error({ error: redactValue(error), topic }, "event handler failed");
@@ -3295,6 +3308,24 @@ export class ControllerService {
   }
 
   private registerSemanticTools(): void {
+    for(const operation of ["takeover","return","history"] as const)this.semanticTools.register({
+      name:`run.${operation}`,description:operation==="history"?"Read bounded native history without changing control":"Request native control handoff without sending a prompt",
+      risk:operation==="history"?"read":"privileged",...(operation!=="history"?{requiredRoles:["operator"]}:{}),
+      input:{required:["target"],properties:{target:"string",settlePolicy:"string",fence:"object"},additionalProperties:false},
+      execute:async({target,settlePolicy,fence},context)=>{
+        const run=this.database.getEntity<JsonValue>("run",String(target)) as unknown as Run|undefined;if(!run)throw new SemanticPolicyError("INVALID_INPUT","Unknown run");
+        const authority=this.nativeWorkflowFence(run,context.workflowId,context.principal,fence,operation!=="history");
+        if(operation==="history"){
+          const page=await this.nativeHistoryService(run).readNativeHistory({...context.principal,profileId:run.profileId},run.sessionId,{limit:50});
+          this.nativeWorkflowFence(run,context.workflowId,context.principal,fence,false);
+          return {source:"native",page};
+        }
+        const receipt=operation==="takeover"?this.nativeInteractions.requestHandoff({principal:context.principal,fence:authority,settlePolicy:settlePolicy===undefined?"wait":settlePolicy as "wait"|"interrupt"}):this.nativeInteractions.requestReclaim({principal:context.principal,fence:authority});
+        this.fleetEvents.publish("run.changed",run.id,{id:run.id});
+        return {receipt,control:new InteractionStore(this.database).control(run.sessionId),requiresReconciliation:true};
+      },
+    });
+
     this.semanticTools.register({
       name: "task.dispatch", description: "Dispatch a READY task to a configured agent profile", risk: "privileged", requiredRoles: ["operator"],
       input: { required: ["target"], properties: { target: "string", profileId: "string" }, additionalProperties: false },
@@ -3578,7 +3609,27 @@ export class ControllerService {
     return this.nativeControlNotices.drain();
   }
 
+  private nativeWorkflowFence(run:Run,workflowId:string,principal:InteractionPrincipal&{channel?:string},input:unknown,mutation:boolean):MutationFence {
+    if(principal.channel==="messaging")return this.nativeWorkflowAuthority.assert(workflowId,run,principal,mutation);
+    if(input!==undefined){
+      const fields=["runId","sessionId","commandId","generation","leaseId","expectedTaskRevision","expectedCurrentRunId","expectedControlRevision","expectedControlEpoch"];
+      if(!input||typeof input!=="object"||Array.isArray(input))throw new SemanticPolicyError("INVALID_INPUT","Capture the current full run authority before submitting");
+      const value=input as Record<string,unknown>;
+      if(Object.keys(value).some(key=>!fields.includes(key))||fields.some(key=>!Object.hasOwn(value,key))||value.runId!==run.id||value.sessionId!==run.sessionId||["commandId","leaseId","expectedCurrentRunId"].some(key=>typeof value[key]!=="string"||!(value[key] as string).trim()||(value[key] as string).length>512)||["generation","expectedTaskRevision","expectedControlRevision","expectedControlEpoch"].some(key=>!Number.isSafeInteger(value[key])||(value[key] as number)<0))throw new SemanticPolicyError("INVALID_INPUT","Capture the current full run authority before submitting");
+      return structuredClone(value) as unknown as MutationFence;
+    }
+    if(mutation)throw new SemanticPolicyError("INVALID_INPUT","Capture the current full run authority before submitting");
+    return this.nativeInteractions.fenceFor(run,workflowId);
+  }
+
   private messagingWorkflowText(workflow: SemanticWorkflowRecord): string {
+    if(workflow.toolName==="run.history"&&workflow.state==="EXECUTED"){
+      const run=this.database.getEntity<JsonValue>("run",String(workflow.intent.arguments.target)) as unknown as Run|undefined;
+      if(!run)throw new ConnectorError("CONFLICT","Run authority is unavailable",{retryable:false});
+      this.nativeWorkflowFence(run,workflow.id,workflow.principal,workflow.intent.arguments.fence,false);
+      return `原生历史（只读；不接管会话）\n${JSON.stringify(redactNativePayload(workflow.result)).slice(0,2800)}`;
+    }
+    if(["run.takeover","run.return"].includes(workflow.toolName)&&workflow.state==="EXECUTED")return `原生控制请求已接受，仍需核对当前控制快照。打开应用或收到此回复不代表交接已完成。\n${JSON.stringify(redactNativePayload(workflow.result)).slice(0,2000)}`;
     if (workflow.toolName === "task.dispatch" && workflow.state === "EXECUTED") {
       const result = workflow.result as TaskDispatchResult;
       return result.run.state === "FAILED" ? `Run ${result.run.id} FAILED: ${result.run.failureReason ?? "Agent could not start"}` : `Dispatched run ${result.run.id}.\n${result.routing.explanation}`;
@@ -3599,7 +3650,7 @@ export class ControllerService {
     if (workflow.state === "READY") {
       try { workflow = await this.semanticWorkflows.execute(workflow.id, workflow.revision); }
       catch (error) {
-        if (!(error instanceof TaskDispatchError || error instanceof ConnectorError && error.code === "CONFLICT")) throw error;
+        if (!(error instanceof TaskDispatchError || error instanceof ConnectorError && error.code === "CONFLICT" || ["run.takeover","run.return","run.history"].includes(workflow.toolName) && ((error instanceof InteractionGuardError || error instanceof NativeHistoryError)&&error.code!=="FORBIDDEN"))) throw error;
         workflow = this.semanticWorkflows.get(workflow.id)!;
       }
     }
@@ -3661,6 +3712,11 @@ export class ControllerService {
       if (!workflow || action.expectedRevision === undefined || workflow.principal.id !== principal.principalId || workflow.principal.roles.some((role) => !principal.roles.includes(role))) throw new ConnectorError("AUTH", "Workflow approval is not authorized", { retryable: false, operation: "auth" });
       const origin = this.database.getEntity<JsonValue>("messaging-workflow-origin", workflow.id) as unknown as { connectorInstanceId: string; conversationId: string; threadId: string } | undefined;
       if (origin && (origin.connectorInstanceId !== adapter.instance.id || origin.conversationId !== message.conversationId || origin.threadId !== message.threadId)) throw new ConnectorError("AUTH", "Approve dispatch in its originating thread", { retryable: false, operation: "auth" });
+      if(["run.takeover","run.return","run.history"].includes(workflow.toolName)&&(message.action.generation!==undefined||message.action.controlEpoch!==undefined)){
+        const run=this.database.getEntity<JsonValue>("run",String(workflow.intent.arguments.target)) as unknown as Run|undefined;
+        const control=run?new InteractionStore(this.database).control(run.sessionId):undefined;
+        if(!run||message.action.generation!==undefined&&message.action.generation!==run.generation||message.action.controlEpoch!==undefined&&message.action.controlEpoch!==(control?.epoch??0))throw new ConnectorError("CONFLICT","Approval button belongs to obsolete run control",{retryable:false});
+      }
       const approved = workflow.state === "EXECUTED" || workflow.state === "FAILED" || workflow.state === "READY" && workflow.revision === action.expectedRevision + 1
         ? workflow : this.semanticWorkflows.approve(workflow.id, action.expectedRevision);
       const executed = await this.executeMessagingWorkflow(approved);
@@ -3674,12 +3730,33 @@ export class ControllerService {
     if (receipt) {
       this.messagingIdentity.authorize(adapter.instance.id, message.principalExternalId, "operator");
       const current = this.database.getEntity<JsonValue>("run", receipt.runId) as unknown as Run | undefined;
-      if (receipt.principalId !== principal.principalId || receipt.connectorInstanceId !== adapter.instance.id || receipt.conversationId !== message.conversationId || receipt.threadId !== message.threadId || !current || current.generation !== receipt.generation || current.sessionId !== receipt.sessionId) throw new ConnectorError("CONFLICT", "Consumed reply belongs to an obsolete intervention", { retryable: false });
+      const task=current?this.database.getCanonicalTask<JsonValue>(current.taskId)?.document as unknown as Task|undefined:undefined;
+      const control=current?new InteractionStore(this.database).control(current.sessionId):undefined;
+      if (receipt.principalId !== principal.principalId || receipt.connectorInstanceId !== adapter.instance.id || receipt.conversationId !== message.conversationId || receipt.threadId !== message.threadId || !current || current.generation !== receipt.generation || current.sessionId !== receipt.sessionId || task?.currentRunId!==current.id || control&&receipt.controlEpoch!==control.epoch || message.action?.controlEpoch!==undefined&&message.action.controlEpoch!==receipt.controlEpoch) return this.replyToMessage(adapter,message,"此回复属于已过期的干预。请在当前 Run 线程查看控制状态。",`stale:${message.idempotencyKey}`);
       return this.replyMessagingResume(adapter, message, receipt.runId);
     }
+    const workflowId = `messaging:${adapter.instance.id}:${message.idempotencyKey}`;
+    const existingWorkflow=this.semanticWorkflows.get(workflowId);
+    if(existingWorkflow){
+      const origin=this.database.getEntity<JsonValue>("messaging-workflow-origin",workflowId) as unknown as {connectorInstanceId:string;conversationId:string;threadId:string}|undefined;
+      if(existingWorkflow.principal.id!==principal.principalId||existingWorkflow.principal.roles.some(role=>!principal.roles.includes(role))||!origin||origin.connectorInstanceId!==adapter.instance.id||origin.conversationId!==message.conversationId||origin.threadId!==message.threadId)throw new ConnectorError("AUTH","Workflow replay is not authorized",{retryable:false});
+      return this.replyMessagingWorkflow(adapter,message,await this.executeMessagingWorkflow(existingWorkflow));
+    }
     const bindingId = `${adapter.instance.id}:${message.conversationId}:${message.threadId}`;
-    const binding = this.database.getEntity<JsonValue>("messaging-conversation", bindingId) as unknown as ConversationBinding | undefined;
-    if (binding?.state === "WAITING_USER" && binding.sessionId && binding.runId) {
+    let binding:ConversationBinding|undefined,boundRun:Run|undefined,control:ReturnType<InteractionStore["control"]>;
+    try{
+      binding=this.database.getEntity<JsonValue>("messaging-conversation",bindingId) as unknown as ConversationBinding|undefined;
+      boundRun=binding?.runId?this.database.getEntity<JsonValue>("run",binding.runId) as unknown as Run|undefined:undefined;
+      if(binding&&(!boundRun||!isDeepStrictEqual(this.runConversation(boundRun),binding)))return this.replyToMessage(adapter,message,"此线程的控制权限已过期。请在当前 Run 线程操作。",`stale:${message.idempotencyKey}`);
+      control=boundRun?new InteractionStore(this.database).control(boundRun.sessionId):undefined;
+    }catch(error){if(!(error instanceof ConnectorError||error instanceof SyntaxError))throw error;return this.replyToMessage(adapter,message,"此线程的控制权限未核验。请在当前 Run 线程操作。",`stale:${message.idempotencyKey}`);}
+    const fixed=parseFixedCommand(message.text);
+    const nativeCommand=fixed&&["run.takeover","run.return","run.history"].includes(fixed.action)?fixed:undefined;
+    const boundTask=boundRun?this.database.getCanonicalTask<JsonValue>(boundRun.taskId)?.document as unknown as Task|undefined:undefined;
+    if(binding&&(binding.state==="CLOSED"||!boundRun||boundRun.sessionId!==binding.sessionId||boundRun.generation!==binding.generation||boundTask?.currentRunId!==boundRun.id||binding.controlEpoch!==undefined&&binding.controlEpoch!==(control?.epoch??0)||message.action?.controlEpoch!==undefined&&message.action.controlEpoch!==(control?.epoch??0)||message.action?.generation!==undefined&&message.action.generation!==binding.generation||message.action?.expectedRevision!==undefined&&message.action.expectedRevision!==binding.revision))return this.replyToMessage(adapter,message,"此线程或按钮的控制权限已过期。请刷新当前 Run。",`stale:${message.idempotencyKey}`);
+    if(nativeCommand&&(!binding||!boundRun||nativeCommand.arguments.target!==boundRun.id))return this.replyToMessage(adapter,message,"请在目标 Run 的已绑定线程使用该命令。",`unbound:${message.idempotencyKey}`);
+    if(control&&control.state!=="AUTOMATED"&&!nativeCommand)return this.replyToMessage(adapter,message,"当前会话正在交接或由你手动控制。这条回复不会发送给 Agent；请使用原生入口，或明确请求交还。",`manual:${message.idempotencyKey}`);
+    if (!nativeCommand && binding?.state === "WAITING_USER" && binding.sessionId && binding.runId) {
       const expectedRevision = message.action?.expectedRevision ?? binding.revision;
       const generation = message.action?.generation ?? binding.generation;
       const run = this.database.getEntity<JsonValue>("run", binding.runId) as unknown as Run | undefined;
@@ -3715,7 +3792,7 @@ export class ControllerService {
         this.conversations.resume(bindingId, { expectedRevision, generation });
         const task = this.database.getCanonicalTask<JsonValue>(run.taskId)!;
         if ((task.document as unknown as Task).state === "WAITING_USER") this.tasks.execute({ id: `messaging-resume:${message.idempotencyKey}`, taskId: run.taskId, baseRevision: task.revision, actor: principal.principalId, command: { type: "task.transition", state: "RUNNING" } });
-        this.database.saveEntity("messaging-resume", resumeKey, json({ version: 1, runId: run.id, sessionId: run.sessionId, generation: run.generation, interventionRevision: expectedRevision, principalId: principal.principalId, connectorInstanceId: adapter.instance.id, conversationId: message.conversationId, threadId: message.threadId } satisfies MessagingResumeReceipt));
+        this.database.saveEntity("messaging-resume", resumeKey, json({ version: 1, runId: run.id, sessionId: run.sessionId, generation: run.generation, interventionRevision: expectedRevision, principalId: principal.principalId, connectorInstanceId: adapter.instance.id, conversationId: message.conversationId, threadId: message.threadId,...(control?{controlEpoch:control.epoch}:{}) } satisfies MessagingResumeReceipt));
         this.runInputs.finish(input,"ACCEPTED");
       });
       this.attentionNotifications.recover(run.taskId);
@@ -3732,16 +3809,18 @@ export class ControllerService {
       }finally{this.runInputs.release(input);}
       });
     }
-    const workflowId = `messaging:${adapter.instance.id}:${message.idempotencyKey}`;
-    const intent = await this.parseAssistantIntent(message.text);
-    let workflow = this.semanticWorkflows.get(workflowId) ?? this.semanticWorkflows.plan({
-      id: workflowId,
-      intent,
-      principal: { id: principal.principalId, roles: principal.roles, channel: "messaging" },
-      candidates: this.semanticCandidates(),
-    });
+    const intent = fixed??await this.parseAssistantIntent(message.text);
+    if(nativeCommand&&binding&&boundRun){
+      try{this.nativeWorkflowAuthority.capture({workflowId,run:boundRun,binding,principal,message});}
+      catch(error){if(!(error instanceof ConnectorError&&error.code==="CONFLICT"))throw error;return this.replyToMessage(adapter,message,"此线程的控制权限已过期。请刷新当前 Run。",`stale:${message.idempotencyKey}`);}
+    }
+    let workflow = this.semanticWorkflows.plan({id:workflowId,intent,principal:{id:principal.principalId,roles:principal.roles,channel:"messaging"},candidates:this.semanticCandidates()});
     this.database.saveEntity("messaging-workflow-origin", workflowId, json({ connectorInstanceId: adapter.instance.id, conversationId: message.conversationId, threadId: message.threadId }));
     workflow = await this.executeMessagingWorkflow(workflow);
+    return this.replyMessagingWorkflow(adapter,message,workflow);
+  }
+
+  private replyMessagingWorkflow(adapter:MessagingAdapter,message:NormalizedMessage,workflow:SemanticWorkflowRecord):Promise<{externalMessageId:string}> {
     const text = workflow.state === "EXECUTED" || workflow.state === "FAILED"
       ? this.messagingWorkflowText(workflow)
       : workflow.state === "NEEDS_APPROVAL"
