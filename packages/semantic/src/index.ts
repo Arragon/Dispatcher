@@ -290,6 +290,20 @@ export class SemanticWorkflowEngine {
 
 export function parseFixedCommand(text: string): TypedIntentV2 | undefined {
   const normalized = text.trim();
+  const native = /^(?:\/)?run\s+(takeover|return|history)(?:\s+([\s\S]*))?$/i.exec(normalized);
+  if (native) {
+    const operation = native[1]!.toLowerCase();
+    const values = native[2]?.trim().split(/\s+/) ?? [];
+    if (!values[0] || values.length > (operation === "takeover" ? 2 : 1) || values[1] !== undefined && !["wait", "interrupt"].includes(values[1])) {
+      throw new SemanticPolicyError("INVALID_INPUT", "Use run takeover <run> [wait|interrupt], run return <run>, or run history <run>");
+    }
+    return {
+      version: 2, action: `run.${operation}`,
+      entities: [{ kind: "run", value: values[0] }],
+      arguments: { target: values[0], ...(operation === "takeover" ? { settlePolicy: values[1] ?? "wait" } : {}) },
+      confidence: 1, source: "fixed-command",
+    };
+  }
   const dispatch = /^(?:\/)?task\s+dispatch(?:\s+(.*))?$/i.exec(normalized);
   if (dispatch) {
     const values = dispatch[1]?.trim().split(/\s+/) ?? [];

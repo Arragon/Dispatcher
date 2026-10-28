@@ -92,3 +92,42 @@ describe("semantic controller v2", () => {
     expect(ambiguous.state).toBe("NEEDS_CLARIFICATION");
   });
 });
+
+it("parses only exact native fixed commands and rejects extra arguments",()=>{expect(parseFixedCommand("/run takeover run interrupt")).toMatchObject({action:"run.takeover",arguments:{target:"run",settlePolicy:"interrupt"}});expect(parseFixedCommand("run return run")).toMatchObject({action:"run.return"});expect(parseFixedCommand("run history run")).toMatchObject({action:"run.history"});expect(()=>parseFixedCommand("run return run continue")).toThrow();});
+
+
+describe("native fixed command grammar", () => {
+  it.each([
+    ["/run takeover run interrupt", "run.takeover", "run", "interrupt"],
+    ["run takeover run", "run.takeover", "run", "wait"],
+    ["run takeover run wait", "run.takeover", "run", "wait"],
+    ["run return run", "run.return", "run", undefined],
+    ["run history run", "run.history", "run", undefined],
+    ["  /RuN\tTaKeOvEr  Native:opaque/SESSION#A  wait \n", "run.takeover", "Native:opaque/SESSION#A", "wait"],
+    ["/RUN RETURN Native:opaque/SESSION#A", "run.return", "Native:opaque/SESSION#A", undefined],
+    [" \tRUN HISTORY\tNative:opaque/SESSION#A\n", "run.history", "Native:opaque/SESSION#A", undefined],
+  ])("preserves the complete intent for %s", (text, action, target, settlePolicy) => {
+    expect(parseFixedCommand(text!)).toEqual({
+      version: 2,
+      action,
+      entities: [{ kind: "run", value: target }],
+      arguments: { target, ...(settlePolicy ? { settlePolicy } : {}) },
+      confidence: 1,
+      source: "fixed-command",
+    });
+  });
+
+  it.each([
+    "run takeover", "/RUN TAKEOVER \t", "run return", "/run history\n",
+    "run takeover run unknown", "run takeover run WAIT", "run takeover run INTERRUPT",
+    "run takeover run wait extra", "run takeover run interrupt extra",
+    "run return run continue", "run return run wait", "run history run extra",
+    "run return run\nextra", "run takeover run\nwait extra",
+  ])("rejects malformed native grammar: %s", (text) => {
+    expect(() => parseFixedCommand(text)).toThrowError(expect.objectContaining({ name: "SemanticPolicyError", code: "INVALID_INPUT" }));
+  });
+
+  it.each(["", "please run takeover run", "run takeoverish run", "task takeover run", "ordinary free text"]) ("leaves unrelated text unrecognized: %s", (text) => {
+    expect(parseFixedCommand(text)).toBeUndefined();
+  });
+});

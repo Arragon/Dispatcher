@@ -94,3 +94,80 @@ describe("Slack MessagingAdapter v1", () => {
     expect(url.toString()).not.toContain("xoxb");
   });
 });
+
+describe("ConversationBinding optional control epoch", () => {
+  const input = {
+    connectorInstanceId: "slack-main", conversationId: "C1", threadId: "T1",
+    taskId: "task-1", runId: "run-1", sessionId: "exact-native-session",
+    generation: 3, state: "WAITING_USER" as const,
+  };
+  type BindInput = Parameters<ConversationBindingService["bind"]>[0] & { controlEpoch?: number };
+
+  it("leaves genuinely legacy bindings without an epoch and accepts a first epoch of zero", () => {
+    const store = new MemoryMessagingStateStore();
+    const conversations = new ConversationBindingService(store);
+    const legacy = conversations.bind(input, fixedNow.toISOString());
+    expect(legacy).toEqual({ ...input, id: "slack-main:C1:T1", revision: 1, updatedAt: fixedNow.toISOString() });
+    expect(legacy).not.toHaveProperty("controlEpoch");
+    expect(conversations.bind(input, fixedNow.toISOString())).toEqual(legacy);
+    const zero = conversations.bind({ ...input, threadId: "T0", controlEpoch: 0 } as BindInput, fixedNow.toISOString());
+    expect(zero).toEqual({ ...input, threadId: "T0", controlEpoch: 0, id: "slack-main:C1:T0", revision: 1, updatedAt: fixedNow.toISOString() });
+    expect(store.getConversation(zero.id)).toEqual(zero);
+  });
+
+  it("increments revision once per effective epoch change and fences stale resumes", () => {
+    const store = new MemoryMessagingStateStore();
+    const conversations = new ConversationBindingService(store);
+    const legacy = conversations.bind(input, fixedNow.toISOString());
+    const known = conversations.bind({ ...input, controlEpoch: 1 } as BindInput, "2026-09-22T12:00:01.000Z");
+    expect(known).toEqual({ ...input, controlEpoch: 1, id: legacy.id, revision: 2, updatedAt: "2026-09-22T12:00:01.000Z" });
+    expect(conversations.bind({ ...input, controlEpoch: 1 } as BindInput, known.updatedAt)).toEqual(known);
+    const omitted = conversations.bind({ ...input, state: "ACTIVE" }, "2026-09-22T12:00:02.000Z");
+    expect(omitted).toEqual({ ...known, state: "ACTIVE", updatedAt: "2026-09-22T12:00:02.000Z" });
+    const advanced = conversations.bind({ ...input, controlEpoch: 2 } as BindInput, "2026-09-22T12:00:03.000Z");
+    expect(advanced).toEqual({ ...known, controlEpoch: 2, revision: 3, updatedAt: "2026-09-22T12:00:03.000Z" });
+    expect(() => conversations.resume(advanced.id, { expectedRevision: known.revision, generation: input.generation })).toThrowError(expect.objectContaining({ code: "CONFLICT" }));
+    expect(store.getConversation(advanced.id)).toEqual(advanced);
+    const resumed = conversations.resume(advanced.id, { expectedRevision: advanced.revision, generation: input.generation }, "2026-09-22T12:00:04.000Z");
+    expect(resumed).toEqual({ ...advanced, state: "ACTIVE", revision: 4, updatedAt: "2026-09-22T12:00:04.000Z" });
+    expect(() => conversations.resume(advanced.id, { expectedRevision: resumed.revision, generation: input.generation })).toThrowError(expect.objectContaining({ code: "CONFLICT" }));
+    expect(store.getConversation(advanced.id)).toEqual(resumed);
+  });
+
+  it.each([-1, 0.5, NaN, Infinity, -Infinity, Number.MAX_SAFE_INTEGER + 1, "1", null, true, {}])("rejects invalid epoch %s before writing a new or existing binding", (invalid) => {
+    const store = new MemoryMessagingStateStore();
+    const conversations = new ConversationBindingService(store);
+    const current = conversations.bind({ ...input, controlEpoch: 1 } as BindInput, fixedNow.toISOString());
+    const save = vi.spyOn(store, "saveConversation");
+    for (const threadId of [input.threadId, "new-thread"]) {
+      const id = `${input.connectorInstanceId}:${input.conversationId}:${threadId}`;
+      const before = store.getConversation(id);
+      expect(() => conversations.bind({ ...input, threadId, controlEpoch: invalid as unknown as number } as BindInput)).toThrowError(expect.objectContaining({ name: "ConnectorError", code: "CONFLICT" }));
+      expect(store.getConversation(id)).toEqual(before);
+    }
+    expect(store.getConversation(current.id)).toEqual(current);
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it("rejects epoch regression without mutating any stored binding field", () => {
+    const store = new MemoryMessagingStateStore();
+    const conversations = new ConversationBindingService(store);
+    const current = conversations.bind({ ...input, controlEpoch: 1 } as BindInput, fixedNow.toISOString());
+    const save = vi.spyOn(store, "saveConversation");
+    expect(() => conversations.bind({ ...input, sessionId: "must-not-replace", state: "ACTIVE", controlEpoch: 0 } as BindInput)).toThrowError(expect.objectContaining({ code: "CONFLICT" }));
+    expect(store.getConversation(current.id)).toEqual(current);
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { taskId: "other-task" }, { runId: "other-run" }, { generation: 4 },
+  ])("preserves intervention conflict checks for %s", (changed) => {
+    const store = new MemoryMessagingStateStore();
+    const conversations = new ConversationBindingService(store);
+    const current = conversations.bind({ ...input, controlEpoch: 1 } as BindInput, fixedNow.toISOString());
+    const save = vi.spyOn(store, "saveConversation");
+    expect(() => conversations.bind({ ...input, ...changed, controlEpoch: 2 } as BindInput)).toThrowError(expect.objectContaining({ code: "CONFLICT" }));
+    expect(store.getConversation(current.id)).toEqual(current);
+    expect(save).not.toHaveBeenCalled();
+  });
+});

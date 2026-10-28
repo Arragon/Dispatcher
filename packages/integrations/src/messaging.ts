@@ -62,6 +62,7 @@ export interface ConversationBinding {
   runId?: string;
   sessionId?: string;
   generation: number;
+  controlEpoch?: number;
   revision: number;
   state: "ACTIVE" | "WAITING_USER" | "CLOSED";
   updatedAt: string;
@@ -358,10 +359,18 @@ export class ConversationBindingService {
   bind(input: Omit<ConversationBinding, "id" | "revision" | "updatedAt">, now = new Date().toISOString()): ConversationBinding {
     const id = `${input.connectorInstanceId}:${input.conversationId}:${input.threadId}`;
     const existing = this.store.getConversation(id);
+    if (input.controlEpoch !== undefined && (!Number.isSafeInteger(input.controlEpoch) || input.controlEpoch < 0 || existing?.controlEpoch !== undefined && input.controlEpoch < existing.controlEpoch)) {
+      throw new ConnectorError("CONFLICT", "Conversation control epoch is stale", { retryable: false, operation: "write" });
+    }
     if (existing && (existing.taskId !== input.taskId || existing.runId !== input.runId || existing.generation !== input.generation)) {
       throw new ConnectorError("CONFLICT", "Conversation thread is already bound to another intervention", { retryable: false, operation: "write" });
     }
-    const binding: ConversationBinding = { ...structuredClone(input), id, revision: existing?.revision ?? 1, updatedAt: now };
+    const controlEpoch = input.controlEpoch ?? existing?.controlEpoch;
+    const binding: ConversationBinding = {
+      ...structuredClone(input), ...(controlEpoch !== undefined ? { controlEpoch } : {}), id,
+      revision: existing ? existing.revision + (controlEpoch !== existing.controlEpoch ? 1 : 0) : 1,
+      updatedAt: now,
+    };
     this.store.saveConversation(binding);
     return structuredClone(binding);
   }
