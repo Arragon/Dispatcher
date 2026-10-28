@@ -1834,6 +1834,16 @@ readable; missing/newly changed proof cannot authorize acceptance. Historical
 accepted receipts keep their original meaning. Automatic Run verification and
 HUMAN snapshot preparation remain separate lifecycle contracts.
 
+Repository snapshotVerification optionally names ordered registered preparation
+commands through ConfigPlan. Dispatch freezes that profile or explicit absence
+beside frozen command definitions; replacement copies the original record or
+legacy absence. Canonical review rebuilds ignored preparation output only inside
+the snapshot, checks source/context/snapshot authority before and after each
+command, and blocks on every preparation failure. Completed configured receipts
+must carry matching profile/definition/ordered successful preparation evidence.
+Missing legacy authorization never adopts a new current profile. This contract
+does not clear native invalidation or authorize active HUMAN delivery.
+
 
 ## Internal Devin Local ACP execution
 

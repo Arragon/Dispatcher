@@ -1320,3 +1320,13 @@
   snapshot alone does not prove checks executed inside it. Private execution
   provenance must qualify a completed proof; old unknown sends remain barriers
   and old accepted facts remain historical facts without silently upgrading them.
+
+- Freeze preparation profile absence explicitly at dispatch as well as command
+  definitions. Copy the original record or legacy absence at replacement; current
+  configuration must not grant an old Run new preparation authority. Every
+  preparation result blocks on failure even when its registration is optional.
+  Rebuild ignored output in the snapshot and qualify completed receipts with the
+  exact ordered definitions/results, separately from active HUMAN invalidation.
+- JSON Schema string maxLength counts Unicode code points. A private validator
+  for the same persisted contract must use equivalent length semantics rather
+  than UTF-16 string.length; keep a real ConfigPlan-to-consumer boundary regression.
