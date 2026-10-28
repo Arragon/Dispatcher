@@ -5988,3 +5988,68 @@ race after final check and before spawn is explicitly unsolved. Other48purposes,
 allCV12/G5, unavailable historical captures/current-candidate UI proof, RHIZA and
 real native/provider/model/GUI/writer/physical-stop/service/release Gates remain
 open. This new verification does not reconstruct the missing Oct26 gate or UI raws.
+
+
+## CV-11 NS035 fixed-command/epoch primitive local acceptance (2026-10-28)
+
+Codef72c3a36d91b7952e71214eaa329d89f59cb4506, parentb975c9c, is locally
+accepted for exactly2primitive purposes. Four existing semantic/integrations
+product/test paths add exact run takeover/return/history intents and optional
+nonnegative safe-integer ConversationBinding.controlEpoch. Takeover defaults to
+wait; invalid native arity/policy/multiline surplus refuses deterministically.
+Literal targets remain unchanged; parser output grants no execution authority.
+Omitted epoch preserves a known value; legacy stays undefined. Effective epoch
+advance increments revision once, same/omitted epoch does not, regression/invalid
+input refuses before save. Existing bind conflicts/resume and all9current semantic/
+5original Slack declarations plus whole old test prefixes remain byte-exact.
+No Controller/Runner/control qualification/schema11/writer7/lock/auth change.
+
+Source dedicated Slack suite was fully read and AST-mapped31declarations/53expanded
+purposes, not merely20ordinary names. This task preserves only parser/epoch2;
+remaining39routing-notice and12native-workflow/deferred-notice purposes remain open.
+Original parser declaration is copied exact; epoch source purpose uses current
+MemoryMessagingStateStore regressions. New TDD parser21fail/14controls then23fail/
+14controls after multiline cases; epoch12fail/9controls. GREEN2files58/build/
+4pathESLint pass, then ONE default mise exec -- pnpm check passes217files4714 and
+allnon-test checks. UTC20:03:11.611519→20:07:30.412809,wall258.804763s;
+outputSHA05be6d9d5fbd6df542c90f984532f1f6d00746ec5b32a856b6cc48d165845421.
+
+During frozen gate, root found16actual composite tsconfig.tsbuildinfo inputs
+outside the v1 source/dist/node_modules-cache enumeration. Their earlier preimages
+were not captured and remain unavailable. Gate output actually passed; its freeze
+claim covers only enumerated inputs. Root kept it running untouched and recorded
+a prior ruling for ONE accurately captured current mise exec -- pnpm typecheck,
+including normal build. It passes20:10:12.188347→20:10:17.469022,wall5.280599875s,
+outputSHA8d475a3bc7e4b8ab097f0dd9ec2abae89d3227827689842b790e2b64f0dcd8d8.
+All16current compiler-state before/after bytes/stat are retained and unchanged;
+53dist metadata rewrites have zero content changes. No default/test retry,
+cacheclear/override, forceflag or worker/deadline weakening. Fresh qualification
+resolves current compiler proof; it cannot retroactively repair absent preimages.
+
+Durable E=/Users/wangdongxin/.codex/dispatcher-evidence/
+01a16430-9b3c-7eb2-876c-a3779ba39939/2026-10-28-slack-native-primitives.
+Full report21472B/SHAfdd0148c2a0de6cf46f6a9338c8936e01421a793f66240b588e459fe4537bd00
+preserves12827/16319/18290prefixes. Full independent review SpecCompliant under
+root ruling/QualityApproved0C0I1M, report11454B/SHA
+0ed94fc2be1d084fe30051c9582668c0b37d0eedc0cb9b4c47a82b64940427a0.
+Root read complete report/review. Minor expected negative-fixture warning/error
+noise and inferred local Git identity remain CV14, no global suppression.
+
+Root sibling2026-10-28-root-audits/slack-primitives-root-audit-v1.json independently
+verifies11phases/12364source746external15598dist22cache301884dependency identity
+rows,32current compiler-state rows,176Git/runtime files,558protected trackedpaths,
+exact4tested/index/committed/current payloads and report prefixes. Separate
+slack-primitives-artifact-audit-v1.json authenticates15immutable Git prep rows,
+18raw Git operations/index+commit logs,7actual binding sequence/11rejection/
+15parser observations. All503eight columns unchanged before acceptance; primary
+19db456three dirty bytes/status exact. Acceptance appends only3existing verification
+cells (semantic2/integrations source1), retaining originalCV12/CV13owners and all7
+identity/source/decision columns. Slack test is not a source503row; none is added.
+
+Reviewer root-provenance/primary503 CannotVerify is resolved at this current bounded
+scope; historical compiler preimages remain a disclosed CV14 limit. Runtime binary
+copies remain excluded with hash/stat identities, and ordinary full-suite outputs
+are not complete other-fixture/native-stream captures. No real Slack/provider/
+account/nativeGUI/physical-stop/service/release/RHIZA Gate is inferred. Continue
+39purpose bounded routing/control notices, then12purpose native workflow composition;
+allCV11/NS035 and whole-branch/release acceptance remain open.

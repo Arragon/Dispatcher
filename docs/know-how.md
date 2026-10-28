@@ -1285,3 +1285,13 @@
   A/B bare repositories and a routing SSH fixture; a one-endpoint stub cannot prove
   absence of a write to a second endpoint. Preserve completed commits on postcommit
   refusal rather than pretending the earlier physical effect disappeared.
+
+- Conversation control epochs are optional for legacy bindings. An omitted epoch
+  must preserve an existing known value; adopting or advancing an epoch changes
+  revision once, replaying the same epoch does not. Reject noninteger/unsafe/
+  negative/regressing input before the store write, and retain the exact session
+  when an epoch advance invalidates an older WAITING_USER revision.
+- Composite TypeScript projects write tsconfig.tsbuildinfo beside tsconfig.json,
+  outside dist and node_modules caches. Include those actual incremental inputs in
+  pre/post raw capture. A later qualified typecheck can prove current state but
+  cannot recover compiler preimages omitted from earlier checks.
