@@ -3124,6 +3124,7 @@ export class ControllerService {
             this.database.saveEntity("run-contract",run.id,json(runContract));
             if(reviewedDelivery)this.database.saveEntity("run-delivery-selection",run.id,json(reviewedDelivery));
             this.database.saveEntity("run-verification-config",run.id,json(repositoryConfig.verificationCommands));
+            this.database.saveEntity("run-snapshot-verification-config",run.id,json({version:1,profile:structuredClone(repositoryConfig.snapshotVerification??null)}));
             this.database.saveEntity("run", run.id, json(run));
             if(publication)this.publications.markStarting(publication.owner,publication.preview.publicationId,run);
             const bound = this.tasks.execute({ id: `dispatch:${run.id}:bound`, taskId, baseRevision: current.revision, actor: "scheduler", command: { type: "task.set-current-run", runId: run.id } });
@@ -3210,6 +3211,7 @@ export class ControllerService {
     const workspace = run?.worktree ? this.workspaces.get(run.worktree) : undefined;
     const contract = this.database.getEntity<JsonValue>("run-contract", runId) as unknown as TaskContract | undefined;
     const verification = this.database.getEntity<JsonValue>("run-verification-config", runId) as unknown as RepositoryConfig["verificationCommands"] | undefined;
+    const snapshotVerification = this.database.getEntity<JsonValue>("run-snapshot-verification-config", runId);
     const delivery = this.database.getEntity<JsonValue>("run-delivery-selection", runId) as unknown as ScmDeliverySelection | undefined;
     const repository = workspace ? snapshot.config.repositories.find(entry => entry.id === workspace.repositoryId) : undefined;
     if (!run || !["ACTIVE", "WAITING_USER", "RESOURCE_BLOCKED", "SUSPECTED_STALL"].includes(run.state) || run.executionSelection&&run.executionSelection.mode!=="legacy" || !profile || !adapter || !previousAdapter || !workspace || workspace.runId !== run.id || workspace.taskId !== run.taskId || !contract || !Array.isArray(verification) || !repository) throw new SemanticPolicyError("INVALID_INPUT", "Legacy reroute requires a current Run with frozen context and an owned worktree; otherwise review a new publication");
@@ -3262,6 +3264,7 @@ export class ControllerService {
             this.database.saveEntity("run", replacement.id, json(replacement));
             this.database.saveEntity("run-contract", replacement.id, json(contract));
             this.database.saveEntity("run-verification-config", replacement.id, json(verification));
+            if (snapshotVerification !== undefined) this.database.saveEntity("run-snapshot-verification-config", replacement.id, json(snapshotVerification));
             if (delivery) this.database.saveEntity("run-delivery-selection", replacement.id, json(delivery));
             this.database.saveEntity("workspace-handle", replacement.id, json(handle));
             this.database.saveEntity("workspace-transfer", run.id, json({ previousRunId: run.id, runId: replacement.id, taskId: run.taskId, path: workspace.path, transferredAt: this.now().toISOString() }));

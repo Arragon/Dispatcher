@@ -1,5 +1,5 @@
 import {isDeepStrictEqual} from "node:util";
-import type {ConfigurationEngine} from "@dispatcher/config";
+import type {ConfigurationEngine,RepositoryConfig} from "@dispatcher/config";
 import type {Run,Task,TaskContract,LocalReviewAuthority,LocalVerificationRequest,LocalAcceptanceRequest,LocalAcceptance,LocalResultReview} from "@dispatcher/domain";
 import type {CanonicalTaskService} from "@dispatcher/integrations";
 import {InteractionStore,type DispatcherDatabase,type JsonValue} from "@dispatcher/persistence";
@@ -10,13 +10,28 @@ import {isGuardedControllerStart} from "./start-recovery.js";
 import {contentHash,PublicationError} from "./task-publications.js";
 
 interface ReviewContext extends LocalReviewAuthority {runId:string;taskId:string;sessionId:string;configRevision:number;contractHash:string;profileHash:string;repositoryHash:string;selectionHash:string}
-interface ReviewState {run:Run;task:Task;context:ReviewContext;commands:VerificationCommand[];repositoryId:string;repositoryScopePaths:string[];scopePaths:string[]}
-interface VerificationReceipt {format:"canonical-local-verification-v1";id:string;actor:string;request:LocalVerificationRequest;context:ReviewContext;state:"SENDING"|"COMPLETED"|"FAILED"|"UNKNOWN";reasonCode?:string;proof?:{executionBasis?:"isolated-snapshot-v1";snapshot:DeliveryCandidate;verifiedAt:string;commandIds:string[];checks:VerificationResult[]}}
+interface ReviewState {run:Run;task:Task;context:ReviewContext;commands:VerificationCommand[];preparation?:{profileHash:string;commands:VerificationCommand[]};repositoryId:string;repositoryScopePaths:string[];scopePaths:string[]}
+interface VerificationReceipt {format:"canonical-local-verification-v1";id:string;actor:string;request:LocalVerificationRequest;context:ReviewContext;state:"SENDING"|"COMPLETED"|"FAILED"|"UNKNOWN";reasonCode?:string;preparation?:{profileHash:string;commands:VerificationCommand[];checks:VerificationResult[]};proof?:{executionBasis?:"isolated-snapshot-v1";snapshot:DeliveryCandidate;verifiedAt:string;commandIds:string[];checks:VerificationResult[]}}
 const json=(value:unknown)=>JSON.parse(JSON.stringify(value)) as JsonValue;
 const key=(run:Run)=>`${run.id}:g${run.generation}`;
 function fail(code:string,message=code):never {throw new PublicationError(code,409,message);}
 const text=(v:unknown):v is string=>typeof v==="string"&&v.length>0&&v.length<=200&&!Array.from(v).some(c=>c.charCodeAt(0)<32||c.charCodeAt(0)===127);
 const stableContext=(context:ReviewContext)=>{const value={...context};delete (value as Partial<ReviewContext>).taskRevision;delete (value as Partial<ReviewContext>).configRevision;return value;};
+function frozenPreparationProfile(marker:unknown):RepositoryConfig["snapshotVerification"]|null {
+ if(!marker||typeof marker!=="object"||Object.keys(marker).sort().join(",")!=="profile,version"||(marker as {version?:unknown}).version!==1)fail("VERIFICATION_ENVIRONMENT_UNAVAILABLE");
+ const profile=(marker as {profile:unknown}).profile;if(profile===null)return null;
+ if(!profile||typeof profile!=="object"||Object.keys(profile).sort().join(",")!=="id,preparationCommandIds,version")fail("VERIFICATION_ENVIRONMENT_UNAVAILABLE");
+ const value=profile as RepositoryConfig["snapshotVerification"];
+ if(!value||value.version!==1||typeof value.id!=="string"||!value.id.length||Array.from(value.id).length>100||!Array.isArray(value.preparationCommandIds)||value.preparationCommandIds.some(id=>typeof id!=="string"||!id.length)||new Set(value.preparationCommandIds).size!==value.preparationCommandIds.length)fail("VERIFICATION_ENVIRONMENT_UNAVAILABLE");
+ return value;
+}
+function preparationQualifies(state:ReviewState,receipt:VerificationReceipt):boolean {
+ if(!state.preparation)return true;
+ const evidence=receipt.preparation,{commands,profileHash}=state.preparation;
+ if(!evidence||evidence.profileHash!==profileHash||!isDeepStrictEqual(evidence.commands,commands)||!Array.isArray(evidence.checks)||evidence.checks.length!==commands.length||!Array.isArray(receipt.proof?.checks))return false;
+ const orderedResults=evidence.checks.every((check,index)=>check&&check.commandId===commands[index]!.id&&check.required===commands[index]!.required&&check.status==="passed"&&check.exitCode===0);
+ return orderedResults&&isDeepStrictEqual(receipt.proof.checks.slice(0,commands.length),evidence.checks)&&isDeepStrictEqual(receipt.proof.commandIds,[...commands,...state.commands].map(command=>command.id));
+}
 
 /** Canonical Task approval only. A retired Run lease is compared as identity, never renewed or used for native input. */
 export class CanonicalLocalResults {
@@ -39,8 +54,14 @@ export class CanonicalLocalResults {
   if(!contract||contract.delivery.type!=="none"||contract.revision!==run.contractRevision||contentHash(contract)!==contentHash(currentContract)||!Array.isArray(frozen)||!contract.verification.length)fail("LOCAL_RESULT_UNAVAILABLE");
   const snapshot=this.configuration.current(),repositoryId=contract.workspace?.repositoryId??contract.delivery.repository,repository=snapshot.config.repositories.find(r=>r.id===repositoryId),profile=snapshot.config.agentProfiles.find(p=>p.id===run.profileId);
   if(!repository||!profile||profile.runnerId!==run.runnerId)fail("LOCAL_REVIEW_CONTEXT_CHANGED");
-  const commands=contract.verification.map(id=>frozen.find(c=>c.id===id));if(commands.some(c=>!c)||frozen.some(c=>c.required&&!contract.verification.includes(c.id))||!commands.some(c=>c?.required))fail("VERIFICATION_NOT_REGISTERED");
-  return {run,task:document,commands:structuredClone(commands as VerificationCommand[]),repositoryId:repository.id,repositoryScopePaths:[...repository.scopePaths],scopePaths:[...contract.scope],context:{runId:run.id,taskId:run.taskId,sessionId:run.sessionId,taskRevision:task.revision,generation:run.generation,leaseId:run.leaseId,controlEpoch:control.epoch,controlRevision:control.revision,configRevision:snapshot.revision,contractHash:contentHash(contract),selectionHash:contentHash(run.executionSelection),profileHash:contentHash(profile),repositoryHash:contentHash({repository,commands})}};
+  const marker=this.db.getEntity<JsonValue>("run-snapshot-verification-config",run.id),preparationProfile=marker===undefined?null:frozenPreparationProfile(marker);
+  if(repository.snapshotVerification&&!preparationProfile)fail("VERIFICATION_ENVIRONMENT_UNAVAILABLE");
+  if(!isDeepStrictEqual(preparationProfile,repository.snapshotVerification??null))fail("LOCAL_REVIEW_CONTEXT_CHANGED");
+  const preparationCommands=preparationProfile?.preparationCommandIds.map(id=>frozen.find(command=>command.id===id))??[];
+  if(preparationCommands.some(command=>!command)||preparationCommands.some(command=>!isDeepStrictEqual(command,repository.verificationCommands.find(current=>current.id===command!.id))))fail("LOCAL_REVIEW_CONTEXT_CHANGED");
+  const selected=contract.verification.map(id=>frozen.find(c=>c.id===id)),preparationIds=new Set(preparationProfile?.preparationCommandIds),commands=selected.filter(command=>command&&!preparationIds.has(command.id));
+  if(selected.some(c=>!c)||frozen.some(c=>c.required&&!contract.verification.includes(c.id))||!commands.some(c=>c?.required))fail("VERIFICATION_NOT_REGISTERED");
+  return {run,task:document,commands:structuredClone(commands as VerificationCommand[]),...(preparationProfile?{preparation:{profileHash:contentHash(preparationProfile),commands:structuredClone(preparationCommands as VerificationCommand[])}}:{}),repositoryId:repository.id,repositoryScopePaths:[...repository.scopePaths],scopePaths:[...contract.scope],context:{runId:run.id,taskId:run.taskId,sessionId:run.sessionId,taskRevision:task.revision,generation:run.generation,leaseId:run.leaseId,controlEpoch:control.epoch,controlRevision:control.revision,configRevision:snapshot.revision,contractHash:contentHash(contract),selectionHash:contentHash(run.executionSelection),profileHash:contentHash(profile),repositoryHash:contentHash({repository,commands})}};
  }
  private assertContext(context:ReviewContext):void {if(this.closed||!isDeepStrictEqual(this.context(context.runId).context,context))fail("LOCAL_REVIEW_CONTEXT_CHANGED");}
  private authority(context:ReviewContext):LocalReviewAuthority {return {taskRevision:context.taskRevision,generation:context.generation,leaseId:context.leaseId,controlEpoch:context.controlEpoch,controlRevision:context.controlRevision};}
@@ -64,6 +85,7 @@ export class CanonicalLocalResults {
    if(receipt.state==="SENDING"||receipt.state==="UNKNOWN"){base.state=this.active.has(runId)?"running":"unknown";base.reasonCode="VERIFICATION_OUTCOME_UNKNOWN";return base;}
    if(receipt.state!=="COMPLETED"||!receipt.proof){base.state="failed";base.reasonCode=receipt.reasonCode??"REQUIRED_VERIFICATION_FAILED";return base;}
    if(receipt.proof.executionBasis!=="isolated-snapshot-v1"){base.state="unverified";base.reasonCode="ISOLATED_VERIFICATION_REQUIRED";return base;}
+   if(!preparationQualifies(state,receipt)){base.state="unverified";base.reasonCode="SNAPSHOT_PREPARATION_REQUIRED";return base;}
    base.verification={id:receipt.id,verifiedAt:receipt.proof.verifiedAt,commandIds:receipt.proof.commandIds,basis:"matching-managed-source",snapshotCommit:receipt.proof.snapshot.commit};
    if(!isDeepStrictEqual(stableContext(receipt.context),stableContext(state.context))||receipt.proof.snapshot.candidate.id!==candidate.id){base.state="changed";base.reasonCode="CANDIDATE_CHANGED";return base;}
    await this.assertSnapshot(receipt.proof.snapshot,state.context);base.state="verified";return base;
@@ -84,11 +106,18 @@ export class CanonicalLocalResults {
   let executing=false;
   try{const candidate=await this.candidate(state);if(candidate.id!==receipt.request.candidateId)fail("CANDIDATE_CHANGED");
    const snapshot=await this.snapshots.createDeliveryCandidate({repositoryId:state.repositoryId,worktree:state.run.worktree!,branch:state.run.branch!,scopePaths:state.scopePaths,repositoryScopePaths:state.repositoryScopePaths},()=>this.assertContext(state.context));if(snapshot.candidate.id!==candidate.id)fail("CANDIDATE_CHANGED");
-   const registry=new VerificationRegistry();for(const command of state.commands)registry.register(command);const checks:VerificationResult[]=[];
-   for(const command of state.commands){this.assertContext(state.context);if(signal.aborted)fail("LOCAL_VERIFICATION_CANCELLED");executing=true;const result=await registry.run(command.id,snapshot.path,signal);executing=false;this.assertContext(state.context);checks.push({...result,output:redactNativeText(String(redactValue(result.output)))});if(signal.aborted)fail("LOCAL_VERIFICATION_CANCELLED");}
+   const preparation=state.preparation?.commands??[],commands=[...preparation,...state.commands],registry=new VerificationRegistry();for(const command of commands)registry.register(command);const checks:VerificationResult[]=[];
+   if(state.preparation)receipt.preparation={...structuredClone(state.preparation),checks:[]};
+   for(const [index,command] of commands.entries()){
+    await this.assertSnapshot(snapshot,state.context);if(signal.aborted)fail("LOCAL_VERIFICATION_CANCELLED");
+    executing=true;const result=await registry.run(command.id,snapshot.path,signal);executing=false;
+    const check={...result,output:redactNativeText(String(redactValue(result.output)))};checks.push(check);if(index<preparation.length)receipt.preparation!.checks.push(check);
+    await this.assertSnapshot(snapshot,state.context);if(signal.aborted)fail("LOCAL_VERIFICATION_CANCELLED");
+    if(index<preparation.length&&(result.status!=="passed"||result.exitCode!==0))fail("SNAPSHOT_PREPARATION_FAILED");
+   }
    await this.assertSnapshot(snapshot,state.context);
    if(checks.some(c=>c.required&&c.status!=="passed")){receipt.state="FAILED";receipt.reasonCode="REQUIRED_VERIFICATION_FAILED";}
-   else {receipt.state="COMPLETED";receipt.proof={executionBasis:"isolated-snapshot-v1",snapshot,verifiedAt:this.now().toISOString(),commandIds:state.commands.map(c=>c.id),checks};}
+   else {receipt.state="COMPLETED";receipt.proof={executionBasis:"isolated-snapshot-v1",snapshot,verifiedAt:this.now().toISOString(),commandIds:commands.map(c=>c.id),checks};}
    this.db.transaction(()=>{this.assertContext(state.context);this.db.saveEntity("local-review-verification",receipt.id,json(receipt));});
   }catch(error){receipt.state=executing?"UNKNOWN":"FAILED";if(executing)this.cleanupUnknown=true;receipt.reasonCode=executing?"VERIFICATION_OUTCOME_UNKNOWN":error instanceof PublicationError?error.code:"LOCAL_VERIFICATION_FAILED";this.db.saveEntity("local-review-verification",receipt.id,json(receipt));}
   return this.read(state.run.id);
@@ -98,7 +127,7 @@ export class CanonicalLocalResults {
   const receiptId=contentHash(["local-acceptance",runId,actor,body.idempotencyKey]),previous=this.db.getEntity<JsonValue>("local-review-receipt",receiptId) as unknown as {request:LocalAcceptanceRequest;acceptance:LocalAcceptance;revision:number}|undefined;
   if(previous){if(!isDeepStrictEqual(previous.request,json(body)))fail("IDEMPOTENCY_CONFLICT");return {acceptance:previous.acceptance,revision:previous.revision,repeated:true};}
   const state=this.context(runId);if(state.task.state!=="REVIEW")fail("TASK_REVIEW_REQUIRED");this.request(state,body,actor);const receipt=this.current(runId);
-  if(!receipt||receipt.state!=="COMPLETED"||!receipt.proof||receipt.proof.executionBasis!=="isolated-snapshot-v1"||receipt.id!==body.verificationId)fail("VERIFIED_CANDIDATE_REQUIRED");
+  if(!receipt||receipt.state!=="COMPLETED"||!receipt.proof||receipt.proof.executionBasis!=="isolated-snapshot-v1"||!preparationQualifies(state,receipt)||receipt.id!==body.verificationId)fail("VERIFIED_CANDIDATE_REQUIRED");
   if(receipt.proof.snapshot.candidate.id!==body.candidateId||!isDeepStrictEqual(stableContext(receipt.context),stableContext(state.context)))fail("CANDIDATE_CHANGED");
   const candidate=await this.candidate(state);if(candidate.id!==body.candidateId)fail("CANDIDATE_CHANGED");await this.assertSnapshot(receipt.proof.snapshot,state.context);
   return this.db.transaction(()=>{const prior=this.db.getEntity<JsonValue>("local-review-receipt",receiptId) as unknown as {request:LocalAcceptanceRequest;acceptance:LocalAcceptance;revision:number}|undefined;if(prior){if(!isDeepStrictEqual(prior.request,json(body)))fail("IDEMPOTENCY_CONFLICT");return {acceptance:prior.acceptance,revision:prior.revision,repeated:true};}

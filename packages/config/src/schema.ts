@@ -46,6 +46,7 @@ export interface RepositoryConfig {
   remote?: string;
   defaultBaseRef: string;
   scopePaths: string[];
+  snapshotVerification?: {version:1;id:string;preparationCommandIds:string[]};
   verificationCommands: Array<{
     id: string;
     file: string;
@@ -206,6 +207,7 @@ export const dispatcherConfigSchema = {
           remote: { type: "string", minLength: 1 },
           defaultBaseRef: { type: "string", minLength: 1 },
           scopePaths: { type: "array", uniqueItems: true, items: { type: "string", minLength: 1 } },
+          snapshotVerification: {type:"object",additionalProperties:false,required:["version","id","preparationCommandIds"],properties:{version:{const:1},id:{type:"string",minLength:1,maxLength:100},preparationCommandIds:{type:"array",uniqueItems:true,items:{type:"string",minLength:1}}}},
           verificationCommands: {
             type: "array",
             items: {
@@ -548,6 +550,7 @@ export function validateConfig(input: unknown): DispatcherConfig {
     }
     const commandIds = new Set(repository.verificationCommands.map((command) => command.id));
     if (commandIds.size !== repository.verificationCommands.length) throw new ConfigValidationError([`/repositories/${repository.id}/verificationCommands contains duplicate id`]);
+    if (repository.snapshotVerification?.preparationCommandIds.some(id => !commandIds.has(id))) throw new ConfigValidationError([`/repositories/${repository.id}/snapshotVerification references an unregistered command`]);
   }
   if(config.policies.modelRouting){
     const routing=config.policies.modelRouting;
