@@ -474,6 +474,14 @@
 - Slack approval buttons identify a semantic workflow plus its expected
   revision. Recheck the durable principal, roles, and revision before execute;
   stale or cross-principal buttons fail closed.
+- A tool's post-await history guard does not cover later registry/workflow
+  promise continuations. Reauthorize messaging history success in the same
+  synchronous transaction as its durable save, and again before disclosure or
+  replay. Keep FAILED persistence available when that success guard rejects.
+- Ordinary automated intervention bindings may omit their optional control
+  epoch. Preserve that legacy continuation contract while native workflow
+  capture requires the exact current epoch. Workflow approval revision is
+  distinct from conversation revision; neither substitutes for the other.
 
 ## Tooling details
 

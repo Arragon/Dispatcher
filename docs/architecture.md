@@ -1060,6 +1060,17 @@ one transaction and preserve a newer WAITING_USER binding. NativeInteractions
 retains sole native command/control ownership; notification delivery grants no
 handoff, reclaim or input authority.
 
+`native-workflow-authority.ts` captures the original messaging workflow scope
+in a private version2 authority record. Approval executes against that captured
+Task, Run, lease, binding, control and linked principal scope; it never adopts
+a newer fence. Native takeover/return tools call the existing NativeInteractions
+request owners, and native history uses NativeHistoryService with the expected
+Run. History reauthorizes after await, before replay/disclosure, and inside the
+Controller workflow store's success-save transaction. The semantic engine still
+owns FAILED persistence. Accepted control request retries replay metadata
+without another native request; free replies outside AUTOMATED do not enter
+LLM or provider input paths.
+
 ## Change rules
 
 - Add a state only by changing its domain contract and transition tests.
