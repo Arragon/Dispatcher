@@ -1,6 +1,6 @@
 import {constants} from "node:fs";
 import {childExecutionEnvironment} from "@dispatcher/shared";
-import {gitInspectionEnvironment,readWorkspaceStatus} from "./git-inspection.js";
+import {gitInspectionEnvironment,gitUrlRewriteConfigured,readWorkspaceStatus} from "./git-inspection.js";
 import {createHash} from "node:crypto";
 import {isGitDeliveryTarget,type GitDeliveryTarget} from "@dispatcher/domain";
 import { execFile, type ExecFileOptions } from "node:child_process";
@@ -154,7 +154,13 @@ export class WorkspaceManager {
   private async deliveryRemote(cwd:string):Promise<{target:GitDeliveryTarget;url:string}>{
     const invalid=():never=>{throw new WorkspacePolicyError("INVALID_DELIVERY_REMOTE","Delivery requires one matching credential-free HTTPS or Git SSH origin fetch/push target");};
     let urls:string[];
-    try{const signal=AbortSignal.timeout(8000);urls=await Promise.all([["remote","get-url","--all","origin"],["remote","get-url","--push","--all","origin"]].map(async args=>{const value=(await execute("git",args,{cwd,signal,timeout:8000,maxBuffer:8192})).stdout.trim();if(!value||value.includes("\n"))return invalid();return value;}));}catch{return invalid();}
+    try{
+      const options={cwd,signal:AbortSignal.timeout(8000),timeout:8000,maxBuffer:8192};
+      // Query the same inherited configuration as the owned push, not the isolated inspection environment.
+      let mappings="";try{mappings=(await execute("git",["config","--name-only","--null","--get-regexp","^url\\."],options)).stdout;}catch(error){if((error as {code?:unknown}).code!==1)return invalid();}
+      if(gitUrlRewriteConfigured(mappings))return invalid();
+      urls=await Promise.all([["remote","get-url","--all","origin"],["remote","get-url","--push","--all","origin"]].map(async args=>{const value=(await execute("git",args,options)).stdout.trim();if(!value||value.includes("\n"))return invalid();return value;}));
+    }catch{return invalid();}
     const identity=(raw:string):{host:string;repository:string}=>{
       if(raw.length>4000||/[\\%\s?#]/.test(raw))return invalid();
       let host:string,path:string;const scp=/^git@([a-zA-Z0-9.-]+):([^:]+)$/.exec(raw);

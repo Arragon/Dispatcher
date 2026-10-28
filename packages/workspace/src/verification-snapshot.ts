@@ -1,4 +1,4 @@
-import {gitInspectionEnvironment} from "./git-inspection.js";
+import {gitInspectionEnvironment,gitUrlRewriteConfigured} from "./git-inspection.js";
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { lstat, mkdir, open, readdir, readlink, realpath, rm, writeFile } from "node:fs/promises";
@@ -23,7 +23,7 @@ export class VerificationSnapshots {
     let urls:string[]=[];try{urls=(await this.git(path,["remote","get-url","--push","--all","origin"])).split("\n").filter(Boolean);}catch{/* An unconfigured origin is valid for a local-only result. */}
     if(urls.length>1||urls.some(url=>/[\0\r\n]/.test(url)))throw new WorkspacePolicyError("UNSAFE_CANDIDATE_REMOTE","UNSAFE_CANDIDATE_REMOTE");
     let mappings="";try{mappings=await this.git(path,["config","--name-only","--null","--get-regexp","^url\\."]);}catch(error){if((error as {code?:number}).code!==1)throw new WorkspacePolicyError("UNSAFE_CANDIDATE_REMOTE","UNSAFE_CANDIDATE_REMOTE");}
-    if(urls.length&&mappings.split("\0").some(key=>/^url\.[\s\S]*\.(insteadof|pushinsteadof)$/i.test(key)))throw new WorkspacePolicyError("UNSAFE_CANDIDATE_REMOTE","UNSAFE_CANDIDATE_REMOTE");
+    if(urls.length&&gitUrlRewriteConfigured(mappings))throw new WorkspacePolicyError("UNSAFE_CANDIDATE_REMOTE","UNSAFE_CANDIDATE_REMOTE");
     const url=urls[0];
     if(url&&/^https?:\/\//i.test(url)){let parsed:URL;try{parsed=new URL(url);}catch{throw new WorkspacePolicyError("UNSAFE_CANDIDATE_REMOTE","UNSAFE_CANDIDATE_REMOTE");}if(parsed.username||parsed.password||parsed.search||parsed.hash)throw new WorkspacePolicyError("UNSAFE_CANDIDATE_REMOTE","UNSAFE_CANDIDATE_REMOTE");}
     return {pushRemoteFingerprint:createHash("sha256").update(JSON.stringify(urls)).digest("hex"),...(url?{pushUrl:url}:{})};

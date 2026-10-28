@@ -4,6 +4,8 @@ import { promisify } from "node:util";
 const execute=promisify(execFile);
 export function gitInspectionEnvironment():NodeJS.ProcessEnv {const env=childExecutionEnvironment(process.env);for(const key of Object.keys(env))if(key.startsWith("GIT_"))delete env[key];return {...env,GIT_OPTIONAL_LOCKS:"0",GIT_NO_LAZY_FETCH:"1",GIT_TERMINAL_PROMPT:"0"};}
 
+export function gitUrlRewriteConfigured(keys:string):boolean {return keys.split("\0").some(key=>/^url\.[\s\S]*\.(insteadof|pushinsteadof)$/i.test(key));}
+
 export async function readWorkspaceStatus(path:string,timeoutMs=10_000):Promise<string> {
  const deadline=Date.now()+timeoutMs,options={maxBuffer:256*1024,env:gitInspectionEnvironment()};
  const git=(args:string[])=>{const timeout=deadline-Date.now();if(timeout<1)throw Error("GIT_INSPECTION_TIMEOUT");return execute("git",["-C",path,"-c","core.fsmonitor=false","-c","core.hooksPath=/dev/null",...args],{...options,timeout});};
