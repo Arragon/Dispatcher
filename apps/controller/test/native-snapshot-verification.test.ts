@@ -315,3 +315,337 @@ it.each(["missing","id","session","state"] as const)("refuses an actual owned mu
   finally{saving.mockRestore();}
  }finally{await f.close();}
 });
+
+
+it.each(["prior-unknown", "returned-policy"] as const)(
+ "pins actual return before initial snapshot verification: %s",
+ async fault => {
+  const f = await nativeSnapshotFixture();
+  await pendingFixture(f, Promise.resolve(), async () => {
+   const db = f.service.database;
+   if (fault === "prior-unknown") {
+    // Labelled persistence fault after a real return; this does not prove a prior send.
+    save(f, "native-mutation", "g2d-labelled-prior", {
+     id: "g2d-labelled-prior", sessionId: f.run.sessionId, state: "unknown",
+    });
+   } else {
+    const frozen = db.getEntity("native-drift-policy", f.run.id) as Record<string, JsonValue>;
+    save(f, "native-drift-policy", f.run.id, {
+     ...frozen, policy: {...frozen.policy as object, permissionFingerprint: "g2d-changed"},
+    });
+   }
+   const before = cycleState(f);
+   const rows = db.listEntities("native-mutation");
+   const response = await f.advance();
+   f.facts({fault, before, response: response.json(), after: cycleState(f), rows});
+   expect(response.statusCode, response.body).toBe(409);
+   expect(response.json().code).toBe(fault === "prior-unknown"
+    ? "NATIVE_COMMAND_OUTCOME_UNKNOWN" : "NATIVE_DRIFT_POLICY_CHANGED");
+   expect(f.children()).toEqual([]);
+   expect(existsSync(join(f.root, "data/verification-snapshots"))).toBe(false);
+   expect(proof(f)).toBeUndefined();
+   expect(db.getEntity("native-verification-invalidation", f.run.id)).toEqual(before.invalidation);
+   expect(db.listEntities("native-reclaim-action")).toEqual(before.actions);
+   for (const row of rows as {id: string}[]) expect(db.getEntity("native-mutation", row.id)).toEqual(row);
+   expect(source(f)).toEqual(before.source);
+   expect(f.starts()).toBe(1);
+  });
+ },
+);
+
+it.each([
+ "missing-action", "duplicate-action", "action-session", "action-run", "action-epoch",
+ "action-command", "action-report", "action-version", "action-state", "missing-return",
+ "return-command", "return-phase", "return-control", "return-binding", "return-observation",
+ "return-not-ready", "return-report-id", "fence-run", "fence-session", "fence-generation",
+ "fence-lease", "consumed-missing-return", "consumed-mismatching-return",
+] as const)("requires the actual initial return grant for %s", async fault => {
+ const f = await nativeSnapshotFixture();
+ await pendingFixture(f, Promise.resolve(), async () => {
+  const db = f.service.database, id = "reclaim-1";
+  const action = db.getEntity("native-reclaim-action", id) as Record<string, JsonValue>;
+  if (fault === "missing-action") db.handle.prepare("DELETE FROM entities WHERE kind='native-reclaim-action' AND id=?").run(id);
+  if (fault === "duplicate-action") save(f, "native-reclaim-action", "g2d-duplicate", {...action, commandId: "g2d-duplicate"});
+  const fields: Record<string, object> = {
+   "action-session": {sessionId: "foreign"}, "action-run": {runId: "foreign"},
+   "action-epoch": {controlEpoch: 0}, "action-command": {commandId: "foreign"},
+   "action-report": {reportId: "foreign"}, "action-version": {version: 2}, "action-state": {state: null},
+  };
+  if (fields[fault]) save(f, "native-reclaim-action", id, {...action, ...fields[fault]});
+  if (fault.startsWith("consumed-")) save(f, "native-reclaim-action", id, {...action, state: "consumed"});
+  if (fault === "missing-return" || fault === "consumed-missing-return") {
+   db.handle.prepare("DELETE FROM entities WHERE kind='native-reclaim' AND id=?").run(id);
+  }
+  const returnedFields: Record<string, [string, string | number]> = {
+   "return-command": ["$.commandId", "foreign"], "return-phase": ["$.phase", "checking"],
+   "return-control": ["$.commit.control.revision", 999], "return-binding": ["$.binding.nativeSessionId", "foreign"],
+   "return-observation": ["$.report.observation.id", "foreign"], "return-not-ready": ["$.report.ready", 0],
+   "return-report-id": ["$.report.id", ""], "fence-run": ["$.commit.fence.runId", "foreign"],
+   "fence-session": ["$.commit.fence.sessionId", "foreign"], "fence-generation": ["$.commit.fence.generation", 99],
+   "fence-lease": ["$.commit.fence.leaseId", "foreign"], "consumed-mismatching-return": ["$.commit.reportId", "foreign"],
+  };
+  const field = returnedFields[fault];
+  if (field) db.handle.prepare("UPDATE entities SET document_json=json_set(document_json,?,?) WHERE kind='native-reclaim' AND id=?").run(...field, id);
+  const before = cycleState(f), response = await f.advance();
+  f.facts({fault, before, response: response.json(), after: cycleState(f)});
+  expect(response.statusCode, response.body).toBe(409);
+  expect(response.json().code).toBe("NATIVE_RECLAIM_ACTION_MISMATCH");
+  expect(f.children()).toEqual([]);
+  expect(existsSync(join(f.root, "data/verification-snapshots"))).toBe(false);
+  expect(db.getEntity("run-snapshot-current", f.run.id)).toBeUndefined();
+  expect(db.listEntities("native-reclaim-action")).toEqual(before.actions);
+  expect(db.listEntities("native-reclaim")).toEqual(before.returns);
+  expect(db.getEntity("native-verification-invalidation", f.run.id)).toEqual(before.invalidation);
+  expect(db.listEntities("run-verification-command")).toEqual([]);
+  expect(source(f)).toEqual(before.source);
+  expect(f.starts()).toBe(1);
+ });
+});
+
+it.each(["allocation-callback", "no-child-retry"] as const)(
+ "accepts a legitimately consumed actual return during %s before any CAPTURED pointer",
+ async mode => {
+  const f = await nativeSnapshotFixture();
+  const snapshots = f.service["verificationSnapshots"], original = snapshots.createDeliveryCandidate.bind(snapshots);
+  let checked = false;
+  const allocation = vi.spyOn(snapshots, "createDeliveryCandidate").mockImplementation(async (input, assertAuthority) => {
+   expect(f.service.database.getEntity("native-reclaim-action", "reclaim-1")).toMatchObject({state: "consumed"});
+   expect(f.service.database.getEntity("run-snapshot-current", f.run.id)).toBeUndefined();
+   assertAuthority(); assertAuthority(); checked = true;
+   if (mode === "no-child-retry") throw Error("g2d known allocation refusal before any child");
+   return original(input, assertAuthority);
+  });
+  await pendingFixture(f, Promise.resolve(), async () => {
+   try {
+    const before = source(f), first = await f.advance();
+    expect(checked).toBe(true);
+    if (mode === "no-child-retry") {
+     expect(first.statusCode).toBe(500);
+     expect(f.children()).toEqual([]);
+     expect(proof(f)).toBeUndefined();
+     expect(f.service.database.getEntity("native-reclaim-action", "reclaim-1")).toMatchObject({state: "consumed"});
+     expect(f.service.database.listEntities("native-mutation")).not.toContainEqual(expect.objectContaining({state: "unknown"}));
+     allocation.mockRestore();
+    }
+    const response = mode === "no-child-retry" ? await f.advance() : first;
+    f.facts({mode, checked, response: response.json(), proof: proof(f), children: f.children()});
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json()).toMatchObject({run: {state: "COMPLETE"}, task: {state: "REVIEW"}});
+    expect(proof(f)?.state).toBe("VERIFIED");
+    expect(f.children()).toHaveLength(2);
+    expect(source(f)).toEqual(before);
+    expect(f.starts()).toBe(1);
+   } finally { allocation.mockRestore(); }
+  });
+ },
+);
+
+it.each(["active", "unknown", "missing-state", "null-state", "malformed-id"] as const)(
+ "keeps labelled prior %s mutation as an initial snapshot barrier",
+ async state => {
+  const f = await nativeSnapshotFixture();
+  await pendingFixture(f, Promise.resolve(), async () => {
+   const id = "g2d-labelled-prior", db = f.service.database;
+   const prior = {id: state === "malformed-id" ? "foreign" : id, sessionId: f.run.sessionId,
+    ...(state === "missing-state" ? {} : {state: state === "null-state" ? null : state === "malformed-id" ? "settled" : state})};
+   save(f, "native-mutation", id, prior);
+   const before = cycleState(f), response = await f.advance();
+   f.facts({state, prior, before, response: response.json(), after: cycleState(f)});
+   expect(response.json().code).toBe("NATIVE_COMMAND_OUTCOME_UNKNOWN");
+   expect(db.getEntity("native-mutation", id)).toEqual(prior);
+   expect(db.listEntities("native-reclaim-action")).toEqual(before.actions);
+   expect(db.getEntity("native-verification-invalidation", f.run.id)).toEqual(before.invalidation);
+   expect(proof(f)).toBeUndefined(); expect(f.children()).toEqual([]);
+   expect(existsSync(join(f.root, "data/verification-snapshots"))).toBe(false);
+   expect(source(f)).toEqual(before.source); expect(f.starts()).toBe(1);
+  });
+ },
+);
+
+it.each(["missing", "id", "session", "state"] as const)(
+ "refuses actual owned marker %s corruption before initial snapshot allocation",
+ async fault => {
+  const f = await nativeSnapshotFixture(), db = f.service.database, original = db.saveEntity.bind(db);
+  let injected = false;
+  const saving = vi.spyOn(db, "saveEntity").mockImplementation((...args) => {
+   const result = original(...args);
+   if (!injected && args[0] === "native-mutation" && (args[2] as {state?: string}).state === "active") {
+    injected = true; f.record("g2d-owned-marker-corruption", {fault, id: args[1], before: args[2]});
+    if (fault === "missing") db.handle.prepare("DELETE FROM entities WHERE kind='native-mutation' AND id=?").run(args[1]);
+    else db.handle.prepare("UPDATE entities SET document_json=json_set(document_json,?,?) WHERE kind='native-mutation' AND id=?")
+     .run(fault === "id" ? "$.id" : fault === "session" ? "$.sessionId" : "$.state", fault === "state" ? "unknown" : "foreign", args[1]);
+   }
+   return result;
+  });
+  await pendingFixture(f, Promise.resolve(), async () => {
+   try {
+    const before = cycleState(f), response = await f.advance();
+    f.facts({fault, injected, before, response: response.json(), after: cycleState(f)});
+    expect(injected).toBe(true); expect(response.json().code).toBe("MUTATION_LANE_REQUIRED");
+    expect(proof(f)).toBeUndefined(); expect(f.children()).toEqual([]);
+    expect(db.listEntities("native-reclaim-action")).toEqual(before.actions);
+    expect(db.getEntity("native-verification-invalidation", f.run.id)).toEqual(before.invalidation);
+    expect(source(f)).toEqual(before.source); expect(f.starts()).toBe(1);
+   } finally { saving.mockRestore(); }
+  });
+ },
+);
+
+it.each(["return", "return-document", "action-document", "policy", "policy-document", "foreign-unknown"] as const)(
+ "settles an occurred preparation before refusing %s drift through a real child barrier",
+ async drift => {
+  const f = await nativeSnapshotFixture({preparation: [barrier]}), pending = f.advance();
+  await pendingFixture(f, pending, async () => {
+   await waitChild(f);
+   const db = f.service.database, before = source(f), invalidation = db.getEntity("native-verification-invalidation", f.run.id);
+   const receipts = db.listEntities("run-verification-command") as unknown as {id: string;state: string}[];
+   expect(receipts).toHaveLength(1); expect(receipts[0]!.state).toBe("SENDING");
+   if (drift === "foreign-unknown") save(f, "native-mutation", "g2d-during-child", {id: "g2d-during-child", sessionId: f.run.sessionId, state: "unknown"});
+   else {
+    const kind = drift.startsWith("policy") ? "native-drift-policy" : drift === "action-document" ? "native-reclaim-action" : "native-reclaim";
+    const path = drift === "return" ? "$.commit.reportId" : drift === "return-document" ? "$.actorId" : drift === "policy" ? "$.policy.permissionFingerprint" : "$.g2dLabelledDrift";
+    db.handle.prepare("UPDATE entities SET document_json=json_set(document_json,?,?) WHERE kind=? AND id=?")
+     .run(path, "g2d-drift", kind, kind === "native-drift-policy" ? f.run.id : "reclaim-1");
+   }
+   const changed = {actions: db.listEntities("native-reclaim-action"), returned: db.listEntities("native-reclaim"),
+    policy: db.getEntity("native-drift-policy", f.run.id), foreign: db.getEntity("native-mutation", "g2d-during-child")};
+   release(f); const response = await pending;
+   f.facts({drift, invalidation, changed, response: response.json(), proof: proof(f), receipts: db.listEntities("run-verification-command"), children: f.children()});
+   expect(response.statusCode, response.body).toBe(409);
+   expect(response.json().code).toBe(drift === "foreign-unknown" ? "NATIVE_COMMAND_OUTCOME_UNKNOWN"
+    : drift === "policy" ? "NATIVE_DRIFT_POLICY_CHANGED" : drift === "return" ? "NATIVE_RECLAIM_ACTION_MISMATCH" : "LOCAL_REVIEW_CONTEXT_CHANGED");
+   expect(db.getEntity("run-verification-command", receipts[0]!.id)).toMatchObject({state: "SETTLED", result: {commandId: "prepare-0", status: "passed", exitCode: 0}});
+   expect(f.children()).toHaveLength(1); expect(absent(f.children()[0]!.pid)).toBe(true);
+   expect(proof(f)?.state).toBe("FAILED");
+   expect(db.getEntity("native-verification-invalidation", f.run.id)).toEqual(invalidation);
+   expect(db.listEntities("native-reclaim-action")).toEqual(changed.actions);
+   expect(db.listEntities("native-reclaim")).toEqual(changed.returned);
+   expect(db.getEntity("native-drift-policy", f.run.id)).toEqual(changed.policy);
+   expect(db.getEntity("native-mutation", "g2d-during-child")).toEqual(changed.foreign);
+   expect(source(f)).toEqual(before); expect(f.starts()).toBe(1);
+  });
+ },
+);
+
+it.each(["return", "action", "policy", "return-document", "foreign-unknown", "ignored-action"] as const)(
+ "rolls back initial %s trigger during consumption and retries the same real return",
+ async fault => {
+  const f = await nativeSnapshotFixture(), db = f.service.database;
+  await pendingFixture(f, Promise.resolve(), async () => {
+   const before = cycleState(f), frozen = db.getEntity("native-drift-policy", f.run.id);
+   const effects: Record<string, string> = {
+    return: "UPDATE entities SET document_json=json_set(document_json,'$.commit.reportId','foreign') WHERE kind='native-reclaim' AND id='reclaim-1';",
+    action: "UPDATE entities SET document_json=json_set(document_json,'$.reportId','foreign') WHERE kind='native-reclaim-action' AND id='reclaim-1';",
+    policy: "UPDATE entities SET document_json=json_set(document_json,'$.policy.permissionFingerprint','foreign') WHERE kind='native-drift-policy';",
+    "return-document": "UPDATE entities SET document_json=json_set(document_json,'$.actorId','foreign') WHERE kind='native-reclaim' AND id='reclaim-1';",
+    "foreign-unknown": `INSERT INTO entities(kind,id,document_json,updated_at) VALUES('native-mutation','g2d-trigger-prior','${JSON.stringify({id: "g2d-trigger-prior", sessionId: f.run.sessionId, state: "unknown"})}','g2d');`,
+    "ignored-action": "SELECT RAISE(IGNORE);",
+   };
+   db.handle.exec(`CREATE TRIGGER g2d_consume_fault ${fault === "ignored-action" ? "BEFORE" : "AFTER"} UPDATE ON entities WHEN NEW.kind='native-reclaim-action' AND json_extract(NEW.document_json,'$.state')='consumed' BEGIN ${effects[fault]} END`);
+   try {
+    const refused = await f.advance();
+    f.facts({fault, before, refused: refused.json(), afterRefusal: cycleState(f)});
+    expect(refused.statusCode, refused.body).toBe(409);
+    expect(refused.json().code).toBe(fault === "policy" ? "NATIVE_DRIFT_POLICY_CHANGED"
+     : fault === "foreign-unknown" ? "NATIVE_COMMAND_OUTCOME_UNKNOWN" : "NATIVE_RECLAIM_ACTION_MISMATCH");
+    expect(db.listEntities("native-reclaim-action")).toEqual(before.actions);
+    expect(db.listEntities("native-reclaim")).toEqual(before.returns);
+    expect(db.getEntity("native-drift-policy", f.run.id)).toEqual(frozen);
+    expect(db.getEntity("native-mutation", "g2d-trigger-prior")).toBeUndefined();
+    expect(db.getEntity("native-verification-invalidation", f.run.id)).toEqual(before.invalidation);
+    expect(proof(f)).toBeUndefined(); expect(f.children()).toEqual([]);
+    expect(db.listEntities("run-verification-command")).toEqual([]);
+    expect(existsSync(join(f.root, "data/verification-snapshots"))).toBe(false);
+    db.handle.exec("DROP TRIGGER g2d_consume_fault");
+    const response = await f.advance();
+    f.record("g2d-trigger-retry", {fault, response: response.json(), proof: proof(f), children: f.children()});
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json()).toMatchObject({run: {state: "COMPLETE"}, task: {state: "REVIEW"}});
+    expect(proof(f)?.state).toBe("VERIFIED"); expect(f.children()).toHaveLength(2);
+    expect(source(f)).toEqual(before.source); expect(f.starts()).toBe(1);
+   } finally { db.handle.exec("DROP TRIGGER IF EXISTS g2d_consume_fault"); }
+  });
+ },
+);
+
+it.each(["VERIFIED", "CAPTURED"] as const)(
+ "retains a legacy %s policy hash as history, refuses reuse and requires a fresh actual HUMAN return",
+ async state => {
+  const f = state === "VERIFIED" ? await deliveringCycle() : await nativeSnapshotFixture({delivery: "commit"});
+  await pendingFixture(f, Promise.resolve(), async () => {
+   const db = f.service.database;
+   if (state === "CAPTURED") {
+    db.handle.exec("CREATE TRIGGER g2d_legacy_capture BEFORE INSERT ON entities WHEN NEW.kind='run-snapshot-verification' AND json_extract(NEW.document_json,'$.state')='VERIFIED' BEGIN SELECT RAISE(ABORT,'g2d capture acceptance fault'); END");
+    try {
+     const first = await f.advance();
+     expect(first.statusCode).toBe(500); expect(proof(f)?.state).toBe("CAPTURED");
+    } finally { db.handle.exec("DROP TRIGGER g2d_legacy_capture"); }
+   }
+   const {contentHash} = await import("../src/task-publications.js");
+   const legacy = structuredClone(proof(f)) as unknown as {id: string;basis: {policyHash: string};state: string};
+   const configured = f.service.configuration.current().config.agentProfiles.find(p => p.id === f.run.profileId)!.nativeInteraction;
+   legacy.basis.policyHash = contentHash({frozen: db.getEntity("native-drift-policy", f.run.id), configured});
+   save(f, "run-snapshot-verification", legacy.id, legacy);
+   const before = cycleState(f), commit = vi.spyOn(f.service["localGitDelivery"], "commit"), response = await f.advance();
+   try {
+    f.facts({state, legacy, before, response: response.json(), after: cycleState(f)});
+    expect(response.statusCode, response.body).toBe(409);
+    expect(response.json().code).toBe("LOCAL_REVIEW_CONTEXT_CHANGED");
+    expect(db.getEntity("run-snapshot-verification", legacy.id)).toEqual(legacy);
+    expect(f.children()).toEqual(before.children); expect(source(f)).toEqual(before.source);
+    expect(commit).not.toHaveBeenCalled();
+    await f.returnHuman({duringHuman: () => writeFileSync(join(f.run.worktree!, "result.txt"), "fresh HUMAN legacy replacement\n")});
+    const fresh = await f.advance();
+    f.record("g2d-legacy-fresh-return", {state, fresh: fresh.json(), proof: proof(f), legacy: db.getEntity("run-snapshot-verification", legacy.id)});
+    expect(fresh.json().code).toBe("VERIFIED_DELIVERY_UNAVAILABLE");
+    expect(proof(f)?.state).toBe("VERIFIED"); expect(proof(f)?.id).not.toBe(legacy.id);
+    expect(db.getEntity("run-snapshot-verification", legacy.id)).toEqual(legacy);
+    expect(f.children()).toHaveLength(4); expect(commit).not.toHaveBeenCalled(); expect(f.starts()).toBe(1);
+   } finally { commit.mockRestore(); }
+  });
+ },
+);
+
+it("never replays an UNKNOWN legacy proof after a genuine fresh explicit HUMAN return", async () => {
+ const f = await deliveringCycle();
+ await pendingFixture(f, Promise.resolve(), async () => {
+  const db = f.service.database, {contentHash} = await import("../src/task-publications.js");
+  const previous = structuredClone(proof(f)) as unknown as {id: string;state: string;basis: {policyHash: string}};
+  previous.state = "UNKNOWN";
+  previous.basis.policyHash = contentHash({frozen: db.getEntity("native-drift-policy", f.run.id), configured: f.service.configuration.current().config.agentProfiles[0]!.nativeInteraction});
+  save(f, "run-snapshot-verification", previous.id, previous);
+  await f.returnHuman();
+  const before = cycleState(f), response = await f.advance();
+  f.facts({previous, before, response: response.json(), after: cycleState(f)});
+  expect(response.statusCode, response.body).toBe(409);
+  expect(db.getEntity("run-snapshot-verification", previous.id)).toEqual(previous);
+  expect(f.children()).toEqual(before.children);
+  expect(db.getEntity("native-verification-invalidation", f.run.id)).toEqual(before.invalidation);
+  expect(source(f)).toEqual(before.source); expect(f.starts()).toBe(1);
+ });
+});
+
+it.each(["profile", "marker", "binding-physical"] as const)(
+ "rolls back valid initial verify authority after late synchronous %s refusal",
+ async fault => {
+  const f = await nativeSnapshotFixture({profile: fault !== "profile"});
+  await pendingFixture(f, Promise.resolve(), async () => {
+   const db = f.service.database;
+   if (fault === "marker") db.handle.prepare("DELETE FROM entities WHERE kind='run-snapshot-verification-config' AND id=?").run(f.run.id);
+   if (fault === "binding-physical") db.handle.prepare("UPDATE native_bindings SET binding_key='foreign' WHERE session_id=?").run(f.run.sessionId);
+   const before = cycleState(f), response = await f.advance();
+   f.facts({fault, before, response: response.json(), after: cycleState(f)});
+   expect(response.statusCode, response.body).toBe(409);
+   expect(response.json().code).toBe(fault === "binding-physical" ? "NATIVE_IDENTITY_CHANGED" : "VERIFICATION_ENVIRONMENT_UNAVAILABLE");
+   expect(db.listEntities("native-reclaim-action")).toEqual(before.actions);
+   expect(db.listEntities("native-reclaim")).toEqual(before.returns);
+   expect(db.getEntity("native-verification-invalidation", f.run.id)).toEqual(before.invalidation);
+   expect(db.getEntity("run", f.run.id)).toMatchObject({state: "VERIFYING", verification: {state: "PENDING"}});
+   expect(db.listEntities("run-snapshot-verification")).toEqual([]);
+   expect(db.listEntities("run-verification-command")).toEqual([]);
+   expect(f.children()).toEqual([]);
+   expect(existsSync(join(f.root, "data/verification-snapshots"))).toBe(false);
+   expect(source(f)).toEqual(before.source); expect(f.starts()).toBe(1);
+  });
+ },
+);

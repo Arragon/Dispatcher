@@ -274,6 +274,16 @@ interface NativeSnapshotBasis {
  runId:string;taskId:string;sessionId:string;generation:number;leaseId:string;taskRevision:number;controlEpoch:number;controlRevision:number;configRevision:number;
  contractHash:string;repositoryHash:string;profileHash:string;executionHash:string;policyHash:string;controlHash:string;bindingHash:string;observationHash:string;frozenVerificationHash:string;invalidationHash:string;
 }
+interface NativeSnapshotReturnAction {
+ version:1;commandId:string;reportId:string;runId:string;sessionId:string;controlEpoch:number;action:"verify";state:"authorized"|"consumed";observationRef:string;
+}
+interface NativeSnapshotCommittedReturn {
+ version:1;commandId:string;phase:"committed";binding:NativeBinding;driftPolicy:NativeDriftPolicy;
+ report:{id:string;ready:true;observation:NativeObservation};commit:{action:"verify";reportId:string;control:unknown;fence:MutationFence};
+}
+interface NativeSnapshotReturn {
+ id:string;action:NativeSnapshotReturnAction;returned:NativeSnapshotCommittedReturn;frozen:{policy:NativeDriftPolicy};
+}
 interface NativeSnapshotProof {
  format:"native-snapshot-verification-v1";version:1;id:string;runId:string;basis:NativeSnapshotBasis;snapshot:DeliveryCandidate;preparation:SnapshotPreparationEvidence;verification:VerificationCommand[];commandIds:string[];checks:VerificationResult[];state:"CAPTURED"|"VERIFIED"|"FAILED"|"UNKNOWN";reasonCode?:string;verifiedAt?:string;
 }
@@ -2304,9 +2314,40 @@ export class ControllerService {
     return proof;
   }
 
+  /** An explicit action is authority only together with its actual committed return. */
+  private nativeSnapshotReturn(run:Run,allowedStates:readonly NativeSnapshotReturnAction["state"][]):NativeSnapshotReturn {
+    const store=new InteractionStore(this.database),control=store.control(run.sessionId),binding=store.binding(run.sessionId);
+    if(!control||control.sessionId!==run.sessionId||control.activeRunId!==run.id||control.state!=="AUTOMATED"||!binding)this.snapshotRefusal("NATIVE_RECLAIM_ACTION_MISMATCH");
+    const rows=this.database.handle.prepare("SELECT id,document_json FROM entities WHERE kind='native-reclaim-action' AND json_extract(document_json,'$.runId')=? AND json_extract(document_json,'$.controlEpoch')=?").all(run.id,control.epoch) as {id:string;document_json:string}[];
+    if(rows.length!==1)this.snapshotRefusal("NATIVE_RECLAIM_ACTION_MISMATCH");
+    const row=rows[0]!,action=JSON.parse(row.document_json) as NativeSnapshotReturnAction|null;
+    const returned=this.database.getEntity<JsonValue>("native-reclaim",row.id) as unknown as NativeSnapshotCommittedReturn|undefined;
+    const observation=store.observation(run.sessionId);
+    // commit.reportId confirms the original report; report itself is the fresh pre-commit reread.
+    if(!action||action.version!==1||action.commandId!==row.id||action.runId!==run.id||action.sessionId!==run.sessionId||action.controlEpoch!==control.epoch
+      ||typeof action.reportId!=="string"||!action.reportId||action.action!=="verify"||!allowedStates.includes(action.state)
+      ||!observation||action.observationRef!==observation.id
+      ||!returned||returned.version!==1||returned.commandId!==row.id||returned.phase!=="committed"
+      ||returned.commit?.action!=="verify"||returned.commit.reportId!==action.reportId
+      ||returned.commit.fence?.runId!==run.id||returned.commit.fence.sessionId!==run.sessionId
+      ||returned.commit.fence.generation!==run.generation||returned.commit.fence.leaseId!==run.leaseId
+      ||!isDeepStrictEqual(returned.binding,binding)||!isDeepStrictEqual(returned.commit.control,control)
+      ||returned.report?.ready!==true||typeof returned.report.id!=="string"||!returned.report.id||returned.report.observation?.id!==action.observationRef)this.snapshotRefusal("NATIVE_RECLAIM_ACTION_MISMATCH");
+    const frozen=this.database.getEntity<JsonValue>("native-drift-policy",run.id) as unknown as NativeSnapshotReturn["frozen"]|undefined;
+    if(!returned.driftPolicy||!frozen||!isDeepStrictEqual(returned.driftPolicy,frozen.policy))this.snapshotRefusal("NATIVE_DRIFT_POLICY_CHANGED");
+    return {id:row.id,action,returned,frozen};
+  }
+
   /** Verification-specific physical consistency checks; generic native reads retain their contracts. */
   private nativeSnapshotContext(run:Run,state:"VERIFYING"|"DELIVERING",verifiedBasis?:NativeSnapshotBasis):{basis:NativeSnapshotBasis;source:CandidateSource;preparation:SnapshotPreparation;verification:VerificationCommand[]} {
-    this.fenceDelivery(run,state==="VERIFYING"?"verify":"complete");
+    return this.database.transaction(()=>{
+      this.nativeInteractions.assertPriorMutationOutcomesSettled(run.sessionId);
+      const before=this.nativeSnapshotReturn(run,["authorized","consumed"]);
+      this.fenceDelivery(run,state==="VERIFYING"?"verify":"complete");
+      const returned=this.nativeSnapshotReturn(run,["consumed"]);
+      if(returned.id!==before.id||!isDeepStrictEqual(returned.action,{...before.action,state:"consumed"})||!isDeepStrictEqual(returned.returned,before.returned))this.snapshotRefusal("NATIVE_RECLAIM_ACTION_MISMATCH");
+      if(!isDeepStrictEqual(returned.frozen,before.frozen))this.snapshotRefusal("NATIVE_DRIFT_POLICY_CHANGED");
+      this.nativeInteractions.assertPriorMutationOutcomesSettled(run.sessionId);
     const current=this.database.getEntity<JsonValue>("run",run.id) as unknown as Run,stored=this.database.getCanonicalTask<JsonValue>(run.taskId),task=stored?.document as unknown as Task|undefined;
     if(current.state!==state||!stored||task?.id!==run.taskId||task.currentRunId!==run.id||task.state!=="VERIFYING"||task.revision!==stored.revision)this.snapshotRefusal("LOCAL_REVIEW_CONTEXT_CHANGED");
     const contract=this.database.getEntity<JsonValue>("run-contract",run.id) as unknown as TaskContract|undefined,currentContract=this.database.getTaskContract<JsonValue>(run.taskId);
@@ -2421,8 +2462,8 @@ export class ControllerService {
       model:current.model,
       modelSelection:(current as Run&{modelSelection?:unknown}).modelSelection,
       contractRevision:current.contractRevision}),
-      policyHash:contentHash({frozen:this.database.getEntity("native-drift-policy",run.id),
-      configured:profile.nativeInteraction}),
+      policyHash:contentHash({scope:"native-return-policy-v1",frozen:returned.frozen,
+      configured:profile.nativeInteraction,returned:returned.returned,action:returned.action}),
       controlHash:contentHash(controlRow),
       bindingHash:contentHash({bindingRow,
       session:{id:session.id,
@@ -2442,7 +2483,9 @@ export class ControllerService {
       observationHash:contentHash({checkpoint,observationRow,events}),
       frozenVerificationHash:contentHash({frozen,marker}),
       invalidationHash:verifiedBasis?.invalidationHash??contentHash(invalidation)};
+    this.nativeInteractions.assertPriorMutationOutcomesSettled(run.sessionId);
     return {basis,source:{repositoryId:repository.id,worktree:current.worktree,branch:current.branch,scopePaths:[...contract.scope],repositoryScopePaths:[...repository.scopePaths]},preparation:selection.preparation!,verification:selection.verification};
+    });
   }
 
   private assertNativeSnapshotBasis(run:Run,proof:NativeSnapshotProof,state:"VERIFYING"|"DELIVERING"):void {
@@ -2554,6 +2597,8 @@ export class ControllerService {
       const context=this.nativeSnapshotContext(run,"VERIFYING"),prior=this.currentNativeSnapshot(run.id);
       if(prior&&prior.basis.controlEpoch===context.basis.controlEpoch){
         if(prior.state!=="CAPTURED")this.snapshotRefusal(prior.reasonCode??"VERIFICATION_OUTCOME_UNKNOWN");
+        // A prior private qualification remains history; this attempt cannot adopt or relabel it.
+        if(prior.basis.policyHash!==context.basis.policyHash)this.snapshotRefusal("LOCAL_REVIEW_CONTEXT_CHANGED");
         proof=prior;await this.assertNativeSnapshot(run,proof,"VERIFYING");
       }else{
         if(prior&&(prior.state==="UNKNOWN"||prior.state==="FAILED"&&!this.freshSnapshotReturn(run,prior,context.basis)))this.snapshotRefusal(prior.reasonCode??"VERIFICATION_OUTCOME_UNKNOWN");
@@ -2632,16 +2677,7 @@ export class ControllerService {
         const invalidation=this.database.getEntity<JsonValue>("native-verification-invalidation",run.id) as {version?:number;runId?:string;sessionId?:string;controlEpoch?:number;observationRef?:string;code?:string}|undefined;
         if(!isDeepStrictEqual(current,json(run))||run.state!=="DELIVERING"||run.verification.state!=="PASSED")this.snapshotRefusal("LOCAL_REVIEW_CONTEXT_CHANGED");
         if(!control||!invalidation||invalidation.version!==1||invalidation.runId!==run.id||invalidation.sessionId!==run.sessionId||invalidation.controlEpoch!==control.epoch||invalidation.code!=="NATIVE_REVERIFICATION_REQUIRED"||typeof invalidation.observationRef!=="string"||!invalidation.observationRef)this.snapshotRefusal("NATIVE_REVERIFICATION_REQUIRED");
-        const actions=this.database.handle.prepare("SELECT id,document_json FROM entities WHERE kind='native-reclaim-action' AND json_extract(document_json,'$.runId')=? AND json_extract(document_json,'$.controlEpoch')=?").all(run.id,control.epoch) as {id:string;document_json:string}[];
-        if(actions.length!==1)this.snapshotRefusal("NATIVE_RECLAIM_ACTION_MISMATCH");
-        const row=actions[0]!,action=JSON.parse(row.document_json) as {version?:number;commandId?:string;reportId?:string;runId?:string;sessionId?:string;controlEpoch?:number;action?:string;state?:string;observationRef?:string};
-        const record=this.database.getEntity<JsonValue>("native-reclaim",row.id) as {version?:number;commandId?:string;phase?:string;binding?:NativeBinding;driftPolicy?:NativeDriftPolicy;report?:{ready?:boolean;observation?:NativeObservation};commit?:{action?:string;reportId?:string;control?:unknown;fence?:MutationFence}}|undefined;
-        // Generic verify admission permits no choice; this backedge requires one real committed choice.
-        if(action.version!==1||action.commandId!==row.id||!action.reportId||action.sessionId!==run.sessionId||action.action!=="verify"||action.state!=="authorized"||action.observationRef!==invalidation.observationRef
-          ||!record||record.version!==1||record.commandId!==row.id||record.phase!=="committed"||record.commit?.action!=="verify"||record.commit.reportId!==action.reportId||record.commit.fence?.runId!==run.id||record.commit.fence.sessionId!==run.sessionId
-          ||!isDeepStrictEqual(record.binding,store.binding(run.sessionId))||!isDeepStrictEqual(record.commit.control,control)||record.report?.ready!==true||record.report.observation?.id!==invalidation.observationRef)this.snapshotRefusal("NATIVE_RECLAIM_ACTION_MISMATCH");
-        const policy=this.database.getEntity<JsonValue>("native-drift-policy",run.id) as {policy?:NativeDriftPolicy}|undefined;
-        if(!record.driftPolicy||!isDeepStrictEqual(policy?.policy,record.driftPolicy))this.snapshotRefusal("NATIVE_DRIFT_POLICY_CHANGED");
+        const returned=this.nativeSnapshotReturn(run,["authorized"]);
         if(!this.snapshotReceiptsSettled(run.id))this.snapshotRefusal("VERIFICATION_OUTCOME_UNKNOWN");
         const previous=this.currentNativeSnapshot(run.id);
         assertRunTransition(run.state,"VERIFYING");
@@ -2649,10 +2685,11 @@ export class ControllerService {
         this.saveAdvancedRun(advanced,"DELIVERING");
         // The existing owner consumes the action and checks all live authority inside this transaction.
         const context=this.nativeSnapshotContext(advanced,"VERIFYING");
-        if(!isDeepStrictEqual(this.database.getEntity("native-reclaim-action",row.id),{...action,state:"consumed"})
-          ||!isDeepStrictEqual(this.database.getEntity("native-reclaim",row.id),record))this.snapshotRefusal("NATIVE_RECLAIM_ACTION_MISMATCH");
+        const consumed=this.nativeSnapshotReturn(advanced,["consumed"]);
+        if(consumed.id!==returned.id||!isDeepStrictEqual(consumed.action,{...returned.action,state:"consumed"})
+          ||!isDeepStrictEqual(consumed.returned,returned.returned))this.snapshotRefusal("NATIVE_RECLAIM_ACTION_MISMATCH");
         if(!previous||!this.freshSnapshotReturn(advanced,previous,context.basis))this.snapshotRefusal("NATIVE_RECLAIM_ACTION_MISMATCH");
-        if(!isDeepStrictEqual(this.database.getEntity("native-drift-policy",run.id),policy))this.snapshotRefusal("NATIVE_DRIFT_POLICY_CHANGED");
+        if(!isDeepStrictEqual(consumed.frozen,returned.frozen))this.snapshotRefusal("NATIVE_DRIFT_POLICY_CHANGED");
         this.nativeInteractions.assertPriorMutationOutcomesSettled(run.sessionId);
         return advanced;
       });

@@ -4,7 +4,7 @@ import {basename,dirname} from "node:path";
 /** Observe fixture readiness before testing cancellation; startup latency is not the assertion. */
 export function fixtureMarker(path:string):{ready:Promise<void>;close:()=>void}{
   const signal=Promise.withResolvers<void>();
-  const watcher=watch(dirname(path),(_,name)=>{if(name?.toString()===basename(path)&&existsSync(path)){watcher.close();signal.resolve();}});
+  const watcher=watch(dirname(path),(_,name)=>{if((name===null||name?.toString()===basename(path))&&existsSync(path)){watcher.close();signal.resolve();}});
   watcher.once("error",error=>{watcher.close();signal.reject(error);});
   if(existsSync(path)){watcher.close();signal.resolve();}
   return {ready:signal.promise,close:()=>watcher.close()};
