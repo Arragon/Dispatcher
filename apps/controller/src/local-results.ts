@@ -1,46 +1,34 @@
+import {resolveSnapshotVerification,preparationEvidenceQualifies,type SnapshotPreparation,type SnapshotPreparationEvidence} from "./snapshot-verification.js";
 import {isDeepStrictEqual} from "node:util";
-import type {ConfigurationEngine,RepositoryConfig} from "@dispatcher/config";
+import type {ConfigurationEngine} from "@dispatcher/config";
 import type {Run,Task,TaskContract,LocalReviewAuthority,LocalVerificationRequest,LocalAcceptanceRequest,LocalAcceptance,LocalResultReview} from "@dispatcher/domain";
 import type {CanonicalTaskService} from "@dispatcher/integrations";
 import {InteractionStore,type DispatcherDatabase,type JsonValue} from "@dispatcher/persistence";
 import {VerificationRegistry,type VerificationCommand,type VerificationResult} from "@dispatcher/runner";
-import {VerificationSnapshots,WorkspacePolicyError,type WorkspaceManager,type WorkspaceCandidate,type DeliveryCandidate} from "@dispatcher/workspace";
+import {WorkspacePolicyError,type WorkspaceManager,type WorkspaceCandidate,type DeliveryCandidate,type VerificationSnapshots} from "@dispatcher/workspace";
 import {redactNativeText,redactValue} from "@dispatcher/observability";
 import {isGuardedControllerStart} from "./start-recovery.js";
 import {contentHash,PublicationError} from "./task-publications.js";
 
 interface ReviewContext extends LocalReviewAuthority {runId:string;taskId:string;sessionId:string;configRevision:number;contractHash:string;profileHash:string;repositoryHash:string;selectionHash:string}
-interface ReviewState {run:Run;task:Task;context:ReviewContext;commands:VerificationCommand[];preparation?:{profileHash:string;commands:VerificationCommand[]};repositoryId:string;repositoryScopePaths:string[];scopePaths:string[]}
-interface VerificationReceipt {format:"canonical-local-verification-v1";id:string;actor:string;request:LocalVerificationRequest;context:ReviewContext;state:"SENDING"|"COMPLETED"|"FAILED"|"UNKNOWN";reasonCode?:string;preparation?:{profileHash:string;commands:VerificationCommand[];checks:VerificationResult[]};proof?:{executionBasis?:"isolated-snapshot-v1";snapshot:DeliveryCandidate;verifiedAt:string;commandIds:string[];checks:VerificationResult[]}}
+interface ReviewState {run:Run;task:Task;context:ReviewContext;commands:VerificationCommand[];preparation?:SnapshotPreparation;repositoryId:string;repositoryScopePaths:string[];scopePaths:string[]}
+interface VerificationReceipt {format:"canonical-local-verification-v1";id:string;actor:string;request:LocalVerificationRequest;context:ReviewContext;state:"SENDING"|"COMPLETED"|"FAILED"|"UNKNOWN";reasonCode?:string;preparation?:SnapshotPreparationEvidence;proof?:{executionBasis?:"isolated-snapshot-v1";snapshot:DeliveryCandidate;verifiedAt:string;commandIds:string[];checks:VerificationResult[]}}
 const json=(value:unknown)=>JSON.parse(JSON.stringify(value)) as JsonValue;
 const key=(run:Run)=>`${run.id}:g${run.generation}`;
 function fail(code:string,message=code):never {throw new PublicationError(code,409,message);}
 const text=(v:unknown):v is string=>typeof v==="string"&&v.length>0&&v.length<=200&&!Array.from(v).some(c=>c.charCodeAt(0)<32||c.charCodeAt(0)===127);
 const stableContext=(context:ReviewContext)=>{const value={...context};delete (value as Partial<ReviewContext>).taskRevision;delete (value as Partial<ReviewContext>).configRevision;return value;};
-function frozenPreparationProfile(marker:unknown):RepositoryConfig["snapshotVerification"]|null {
- if(!marker||typeof marker!=="object"||Object.keys(marker).sort().join(",")!=="profile,version"||(marker as {version?:unknown}).version!==1)fail("VERIFICATION_ENVIRONMENT_UNAVAILABLE");
- const profile=(marker as {profile:unknown}).profile;if(profile===null)return null;
- if(!profile||typeof profile!=="object"||Object.keys(profile).sort().join(",")!=="id,preparationCommandIds,version")fail("VERIFICATION_ENVIRONMENT_UNAVAILABLE");
- const value=profile as RepositoryConfig["snapshotVerification"];
- if(!value||value.version!==1||typeof value.id!=="string"||!value.id.length||Array.from(value.id).length>100||!Array.isArray(value.preparationCommandIds)||value.preparationCommandIds.some(id=>typeof id!=="string"||!id.length)||new Set(value.preparationCommandIds).size!==value.preparationCommandIds.length)fail("VERIFICATION_ENVIRONMENT_UNAVAILABLE");
- return value;
-}
 function preparationQualifies(state:ReviewState,receipt:VerificationReceipt):boolean {
- if(!state.preparation)return true;
- const evidence=receipt.preparation,{commands,profileHash}=state.preparation;
- if(!evidence||evidence.profileHash!==profileHash||!isDeepStrictEqual(evidence.commands,commands)||!Array.isArray(evidence.checks)||evidence.checks.length!==commands.length||!Array.isArray(receipt.proof?.checks))return false;
- const orderedResults=evidence.checks.every((check,index)=>check&&check.commandId===commands[index]!.id&&check.required===commands[index]!.required&&check.status==="passed"&&check.exitCode===0);
- return orderedResults&&isDeepStrictEqual(receipt.proof.checks.slice(0,commands.length),evidence.checks)&&isDeepStrictEqual(receipt.proof.commandIds,[...commands,...state.commands].map(command=>command.id));
+ return preparationEvidenceQualifies({preparation:state.preparation,evidence:receipt.preparation,checks:receipt.proof?.checks,commandIds:receipt.proof?.commandIds,verification:state.commands});
 }
 
 /** Canonical Task approval only. A retired Run lease is compared as identity, never renewed or used for native input. */
 export class CanonicalLocalResults {
  private readonly store:InteractionStore;
- private readonly snapshots:VerificationSnapshots;
  private readonly active=new Map<string,{id:string;controller:AbortController;promise:Promise<LocalResultReview>}>();
  private closed=false;
  private cleanupUnknown=false;
- constructor(private readonly db:DispatcherDatabase,private readonly configuration:ConfigurationEngine,private readonly tasks:CanonicalTaskService,private readonly workspaces:WorkspaceManager,snapshotRoot:string,private readonly now:()=>Date=()=>new Date()) {this.store=new InteractionStore(db);this.snapshots=new VerificationSnapshots(workspaces,snapshotRoot);}
+ constructor(private readonly db:DispatcherDatabase,private readonly configuration:ConfigurationEngine,private readonly tasks:CanonicalTaskService,private readonly workspaces:WorkspaceManager,private readonly snapshots:VerificationSnapshots,private readonly now:()=>Date=()=>new Date()) {this.store=new InteractionStore(db);}
  private context(runId:string):ReviewState {
   const run=this.db.getEntity<JsonValue>("run",runId) as unknown as Run|undefined,task=run?this.db.getCanonicalTask<JsonValue>(run.taskId):undefined,document=task?.document as unknown as Task|undefined;
   if(!run||!task||!document||document.currentRunId!==runId||run.state!=="COMPLETE"||!["REVIEW","DONE"].includes(document.state)||!run.worktree||!run.branch)fail("LOCAL_RESULT_UNAVAILABLE");
@@ -54,14 +42,10 @@ export class CanonicalLocalResults {
   if(!contract||contract.delivery.type!=="none"||contract.revision!==run.contractRevision||contentHash(contract)!==contentHash(currentContract)||!Array.isArray(frozen)||!contract.verification.length)fail("LOCAL_RESULT_UNAVAILABLE");
   const snapshot=this.configuration.current(),repositoryId=contract.workspace?.repositoryId??contract.delivery.repository,repository=snapshot.config.repositories.find(r=>r.id===repositoryId),profile=snapshot.config.agentProfiles.find(p=>p.id===run.profileId);
   if(!repository||!profile||profile.runnerId!==run.runnerId)fail("LOCAL_REVIEW_CONTEXT_CHANGED");
-  const marker=this.db.getEntity<JsonValue>("run-snapshot-verification-config",run.id),preparationProfile=marker===undefined?null:frozenPreparationProfile(marker);
-  if(repository.snapshotVerification&&!preparationProfile)fail("VERIFICATION_ENVIRONMENT_UNAVAILABLE");
-  if(!isDeepStrictEqual(preparationProfile,repository.snapshotVerification??null))fail("LOCAL_REVIEW_CONTEXT_CHANGED");
-  const preparationCommands=preparationProfile?.preparationCommandIds.map(id=>frozen.find(command=>command.id===id))??[];
-  if(preparationCommands.some(command=>!command)||preparationCommands.some(command=>!isDeepStrictEqual(command,repository.verificationCommands.find(current=>current.id===command!.id))))fail("LOCAL_REVIEW_CONTEXT_CHANGED");
-  const selected=contract.verification.map(id=>frozen.find(c=>c.id===id)),preparationIds=new Set(preparationProfile?.preparationCommandIds),commands=selected.filter(command=>command&&!preparationIds.has(command.id));
-  if(selected.some(c=>!c)||frozen.some(c=>c.required&&!contract.verification.includes(c.id))||!commands.some(c=>c?.required))fail("VERIFICATION_NOT_REGISTERED");
-  return {run,task:document,commands:structuredClone(commands as VerificationCommand[]),...(preparationProfile?{preparation:{profileHash:contentHash(preparationProfile),commands:structuredClone(preparationCommands as VerificationCommand[])}}:{}),repositoryId:repository.id,repositoryScopePaths:[...repository.scopePaths],scopePaths:[...contract.scope],context:{runId:run.id,taskId:run.taskId,sessionId:run.sessionId,taskRevision:task.revision,generation:run.generation,leaseId:run.leaseId,controlEpoch:control.epoch,controlRevision:control.revision,configRevision:snapshot.revision,contractHash:contentHash(contract),selectionHash:contentHash(run.executionSelection),profileHash:contentHash(profile),repositoryHash:contentHash({repository,commands})}};
+  const selection=resolveSnapshotVerification({marker:this.db.getEntity<JsonValue>("run-snapshot-verification-config",run.id),currentRepository:repository,frozenCommands:frozen,selectedIds:contract.verification,requirePreparationProfile:false});
+  if(selection.state==="unavailable")fail(selection.code);
+  const commands=selection.verification;
+  return {run,task:document,commands:structuredClone(commands as VerificationCommand[]),...(selection.preparation?{preparation:selection.preparation}:{}),repositoryId:repository.id,repositoryScopePaths:[...repository.scopePaths],scopePaths:[...contract.scope],context:{runId:run.id,taskId:run.taskId,sessionId:run.sessionId,taskRevision:task.revision,generation:run.generation,leaseId:run.leaseId,controlEpoch:control.epoch,controlRevision:control.revision,configRevision:snapshot.revision,contractHash:contentHash(contract),selectionHash:contentHash(run.executionSelection),profileHash:contentHash(profile),repositoryHash:contentHash({repository,commands})}};
  }
  private assertContext(context:ReviewContext):void {if(this.closed||!isDeepStrictEqual(this.context(context.runId).context,context))fail("LOCAL_REVIEW_CONTEXT_CHANGED");}
  private authority(context:ReviewContext):LocalReviewAuthority {return {taskRevision:context.taskRevision,generation:context.generation,leaseId:context.leaseId,controlEpoch:context.controlEpoch,controlRevision:context.controlRevision};}

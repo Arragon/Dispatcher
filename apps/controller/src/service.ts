@@ -2,6 +2,7 @@ import {NativeWorkflowAuthority} from "./native-workflow-authority.js";
 import {selectRunConversation} from "./messaging-conversations.js";
 import {NativeControlNotices} from "./native-control-notices.js";
 import {profileInteractionView,loadProfileEvidence} from "./profile-interaction-view.js";
+import {resolveSnapshotVerification,preparationEvidenceQualifies,type SnapshotPreparation,type SnapshotPreparationEvidence} from "./snapshot-verification.js";
 import {CanonicalLocalResults} from "./local-results.js";
 import {CodexExecutionRuntime} from "./codex-runtime.js";
 import {OpenCodeExecutionRuntime} from "./opencode-runtime.js";
@@ -12,7 +13,7 @@ import {NativeHistoryService,NativeHistoryError} from "./native-history.js";
 import {nativeSessionView} from "./native-session-view.js";
 import {isGuardedControllerStart,isReadableManagedCodexRun,isReadableManagedOpenCodeRun,isReadableManagedPiRun,isReadableManagedDevinRun,isReadableManagedCopilotRun} from "./start-recovery.js";
 import {parseNativeModelDefaultReview,qualifyNativeModelDefault,readNativeModelDefaultEvidence} from "./model-defaults.js";
-import {isExecutionContextRef,type NativeBinding,type InteractionCapabilities,type NativeResponse,type RunGitDelivery,type ScmDeliverySelection,type MutationFence,type ExecutionContextRef,type NativeControlView} from "@dispatcher/domain";
+import {isExecutionContextRef,nativeBindingKey,normalizeNativeBinding,type NativeBinding,type InteractionCapabilities,type NativeResponse,type RunGitDelivery,type ScmDeliverySelection,type MutationFence,type ExecutionContextRef,type NativeControlView,type NativeObservation,type Session} from "@dispatcher/domain";
 import {NativeInteractions,InteractionGuardError,type ControllerInteractionOperation,type InteractionPrincipal} from "./native-interactions.js";
 import {AdapterAdmissionError,readInteractionCapabilities,assertAdapterWriteAdmission,type AdapterStartOutcome} from "@dispatcher/adapters";
 import { resolveProfileExecutionContext } from "./execution-context.js";
@@ -169,9 +170,9 @@ import {
   type TaskPlatformAdapter,
 } from "@dispatcher/integrations";
 import { LlmRuntime, LlmRuntimeError, type FetchLike, type LlmConfiguration, type LlmRole } from "@dispatcher/llm-runtime";
-import { createLogger, redactValue, redactNativePayload } from "@dispatcher/observability";
+import { createLogger, redactNativeText,redactValue, redactNativePayload } from "@dispatcher/observability";
 import { DispatcherDatabase, InteractionStore, RevisionConflictError, type JsonValue } from "@dispatcher/persistence";
-import { EmbeddedRunner, EventBus, LeaseFenceError, LocalGitDelivery, LocalGitDeliveryError, ProcessManager, RemoteRunnerServer, RunnerEnrollmentAuthority, RunnerLeaseAuthority, RunnerRegistry, VerificationRegistry, reconcileRunnerState, type RunnerEnrollmentRecord, type RunnerEvents, type RuntimeLocalDisconnectResult } from "@dispatcher/runner";
+import { EmbeddedRunner, EventBus, LeaseFenceError, LocalGitDelivery, LocalGitDeliveryError, ProcessManager, RemoteRunnerServer, RunnerEnrollmentAuthority, RunnerLeaseAuthority, RunnerRegistry, VerificationRegistry, reconcileRunnerState, type RunnerEnrollmentRecord, type RunnerEvents, type RuntimeLocalDisconnectResult,type VerificationCommand,type VerificationResult,type NativeEventCheckpoint } from "@dispatcher/runner";
 import {
   SemanticPolicyError,
   SemanticToolRegistry,
@@ -184,7 +185,7 @@ import {
   TaskContractCompiler,
 } from "@dispatcher/semantic";
 import { CanonicalScheduler, routeDeterministically, type DispatchCandidate } from "@dispatcher/scheduler";
-import { RepositoryRegistry, WorkspaceManager, WorkspacePolicyError } from "@dispatcher/workspace";
+import { RepositoryRegistry, WorkspaceManager, WorkspacePolicyError,VerificationSnapshots,type DeliveryCandidate,type CandidateSource } from "@dispatcher/workspace";
 import { BackgroundLoop, backoffDelayMs, runBounded } from "./background.js";
 import { ControlPlaneAuth, OWNER_PASSWORD_REFERENCE, OWNER_PRINCIPAL_ID, OWNER_ROLES, OWNER_TOKEN_REFERENCE, type ControlPrincipal } from "./control-auth.js";
 import { hashOwnerPassword, validOwnerPassword } from "./owner-password.js";
@@ -268,7 +269,15 @@ const ADVANCEABLE_RUN_STATES = new Set<Run["state"]>(["ACTIVE", "VERIFYING", "DE
 
 interface SessionStopIntent {version:1;actorId:string;operation:"cancel"|"fail"|"cleanup-start";fence:MutationFence;requestedAt:string}
 interface LocalStartAdmission {fence:MutationFence;adapter:AgentAdapter;beforeSend():void;settled(outcome:AdapterStartOutcome):void;assertProjection():void}
-interface AutomaticVerificationCommand {version:1;id:string;runId:string;generation:number;commandId:string;fence:MutationFence;semanticsHash:string;state:"SENDING"|"SETTLED"|"UNKNOWN";result?:Awaited<ReturnType<VerificationRegistry["run"]>>}
+interface AutomaticVerificationCommand {version:1;id:string;runId:string;generation:number;commandId:string;fence:MutationFence;semanticsHash:string;state:"SENDING"|"SETTLED"|"UNKNOWN";snapshotScope?:{version:1;proofId:string;snapshotId:string;phase:"preparation"|"verification";index:number;basisHash:string};result?:Awaited<ReturnType<VerificationRegistry["run"]>>}
+interface NativeSnapshotBasis {
+ runId:string;taskId:string;sessionId:string;generation:number;leaseId:string;taskRevision:number;controlEpoch:number;controlRevision:number;configRevision:number;
+ contractHash:string;repositoryHash:string;profileHash:string;executionHash:string;policyHash:string;controlHash:string;bindingHash:string;observationHash:string;frozenVerificationHash:string;invalidationHash:string;
+}
+interface NativeSnapshotProof {
+ format:"native-snapshot-verification-v1";version:1;id:string;runId:string;basis:NativeSnapshotBasis;snapshot:DeliveryCandidate;preparation:SnapshotPreparationEvidence;verification:VerificationCommand[];commandIds:string[];checks:VerificationResult[];state:"CAPTURED"|"VERIFIED"|"FAILED"|"UNKNOWN";reasonCode?:string;verifiedAt?:string;
+}
+
 interface SessionAuthority {version:1;fingerprint:string;repositoryId?:string;stopState:NativeSessionConsoleView["stopState"];stopIntent?:SessionStopIntent}
 type BoundSession=AdapterSession&{authority?:SessionAuthority};
 class DatabaseSessionStore implements SessionStore {
@@ -505,6 +514,7 @@ export class ControllerService {
   readonly repositories = new RepositoryRegistry();
   readonly workspaces: WorkspaceManager;
   readonly localResults:CanonicalLocalResults;
+  private readonly verificationSnapshots:VerificationSnapshots;
   readonly connectors = new ConnectorRegistry();
   readonly tasks: CanonicalTaskService;
   private readonly nativeInteractions:NativeInteractions;
@@ -641,7 +651,8 @@ export class ControllerService {
     this.secureLinks = new SecureDashboardLinkIssuer(`http://${options.host ?? "127.0.0.1"}:${options.port ?? 8347}`, randomUUID());
     this.llm = new LlmRuntime(this.database, (reference) => this.secrets.resolve(reference, { principal: "controller", purpose: "llm" }), options.llmFetch);
     this.configuration = new ConfigurationEngine(this.database, { apply: (config) => this.applyRuntimeConfiguration(config) });
-    this.localResults=new CanonicalLocalResults(this.database,this.configuration,this.tasks,this.workspaces,join(options.dataDirectory,"verification-snapshots"),()=>this.now());
+    this.verificationSnapshots=new VerificationSnapshots(this.workspaces,join(options.dataDirectory,"verification-snapshots"));
+    this.localResults=new CanonicalLocalResults(this.database,this.configuration,this.tasks,this.workspaces,this.verificationSnapshots,()=>this.now());
     this.applyRuntimeConfiguration(this.configuration.current().config);
     this.semanticTools = new SemanticToolRegistry({ highRiskRequiresConfirmation: this.configuration.current().config.policies.highRiskRequiresConfirmation });
     this.semanticWorkflows = new SemanticWorkflowEngine(this.semanticTools, new DatabaseSemanticWorkflowStore(this.database,record=>{
@@ -2270,6 +2281,340 @@ export class ControllerService {
     }
   }
 
+  private snapshotRefusal(code:string):never {throw new InteractionGuardError(code);}
+
+  private currentNativeSnapshot(runId:string):NativeSnapshotProof|undefined {
+    const pointer=this.database.getEntity<JsonValue>("run-snapshot-current",runId) as {id?:string}|undefined;
+    if(!pointer)return undefined;
+    const proof=pointer.id?this.database.getEntity<JsonValue>("run-snapshot-verification",pointer.id) as unknown as NativeSnapshotProof|undefined:undefined;
+    if(!proof
+      ||proof.format!=="native-snapshot-verification-v1"
+      ||proof.version!==1
+      ||proof.id!==pointer.id
+      ||proof.runId!==runId
+      ||!proof.basis
+      ||!proof.snapshot
+      ||!proof.preparation
+      ||!Array.isArray(proof.preparation.commands)
+      ||!Array.isArray(proof.preparation.checks)
+      ||!Array.isArray(proof.verification)
+      ||!Array.isArray(proof.commandIds)
+      ||!Array.isArray(proof.checks)
+      ||proof.id!==contentHash(["native-snapshot-proof",runId,proof.basis.generation,proof.basis.controlEpoch,proof.snapshot.id]))this.snapshotRefusal("VERIFICATION_OUTCOME_UNKNOWN");
+    return proof;
+  }
+
+  /** Verification-specific physical consistency checks; generic native reads retain their contracts. */
+  private nativeSnapshotContext(run:Run,state:"VERIFYING"|"DELIVERING",verifiedBasis?:NativeSnapshotBasis):{basis:NativeSnapshotBasis;source:CandidateSource;preparation:SnapshotPreparation;verification:VerificationCommand[]} {
+    this.fenceDelivery(run,state==="VERIFYING"?"verify":"complete");
+    const current=this.database.getEntity<JsonValue>("run",run.id) as unknown as Run,stored=this.database.getCanonicalTask<JsonValue>(run.taskId),task=stored?.document as unknown as Task|undefined;
+    if(current.state!==state||!stored||task?.id!==run.taskId||task.currentRunId!==run.id||task.state!=="VERIFYING"||task.revision!==stored.revision)this.snapshotRefusal("LOCAL_REVIEW_CONTEXT_CHANGED");
+    const contract=this.database.getEntity<JsonValue>("run-contract",run.id) as unknown as TaskContract|undefined,currentContract=this.database.getTaskContract<JsonValue>(run.taskId);
+    if(!contract||contract.revision!==current.contractRevision||!isDeepStrictEqual(json(contract),currentContract))this.snapshotRefusal("LOCAL_REVIEW_CONTEXT_CHANGED");
+    const config=this.configuration.current(),repository=config.config.repositories.find(r=>r.id===(contract.workspace?.repositoryId??contract.delivery.repository)),profile=config.config.agentProfiles.find(p=>p.id===current.profileId),runner=config.config.runners.find(r=>r.id===current.runnerId);
+    if(!repository||!profile||profile.runnerId!==current.runnerId||runner?.mode!=="embedded"||!current.worktree||!current.branch)this.snapshotRefusal("VERIFICATION_ENVIRONMENT_UNAVAILABLE");
+    const frozen=this.database.getEntity<JsonValue>("run-verification-config",run.id) as unknown as VerificationCommand[]|undefined,marker=this.database.getEntity<JsonValue>("run-snapshot-verification-config",run.id);
+    if(!Array.isArray(frozen)||marker===undefined)this.snapshotRefusal("VERIFICATION_ENVIRONMENT_UNAVAILABLE");
+    if(!isDeepStrictEqual(frozen,repository.verificationCommands))this.snapshotRefusal("LOCAL_REVIEW_CONTEXT_CHANGED");
+    const selection=resolveSnapshotVerification({marker,currentRepository:repository,frozenCommands:frozen,selectedIds:contract.verification,requirePreparationProfile:true});
+    if(selection.state==="unavailable")this.snapshotRefusal(selection.code);
+    const store=new InteractionStore(this.database),control=store.control(run.sessionId),binding=store.binding(run.sessionId),session=this.database.getEntity<JsonValue>("session",run.sessionId) as unknown as Session|undefined,adapter=this.database.getEntity<JsonValue>("adapter-session",run.sessionId) as unknown as AdapterSession|undefined;
+    const controlRow=this.database.handle.prepare("SELECT * FROM session_controls WHERE session_id=?").get(run.sessionId);
+    if(!control
+      ||!controlRow
+      ||control.state!=="AUTOMATED"
+      ||control.exclusion==="none"
+      ||control.activeRunId!==run.id
+      ||control.sessionId!==run.sessionId
+      ||controlRow.session_id!==control.sessionId
+      ||controlRow.active_run_id!==control.activeRunId
+      ||controlRow.epoch!==control.epoch
+      ||controlRow.revision!==control.revision
+      ||controlRow.state!==control.state
+      ||!isDeepStrictEqual(JSON.parse(String(controlRow.document_json)),control))this.snapshotRefusal("NATIVE_CONTROL_CHANGED");
+    const bindingRow=this.database.handle.prepare("SELECT * FROM native_bindings WHERE session_id=?").get(run.sessionId);
+    if(!binding
+      ||!session
+      ||!adapter
+      ||!bindingRow
+      ||binding.identityState!=="bound"
+      ||!isDeepStrictEqual(normalizeNativeBinding(session,adapter,current),{state:"bound",binding})
+      ||!isDeepStrictEqual(session.nativeBinding,binding)
+      ||!isDeepStrictEqual(adapter.nativeBinding,binding)
+      ||!isDeepStrictEqual(session.executionRef,current.executionRef)
+      ||!isDeepStrictEqual(adapter.executionRef,current.executionRef)
+      ||adapter.workspacePath!==current.worktree
+      ||adapter.execution?.generation!==current.generation
+      ||adapter.execution?.leaseId!==current.leaseId
+      ||adapter.execution?.attempt!==current.attempt
+      ||!adapter.nativeInvocationId
+      ||bindingRow.session_id!==session.id
+      ||bindingRow.binding_key!==nativeBindingKey(binding)
+      ||bindingRow.profile_id!==current.profileId
+      ||bindingRow.execution_ref_id!==current.executionRef?.id)this.snapshotRefusal("NATIVE_IDENTITY_CHANGED");
+    // Reclaim promotes the checkpoint atomically; its immutable read row retains the RECONCILING epoch.
+    const checkpoint=this.database.handle.prepare("SELECT * FROM native_observation_checkpoints WHERE session_id=?").get(run.sessionId),observationRow=checkpoint?this.database.handle.prepare("SELECT * FROM native_observations WHERE id=?").get(String(checkpoint.observation_id)):undefined,observation=store.observation(run.sessionId),events=this.database.getEntity<JsonValue>("native-event-checkpoint",run.sessionId) as unknown as NativeEventCheckpoint|undefined;
+    const o=observation as NativeObservation|undefined;
+    if(!checkpoint
+      ||!observationRow
+      ||!o
+      ||!o.read
+      ||checkpoint.session_id!==run.sessionId
+      ||checkpoint.observation_id!==o.id
+      ||observationRow.id!==o.id
+      ||observationRow.session_id!==run.sessionId
+      ||checkpoint.control_epoch!==control.epoch
+      ||observationRow.observer_generation!==checkpoint.observer_generation
+      ||observationRow.observer_sequence!==checkpoint.observer_sequence
+      ||observationRow.control_epoch!==control.epoch-1&&observationRow.control_epoch!==control.epoch
+      ||o.read.observerGeneration!==checkpoint.observer_generation
+      ||o.read.sequence!==checkpoint.observer_sequence
+      ||o.read.requestId!==o.id
+      ||o.read.readability!=="readable"
+      ||!isDeepStrictEqual(JSON.parse(String(observationRow.document_json)),o)
+      ||o.nativeSessionId!==binding.nativeSessionId
+      ||o.nativeThreadId!==binding.nativeThreadId
+      ||o.executionRefId!==binding.executionRefId
+      ||o.state!=="idle"
+      ||o.activeTurnId
+      ||o.pendingTools!=="none"
+      ||o.pendingApprovals!=="none"
+      ||!Number.isFinite(Date.parse(o.observedAt))
+      ||!events
+      ||events.needsSnapshot
+      ||events.needsHistory
+      ||!isDeepStrictEqual(events.binding,binding)
+      ||events.scopeFingerprint!==o.scopeFingerprint
+      ||events.observationId!==o.id
+      ||events.observerGeneration!==o.read.observerGeneration
+      ||events.sequence!==o.read.sequence
+      ||events.observerEpoch!==o.read.observerEpoch)this.snapshotRefusal("NATIVE_STATE_UNKNOWN");
+    const invalidation=this.database.getEntity<JsonValue>("native-verification-invalidation",run.id) as {version?:number;runId?:string;sessionId?:string;controlEpoch?:number;observationRef?:string;code?:string}|undefined;
+    if(verifiedBasis?invalidation!==undefined:!invalidation
+      ||invalidation.version!==1
+      ||invalidation.runId!==current.id
+      ||invalidation.sessionId!==current.sessionId
+      ||invalidation.controlEpoch!==control.epoch
+      ||invalidation.observationRef!==o.id
+      ||invalidation.code!=="NATIVE_REVERIFICATION_REQUIRED")this.snapshotRefusal("NATIVE_REVERIFICATION_REQUIRED");
+    const basis:NativeSnapshotBasis={runId:current.id,
+      taskId:current.taskId,
+      sessionId:current.sessionId,
+      generation:current.generation,
+      leaseId:current.leaseId,
+      taskRevision:stored.revision,
+      controlEpoch:control.epoch,
+      controlRevision:control.revision,
+      configRevision:config.revision,
+      contractHash:contentHash({contract,currentContract,task}),
+      repositoryHash:contentHash(repository),
+      profileHash:contentHash(profile),
+      executionHash:contentHash({attempt:current.attempt,
+      profileId:current.profileId,
+      providerId:current.providerId,
+      runnerId:current.runnerId,
+      sessionId:current.sessionId,
+      worktree:current.worktree,
+      branch:current.branch,
+      executionRef:current.executionRef,
+      executionSelection:current.executionSelection,
+      model:current.model,
+      modelSelection:(current as Run&{modelSelection?:unknown}).modelSelection,
+      contractRevision:current.contractRevision}),
+      policyHash:contentHash({frozen:this.database.getEntity("native-drift-policy",run.id),
+      configured:profile.nativeInteraction}),
+      controlHash:contentHash(controlRow),
+      bindingHash:contentHash({bindingRow,
+      session:{id:session.id,
+      profileId:session.profileId,
+      providerId:session.providerId,
+      executionRef:session.executionRef,
+      nativeBinding:session.nativeBinding},
+      adapter:{id:adapter.id,
+      runId:adapter.runId,
+      profileId:adapter.profileId,
+      backendId:adapter.backendId,
+      workspacePath:adapter.workspacePath,
+      executionRef:adapter.executionRef,
+      execution:adapter.execution,
+      nativeInvocationId:adapter.nativeInvocationId,
+      nativeBinding:adapter.nativeBinding}}),
+      observationHash:contentHash({checkpoint,observationRow,events}),
+      frozenVerificationHash:contentHash({frozen,marker}),
+      invalidationHash:verifiedBasis?.invalidationHash??contentHash(invalidation)};
+    return {basis,source:{repositoryId:repository.id,worktree:current.worktree,branch:current.branch,scopePaths:[...contract.scope],repositoryScopePaths:[...repository.scopePaths]},preparation:selection.preparation!,verification:selection.verification};
+  }
+
+  private assertNativeSnapshotBasis(run:Run,proof:NativeSnapshotProof,state:"VERIFYING"|"DELIVERING"):void {
+    const context=this.nativeSnapshotContext(run,state,proof.state==="VERIFIED"?proof.basis:undefined);
+    // The persisted source is never allowed to choose a filesystem before current registration agrees.
+    const persisted=this.currentNativeSnapshot(run.id),expected=proof.state==="CAPTURED"?{...proof,preparation:{...proof.preparation,checks:[]},checks:[]}:proof;
+    if(!isDeepStrictEqual(persisted,expected)
+      ||!isDeepStrictEqual(context.basis,proof.basis)
+      ||!isDeepStrictEqual(context.source,proof.snapshot.source)
+      ||!isDeepStrictEqual(context.preparation,{profileHash:proof.preparation.profileHash,commands:proof.preparation.commands})
+      ||!isDeepStrictEqual(context.verification,proof.verification)
+      ||this.currentNativeSnapshot(run.id)?.id!==proof.id)this.snapshotRefusal("LOCAL_REVIEW_CONTEXT_CHANGED");
+  }
+
+  private async assertNativeSnapshot(run:Run,proof:NativeSnapshotProof,state:"VERIFYING"|"DELIVERING"):Promise<void> {
+    this.assertNativeSnapshotBasis(run,proof,state);
+    await this.verificationSnapshots.assertCandidateAuthority(proof.snapshot,()=>this.assertNativeSnapshotBasis(run,proof,state));
+  }
+
+  private validSnapshotResult(result:VerificationResult|undefined,command:Pick<VerificationCommand,"id"|"required">):result is VerificationResult {
+    return Boolean(result
+        &&result.commandId===command.id
+        &&result.required===command.required
+        &&["passed","failed","timeout"].includes(result.status)
+        &&(result.exitCode===null||Number.isSafeInteger(result.exitCode))
+        &&(result.status!=="passed"||result.exitCode===0)
+        &&Number.isFinite(result.durationMs)
+        &&result.durationMs>=0
+        &&typeof result.output==="string"
+        &&typeof result.truncated==="boolean");
+  }
+
+  private snapshotReceiptsSettled(runId:string):boolean {
+    const rows=this.database.handle.prepare("SELECT id,document_json FROM entities WHERE kind='run-verification-command'").all() as {id:string;document_json:string}[];
+    return rows.every(row=>{
+      const value=JSON.parse(row.document_json) as AutomaticVerificationCommand|null;
+      if(value?.runId!==runId&&value?.fence?.runId!==runId)return true;
+      if(!value
+      ||value.version!==1
+      ||value.id!==row.id
+      ||value.runId!==runId
+      ||!Number.isSafeInteger(value.generation)
+      ||value.generation<1
+      ||typeof value.commandId!=="string"
+      ||!value.commandId
+      ||typeof value.semanticsHash!=="string"
+      ||!value.semanticsHash
+      ||value.state!=="SETTLED"
+      ||!value.fence
+      ||value.fence.runId!==runId
+      ||value.fence.generation!==value.generation)return false;
+      const result=value.result,fence=value.fence,scope=value.snapshotScope;
+      if(!result
+      ||typeof result.required!=="boolean"
+      ||!this.validSnapshotResult(result,{id:value.commandId,required:result.required})
+      ||![fence.sessionId,fence.commandId,fence.leaseId,fence.expectedCurrentRunId].every(v=>typeof v==="string"&&v.length>0)
+      ||![fence.expectedTaskRevision,fence.expectedControlRevision,fence.expectedControlEpoch].every(v=>Number.isSafeInteger(v)&&v>=0))return false;
+      return scope===undefined||Boolean(scope.version===1
+        &&typeof scope.proofId==="string"
+        &&scope.proofId.length>0
+        &&typeof scope.snapshotId==="string"
+        &&scope.snapshotId.length>0
+        &&["preparation","verification"].includes(scope.phase)
+        &&Number.isSafeInteger(scope.index)
+        &&scope.index>=0
+        &&typeof scope.basisHash==="string"
+        &&scope.basisHash.length>0);
+    });
+  }
+
+  private freshSnapshotReturn(run:Run,previous:NativeSnapshotProof,basis:NativeSnapshotBasis):boolean {
+    if(basis.controlEpoch<=previous.basis.controlEpoch)return false;
+    const control=new InteractionStore(this.database).control(run.sessionId);
+    const rows=this.database.listEntities<JsonValue>("native-reclaim") as unknown as Array<{version:number;commandId:string;phase:string;binding:NativeBinding;report?:{observation?:NativeObservation};commit?:{action:string;control:unknown}}>;
+    return rows.some(record=>{
+      const action=this.database.getEntity<JsonValue>("native-reclaim-action",record.commandId) as {runId?:string;sessionId?:string;controlEpoch?:number;action?:string;state?:string}|undefined;
+      return record.version===1
+        &&record.phase==="committed"
+        &&record.commit?.action==="verify"
+        &&isDeepStrictEqual(record.binding,new InteractionStore(this.database).binding(run.sessionId))
+        &&isDeepStrictEqual(record.commit.control,control)
+        &&record.report?.observation?.id===(this.database.getEntity<JsonValue>("native-verification-invalidation",run.id) as {observationRef?:string}|undefined)?.observationRef
+        &&action?.runId===run.id
+        &&action.sessionId===run.sessionId
+        &&action.controlEpoch===basis.controlEpoch
+        &&action.action==="verify"
+        &&["authorized","consumed"].includes(action.state??"")
+        &&Boolean(this.database.handle.prepare("SELECT 1 FROM control_audit WHERE session_id=? AND json_extract(document_json,'$.state')='HUMAN' AND json_extract(document_json,'$.newEpoch')>? AND json_extract(document_json,'$.newEpoch')<?").get(run.sessionId,previous.basis.controlEpoch,basis.controlEpoch));
+    });
+  }
+
+  private qualifiedNativeProof(proof:NativeSnapshotProof|undefined):boolean {
+    if(!proof||!proof.preparation||!Array.isArray(proof.preparation.commands)||!Array.isArray(proof.verification))return false;
+    const commands=[...proof.preparation.commands,...proof.verification];
+    return proof.state==="VERIFIED"
+        &&Boolean(proof.verifiedAt)
+        &&Array.isArray(proof.checks)
+        &&proof.checks.length===commands.length
+        &&isDeepStrictEqual(proof.commandIds,commands.map(c=>c.id))
+        &&proof.checks.every((check,index)=>this.validSnapshotResult(check,commands[index]!)
+        &&(!check.required||check.status==="passed"))
+        &&preparationEvidenceQualifies({preparation:proof.preparation,evidence:proof.preparation,checks:proof.checks,commandIds:proof.commandIds,verification:proof.verification});
+  }
+
+  private async verifyNativeSnapshot(run:Run,contract:TaskContract):Promise<void> {
+    let proof:NativeSnapshotProof|undefined,unknown=false,accepting=false;
+    try{
+      if(!this.snapshotReceiptsSettled(run.id))this.snapshotRefusal("VERIFICATION_OUTCOME_UNKNOWN");
+      const context=this.nativeSnapshotContext(run,"VERIFYING"),prior=this.currentNativeSnapshot(run.id);
+      if(prior&&prior.basis.controlEpoch===context.basis.controlEpoch){
+        if(prior.state!=="CAPTURED")this.snapshotRefusal(prior.reasonCode??"VERIFICATION_OUTCOME_UNKNOWN");
+        proof=prior;await this.assertNativeSnapshot(run,proof,"VERIFYING");
+      }else{
+        if(prior&&(prior.state==="UNKNOWN"||prior.state==="FAILED"&&!this.freshSnapshotReturn(run,prior,context.basis)))this.snapshotRefusal(prior.reasonCode??"VERIFICATION_OUTCOME_UNKNOWN");
+        const snapshot=await this.verificationSnapshots.createDeliveryCandidate(context.source,()=>{if(!isDeepStrictEqual(this.nativeSnapshotContext(run,"VERIFYING").basis,context.basis))this.snapshotRefusal("LOCAL_REVIEW_CONTEXT_CHANGED");});
+        const id=contentHash(["native-snapshot-proof",run.id,run.generation,context.basis.controlEpoch,snapshot.id]);
+        proof={format:"native-snapshot-verification-v1",version:1,id,runId:run.id,basis:context.basis,snapshot,preparation:{...context.preparation,checks:[]},verification:context.verification,commandIds:[...context.preparation.commands,...context.verification].map(c=>c.id),checks:[],state:"CAPTURED"};
+        this.database.transaction(()=>{if(!isDeepStrictEqual(this.nativeSnapshotContext(run,"VERIFYING").basis,context.basis)
+      ||!this.snapshotReceiptsSettled(run.id))this.snapshotRefusal("LOCAL_REVIEW_CONTEXT_CHANGED");this.database.saveEntity("run-snapshot-verification",id,json(proof));this.database.saveEntity("run-snapshot-current",run.id,{id});});
+      }
+      const captured=proof,registry=new VerificationRegistry(),controller=new AbortController(),commands=[...captured.preparation.commands,...captured.verification];for(const command of commands)registry.register(command);
+      captured.checks=[];captured.preparation.checks=[];
+      const work=(async()=>{
+        for(const [ordinal,command] of commands.entries()){
+          await this.assertNativeSnapshot(run,captured,"VERIFYING");if(controller.signal.aborted)this.snapshotRefusal("RUN_CANCELLED");
+          const phase:"preparation"|"verification"=ordinal<captured.preparation.commands.length?"preparation":"verification",index=phase==="preparation"?ordinal:ordinal-captured.preparation.commands.length;
+          const id=contentHash(["snapshot-verification",run.id,run.generation,captured.basis.controlEpoch,captured.snapshot.id,phase,index]),snapshotScope={version:1 as const,proofId:captured.id,snapshotId:captured.snapshot.id,phase,index,basisHash:contentHash(captured.basis)},fence=this.nativeInteractions.fenceFor(run,`verify:${id}`),semanticsHash=contentHash({contract,command,snapshotScope,snapshot:captured.snapshot});
+          const receipt:AutomaticVerificationCommand={version:1,id,runId:run.id,generation:run.generation,commandId:command.id,fence,semanticsHash,snapshotScope,state:"SENDING"};
+          const previous=this.database.getEntity<JsonValue>("run-verification-command",id) as unknown as AutomaticVerificationCommand|undefined;let result:VerificationResult;
+          if(previous){if(previous.state!=="SETTLED"
+      ||!this.validSnapshotResult(previous.result,command)
+      ||!isDeepStrictEqual({...previous,state:"SENDING",result:undefined},{...receipt,result:undefined}))this.snapshotRefusal("VERIFICATION_OUTCOME_UNKNOWN");result=previous.result;}
+          else{
+            this.database.transaction(()=>{this.assertNativeSnapshotBasis(run,captured,"VERIFYING");if(!this.snapshotReceiptsSettled(run.id))this.snapshotRefusal("VERIFICATION_OUTCOME_UNKNOWN");this.database.saveEntity("run-verification-command",id,json(receipt));});
+            unknown=true;
+            try{const actual=await registry.run(command.id,captured.snapshot.path,controller.signal);result={...actual,output:redactNativeText(String(redactValue(actual.output)))};
+              // An occurred result is a fact under the original send identity, even after authority drift.
+              this.database.transaction(()=>{if(!isDeepStrictEqual(this.database.getEntity("run-verification-command",id),json(receipt)))this.snapshotRefusal("VERIFICATION_OUTCOME_UNKNOWN");this.database.saveEntity("run-verification-command",id,json({...receipt,state:"SETTLED",result}));});unknown=false;
+            }catch(error){
+              this.database.transaction(()=>{if(isDeepStrictEqual(this.database.getEntity("run-verification-command",id),json(receipt)))this.database.saveEntity("run-verification-command",id,json({...receipt,state:"UNKNOWN"}));});
+              throw error;
+            }
+          }
+          captured.checks.push(result);if(phase==="preparation")captured.preparation.checks.push(result);
+          await this.assertNativeSnapshot(run,captured,"VERIFYING");if(controller.signal.aborted)this.snapshotRefusal("RUN_CANCELLED");
+          if(phase==="preparation"&&(result.status!=="passed"||result.exitCode!==0))this.snapshotRefusal("SNAPSHOT_PREPARATION_FAILED");
+        }
+      })();
+      this.localCommands.set(run.id,{controller,settled:work});try{await work;}finally{if(this.localCommands.get(run.id)?.controller===controller)this.localCommands.delete(run.id);}
+      if(captured.checks.some(c=>c.required&&c.status!=="passed"))this.snapshotRefusal("REQUIRED_VERIFICATION_FAILED");
+      const verified:NativeSnapshotProof={...captured,state:"VERIFIED",verifiedAt:this.now().toISOString()};if(!this.qualifiedNativeProof(verified))this.snapshotRefusal("SNAPSHOT_PREPARATION_REQUIRED");
+      await this.assertNativeSnapshot(run,captured,"VERIFYING");accepting=true;
+      this.database.transaction(()=>{
+        this.assertNativeSnapshotBasis(run,captured,"VERIFYING");
+        this.database.saveEntity("run-snapshot-verification",captured.id,json(verified));
+        const advanced:Run={...run,state:"DELIVERING",verification:{state:"PASSED",commands:[...contract.verification],summary:captured.checks.map(c=>`${c.commandId}:${c.status}`).join(", ")}};
+        assertRunTransition(run.state,"DELIVERING");this.saveAdvancedRun(advanced,"VERIFYING");
+        if(contentHash(this.database.getEntity("native-verification-invalidation",run.id))!==captured.basis.invalidationHash)this.snapshotRefusal("NATIVE_REVERIFICATION_REQUIRED");
+        const deleted=this.database.handle.prepare("DELETE FROM entities WHERE kind='native-verification-invalidation' AND id=?").run(run.id);if(deleted.changes!==1)this.snapshotRefusal("NATIVE_REVERIFICATION_REQUIRED");
+        this.assertNativeSnapshotBasis(advanced,verified,"DELIVERING");
+        Object.assign(run,advanced);
+      });
+    }catch(error){
+      if(proof&&!accepting){proof.state=unknown?"UNKNOWN":"FAILED";proof.reasonCode=unknown?"VERIFICATION_OUTCOME_UNKNOWN":error instanceof AdapterContractError
+      ||error instanceof InteractionGuardError
+      ||error instanceof WorkspacePolicyError?error.code:"NATIVE_SNAPSHOT_VERIFICATION_FAILED";this.database.saveEntity("run-snapshot-verification",proof.id,json(proof));}
+      if(!unknown&&this.snapshotReceiptsSettled(run.id))this.nativeInteractions.acknowledgeSettledMutationOutcome(run.sessionId);
+      throw error;
+    }
+  }
+
+
   private saveAdvancedRun(run: Run, expectedState: Run["state"]): void {
     if(this.nativeInteractions.hasAuthorityContext(run.sessionId))this.assertRunInteraction(run,"advance");
     const current = this.database.getEntity<JsonValue>("run", run.id) as unknown as Run | undefined;
@@ -2362,6 +2707,10 @@ export class ControllerService {
       return { waiting: true, run, task: storedTask.document as unknown as Task, deliveries: [] };
     }
 
+    if(run.state==="VERIFYING"&&this.nativeInteractions.requiresDeliverySnapshot(run)){
+      if(this.agentAdapters.get(run.profileId) instanceof RemoteNativeAdapter){this.nativeInteractions.acknowledgeSettledMutationOutcome(run.sessionId);this.snapshotRefusal("VERIFICATION_ENVIRONMENT_UNAVAILABLE");}
+      await this.verifyNativeSnapshot(run,contract);
+    }
     if (run.state === "VERIFYING") {
       const repositoryId = contract.workspace?.repositoryId ?? contract.delivery.repository;
       const repository = this.configuration.current().config.repositories.find((entry) => entry.id === repositoryId);
@@ -2448,6 +2797,19 @@ export class ControllerService {
     }
 
     if (run.state !== "DELIVERING" || !run.worktree || !run.branch) throw new ConnectorError("CONFLICT", `Run ${run.id} is not ready for delivery`);
+    let snapshotProof:NativeSnapshotProof|undefined;
+    if(this.nativeInteractions.requiresDeliverySnapshot(run)){
+      try{
+        snapshotProof=this.currentNativeSnapshot(run.id);
+        if(!snapshotProof||!this.qualifiedNativeProof(snapshotProof))this.snapshotRefusal("VERIFIED_CANDIDATE_REQUIRED");
+        await this.assertNativeSnapshot(run,snapshotProof,"DELIVERING");
+        if(contract.delivery.type!=="none")this.snapshotRefusal("VERIFIED_DELIVERY_UNAVAILABLE");
+      }catch(error){
+        // This preflight cannot send native delivery. Prior uncertain commands stay barriers.
+        if(this.snapshotReceiptsSettled(run.id))this.nativeInteractions.acknowledgeSettledMutationOutcome(run.sessionId);
+        throw error;
+      }
+    }
     if(contract.delivery.type==="pull-request"){
       if(contract.delivery.scmConnectorId||this.database.getEntity("run-delivery-selection",run.id))return this.deliverExplicitPr(run,contract);
       if(!this.options.gitTransport)throw new ConnectorError("CONFLICT","Legacy delivery has no frozen owning target; review and dispatch a new Run",{retryable:false,operation:"delivery"});
@@ -2456,8 +2818,10 @@ export class ControllerService {
       const remote=this.agentAdapters.get(run.profileId) instanceof RemoteNativeAdapter;
       const workspace=remote?this.database.getEntity<JsonValue>("workspace-handle",run.id) as unknown as WorkspaceHandle|undefined:this.workspaces.get(run.worktree);
       if(!workspace)throw new WorkspacePolicyError("WORKSPACE_UNAVAILABLE","Managed worktree requires restoration or inspection");
+      if(snapshotProof)await this.assertNativeSnapshot(run,snapshotProof,"DELIVERING");
       const resultFiles=remote?await this.remoteRequest(run.runnerId,{type:"native.run_files",runId:run.id},run):await this.workspaces.resultFiles(workspace);
       if(!Array.isArray(resultFiles)||resultFiles.length>5000||resultFiles.some(file=>typeof file!=="string"||file.length>4000||/^[/\\]|^[a-z]:/i.test(file)||file.split(/[\\/]/).some(segment=>segment===".."||segment===".git"))||new Set(resultFiles).size!==resultFiles.length)throw new AdapterContractError("REMOTE_RESULT_INVALID","Owning Runner returned an invalid change manifest");
+      if(snapshotProof)await this.assertNativeSnapshot(run,snapshotProof,"DELIVERING");
       let files=resultFiles as string[];if(remote)assertPublicationScope(files,workspace.scopePaths);
       let commit:Awaited<ReturnType<LocalGitDelivery["commit"]>>|undefined;
       if(contract.delivery.type==="commit"){
@@ -2474,6 +2838,7 @@ export class ControllerService {
       if(remote){this.fenceDelivery(run,"complete");await this.finalizeRemoteRun(run);}
       this.database.transaction(()=>{
         this.fenceDelivery(run,"complete");
+        if(snapshotProof){this.assertNativeSnapshotBasis(run,snapshotProof,"DELIVERING");if(!this.qualifiedNativeProof(this.currentNativeSnapshot(run.id)!))this.snapshotRefusal("VERIFIED_CANDIDATE_REQUIRED");}
         const current=this.database.getCanonicalTask<JsonValue>(run.taskId)!;
         const task=current.document as unknown as Task;
         if(task.currentRunId!==run.id||task.state!=="VERIFYING")throw new ConnectorError("CONFLICT","Task authority changed before local completion");
