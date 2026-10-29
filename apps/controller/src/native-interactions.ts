@@ -257,6 +257,21 @@ export class NativeInteractions {
     // Only a trusted side-effect coordinator may acknowledge its durable outcome.
     context.mutationAuthorized=false;
   }
+  assertPriorMutationOutcomesSettled(sessionId:string):void {
+    const context=this.laneContext.getStore();
+    if(!context?.ownsLane||context.sessionId!==sessionId||!context.mutationRecordId||!this.activeMutations.has(context.mutationRecordId))throw new InteractionGuardError("MUTATION_LANE_REQUIRED");
+    const own=this.database.handle.prepare("SELECT id,document_json FROM entities WHERE kind='native-mutation' AND id=?").get(context.mutationRecordId) as {id:string;document_json:string}|undefined;
+    let marker:Partial<MutationRecord>|null|undefined;
+    try{marker=own?JSON.parse(own.document_json) as Partial<MutationRecord>|null:undefined;}catch{/* An unreadable owned marker cannot establish the lane. */}
+    if(!own||!marker||marker.id!==own.id||marker.sessionId!==sessionId||marker.state!=="active")throw new InteractionGuardError("MUTATION_LANE_REQUIRED");
+    const rows=this.database.handle.prepare("SELECT id,document_json FROM entities WHERE kind='native-mutation' AND CASE WHEN json_valid(document_json) THEN json_extract(document_json,'$.sessionId') END=?").all(sessionId) as {id:string;document_json:string}[];
+    for(const row of rows){
+      if(row.id===context.mutationRecordId)continue;
+      const prior=JSON.parse(row.document_json) as Partial<MutationRecord>|null;
+      // Check all associated rows, including missing/null states; only this exact live lane is excluded.
+      if(!prior||prior.id!==row.id||prior.sessionId!==sessionId||prior.state!=="settled"||this.activeMutations.has(row.id))throw new InteractionGuardError("NATIVE_COMMAND_OUTCOME_UNKNOWN");
+    }
+  }
   fenceFor(run:Run,commandId:string):MutationFence {
     const task=this.database.getCanonicalTask<JsonValue>(run.taskId);
     const context=this.laneContext.getStore();

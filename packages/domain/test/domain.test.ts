@@ -78,3 +78,14 @@ describe("domain state contracts", () => {
     expect(task.bindings).toEqual([expect.objectContaining({ externalId: "INH-1", canonicalEntityId: "task-1" })]);
   });
 });
+
+// A pure phase edge does not grant native verification authority.
+it("allows delivery to return to verification",()=>{
+  expect(()=>assertRunTransition("DELIVERING","VERIFYING")).not.toThrow();
+});
+it.each(["COMPLETE","FAILED","CANCELLED","SUPERSEDED"] as const)("keeps %s terminal during re-verification",state=>{
+  expect(()=>assertRunTransition(state,"VERIFYING")).toThrow(InvalidStateTransitionError);
+});
+it("does not reopen delivery as active execution",()=>{
+  expect(()=>assertRunTransition("DELIVERING","ACTIVE")).toThrow(InvalidStateTransitionError);
+});

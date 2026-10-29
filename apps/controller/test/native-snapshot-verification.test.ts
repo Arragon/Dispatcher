@@ -182,3 +182,136 @@ it.each(["SENDING", "UNKNOWN", "malformed", "native-unknown"] as const)("preserv
   expect(f.starts()).toBe(1);
  }, () => manifest.mockRestore());
 });
+
+// G2c starts each second cycle from an actually accepted first proof.
+async function deliveringCycle(delivery:"none"|"commit"|"pull-request"="commit",options:Parameters<typeof nativeSnapshotFixture>[0]={}){
+ const f=await nativeSnapshotFixture({...options,delivery});
+ try{
+  // Stage the actual native result, so HUMAN changes a tracked candidate without a new commit.
+  execFileSync("git",["-C",f.run.worktree!,"add","result.txt"]);
+  if(delivery==="none")f.service.database.handle.exec("CREATE TRIGGER g2c_initial_completion BEFORE INSERT ON entities WHEN NEW.kind='run-result' BEGIN SELECT RAISE(ABORT,'g2c initial completion fault'); END");
+  const first=await f.advance();
+  if(delivery==="none"){expect(first.statusCode).toBe(500);f.service.database.handle.exec("DROP TRIGGER g2c_initial_completion");}
+  else expect(first.json().code).toBe("VERIFIED_DELIVERY_UNAVAILABLE");
+  expect(f.service.database.getEntity("run",f.run.id)).toMatchObject({state:"DELIVERING",verification:{state:"PASSED"}});
+  expect(proof(f)?.state).toBe("VERIFIED");expect(f.children()).toHaveLength(2);
+  f.record("g2c-first-delivering",{run:f.service.database.getEntity("run",f.run.id),proof:proof(f),source:source(f),children:f.children()});
+  return f;
+ }catch(error){await f.close();throw error;}
+}
+const cycleState=(f:Fixture)=>({run:f.service.database.getEntity("run",f.run.id),actions:f.service.database.listEntities("native-reclaim-action"),invalidation:f.service.database.getEntity("native-verification-invalidation",f.run.id),pointer:f.service.database.getEntity("run-snapshot-current",f.run.id),proofs:f.service.database.listEntities("run-snapshot-verification"),returns:f.service.database.listEntities("native-reclaim"),children:f.children(),native:[...f.nativeCalls],source:source(f)});
+it.each(["none","commit","pull-request"] as const)("re-verifies a genuine %s delivery after explicit HUMAN edits with fresh snapshot commands",async delivery=>{
+ const f=await deliveringCycle(delivery);try{
+  const old=structuredClone(proof(f))!,receipts=structuredClone(f.service.database.listEntities("run-verification-command")) as unknown as {id:string}[],before=source(f),native=[...f.nativeCalls],bare=delivery==="pull-request"?execFileSync("git",["--git-dir",join(f.root,"bare.git"),"show-ref"]).toString():undefined;
+  const commit=vi.spyOn(f.service["localGitDelivery"],"commit"),push=vi.spyOn(f.service["localGitDelivery"],"push");
+  await f.returnHuman({duringHuman:()=>{expect(f.store.control(f.run.sessionId)?.state).toBe("HUMAN");writeFileSync(join(f.run.worktree!,"result.txt"),"human second candidate\n");}});
+  const invalidation=f.service.database.getEntity("native-verification-invalidation",f.run.id),response=await f.advance(),fresh=proof(f)!;
+  f.facts({delivery,before,old,invalidation,response:response.json(),fresh,state:cycleState(f)});
+  expect(response.statusCode,response.body).toBe(delivery==="none"?200:409);
+  if(delivery!=="none")expect(response.json().code).toBe("VERIFIED_DELIVERY_UNAVAILABLE");
+  expect(fresh.id).not.toBe(old.id);expect(fresh.snapshot.id).not.toBe(old.snapshot.id);expect(fresh.state).toBe("VERIFIED");
+  expect((fresh as unknown as {basis:{controlEpoch:number}}).basis.controlEpoch).toBeGreaterThan((old as unknown as {basis:{controlEpoch:number}}).basis.controlEpoch);
+  expect(readFileSync(join(fresh.snapshot.path,"result.txt"),"utf8")).toBe("human second candidate\n");
+  expect(f.service.database.getEntity("run-snapshot-verification",old.id)).toEqual(old);
+  for(const receipt of receipts)expect(f.service.database.getEntity("run-verification-command",receipt.id)).toEqual(receipt);
+  expect(f.children().map(c=>c.phase)).toEqual(["prepare-0","check","prepare-0","check"]);
+  for(const c of f.children().slice(2))expect([c.cwd,c.pwd,c.top]).toEqual([fresh.snapshot.path,fresh.snapshot.path,fresh.snapshot.path]);
+  expect(f.service.database.getEntity("native-verification-invalidation",f.run.id)).toBeUndefined();
+  expect(f.nativeCalls).toEqual(native);expect(f.starts()).toBe(1);expect(native.filter(x=>x==="initialize")).toHaveLength(1);expect(native.filter(x=>x==="thread/start")).toHaveLength(1);expect(native.filter(x=>x==="turn/start")).toHaveLength(1);
+  expect(source(f)).toEqual({...before,result:"human second candidate\n"});expect(commit).not.toHaveBeenCalled();expect(push).not.toHaveBeenCalled();
+  if(bare)expect(execFileSync("git",["--git-dir",join(f.root,"bare.git"),"show-ref"]).toString()).toBe(bare);
+  expect(f.service.database.getEntity("run",f.run.id)).toMatchObject({state:delivery==="none"?"COMPLETE":"DELIVERING",verification:{state:"PASSED"}});
+  expect(f.service.database.getCanonicalTask(f.run.taskId)?.document).toMatchObject({state:delivery==="none"?"REVIEW":"VERIFYING"});
+ }finally{await f.close();}
+});
+
+it.each(["continue","missing","duplicate","consumed","action-version","action-session","action-epoch","action-observation","action-command","action-report","action-shape","action-run","record","record-policy","record-policy-changed","record-control","record-binding","invalidation-version","invalidation-run","invalidation-session","invalidation-epoch","invalidation-observation","invalidation-code"] as const)("refuses delivery reentry with %s without consuming authority or sending work",async damage=>{
+ const f=await deliveringCycle();try{
+  await f.returnHuman({action:damage==="continue"?"continue":"verify"});
+  const db=f.service.database,id="reclaim-2",action=db.getEntity("native-reclaim-action",id) as Record<string,JsonValue>;
+  if(damage==="missing")db.handle.prepare("DELETE FROM entities WHERE kind='native-reclaim-action' AND id=?").run(id);
+  if(damage==="duplicate")save(f,"native-reclaim-action","duplicate",{...action,commandId:"duplicate"});
+  if(damage==="consumed")save(f,"native-reclaim-action",id,{...action,state:"consumed"});
+  const actionFields:Record<string,object>={"action-version":{version:2},"action-run":{runId:"foreign"},"action-shape":{state:null,reportId:null},"action-session":{sessionId:"foreign"},"action-epoch":{controlEpoch:0},"action-observation":{observationRef:"foreign"},"action-command":{commandId:"foreign"},"action-report":{reportId:"foreign"}};
+  if(actionFields[damage])save(f,"native-reclaim-action",id,{...action,...actionFields[damage]});
+  if(damage==="record")db.handle.prepare("DELETE FROM entities WHERE kind='native-reclaim' AND id=?").run(id);
+  if(damage==="record-policy")db.handle.prepare("UPDATE entities SET document_json=json_remove(document_json,'$.driftPolicy') WHERE kind='native-reclaim' AND id=?").run(id);
+  if(damage==="record-policy-changed")db.handle.prepare("UPDATE entities SET document_json=json_set(document_json,'$.driftPolicy.permissionFingerprint','foreign') WHERE kind='native-reclaim' AND id=?").run(id);
+  if(damage==="record-control")db.handle.prepare("UPDATE entities SET document_json=json_set(document_json,'$.commit.control.revision',999) WHERE kind='native-reclaim' AND id=?").run(id);
+  if(damage==="record-binding")db.handle.prepare("UPDATE entities SET document_json=json_set(document_json,'$.binding.nativeSessionId','foreign') WHERE kind='native-reclaim' AND id=?").run(id);
+  const invalidation=db.getEntity("native-verification-invalidation",f.run.id) as Record<string,JsonValue>,fields:Record<string,object>={"invalidation-version":{version:2},"invalidation-run":{runId:"foreign"},"invalidation-session":{sessionId:"foreign"},"invalidation-epoch":{controlEpoch:0},"invalidation-observation":{observationRef:"foreign"},"invalidation-code":{code:"foreign"}};
+  if(fields[damage])save(f,"native-verification-invalidation",f.run.id,{...invalidation,...fields[damage]});
+  const before=cycleState(f),response=await f.advance();f.facts({damage,before,response:response.json(),after:cycleState(f)});
+  expect(response.statusCode,response.body).toBe(409);expect(cycleState(f)).toEqual(before);
+  expect(db.listEntities("native-mutation")).not.toContainEqual(expect.objectContaining({state:"unknown"}));
+ }finally{await f.close();}
+});
+it.each(["task-physical","task-document","control-physical","control-document","checkpoint","binding-physical","binding-document","configuration","frozen-commands","policy","lease-expiry","lease-revocation"] as const)("retains delivery PASSED and explicit verify choice when %s authority rejects reentry",async drift=>{
+ const f=await deliveringCycle();try{
+  await f.returnHuman();const db=f.service.database,run=f.run;
+  if(drift==="task-physical")db.handle.prepare("UPDATE canonical_tasks SET revision=revision+1 WHERE id=?").run(run.taskId);
+  if(drift==="task-document")db.handle.prepare("UPDATE canonical_tasks SET document_json=json_set(document_json,'$.id','foreign') WHERE id=?").run(run.taskId);
+  if(drift==="control-physical")db.handle.prepare("UPDATE session_controls SET active_run_id='foreign' WHERE session_id=?").run(run.sessionId);
+  if(drift==="control-document")db.handle.prepare("UPDATE session_controls SET document_json=json_set(document_json,'$.exclusion','native-enforced') WHERE session_id=?").run(run.sessionId);
+  if(drift==="checkpoint")db.handle.prepare("UPDATE native_observation_checkpoints SET observer_sequence=observer_sequence+1 WHERE session_id=?").run(run.sessionId);
+  if(drift==="binding-physical")db.handle.prepare("UPDATE native_bindings SET profile_id='foreign' WHERE session_id=?").run(run.sessionId);
+  if(drift==="binding-document")db.handle.prepare("UPDATE native_bindings SET document_json=json_set(document_json,'$.nativeStoreRef','foreign') WHERE session_id=?").run(run.sessionId);
+  if(drift==="configuration"){const config=f.service.configuration.current().config;config.repositories[0]!.snapshotVerification!.id="changed";await f.service.configuration.applyPlan(f.service.configuration.buildPlan(config,"owner","fixture").id,{confirmed:true});}
+  if(drift==="frozen-commands"){const frozen=db.getEntity("run-verification-config",run.id) as unknown as VerificationCommand[];frozen[0]!.args.push("changed");save(f,"run-verification-config",run.id,frozen);}
+  if(drift==="policy"){const policy=db.getEntity("native-drift-policy",run.id) as Record<string,JsonValue>;save(f,"native-drift-policy",run.id,{...policy,policy:{...policy.policy as object,permissionFingerprint:"changed"}});}
+  if(drift==="lease-expiry"){const current=db.getEntity("run",run.id) as unknown as Run;f.service.options.clock=()=>new Date(Date.parse(current.leaseExpiresAt!)+1);}
+  if(drift==="lease-revocation")f.service["leaseAuthority"].revoke(run.id,run.leaseId,run.generation,"fixture reentry revocation",new Date().toISOString());
+  const before=cycleState(f),response=await f.advance();f.facts({drift,before,response:response.json(),after:cycleState(f)});
+  expect(response.statusCode,response.body).toBe(409);expect(cycleState(f)).toEqual(before);
+  expect(db.getEntity("run",run.id)).toMatchObject({state:"DELIVERING",verification:{state:"PASSED"}});
+ }finally{await f.close();}
+});
+it.each(["SENDING","UNKNOWN","malformed","native-unknown","native-active","native-malformed","native-id-mismatch"] as const)("does not bypass a labelled old %s barrier after a second actual HUMAN return",async barrier=>{
+ const f=await deliveringCycle();try{
+  await f.returnHuman();const id="g2c-old-uncertainty",kind=barrier.startsWith("native-")?"native-mutation":"run-verification-command";
+  const prior=barrier.startsWith("native-")?{id:barrier==="native-id-mismatch"?"foreign-document":id,sessionId:f.run.sessionId,...(barrier==="native-malformed"?{}:{state:barrier==="native-id-mismatch"?"settled":barrier==="native-unknown"?"unknown":"active"})}:barrier==="malformed"?{version:1,id,runId:f.run.id,state:"SETTLED"}:{version:1,id,runId:f.run.id,generation:f.run.generation,commandId:"check",semanticsHash:"labelled-old-proof",fence:f.interactions.fenceFor(f.run,id),state:barrier};
+  save(f,kind,id,prior);const before=cycleState(f),response=await f.advance();f.facts({barrier,prior,before,response:response.json(),after:cycleState(f)});
+  expect(response.statusCode,response.body).toBe(409);if(barrier.startsWith("native-"))expect(response.json().code).toBe("NATIVE_COMMAND_OUTCOME_UNKNOWN");expect(cycleState(f)).toEqual(before);expect(f.service.database.getEntity(kind,id)).toEqual(prior);
+ }finally{await f.close();}
+});
+it.each(["run-write","action-write","action-ignored","return-during-consume","task-during-consume","control-during-consume"] as const)("rolls back %s atomically and retries the same explicit choice once without duplicate children",async fault=>{
+ const f=await deliveringCycle();try{
+  await f.returnHuman({duringHuman:()=>writeFileSync(join(f.run.worktree!,"result.txt"),"rollback retry candidate\n")});const db=f.service.database,before=cycleState(f);
+  const condition=fault==="run-write"?"NEW.kind='run' AND json_extract(NEW.document_json,'$.state')='VERIFYING'":"NEW.kind='native-reclaim-action' AND json_extract(NEW.document_json,'$.state')='consumed'";
+  const effect=fault==="return-during-consume"?"UPDATE entities SET document_json=json_set(document_json,'$.commit.reportId','foreign') WHERE kind='native-reclaim' AND id='reclaim-2';":fault==="action-ignored"?"SELECT RAISE(IGNORE);":fault==="task-during-consume"?"UPDATE canonical_tasks SET document_json=json_set(document_json,'$.id','foreign');":fault==="control-during-consume"?"UPDATE session_controls SET revision=revision+1;":"SELECT RAISE(ABORT,'g2c transactional write fault');";
+  db.handle.exec(`CREATE TRIGGER g2c_reentry_fault ${fault.endsWith("during-consume")?"AFTER UPDATE":fault==="action-ignored"?"BEFORE UPDATE":"BEFORE INSERT"} ON entities WHEN ${condition} BEGIN ${effect} END`);
+  const rejected=await f.advance();expect(rejected.statusCode,rejected.body).toBe(fault.endsWith("during-consume")||fault==="action-ignored"?409:500);expect(cycleState(f)).toEqual(before);
+  expect(db.listEntities("native-mutation")).not.toContainEqual(expect.objectContaining({state:"unknown"}));
+  db.handle.exec("DROP TRIGGER g2c_reentry_fault");const retry=await f.advance();f.facts({fault,before,rejected:rejected.json(),retry:retry.json(),after:cycleState(f)});
+  expect(retry.json().code).toBe("VERIFIED_DELIVERY_UNAVAILABLE");expect(f.children()).toHaveLength(4);expect(proof(f)!.id).not.toBe((before.pointer as unknown as {id:string}).id);
+  const children=f.children(),again=await f.advance();expect(again.json().code).toBe("VERIFIED_DELIVERY_UNAVAILABLE");expect(f.children()).toEqual(children);
+ }finally{f.service.database.handle.exec("DROP TRIGGER IF EXISTS g2c_reentry_fault");await f.close();}
+});
+it.each(["preparation","verification"] as const)("a failing new %s cannot retain operative old PASSED authority",async phase=>{
+ const fail="if(fs.existsSync(root+'/fail-second'))process.exit(7);",prepare="if(!fs.existsSync('env.txt'))fs.writeFileSync('env.txt','prepared');",f=await deliveringCycle("commit",phase==="preparation"?{preparation:[fail+prepare]}:{check:fail+"if(fs.readFileSync('env.txt','utf8')!=='prepared')process.exit(9);"});
+ try{
+  const old=structuredClone(proof(f))!;await f.returnHuman({duringHuman:()=>{writeFileSync(join(f.root,"fail-second"),"fail");writeFileSync(join(f.run.worktree!,"result.txt"),"failing HUMAN candidate\n");}});
+  const invalidation=f.service.database.getEntity("native-verification-invalidation",f.run.id),response=await f.advance();f.facts({phase,old,invalidation,response:response.json(),after:cycleState(f)});
+  expect(response.statusCode).toBe(409);expect(f.service.database.getEntity("run",f.run.id)).toMatchObject({state:"VERIFYING",verification:{state:"PENDING",commands:["check"]}});
+  expect((f.service.database.getEntity("run",f.run.id) as unknown as Run).verification.summary).toBeUndefined();expect(proof(f)?.state).toBe("FAILED");expect(proof(f)?.id).not.toBe(old.id);
+  expect(f.service.database.getEntity("run-snapshot-verification",old.id)).toEqual(old);expect(f.service.database.getEntity("native-verification-invalidation",f.run.id)).toEqual(invalidation);
+  expect(f.children()).toHaveLength(phase==="preparation"?3:4);expect(f.service.database.listEntities("run-verification-command")).toEqual(expect.arrayContaining([expect.objectContaining({state:"SETTLED",result:expect.objectContaining({status:"failed",exitCode:7})})]));
+ }finally{await f.close();}
+});
+
+it.each(["missing","id","session","state"] as const)("refuses an actual owned mutation marker %s fault before delivery reentry",async fault=>{
+ const f=await deliveringCycle();try{
+  await f.returnHuman();const db=f.service.database,before=cycleState(f),original=db.saveEntity.bind(db);let injected=false;
+  const saving=vi.spyOn(db,"saveEntity").mockImplementation((...args)=>{
+   const result=original(...args),marker=args[2] as {state?:string};
+   if(!injected&&args[0]==="native-mutation"&&marker.state==="active"){
+    injected=true;f.record("g2c-owned-marker-fault",{fault,id:args[1],before:args[2]});
+    if(fault==="missing")db.handle.prepare("DELETE FROM entities WHERE kind='native-mutation' AND id=?").run(args[1]);
+    else db.handle.prepare("UPDATE entities SET document_json=json_set(document_json,?,?) WHERE kind='native-mutation' AND id=?").run(fault==="id"?"$.id":fault==="session"?"$.sessionId":"$.state",fault==="state"?"unknown":"foreign",args[1]);
+   }
+   return result;
+  });
+  try{const response=await f.advance();f.facts({fault,injected,before,response:response.json(),after:cycleState(f)});expect(injected).toBe(true);expect(response.json().code).toBe("MUTATION_LANE_REQUIRED");expect(cycleState(f)).toEqual(before);expect(db.listEntities("native-mutation")).not.toContainEqual(expect.objectContaining({state:"unknown"}));}
+  finally{saving.mockRestore();}
+ }finally{await f.close();}
+});

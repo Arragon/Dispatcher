@@ -13,7 +13,7 @@ import {NativeHistoryService,NativeHistoryError} from "./native-history.js";
 import {nativeSessionView} from "./native-session-view.js";
 import {isGuardedControllerStart,isReadableManagedCodexRun,isReadableManagedOpenCodeRun,isReadableManagedPiRun,isReadableManagedDevinRun,isReadableManagedCopilotRun} from "./start-recovery.js";
 import {parseNativeModelDefaultReview,qualifyNativeModelDefault,readNativeModelDefaultEvidence} from "./model-defaults.js";
-import {isExecutionContextRef,nativeBindingKey,normalizeNativeBinding,type NativeBinding,type InteractionCapabilities,type NativeResponse,type RunGitDelivery,type ScmDeliverySelection,type MutationFence,type ExecutionContextRef,type NativeControlView,type NativeObservation,type Session} from "@dispatcher/domain";
+import {isExecutionContextRef,nativeBindingKey,normalizeNativeBinding,type NativeDriftPolicy,type NativeBinding,type InteractionCapabilities,type NativeResponse,type RunGitDelivery,type ScmDeliverySelection,type MutationFence,type ExecutionContextRef,type NativeControlView,type NativeObservation,type Session} from "@dispatcher/domain";
 import {NativeInteractions,InteractionGuardError,type ControllerInteractionOperation,type InteractionPrincipal} from "./native-interactions.js";
 import {AdapterAdmissionError,readInteractionCapabilities,assertAdapterWriteAdmission,type AdapterStartOutcome} from "@dispatcher/adapters";
 import { resolveProfileExecutionContext } from "./execution-context.js";
@@ -2624,6 +2624,45 @@ export class ControllerService {
     this.database.saveEntity("run", run.id, json(run));
   }
 
+  private reenterNativeSnapshot(run:Run,contract:TaskContract):Run {
+    try{
+      if(this.agentAdapters.get(run.profileId) instanceof RemoteNativeAdapter)this.snapshotRefusal("VERIFICATION_ENVIRONMENT_UNAVAILABLE");
+      return this.database.transaction(()=>{
+        const current=this.database.getEntity<JsonValue>("run",run.id),store=new InteractionStore(this.database),control=store.control(run.sessionId);
+        const invalidation=this.database.getEntity<JsonValue>("native-verification-invalidation",run.id) as {version?:number;runId?:string;sessionId?:string;controlEpoch?:number;observationRef?:string;code?:string}|undefined;
+        if(!isDeepStrictEqual(current,json(run))||run.state!=="DELIVERING"||run.verification.state!=="PASSED")this.snapshotRefusal("LOCAL_REVIEW_CONTEXT_CHANGED");
+        if(!control||!invalidation||invalidation.version!==1||invalidation.runId!==run.id||invalidation.sessionId!==run.sessionId||invalidation.controlEpoch!==control.epoch||invalidation.code!=="NATIVE_REVERIFICATION_REQUIRED"||typeof invalidation.observationRef!=="string"||!invalidation.observationRef)this.snapshotRefusal("NATIVE_REVERIFICATION_REQUIRED");
+        const actions=this.database.handle.prepare("SELECT id,document_json FROM entities WHERE kind='native-reclaim-action' AND json_extract(document_json,'$.runId')=? AND json_extract(document_json,'$.controlEpoch')=?").all(run.id,control.epoch) as {id:string;document_json:string}[];
+        if(actions.length!==1)this.snapshotRefusal("NATIVE_RECLAIM_ACTION_MISMATCH");
+        const row=actions[0]!,action=JSON.parse(row.document_json) as {version?:number;commandId?:string;reportId?:string;runId?:string;sessionId?:string;controlEpoch?:number;action?:string;state?:string;observationRef?:string};
+        const record=this.database.getEntity<JsonValue>("native-reclaim",row.id) as {version?:number;commandId?:string;phase?:string;binding?:NativeBinding;driftPolicy?:NativeDriftPolicy;report?:{ready?:boolean;observation?:NativeObservation};commit?:{action?:string;reportId?:string;control?:unknown;fence?:MutationFence}}|undefined;
+        // Generic verify admission permits no choice; this backedge requires one real committed choice.
+        if(action.version!==1||action.commandId!==row.id||!action.reportId||action.sessionId!==run.sessionId||action.action!=="verify"||action.state!=="authorized"||action.observationRef!==invalidation.observationRef
+          ||!record||record.version!==1||record.commandId!==row.id||record.phase!=="committed"||record.commit?.action!=="verify"||record.commit.reportId!==action.reportId||record.commit.fence?.runId!==run.id||record.commit.fence.sessionId!==run.sessionId
+          ||!isDeepStrictEqual(record.binding,store.binding(run.sessionId))||!isDeepStrictEqual(record.commit.control,control)||record.report?.ready!==true||record.report.observation?.id!==invalidation.observationRef)this.snapshotRefusal("NATIVE_RECLAIM_ACTION_MISMATCH");
+        const policy=this.database.getEntity<JsonValue>("native-drift-policy",run.id) as {policy?:NativeDriftPolicy}|undefined;
+        if(!record.driftPolicy||!isDeepStrictEqual(policy?.policy,record.driftPolicy))this.snapshotRefusal("NATIVE_DRIFT_POLICY_CHANGED");
+        if(!this.snapshotReceiptsSettled(run.id))this.snapshotRefusal("VERIFICATION_OUTCOME_UNKNOWN");
+        const previous=this.currentNativeSnapshot(run.id);
+        assertRunTransition(run.state,"VERIFYING");
+        const advanced:Run={...run,state:"VERIFYING",verification:{state:"PENDING",commands:[...contract.verification]}};
+        this.saveAdvancedRun(advanced,"DELIVERING");
+        // The existing owner consumes the action and checks all live authority inside this transaction.
+        const context=this.nativeSnapshotContext(advanced,"VERIFYING");
+        if(!isDeepStrictEqual(this.database.getEntity("native-reclaim-action",row.id),{...action,state:"consumed"})
+          ||!isDeepStrictEqual(this.database.getEntity("native-reclaim",row.id),record))this.snapshotRefusal("NATIVE_RECLAIM_ACTION_MISMATCH");
+        if(!previous||!this.freshSnapshotReturn(advanced,previous,context.basis))this.snapshotRefusal("NATIVE_RECLAIM_ACTION_MISMATCH");
+        if(!isDeepStrictEqual(this.database.getEntity("native-drift-policy",run.id),policy))this.snapshotRefusal("NATIVE_DRIFT_POLICY_CHANGED");
+        this.nativeInteractions.assertPriorMutationOutcomesSettled(run.sessionId);
+        return advanced;
+      });
+    }catch(error){
+      // Reentry has no child or native send. Never settle any earlier uncertain receipt.
+      if(this.snapshotReceiptsSettled(run.id))this.nativeInteractions.acknowledgeSettledMutationOutcome(run.sessionId);
+      throw error;
+    }
+  }
+
   private async advanceRun(runId: string): Promise<{ waiting: boolean; run: Run; task: Task; deliveries: JsonValue[] }> {
     const storedRun = this.database.getEntity<JsonValue>("run", runId);
     if (!storedRun) throw new ConnectorError("PERMANENT", `Unknown run ${runId}`);
@@ -2707,6 +2746,7 @@ export class ControllerService {
       return { waiting: true, run, task: storedTask.document as unknown as Task, deliveries: [] };
     }
 
+    if(run.state==="DELIVERING"&&this.database.getEntity("native-verification-invalidation",run.id))Object.assign(run,this.reenterNativeSnapshot(run,contract));
     if(run.state==="VERIFYING"&&this.nativeInteractions.requiresDeliverySnapshot(run)){
       if(this.agentAdapters.get(run.profileId) instanceof RemoteNativeAdapter){this.nativeInteractions.acknowledgeSettledMutationOutcome(run.sessionId);this.snapshotRefusal("VERIFICATION_ENVIRONMENT_UNAVAILABLE");}
       await this.verifyNativeSnapshot(run,contract);
