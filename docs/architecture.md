@@ -273,8 +273,8 @@ automatically reopen terminal tasks.
 
 Background advancement scans ACTIVE, VERIFYING and DELIVERING. RESOURCE_BLOCKED
 is resumed through resource recovery or explicit resume, and WAITING_USER
-through user input. Automatic local verification journals each registered command
-as SENDING before process creation and SETTLED only after the captured Task,
+through user input. Ordinary automatic local verification journals each registered
+command as SENDING before process creation and SETTLED only after the captured Task,
 control and lease fences still hold. An uncertain result remains UNKNOWN; a
 Controller restart holds local VERIFYING Runs for explicit reconciliation,
 including legacy records without invocation receipts. It never repeats a command
@@ -1843,6 +1843,24 @@ command, and blocks on every preparation failure. Completed configured receipts
 must carry matching profile/definition/ordered successful preparation evidence.
 Missing legacy authorization never adopts a new current profile. This contract
 does not clear native invalidation or authorize active HUMAN delivery.
+
+Active bound native verification after a qualified HUMAN return uses that same
+snapshot allocator and frozen preparation predicates, with its existing live
+Run mutation lane as owner. A private native-snapshot-verification-v1 proof binds
+Task/configuration, physical and decoded control/binding/checkpoint identities,
+the source candidate, and actual snapshot preparation/check results. An occurred
+child result settles its original unchanged receipt before subsequent authority
+checks; settlement alone grants no delivery permission. VERIFIED proof, Run
+PASSED/DELIVERING and removal of only the matching invalidation commit in one
+transaction with a final synchronous basis check. Uncertain prior sends remain
+barriers across new proof IDs.
+
+Snapshot-backed local delivery.none can finish at Task REVIEW. Known no-send
+manifest or completion-metadata failures settle only the current mutation lane
+when all snapshot receipts are valid and settled; foreign uncertainty remains.
+Native commit/PR and remote snapshot verification still refuse before delivery.
+This active proof does not qualify completed bound canonical acceptance, and
+actual unsupported native exclusion capability remains unavailable.
 
 
 ## Internal Devin Local ACP execution

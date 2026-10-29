@@ -1330,3 +1330,19 @@
 - JSON Schema string maxLength counts Unicode code points. A private validator
   for the same persisted contract must use equivalent length semantics rather
   than UTF-16 string.length; keep a real ConfigPlan-to-consumer boundary regression.
+
+- Preserve the difference between an occurred verification result and current
+  authority. Persist a returned, redacted result only to its unchanged SENDING
+  receipt before later source/control checks; accept proof, Run transition and
+  matching invalidation deletion atomically with a final synchronous basis check.
+  New proof IDs cannot bypass earlier UNKNOWN, SENDING or malformed receipts.
+  A stored VERIFIED proof remains historical after a later control epoch change.
+- Snapshot-backed local none completion has no physical delivery send. A known
+  manifest/metadata failure can acknowledge its own native mutation lane only
+  after every relevant snapshot receipt qualifies as SETTLED; unrelated or old
+  uncertainty must still block handoff. Do not apply this classification to
+  commit, remote or ordinary verification paths.
+- Active native proof uses live lease/control authority; completed canonical
+  review uses retired identity and current acceptance context. Sharing frozen
+  preparation predicates and one snapshot allocator does not make those
+  lifecycle qualifiers interchangeable or upgrade an unsupported native writer.
