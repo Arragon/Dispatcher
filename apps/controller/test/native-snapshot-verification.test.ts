@@ -80,3 +80,105 @@ it("real canonical cancellation drains the owned child while unsupported native 
 it("does not invent an observation age expiry while its challenged checkpoint and live lease remain current",async()=>{const f=await nativeSnapshotFixture({check:barrier}),pending=f.advance().then(r=>r);await pendingFixture(f,pending,async()=>{await waitChild(f);const future=Date.now()+31_000;f.service.options.clock=()=>new Date(future);release(f);const response=await pending;f.facts({response:response.json(),proof:proof(f)});expect(response.statusCode,response.body).toBe(200);expect(proof(f)?.state).toBe("VERIFIED");});});
 it("always closes an owned fixture and retains primary, pending and cleanup errors together",async()=>{const f=await nativeSnapshotFixture(),actual=f.advance().then(r=>r),pending=actual.then(()=>{throw Error("fixture pending rejection");}),close=f.close;f.close=async()=>{await close();throw Error("fixture cleanup diagnostic");};const outcome=await pendingFixture(f,pending,async()=>{throw Error("fixture primary assertion");}).catch(error=>error);f.record("teardown-probe-aggregate",{errors:outcome.errors.map((error:Error)=>({name:error.name,message:error.message}))});expect(outcome).toBeInstanceOf(AggregateError);expect(outcome.errors.map((error:Error)=>error.message)).toEqual(["fixture primary assertion","fixture pending rejection","fixture cleanup diagnostic"]);expect(existsSync(f.root)).toBe(false);});
 it("rolls back a synchronous Task write after the acceptance writes through the final full basis fence",async()=>{const f=await nativeSnapshotFixture(),db=f.service.database,original=db.saveEntity.bind(db);const fault=vi.spyOn(db,"saveEntity").mockImplementation((...args)=>{const result=original(...args);if(args[0]==="run"&&(args[2] as {state?:string}).state==="DELIVERING")db.handle.prepare("UPDATE canonical_tasks SET document_json=json_set(document_json,'$.description','transaction-drift') WHERE id=?").run(f.run.taskId);return result;});try{const response=await f.advance();f.facts({response:response.json(),proof:proof(f),task:db.getCanonicalTask(f.run.taskId),invalidation:db.getEntity("native-verification-invalidation",f.run.id)});expect(response.statusCode).toBe(409);expect(proof(f)?.state).toBe("CAPTURED");expect(db.getEntity("run",f.run.id)).toMatchObject({state:"VERIFYING",verification:{state:"PENDING"}});expect(db.getCanonicalTask(f.run.taskId)?.document).not.toMatchObject({description:"transaction-drift"});expect(db.getEntity("native-verification-invalidation",f.run.id)).toBeDefined();expect(db.listEntities("run-verification-command")).toHaveLength(2);}finally{fault.mockRestore();await f.close();}});
+
+
+// Fix1: these failures occur after snapshot verification and send no native delivery.
+async function completionFailureFixture(f: Fixture, body: () => Promise<void>, cleanup: () => void) {
+ const errors: unknown[] = [];
+ for (const action of [body, cleanup, () => f.close()]) {
+  try { await action(); } catch (error) { errors.push(error); }
+ }
+ if (errors.length === 1) throw errors[0];
+ if (errors.length) throw new AggregateError(errors, "Completion failure assertion or cleanup failed", {cause: errors[0]});
+}
+
+async function completionFailureHandoff(f: Fixture, commandId: string) {
+ const run = f.service.database.getEntity("run", f.run.id) as unknown as Run;
+ const principal = {id: "owner", roles: ["operator"], profileId: run.profileId};
+ const observed = f.store.observation(run.sessionId)!;
+ const receipt = f.interactions.requestHandoff({principal, fence: f.interactions.fenceFor(run, commandId), settlePolicy: "wait"});
+ const requestId = `${commandId}:fake-source-read`;
+ const observation = {...observed, id: requestId, observedAt: new Date().toISOString(), read: {...observed.read!, requestId, sequence: observed.read!.sequence + 1}};
+ const read = f.store.saveObservation({sessionId: run.sessionId, observerGeneration: observation.read.observerGeneration, observerSequence: observation.read.sequence, controlEpoch: f.store.control(run.sessionId)!.epoch, observation, readBarrier: f.store.nativeReadBarrier(run.sessionId)!});
+ f.record("fix1-labelled-fake-source-handoff-read", {observation, read});
+ const handoff = await f.interactions.advanceHandoff(principal, commandId);
+ f.record("fix1-real-completion-failure-handoff", {receipt, handoff});
+ return {receipt, read, handoff};
+}
+
+it.each(["manifest-error", "manifest-source", "completion-metadata"] as const)("settles known no-send %s after VERIFIED proof and permits the real handoff drain", async fault => {
+ const f = await nativeSnapshotFixture();
+ const db = f.service.database;
+ const commit = vi.spyOn(f.service["localGitDelivery"], "commit");
+ const push = vi.spyOn(f.service["localGitDelivery"], "push");
+ const resultFiles = f.service.workspaces.resultFiles.bind(f.service.workspaces);
+ const manifest = vi.spyOn(f.service.workspaces, "resultFiles").mockImplementation(async workspace => {
+  expect(proof(f)?.state).toBe("VERIFIED");
+  if (fault === "manifest-error") throw Error("fixture resultFiles rejection after VERIFIED");
+  const files = await resultFiles(workspace);
+  if (fault === "manifest-source") writeFileSync(join(workspace.path, "result.txt"), "manifest source drift\n");
+  return files;
+ });
+ await completionFailureFixture(f, async () => {
+  if (fault === "completion-metadata") db.handle.exec("CREATE TRIGGER fix1_completion_fault BEFORE INSERT ON entities WHEN NEW.kind='run-result' BEGIN SELECT RAISE(ABORT,'fixture completion metadata fault'); END");
+  const before = source(f), nativeBefore = [...f.nativeCalls];
+  const response = await f.advance();
+  const stored = db.getEntity("run", f.run.id), task = db.getCanonicalTask(f.run.taskId), verified = structuredClone(proof(f));
+  const receipts = db.listEntities("run-verification-command"), mutations = db.listEntities("native-mutation");
+  const handoff = await completionFailureHandoff(f, `fix1-${fault}`);
+  f.facts({fault, response: response.json(), stored, task, proof: verified, receipts, mutations, handoff, before, after: source(f), children: f.children(), nativeBefore, nativeAfter: f.nativeCalls, deliveryCalls: {commit: commit.mock.calls.length, push: push.mock.calls.length}});
+  expect(response.statusCode, response.body).toBe(fault === "manifest-source" ? 409 : 500);
+  expect(verified?.state).toBe("VERIFIED");
+  expect(stored).toMatchObject({state: "DELIVERING", verification: {state: "PASSED"}});
+  expect(task?.document).toMatchObject({state: "VERIFYING"});
+  expect(db.getEntity("run-result", f.run.id)).toBeUndefined();
+  expect(receipts).toHaveLength(2);
+  expect(receipts).toEqual(expect.arrayContaining([expect.objectContaining({commandId: "prepare-0", state: "SETTLED"}), expect.objectContaining({commandId: "check", state: "SETTLED"})]));
+  expect(f.children().map(child => child.phase)).toEqual(["prepare-0", "check"]);
+  expect(f.nativeCalls).toEqual(nativeBefore);
+  expect(f.starts()).toBe(1);
+  expect(commit).not.toHaveBeenCalled();
+  expect(push).not.toHaveBeenCalled();
+  expect(source(f).head).toBe(before.head);
+  expect(source(f).index).toBe(before.index);
+  expect(mutations).not.toContainEqual(expect.objectContaining({state: "unknown"}));
+  expect(handoff.read.accepted).toBe(true);
+  expect(handoff.handoff).toMatchObject({phase: "awaiting-release", drain: "settled"});
+ }, () => {
+  manifest.mockRestore();
+  commit.mockRestore();
+  push.mockRestore();
+  db.handle.exec("DROP TRIGGER IF EXISTS fix1_completion_fault");
+ });
+});
+
+it.each(["SENDING", "UNKNOWN", "malformed", "native-unknown"] as const)("preserves the genuine %s barrier during a known no-send manifest failure", async barrier => {
+ const f = await nativeSnapshotFixture();
+ const db = f.service.database;
+ let prior: unknown;
+ const manifest = vi.spyOn(f.service.workspaces, "resultFiles").mockImplementation(async () => {
+  expect(proof(f)?.state).toBe("VERIFIED");
+  prior = barrier === "native-unknown"
+   ? {id: "fix1-prior-native-unknown", sessionId: f.run.sessionId, state: "unknown"}
+   : barrier === "malformed" ? {version: 1, id: "fix1-prior-command", runId: f.run.id, state: "SETTLED"}
+   : {version: 1, id: "fix1-prior-command", runId: f.run.id, generation: f.run.generation, commandId: "check", semanticsHash: "fixture-prior-unreconciled", fence: f.interactions.fenceFor(f.run, "fix1-prior-command"), state: barrier};
+  save(f, barrier === "native-unknown" ? "native-mutation" : "run-verification-command", barrier === "native-unknown" ? "fix1-prior-native-unknown" : "fix1-prior-command", prior);
+  throw Error("fixture manifest rejection with retained prior uncertainty");
+ });
+ await completionFailureFixture(f, async () => {
+  const response = await f.advance();
+  const stored = db.getEntity("run", f.run.id), verified = structuredClone(proof(f));
+  const mutations = db.listEntities("native-mutation");
+  const handoff = await completionFailureHandoff(f, `fix1-barrier-${barrier}`);
+  f.facts({barrier, prior, response: response.json(), stored, proof: verified, mutations, handoff, children: f.children()});
+  expect(response.statusCode).toBe(500);
+  expect(verified?.state).toBe("VERIFIED");
+  expect(stored).toMatchObject({state: "DELIVERING", verification: {state: "PASSED"}});
+  expect(db.getCanonicalTask(f.run.taskId)?.document).toMatchObject({state: "VERIFYING"});
+  expect(db.getEntity(barrier === "native-unknown" ? "native-mutation" : "run-verification-command", barrier === "native-unknown" ? "fix1-prior-native-unknown" : "fix1-prior-command")).toEqual(prior);
+  expect(mutations).toContainEqual(expect.objectContaining({state: "unknown"}));
+  expect(handoff.handoff).toMatchObject({phase: "conflict", drain: "unknown", code: "INFLIGHT_OUTCOME_UNKNOWN"});
+  expect(f.children()).toHaveLength(2);
+  expect(f.starts()).toBe(1);
+ }, () => manifest.mockRestore());
+});

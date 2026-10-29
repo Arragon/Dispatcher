@@ -2816,39 +2816,48 @@ export class ControllerService {
     }
     if(contract.delivery.type==="none"||contract.delivery.type==="commit") {
       const remote=this.agentAdapters.get(run.profileId) instanceof RemoteNativeAdapter;
-      const workspace=remote?this.database.getEntity<JsonValue>("workspace-handle",run.id) as unknown as WorkspaceHandle|undefined:this.workspaces.get(run.worktree);
-      if(!workspace)throw new WorkspacePolicyError("WORKSPACE_UNAVAILABLE","Managed worktree requires restoration or inspection");
-      if(snapshotProof)await this.assertNativeSnapshot(run,snapshotProof,"DELIVERING");
-      const resultFiles=remote?await this.remoteRequest(run.runnerId,{type:"native.run_files",runId:run.id},run):await this.workspaces.resultFiles(workspace);
-      if(!Array.isArray(resultFiles)||resultFiles.length>5000||resultFiles.some(file=>typeof file!=="string"||file.length>4000||/^[/\\]|^[a-z]:/i.test(file)||file.split(/[\\/]/).some(segment=>segment===".."||segment===".git"))||new Set(resultFiles).size!==resultFiles.length)throw new AdapterContractError("REMOTE_RESULT_INVALID","Owning Runner returned an invalid change manifest");
-      if(snapshotProof)await this.assertNativeSnapshot(run,snapshotProof,"DELIVERING");
-      let files=resultFiles as string[];if(remote)assertPublicationScope(files,workspace.scopePaths);
-      let commit:Awaited<ReturnType<LocalGitDelivery["commit"]>>|undefined;
-      if(contract.delivery.type==="commit"){
-        if(remote){
-          this.fenceDelivery(run,"commit");
-          commit=remoteCommitResult(await this.remoteRequest(run.runnerId,{type:"native.run_commit",runId:run.id},run,`native-commit:${run.id}:${run.generation}`),{runId:run.id,generation:run.generation,branch:workspace.branch});
-          this.fenceDelivery(run,"commit");assertPublicationScope(commit.files,workspace.scopePaths);files=commit.files;
-        }else{
-          const controller=new AbortController(),settled=(async()=>{commit=await this.localGitDelivery.commit({runId:run.id,generation:run.generation,leaseId:run.leaseId,workspace,message:commitMessage(contract.goal),assertAuthority:()=>this.fenceDelivery(run,"commit"),signal:controller.signal});})();
-          this.localCommands.set(run.id,{controller,settled});try{await settled;files=commit!.files;}finally{if(this.localCommands.get(run.id)?.controller===controller)this.localCommands.delete(run.id);}
+      try {
+        const workspace=remote?this.database.getEntity<JsonValue>("workspace-handle",run.id) as unknown as WorkspaceHandle|undefined:this.workspaces.get(run.worktree);
+        if(!workspace)throw new WorkspacePolicyError("WORKSPACE_UNAVAILABLE","Managed worktree requires restoration or inspection");
+        if(snapshotProof)await this.assertNativeSnapshot(run,snapshotProof,"DELIVERING");
+        const resultFiles=remote?await this.remoteRequest(run.runnerId,{type:"native.run_files",runId:run.id},run):await this.workspaces.resultFiles(workspace);
+        if(!Array.isArray(resultFiles)||resultFiles.length>5000||resultFiles.some(file=>typeof file!=="string"||file.length>4000||/^[/\\]|^[a-z]:/i.test(file)||file.split(/[\\/]/).some(segment=>segment===".."||segment===".git"))||new Set(resultFiles).size!==resultFiles.length)throw new AdapterContractError("REMOTE_RESULT_INVALID","Owning Runner returned an invalid change manifest");
+        if(snapshotProof)await this.assertNativeSnapshot(run,snapshotProof,"DELIVERING");
+        let files=resultFiles as string[];if(remote)assertPublicationScope(files,workspace.scopePaths);
+        let commit:Awaited<ReturnType<LocalGitDelivery["commit"]>>|undefined;
+        if(contract.delivery.type==="commit"){
+          if(remote){
+            this.fenceDelivery(run,"commit");
+            commit=remoteCommitResult(await this.remoteRequest(run.runnerId,{type:"native.run_commit",runId:run.id},run,`native-commit:${run.id}:${run.generation}`),{runId:run.id,generation:run.generation,branch:workspace.branch});
+            this.fenceDelivery(run,"commit");assertPublicationScope(commit.files,workspace.scopePaths);files=commit.files;
+          }else{
+            const controller=new AbortController(),settled=(async()=>{commit=await this.localGitDelivery.commit({runId:run.id,generation:run.generation,leaseId:run.leaseId,workspace,message:commitMessage(contract.goal),assertAuthority:()=>this.fenceDelivery(run,"commit"),signal:controller.signal});})();
+            this.localCommands.set(run.id,{controller,settled});try{await settled;files=commit!.files;}finally{if(this.localCommands.get(run.id)?.controller===controller)this.localCommands.delete(run.id);}
+          }
         }
+        const result={version:1,runId:run.id,taskId:run.taskId,runnerId:run.runnerId,generation:run.generation,deliveryType:contract.delivery.type,...(commit?{commit}:{}),worktree:run.worktree,branch:run.branch,baseCommit:workspace.baseRevision,files,verification:run.verification,summary:run.activitySummary??"",createdAt:this.now().toISOString()};
+        if(remote){this.fenceDelivery(run,"complete");await this.finalizeRemoteRun(run);}
+        this.database.transaction(()=>{
+          this.fenceDelivery(run,"complete");
+          if(snapshotProof){this.assertNativeSnapshotBasis(run,snapshotProof,"DELIVERING");if(!this.qualifiedNativeProof(this.currentNativeSnapshot(run.id)!))this.snapshotRefusal("VERIFIED_CANDIDATE_REQUIRED");}
+          const current=this.database.getCanonicalTask<JsonValue>(run.taskId)!;
+          const task=current.document as unknown as Task;
+          if(task.currentRunId!==run.id||task.state!=="VERIFYING")throw new ConnectorError("CONFLICT","Task authority changed before local completion");
+          assertRunTransition(run.state,"COMPLETE");run.state="COMPLETE";run.endedAt=this.now().toISOString();
+          this.saveAdvancedRun(run,"DELIVERING");this.database.saveEntity("run-result",run.id,json(result));
+          this.tasks.execute({id:`run:${run.id}:review`,taskId:run.taskId,baseRevision:current.revision,actor:"run-worker",command:{type:"task.transition",state:"REVIEW"}});
+          this.nativeInteractions.acknowledgeTaskRevision(run);
+        });
+        this.fleetEvents.publish("run.changed",run.id,{id:run.id,state:run.state});
+        return {waiting:false,run,task:this.database.getCanonicalTask<JsonValue>(run.taskId)!.document as unknown as Task,deliveries:[]};
+      } catch (error) {
+        // Local snapshot-backed none completion sends no native delivery, even on metadata failure.
+        // Unsettled or malformed receipts still retain this lane's uncertainty barrier.
+        if (snapshotProof && contract.delivery.type === "none" && !remote && this.snapshotReceiptsSettled(run.id)) {
+          this.nativeInteractions.acknowledgeSettledMutationOutcome(run.sessionId);
+        }
+        throw error;
       }
-      const result={version:1,runId:run.id,taskId:run.taskId,runnerId:run.runnerId,generation:run.generation,deliveryType:contract.delivery.type,...(commit?{commit}:{}),worktree:run.worktree,branch:run.branch,baseCommit:workspace.baseRevision,files,verification:run.verification,summary:run.activitySummary??"",createdAt:this.now().toISOString()};
-      if(remote){this.fenceDelivery(run,"complete");await this.finalizeRemoteRun(run);}
-      this.database.transaction(()=>{
-        this.fenceDelivery(run,"complete");
-        if(snapshotProof){this.assertNativeSnapshotBasis(run,snapshotProof,"DELIVERING");if(!this.qualifiedNativeProof(this.currentNativeSnapshot(run.id)!))this.snapshotRefusal("VERIFIED_CANDIDATE_REQUIRED");}
-        const current=this.database.getCanonicalTask<JsonValue>(run.taskId)!;
-        const task=current.document as unknown as Task;
-        if(task.currentRunId!==run.id||task.state!=="VERIFYING")throw new ConnectorError("CONFLICT","Task authority changed before local completion");
-        assertRunTransition(run.state,"COMPLETE");run.state="COMPLETE";run.endedAt=this.now().toISOString();
-        this.saveAdvancedRun(run,"DELIVERING");this.database.saveEntity("run-result",run.id,json(result));
-        this.tasks.execute({id:`run:${run.id}:review`,taskId:run.taskId,baseRevision:current.revision,actor:"run-worker",command:{type:"task.transition",state:"REVIEW"}});
-        this.nativeInteractions.acknowledgeTaskRevision(run);
-      });
-      this.fleetEvents.publish("run.changed",run.id,{id:run.id,state:run.state});
-      return {waiting:false,run,task:this.database.getCanonicalTask<JsonValue>(run.taskId)!.document as unknown as Task,deliveries:[]};
     }
     const repositoryId = contract.delivery.repository;
     const repositoryParts = repositoryId?.split("/") ?? [];
