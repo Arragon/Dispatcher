@@ -214,6 +214,7 @@ export class WorkspaceManager {
     const repository = this.registry.get(input.repositoryId);
     await this.assertPublicScope(repository,input.scopePaths);
     const options = { timeout: 10_000, maxBuffer: 16 * 1024 * 1024,env:gitInspectionEnvironment() };
+    const value = (result: PromiseSettledResult<string>): string => { if (result.status === "rejected") throw result.reason; return result.value; };
     let path: string;
     let identity: Awaited<ReturnType<typeof stat>>;
     try {
@@ -222,15 +223,19 @@ export class WorkspaceManager {
       identity = await stat(path);
       const source = await realpath(repository.root);
       const git = async (directory: string, args: string[]) => (await execute("git", ["-C", directory,"-c","core.fsmonitor=false","-c","core.hooksPath=/dev/null", ...args], options)).stdout.replace(/\r?\n$/, "");
-      if (!within(root, path) || path === root || path === source || !identity.isDirectory() || await realpath(await git(path, ["rev-parse", "--show-toplevel"])) !== path || await git(path, ["branch", "--show-current"]) !== input.branch || await realpath(await git(path, ["rev-parse", "--path-format=absolute", "--git-common-dir"])) !== await realpath(await git(source, ["rev-parse", "--path-format=absolute", "--git-common-dir"]))) throw Error("mismatch");
+      if (!within(root, path) || path === root || path === source || !identity.isDirectory()) throw Error("mismatch");
+      // Settle independent identity reads before refusing or admitting status/content work.
+      const [top,branch,common,registered] = await Promise.allSettled([git(path,["rev-parse","--show-toplevel"]),git(path,["branch","--show-current"]),git(path,["rev-parse","--path-format=absolute","--git-common-dir"]),git(source,["rev-parse","--path-format=absolute","--git-common-dir"])] as const);
+      if (await realpath(value(top)) !== path || value(branch) !== input.branch || await realpath(value(common)) !== await realpath(value(registered))) throw Error("mismatch");
     } catch { throw new WorkspacePolicyError("CANDIDATE_WORKSPACE_MISMATCH", "Result must belong to its recorded managed Git worktree and branch"); }
     try {
       await readWorkspaceStatus(path);
       const git = async (args: string[]) => (await execute("git", ["-C", path,"-c","core.fsmonitor=false","-c","core.hooksPath=/dev/null", ...args], options)).stdout;
       const headRevision = (await git(["rev-parse", "--verify", "HEAD"])).trim();
-      const patch = await git(["diff", "--no-ext-diff", "--no-textconv", "--binary", "HEAD", "--"]);
-      const tracked = (await git(["diff", "--no-ext-diff", "--no-textconv", "--name-only", "-z", "HEAD", "--"])).split("\0").filter(Boolean);
-      const untracked = (await git(["ls-files", "--others", "--exclude-standard", "-z"])).split("\0").filter(Boolean).sort();
+      const [patchRead,trackedRead,untrackedRead] = await Promise.allSettled([git(["diff", "--no-ext-diff", "--no-textconv", "--binary", "HEAD", "--"]),git(["diff", "--no-ext-diff", "--no-textconv", "--name-only", "-z", "HEAD", "--"]),git(["ls-files", "--others", "--exclude-standard", "-z"])] as const);
+      const patch = value(patchRead);
+      const tracked = value(trackedRead).split("\0").filter(Boolean);
+      const untracked = value(untrackedRead).split("\0").filter(Boolean).sort();
       if (untracked.length > 10_000) throw Error("candidate limit");
       const changedFiles = [...new Set([...tracked, ...untracked])].sort();
       for (const file of changedFiles) {
