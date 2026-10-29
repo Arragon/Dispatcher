@@ -1866,6 +1866,28 @@ phase/action changes, while a successful new epoch retains the old proof and
 runs fresh snapshot commands. This check belongs to this reentry path and does
 not change generic native admission or capability qualification.
 
+Initial snapshot qualification and reentry share the current committed-return
+predicate. It checks the actual mutation owner, explicit verify action, original
+confirmation report, current observation/control/binding/fence, and frozen policy
+before consuming authority. The exact consumed action, unchanged return and
+policy are checked again afterward. All synchronous context guards and action
+consumption share the existing SQLite transaction (a nested SAVEPOINT during
+reentry); initial advancement's phase/PENDING writes remain outside that inner
+transaction. A matching real return may legitimately have a consumed action
+during allocation callbacks or a known no-child retry; consumption alone grants
+no authority.
+
+The existing private policyHash qualifies frozen/configured policy, the complete
+committed return and consumed action under scope native-return-policy-v1.
+Earlier hash recipes remain historical facts and cannot qualify current active
+use; a real fresh HUMAN return with explicit verify can create a new proof.
+Incompatible CAPTURED records are refused before being adopted as mutable current
+proofs. The proof format, schema and writer protocol are unchanged. Malformed
+stored action/return JSON, including an existing historical-return read, refuses
+NATIVE_RECLAIM_ACTION_MISMATCH. The owner keeps unscopable malformed action rows
+as barriers. Only document parsing normalizes SyntaxError; storage reads and
+their errors remain outside that boundary.
+
 Snapshot-backed local delivery.none can finish at Task REVIEW. Known no-send
 manifest or completion-metadata failures settle only the current mutation lane
 when all snapshot receipts are valid and settled; foreign uncertainty remains.

@@ -1360,3 +1360,23 @@
   closed tree also contains a restart-test backup. Enumerate physical databases
   separately. A current immutable inspection of a sealed raw backup is useful
   evidence, but it is not an original extra inventory or a historical API trace.
+
+- Native reclaim action.reportId identifies the confirmed original report and
+  matches committedReturn.commit.reportId. The committed return's report.id is
+  an independent fresh reread; bind its observation to the current grant instead
+  of equating those two report IDs.
+- Repeated snapshot-allocation checks may encounter an already consumed action
+  before a CAPTURED pointer exists. Require the matching real committed return,
+  current policy and live owner; do not add a first-use oracle or grant authority
+  to a consumed row alone. Keep every synchronous context guard in the action's
+  transaction so a late no-child refusal rolls consumption back.
+- Guard json_extract on persisted reclaim TEXT without dropping malformed rows.
+  An unscopable corrupt action remains a barrier even when a valid current action
+  exists. Parse corresponding and historical return TEXT only after storage
+  reads complete; normalize actual document SyntaxError locally, preserving
+  reader-origin errors and corrupt history. A short-circuit search must not hide
+  malformed older returns behind a newer valid one.
+- fs.watch may notify a fixture directory with a null filename. Recheck the
+  actual marker in that case and retain the existing cancellation/result/close
+  assertions. A healthy instrumented focus changes scheduling and does not
+  explain an earlier full-suite failure.
