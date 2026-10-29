@@ -1855,6 +1855,17 @@ PASSED/DELIVERING and removal of only the matching invalidation commit in one
 transaction with a final synchronous basis check. Uncertain prior sends remain
 barriers across new proof IDs.
 
+A previously snapshot-verified local DELIVERING Run can reenter VERIFYING after
+another qualified HUMAN return with explicit verify. The pure domain edge does
+not grant admission: Service validates the committed return, current frozen
+policy and exact authorized action, then saves PENDING and checks actual action
+consumption in one transaction through the existing live verification fence.
+NativeInteractions identifies the current mutation by its owned lane context;
+foreign uncertain or malformed markers remain barriers. Rejection rolls back
+phase/action changes, while a successful new epoch retains the old proof and
+runs fresh snapshot commands. This check belongs to this reentry path and does
+not change generic native admission or capability qualification.
+
 Snapshot-backed local delivery.none can finish at Task REVIEW. Known no-send
 manifest or completion-metadata failures settle only the current mutation lane
 when all snapshot receipts are valid and settled; foreign uncertainty remains.

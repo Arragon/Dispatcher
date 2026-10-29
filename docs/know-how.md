@@ -1346,3 +1346,17 @@
   review uses retired identity and current acceptance context. Sharing frozen
   preparation predicates and one snapshot allocator does not make those
   lifecycle qualifiers interchangeable or upgrade an unsupported native writer.
+
+- A verification fence may legitimately accept an absent reclaim choice during
+  ordinary work. Delivery reentry must separately require the actual committed
+  explicit verify choice and its original frozen policy. Re-read the exact
+  consumed action and unchanged return after writes inside the same transaction;
+  a successful write call alone does not prove that a trigger consumed authority.
+- Identify a current native mutation through its owner's lane context and active
+  promise map, then verify its physical/document marker. A count of active rows
+  cannot establish ownership. Read relevant rows without a state filter that
+  drops SQL NULL, so missing or unknown states cannot escape uncertainty checks.
+- Fixture inventories may cover only the main Controller database while the
+  closed tree also contains a restart-test backup. Enumerate physical databases
+  separately. A current immutable inspection of a sealed raw backup is useful
+  evidence, but it is not an original extra inventory or a historical API trace.
