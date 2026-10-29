@@ -649,3 +649,117 @@ it.each(["profile", "marker", "binding-physical"] as const)(
   });
  },
 );
+
+// Raw TEXT observations must not decode the deliberately corrupted grant document.
+const rawNativeGrants=(f:Fixture)=>f.service.database.handle.prepare("SELECT kind,id,document_json,updated_at FROM entities WHERE kind IN ('native-reclaim-action','native-reclaim') ORDER BY kind,id").all();
+
+it.each([
+ {phase:"initial",kind:"native-reclaim-action"},
+ {phase:"initial",kind:"native-reclaim"},
+ {phase:"reentry",kind:"native-reclaim-action"},
+ {phase:"reentry",kind:"native-reclaim"},
+] as const)("normalizes malformed persisted native grant before $phase children: $kind",async({phase,kind})=>{
+ const f=phase==="reentry"?await deliveringCycle():await nativeSnapshotFixture();
+ await pendingFixture(f,Promise.resolve(),async()=>{
+  if(phase==="reentry")await f.returnHuman();
+  const db=f.service.database,id=phase==="reentry"?"reclaim-2":"reclaim-1",corrupt="{r1-labelled-invalid-json";
+  const oldProofs=db.listEntities("run-snapshot-verification"),pointer=db.getEntity("run-snapshot-current",f.run.id),oldRun=db.getEntity("run",f.run.id);
+  db.handle.prepare("UPDATE entities SET document_json=? WHERE kind=? AND id=?").run(corrupt,kind,id);
+  const grants=rawNativeGrants(f),invalidation=db.getEntity("native-verification-invalidation",f.run.id),before=source(f),children=f.children();
+  const allocation=vi.spyOn(f.service["verificationSnapshots"],"createDeliveryCandidate");
+  try{
+   const response=await f.advance();
+   f.facts({phase,kind,id,corrupt,grants,response:response.json(),afterGrants:rawNativeGrants(f),proofs:db.listEntities("run-snapshot-verification"),children:f.children()});
+   expect(response.statusCode,response.body).toBe(409);
+   expect(response.json().code).toBe("NATIVE_RECLAIM_ACTION_MISMATCH");
+   expect(rawNativeGrants(f)).toEqual(grants);
+   expect(db.getEntity("native-verification-invalidation",f.run.id)).toEqual(invalidation);
+   expect(db.getEntity("run-snapshot-current",f.run.id)).toEqual(pointer);
+   expect(db.listEntities("run-snapshot-verification")).toEqual(oldProofs);
+   if(phase==="reentry")expect(db.getEntity("run",f.run.id)).toEqual(oldRun);
+   else expect(existsSync(join(f.root,"data/verification-snapshots"))).toBe(false);
+   expect(allocation).not.toHaveBeenCalled();expect(f.children()).toEqual(children);
+   expect(source(f)).toEqual(before);expect(f.starts()).toBe(1);
+  }finally{allocation.mockRestore();}
+ });
+});
+
+it.each(["native-reclaim-action","native-reclaim"] as const)("normalizes malformed persisted native grant after a real child: %s",async kind=>{
+ const f=await nativeSnapshotFixture({preparation:[barrier]}),pending=f.advance();
+ await pendingFixture(f,pending,async()=>{
+  await waitChild(f);
+  const db=f.service.database,before=source(f),corrupt="[r1-labelled-child-corruption",invalidation=db.getEntity("native-verification-invalidation",f.run.id);
+  const sending=db.listEntities("run-verification-command") as unknown as {id:string;state:string;result?:unknown}[];
+  expect(sending).toHaveLength(1);expect(sending[0]!.state).toBe("SENDING");
+  db.handle.prepare("UPDATE entities SET document_json=? WHERE kind=? AND id='reclaim-1'").run(corrupt,kind);
+  const grants=rawNativeGrants(f);release(f);const response=await pending;
+  const returned=db.getEntity("run-verification-command",sending[0]!.id) as unknown as {state:string;result?:unknown};
+  f.facts({kind,corrupt,grants,response:response.json(),returned,proof:proof(f),children:f.children()});
+  expect(response.statusCode,response.body).toBe(409);
+  expect(response.json().code).toBe("NATIVE_RECLAIM_ACTION_MISMATCH");
+  expect(returned).toMatchObject({state:"SETTLED",result:{commandId:"prepare-0",status:"passed",exitCode:0}});
+  expect({...returned,state:"SENDING",result:undefined}).toEqual({...sending[0],result:undefined});
+  expect(rawNativeGrants(f)).toEqual(grants);
+  expect(db.getEntity("native-verification-invalidation",f.run.id)).toEqual(invalidation);
+  expect(proof(f)?.state).toBe("FAILED");expect(f.children()).toHaveLength(1);
+  expect(absent(f.children()[0]!.pid)).toBe(true);expect(source(f)).toEqual(before);expect(f.starts()).toBe(1);
+ });
+});
+
+it.each(["000-r1-corrupt","zzz-r1-corrupt"] as const)("does not skip malformed persisted native grant %s alongside a valid current grant",async id=>{
+ const f=await nativeSnapshotFixture();
+ await pendingFixture(f,Promise.resolve(),async()=>{
+  const db=f.service.database,corrupt="r1-unscopable-invalid-json";
+  // Labelled corrupt storage only; this is not another Run, grant or prior native send.
+  db.handle.prepare("INSERT INTO entities(kind,id,document_json,updated_at) VALUES('native-reclaim-action',?,?,?)").run(id,corrupt,"labelled-r1-fault");
+  const grants=rawNativeGrants(f),invalidation=db.getEntity("native-verification-invalidation",f.run.id),before=source(f),response=await f.advance();
+  f.facts({id,corrupt,grants,response:response.json(),afterGrants:rawNativeGrants(f)});
+  expect(response.statusCode,response.body).toBe(409);expect(response.json().code).toBe("NATIVE_RECLAIM_ACTION_MISMATCH");
+  expect(rawNativeGrants(f)).toEqual(grants);expect(db.getEntity("native-verification-invalidation",f.run.id)).toEqual(invalidation);
+  expect(proof(f)).toBeUndefined();expect(f.children()).toEqual([]);
+  expect(existsSync(join(f.root,"data/verification-snapshots"))).toBe(false);
+  expect(source(f)).toEqual(before);expect(f.starts()).toBe(1);
+ });
+});
+
+it("normalizes malformed persisted native grant historical return TEXT during actual reentry",async()=>{
+ const f=await deliveringCycle();
+ await pendingFixture(f,Promise.resolve(),async()=>{
+  await f.returnHuman();const db=f.service.database,corrupt="{r1-labelled-corrupt-old-return";
+  db.handle.prepare("UPDATE entities SET document_json=? WHERE kind='native-reclaim' AND id='reclaim-1'").run(corrupt);
+  const grants=rawNativeGrants(f),oldRun=db.getEntity("run",f.run.id),oldProofs=db.listEntities("run-snapshot-verification"),pointer=db.getEntity("run-snapshot-current",f.run.id),receipts=db.listEntities("run-verification-command"),invalidation=db.getEntity("native-verification-invalidation",f.run.id),before=source(f),children=f.children();
+  const response=await f.advance();
+  f.facts({corrupt,grants,response:response.json(),afterGrants:rawNativeGrants(f),proofs:db.listEntities("run-snapshot-verification"),children:f.children()});
+  expect(response.statusCode,response.body).toBe(409);expect(response.json().code).toBe("NATIVE_RECLAIM_ACTION_MISMATCH");
+  expect(rawNativeGrants(f)).toEqual(grants);expect(db.getEntity("run",f.run.id)).toEqual(oldRun);
+  expect(db.listEntities("run-snapshot-verification")).toEqual(oldProofs);expect(db.getEntity("run-snapshot-current",f.run.id)).toEqual(pointer);
+  expect(db.listEntities("run-verification-command")).toEqual(receipts);
+  expect(db.getEntity("native-verification-invalidation",f.run.id)).toEqual(invalidation);
+  expect(f.children()).toEqual(children);expect(source(f)).toEqual(before);expect(f.starts()).toBe(1);
+ });
+});
+
+it.each(["owner","matching-return","historical-return"] as const)("does not normalize unrelated native grant storage errors at %s",async boundary=>{
+ const f=boundary==="historical-return"?await deliveringCycle():await nativeSnapshotFixture();
+ await pendingFixture(f,Promise.resolve(),async()=>{
+  if(boundary==="historical-return")await f.returnHuman();
+  const db=f.service.database,prepare=db.handle.prepare.bind(db.handle),fault=Object.assign(new SyntaxError("labelled unrelated storage read failure"),{code:"R1_INJECTED_STORAGE_FAILURE"});
+  const grants=rawNativeGrants(f),invalidation=db.getEntity("native-verification-invalidation",f.run.id),proofs=db.listEntities("run-snapshot-verification"),before=source(f),children=f.children();
+  let injected=false;
+  const reading=vi.spyOn(db.handle,"prepare").mockImplementation((...args)=>{
+   const sql=args[0],target=boundary==="owner"?sql.includes("kind='native-reclaim-action'")&&sql.includes("LIMIT 1"):boundary==="matching-return"?sql.includes("kind='native-reclaim' AND id=?"):sql.includes("kind='native-reclaim' ORDER BY");
+   // A reader-origin SyntaxError is not an actual malformed JSON document.
+   if(target){injected=true;throw fault;}
+   return prepare(...args);
+  });
+  try{
+   const response=await f.advance();
+   f.facts({boundary,injected,fault:{name:fault.name,message:fault.message,code:fault.code},response:response.json(),grants,afterGrants:rawNativeGrants(f)});
+   expect(injected).toBe(true);expect(response.statusCode,response.body).toBe(500);
+   expect(response.json().code).not.toBe("NATIVE_RECLAIM_ACTION_MISMATCH");
+   expect(rawNativeGrants(f)).toEqual(grants);expect(db.getEntity("native-verification-invalidation",f.run.id)).toEqual(invalidation);
+   expect(db.listEntities("run-snapshot-verification")).toEqual(proofs);expect(f.children()).toEqual(children);
+   expect(source(f)).toEqual(before);expect(f.starts()).toBe(1);
+  }finally{reading.mockRestore();}
+ });
+});

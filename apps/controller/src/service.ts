@@ -2318,10 +2318,15 @@ export class ControllerService {
   private nativeSnapshotReturn(run:Run,allowedStates:readonly NativeSnapshotReturnAction["state"][]):NativeSnapshotReturn {
     const store=new InteractionStore(this.database),control=store.control(run.sessionId),binding=store.binding(run.sessionId);
     if(!control||control.sessionId!==run.sessionId||control.activeRunId!==run.id||control.state!=="AUTOMATED"||!binding)this.snapshotRefusal("NATIVE_RECLAIM_ACTION_MISMATCH");
-    const rows=this.database.handle.prepare("SELECT id,document_json FROM entities WHERE kind='native-reclaim-action' AND json_extract(document_json,'$.runId')=? AND json_extract(document_json,'$.controlEpoch')=?").all(run.id,control.epoch) as {id:string;document_json:string}[];
+    const rows=this.database.handle.prepare("SELECT id,document_json FROM entities WHERE kind='native-reclaim-action' AND CASE WHEN json_valid(document_json) THEN json_extract(document_json,'$.runId')=? AND json_extract(document_json,'$.controlEpoch')=? ELSE 1 END").all(run.id,control.epoch) as {id:string;document_json:string}[];
     if(rows.length!==1)this.snapshotRefusal("NATIVE_RECLAIM_ACTION_MISMATCH");
-    const row=rows[0]!,action=JSON.parse(row.document_json) as NativeSnapshotReturnAction|null;
-    const returned=this.database.getEntity<JsonValue>("native-reclaim",row.id) as unknown as NativeSnapshotCommittedReturn|undefined;
+    const row=rows[0]!;let action:NativeSnapshotReturnAction|null;
+    try{action=JSON.parse(row.document_json) as NativeSnapshotReturnAction|null;}
+    catch(error){if(error instanceof SyntaxError)this.snapshotRefusal("NATIVE_RECLAIM_ACTION_MISMATCH");throw error;}
+    const returnedRow=this.database.handle.prepare("SELECT document_json FROM entities WHERE kind='native-reclaim' AND id=?").get(row.id) as {document_json:string}|undefined;
+    let returned:NativeSnapshotCommittedReturn|undefined;
+    try{returned=returnedRow?JSON.parse(returnedRow.document_json) as NativeSnapshotCommittedReturn:undefined;}
+    catch(error){if(error instanceof SyntaxError)this.snapshotRefusal("NATIVE_RECLAIM_ACTION_MISMATCH");throw error;}
     const observation=store.observation(run.sessionId);
     // commit.reportId confirms the original report; report itself is the fresh pre-commit reread.
     if(!action||action.version!==1||action.commandId!==row.id||action.runId!==run.id||action.sessionId!==run.sessionId||action.controlEpoch!==control.epoch
@@ -2559,7 +2564,10 @@ export class ControllerService {
   private freshSnapshotReturn(run:Run,previous:NativeSnapshotProof,basis:NativeSnapshotBasis):boolean {
     if(basis.controlEpoch<=previous.basis.controlEpoch)return false;
     const control=new InteractionStore(this.database).control(run.sessionId);
-    const rows=this.database.listEntities<JsonValue>("native-reclaim") as unknown as Array<{version:number;commandId:string;phase:string;binding:NativeBinding;report?:{observation?:NativeObservation};commit?:{action:string;control:unknown}}>;
+    const storedRows=this.database.handle.prepare("SELECT document_json FROM entities WHERE kind='native-reclaim' ORDER BY updated_at DESC").all() as {document_json:string}[];
+    let rows:Array<{version:number;commandId:string;phase:string;binding:NativeBinding;report?:{observation?:NativeObservation};commit?:{action:string;control:unknown}}>;
+    try{rows=storedRows.map(row=>JSON.parse(row.document_json)) as typeof rows;}
+    catch(error){if(error instanceof SyntaxError)this.snapshotRefusal("NATIVE_RECLAIM_ACTION_MISMATCH");throw error;}
     return rows.some(record=>{
       const action=this.database.getEntity<JsonValue>("native-reclaim-action",record.commandId) as {runId?:string;sessionId?:string;controlEpoch?:number;action?:string;state?:string}|undefined;
       return record.version===1

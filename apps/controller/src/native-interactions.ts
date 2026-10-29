@@ -372,8 +372,11 @@ export class NativeInteractions {
     if(["continue","steer","approval","resume","advance","verify","deliver","reroute"].includes(operation)){try{this.assertDriftPolicy(run);const policy=this.database.getEntity<JsonValue>("native-drift-policy",run.id) as unknown as FrozenDriftPolicy|undefined;if(this.store.control(run.sessionId)?.state==="AUTOMATED"&&!policy?.policy.permissionFingerprint&&this.firstHumanEpoch(run.sessionId)!==null)return reject("NATIVE_POLICY_UNVERIFIED");}catch(error){return reject(error instanceof InteractionGuardError?error.code:"NATIVE_DRIFT_POLICY_INVALID");}}
     if(operation==="deliver"&&this.database.getEntity("native-verification-invalidation",run.id))return reject("NATIVE_REVERIFICATION_REQUIRED");
     const epoch=this.store.control(run.sessionId)?.epoch;
-    const nextAction=this.database.handle.prepare("SELECT document_json FROM entities WHERE kind='native-reclaim-action' AND json_extract(document_json,'$.runId')=? AND json_extract(document_json,'$.controlEpoch')=? AND json_extract(document_json,'$.state')='authorized' LIMIT 1").get(run.id,epoch??0) as {document_json:string}|undefined;
-    const choice=nextAction?JSON.parse(nextAction.document_json) as {action:"continue"|"verify"}:undefined;
+    // Corrupt TEXT has no trustworthy scope; keep it ahead of a valid choice rather than skipping it.
+    const nextAction=this.database.handle.prepare("SELECT document_json FROM entities WHERE kind='native-reclaim-action' AND CASE WHEN json_valid(document_json) THEN json_extract(document_json,'$.runId')=? AND json_extract(document_json,'$.controlEpoch')=? AND json_extract(document_json,'$.state')='authorized' ELSE 1 END ORDER BY json_valid(document_json) LIMIT 1").get(run.id,epoch??0) as {document_json:string}|undefined;
+    let choice:{action:"continue"|"verify"}|undefined;
+    try{choice=nextAction?JSON.parse(nextAction.document_json) as {action:"continue"|"verify"}:undefined;}
+    catch(error){if(error instanceof SyntaxError)return reject("NATIVE_RECLAIM_ACTION_MISMATCH");throw error;}
     if(choice&&(choice.action==="verify"&&["continue","steer","approval","resume","reroute"].includes(operation)||choice.action==="continue"&&operation==="verify"))return reject("NATIVE_RECLAIM_ACTION_MISMATCH");
     const external=this.database.getEntity<JsonValue>("native-external-checkpoint",run.sessionId) as unknown as {decision?:{kind:string;requiresReconcile:boolean}}|undefined;
     if(external?.decision?.kind==="unverified"&&external.decision.requiresReconcile&&!["cancel","fail","reject-approval"].includes(operation))return reject("NATIVE_STATE_UNKNOWN");
