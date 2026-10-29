@@ -1627,8 +1627,29 @@ Physical completion followed by failed receipt persistence is retained in this
 process for a safe persistence retry; restart with an unresolved intent remains
 COMMIT_OUTCOME_UNKNOWN and cannot blindly execute again. A terminal local result
 stores its commit evidence and post-commit file manifest directly, without a
-fabricated external connector. Existing native commits/no-change results are
-identified by created=false rather than claimed as newly created.
+fabricated external connector. The created flag compares final HEAD with the
+pre-operation HEAD. A hook can restore HEAD after a real commit command, so
+created=false does not prove that no command ran.
+
+The same owner records private local-git-command/version1 intents for the explicit
+stage, commit and push mutation sites. SENDING is durable before process creation;
+its derived owner/phase identity binds the original Run, generation, lease,
+request, actual cwd and exact command hash. After the final authority callback,
+both the legacy parent and unchanged command intent are qualified synchronously
+before spawn. An actual returned handle and minimal result scalars become SETTLED
+before later authority or cancellation checks. Raw argv, URLs, messages and output
+are not stored in this journal; a settled command is separate from exact commit
+readback, operation completion and current delivery permission.
+
+Legacy local-git-delivery and git-push-delivery v1 completion receipts retain
+their meaning. Related malformed, moved-key or uncertain command facts block
+another mutation, including after a missing legacy parent; settled facts do not
+reconstruct that parent. Equivalent work genuinely owned by the current pending
+map still coalesces. Same-process completion-write repair requires its intact
+parent and successful facts for the phases actually executed; a clean no-op has
+no sent phases. Historical COMPLETE receipts without command facts remain valid.
+This private fact journal changes neither schema11/writer7 nor native verified
+commit/PR availability.
 
 Controller verification and local commit share the owned-command cancellation
 slot. Both native authority and current canonical Task/Run binding must still

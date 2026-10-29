@@ -922,6 +922,21 @@
   command connected to an isolated bare receive-pack. This validates Git transfer
   and process ownership, not a real SSH server, account authorization or GitHub PR.
 
+- Keep actual Git command occurrence separate from operation completion. A quiet
+  successful commit does not identify its SHA/tree/parent, and created=false can
+  follow a commit hook that restores HEAD. Known-result repair needs the original
+  successful sent-phase facts and intact parent; an actual clean no-op needs none.
+- A final authority callback can change both the legacy parent and command intent.
+  Qualify both again synchronously before spawn. Retain an observed result before
+  later permission checks, without using it to reconstruct a missing parent or
+  authorize another command.
+- A held verifier's marker budget starts after its registered snapshot invocation,
+  since manual verification first prepares the snapshot asynchronously. Arm the
+  fixture-root/command latch before verify and settle it on early result, error or
+  close; retain the marker and command deadlines. A fresh attempt can overwrite a
+  cancelled child's marker, so associate the original entered PID/cwd and receipt
+  separately from the later marker and proof.
+
 - Additive delivery commands need an explicit peer capability even while keeping
   transport1.2 and legacy omitted-intent hashes. Gate preparation as well as the
   final command; otherwise an older Runner fails after a task has been created.
