@@ -1395,3 +1395,16 @@
   actual marker in that case and retain the existing cancellation/result/close
   assertions. A healthy instrumented focus changes scheduling and does not
   explain an earlier full-suite failure.
+
+- On the installed Git, --path-format=absolute --git-path index follows a final index
+  symlink. For physical-context admission use Git-reported default index path,
+  canonicalize only the parent, and lstat the final component. Bind its path and
+  regular-file policy separately from replaceable index inode/bytes.
+- Preserve legal metadata path whitespace by removing exactly the terminal LF; trim()
+  changes a path ending in spaces or containing boundary whitespace. Context
+  inspection may isolate inherited Git selectors, while actual delivery must qualify
+  its real execution environment.
+- Parallelize only independent Git reads behind the existing physical/policy barriers
+  and settle every started child on failure. A failed process.kill(pid,0) proves
+  absence only for ESRCH; propagate EPERM and other errors instead of recording
+  successful drain.

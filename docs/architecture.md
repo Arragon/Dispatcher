@@ -1855,6 +1855,23 @@ readable; missing/newly changed proof cannot authorize acceptance. Historical
 accepted receipts keep their original meaning. Automatic Run verification and
 HUMAN snapshot preparation remain separate lifecycle contracts.
 
+Every new DeliveryCandidate version1 allocation stores versioned gitContext in the
+existing private sidecar; the field is optional only for historical records. It
+records separate source and retained worktree, Git-directory, common-directory and
+objects-directory physical path/device/inode identities, plus the Git-reported
+default index path. Directory identity is frozen; equivalent regular index
+replacement remains valid. Present malformed context refuses, while historical
+absence stays absent. Source authority compares the source context and existing
+candidate guards; retained assertion compares only its retained context so future
+legitimate staging/committing does not invalidate the artifact itself. This metadata
+grants no native commit/PR or remote snapshot delivery permission.
+
+Workspace candidate inspection settles its four independent identity reads before the
+existing status policy barrier, then settles its three manifest reads after status
+and initial HEAD. Failed groups return only after every started child settles.
+Physical/private admission, policy filters/Gitlinks, scopes, bounded file reads,
+sequential content hashing and the final identity/HEAD fences retain their order.
+
 Repository snapshotVerification optionally names ordered registered preparation
 commands through ConfigPlan. Dispatch freezes that profile or explicit absence
 beside frozen command definitions; replacement copies the original record or
