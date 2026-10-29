@@ -111,7 +111,7 @@ const processState=(pid:number)=>{try{process.kill(pid,0);return "alive";}catch(
 it.each(["source","task","control","config","generation","lease"] as const)("retains the actual preparation result and refuses proof when %s drifts during its real child",async change=>{
  const f=await localReviewFixture({preparationScripts:[heldPreparation],verificationScript:check});let pending:Promise<View>|undefined;
  try{const initial=await f.results.read(f.receipt.runId),before=facts(initial.candidate!.worktree),count=childFacts(f).length,sentinel={reason:"owned-test-invalidation"};f.service.database.saveEntity("native-verification-invalidation",f.receipt.runId,sentinel);
-  pending=f.results.verify(f.receipt.runId,body(initial,"in-flight-preparation"),"owner");await vi.waitFor(()=>expect(existsSync(join(f.root,"preparation-entered"))).toBe(true));const entered=JSON.parse(readFileSync(join(f.root,"preparation-entered"),"utf8"));
+  const invoked=f.armSnapshotInvocation("prepare-0");pending=f.results.verify(f.receipt.runId,body(initial,"in-flight-preparation"),"owner");await invoked(pending);await vi.waitFor(()=>expect(existsSync(join(f.root,"preparation-entered"))).toBe(true));const entered=JSON.parse(readFileSync(join(f.root,"preparation-entered"),"utf8"));
   if(change==="source")writeFileSync(join(initial.candidate!.worktree,"result.txt"),"changed during preparation\n");
   if(change==="task"){const task=f.service.database.getCanonicalTask(f.receipt.taskId)!;f.service.database.writeCanonicalTask(f.receipt.taskId,task.revision,{...task.document as object,title:"changed during preparation"},new Date().toISOString());}
   if(change==="control"){const store=new InteractionStore(f.service.database),control=store.control(initial.sessionId)!;store.compareAndSwapControl({sessionId:initial.sessionId,expectedRevision:control.revision,expectedEpoch:control.epoch,actorId:"owner",event:{type:"conflict",at:new Date().toISOString()}});}
@@ -123,7 +123,7 @@ it.each(["source","task","control","config","generation","lease"] as const)("ret
 });
 it("cancels and drains an actual preparation child, keeps its failed result and same-key barrier, and permits a fresh confirmed attempt",async()=>{
  const f=await localReviewFixture({preparationScripts:[heldPreparation],verificationScript:check});let pending:Promise<View>|undefined;
- try{const initial=await f.results.read(f.receipt.runId),request=body(initial,"cancel-preparation");pending=f.results.verify(f.receipt.runId,request,"owner");await vi.waitFor(()=>expect(existsSync(join(f.root,"preparation-entered"))).toBe(true));const entered=JSON.parse(readFileSync(join(f.root,"preparation-entered"),"utf8")),running=await f.results.read(f.receipt.runId);expect(running).toMatchObject({state:"running",pendingVerification:{owned:true}});const stopped=await f.results.cancel(f.receipt.runId,running.pendingVerification!.id,"owner");await pending;const proof=receipt(f),before=childFacts(f).length,absence=processState(entered.pid);expect(stopped).toMatchObject({state:"failed",reasonCode:"LOCAL_VERIFICATION_CANCELLED"});expect(proof.preparation!.checks).toEqual([expect.objectContaining({commandId:"prepare-0",status:"failed"})]);expect(absence).toBe("ESRCH");await f.results.verify(f.receipt.runId,request,"owner");expect(childFacts(f)).toHaveLength(before);noAcceptance(f);writeFileSync(join(f.root,"preparation-release"),"fresh may finish");const fresh=await f.results.verify(f.receipt.runId,body(stopped,"fresh-after-cancel"),"owner");record(f,{entered,stopped,proof,before,absence,fresh,after:childFacts(f)});expect(fresh.state).toBe("verified");expect(childFacts(f)).toHaveLength(before+2);expect(f.starts()).toBe(1);
+ try{const initial=await f.results.read(f.receipt.runId),request=body(initial,"cancel-preparation");const invoked=f.armSnapshotInvocation("prepare-0");pending=f.results.verify(f.receipt.runId,request,"owner");await invoked(pending);await vi.waitFor(()=>expect(existsSync(join(f.root,"preparation-entered"))).toBe(true));const entered=JSON.parse(readFileSync(join(f.root,"preparation-entered"),"utf8")),running=await f.results.read(f.receipt.runId);expect(running).toMatchObject({state:"running",pendingVerification:{owned:true}});const stopped=await f.results.cancel(f.receipt.runId,running.pendingVerification!.id,"owner");await pending;const proof=receipt(f),before=childFacts(f).length,absence=processState(entered.pid);expect(stopped).toMatchObject({state:"failed",reasonCode:"LOCAL_VERIFICATION_CANCELLED"});expect(proof.preparation!.checks).toEqual([expect.objectContaining({commandId:"prepare-0",status:"failed"})]);expect(absence).toBe("ESRCH");await f.results.verify(f.receipt.runId,request,"owner");expect(childFacts(f)).toHaveLength(before);noAcceptance(f);writeFileSync(join(f.root,"preparation-release"),"fresh may finish");const fresh=await f.results.verify(f.receipt.runId,body(stopped,"fresh-after-cancel"),"owner");record(f,{entered,stopped,proof,before,absence,fresh,after:childFacts(f)});expect(fresh.state).toBe("verified");expect(childFacts(f)).toHaveLength(before+2);expect(f.starts()).toBe(1);
  }finally{writeFileSync(join(f.root,"preparation-release"),"cleanup");await pending;await f.close();}
 });
 
@@ -142,4 +142,39 @@ it("captures and cleans its actual failed automatic setup before returning the s
 });
 it("accepts a dispatch-frozen profile id at the schema's 100 astral-code-point boundary",async()=>{
  const f=await localReviewFixture({preparationScripts:[prepare],verificationScript:check,preparationProfileId:"🙂".repeat(100)});try{const initial=await f.results.read(f.receipt.runId);expect(initial.state).toBe("unverified");const verified=await f.results.verify(f.receipt.runId,body(initial,"unicode-profile"),"owner");record(f,{initial,verified,receipt:receipt(f)});expect(verified.state).toBe("verified");expect(receipt(f).preparation!.profileHash).toBe(contentHash(f.service.configuration.current().config.repositories[0]!.snapshotVerification));}finally{await f.close();}
+});
+
+it("keeps a snapshot invocation latch bound to its fixture root and removes it on early completion",async()=>{
+ const owner=await localReviewFixture();let other:Fixture|undefined;
+ try{
+  other=await localReviewFixture();const initial=await other.results.read(other.receipt.runId),invoked=owner.armSnapshotInvocation("check"),work=other.results.verify(other.receipt.runId,body(initial,"foreign-fixture-invocation"),"owner");
+  await expect(invoked(work)).rejects.toThrow("Verification completed before the owned snapshot command invocation");expect((await work).state).toBe("verified");expect(owner.pendingSnapshotInvocations()).toBe(0);
+ }finally{try{await other?.close();}finally{await owner.close();}}
+});
+it("resolves a snapshot invocation latch only for the selected registered command",async()=>{
+ const f=await localReviewFixture({preparationScripts:[prepare],verificationScript:check});
+ try{
+  const initial=await f.results.read(f.receipt.runId),invoked=f.armSnapshotInvocation("check"),work=f.results.verify(f.receipt.runId,body(initial,"selected-command-invocation"),"owner"),invocation=await invoked(work);
+  expect(invocation.commandId).toBe("check");expect(invocation.cwd.startsWith(join(f.root,"data","verification-snapshots")+"/")).toBe(true);expect((await work).state).toBe("verified");expect(f.pendingSnapshotInvocations()).toBe(0);
+ }finally{await f.close();}
+});
+it("does not treat its own automatic worktree check as a snapshot invocation",async()=>{
+ const f=await localReviewFixture({advance:false});
+ try{
+  const invoked=f.armSnapshotInvocation("check"),work=Promise.resolve(f.service.app.inject({method:"POST",url:`/api/runs/${f.receipt.runId}/advance`,headers:f.headers}));
+  await expect(invoked(work)).rejects.toThrow("Verification completed before the owned snapshot command invocation");expect((await work).statusCode).toBe(200);expect(f.pendingSnapshotInvocations()).toBe(0);
+ }finally{await f.close();}
+});
+it("preserves an early verification rejection and removes its snapshot invocation waiter",async()=>{
+ const f=await localReviewFixture();
+ try{
+  const initial=await f.results.read(f.receipt.runId),invoked=f.armSnapshotInvocation("check"),work=f.results.verify("unknown-controlled-run",body(initial,"early-rejected-invocation"),"owner"),outcomes=await Promise.allSettled([work,invoked(work)]);
+  expect(outcomes[0]!.status).toBe("rejected");expect(outcomes[1]!.status).toBe("rejected");if(outcomes[0]!.status==="rejected"&&outcomes[1]!.status==="rejected")expect(outcomes[1]!.reason).toBe(outcomes[0]!.reason);expect(f.pendingSnapshotInvocations()).toBe(0);
+ }finally{await f.close();}
+});
+it("settles and removes an armed snapshot invocation waiter when its fixture closes",async()=>{
+ const f=await localReviewFixture();let closed=false;
+ try{
+  const invoked=f.armSnapshotInvocation("check");expect(f.pendingSnapshotInvocations()).toBe(1);closed=true;await f.close();await expect(invoked(Promise.resolve())).rejects.toThrow("Fixture closed before snapshot command invocation");expect(f.pendingSnapshotInvocations()).toBe(0);expect(()=>f.armSnapshotInvocation("check")).toThrow("Fixture is closed");
+ }finally{if(!closed)await f.close();}
 });

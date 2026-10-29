@@ -118,7 +118,8 @@ it.each(['source','task','control'] as const)("refuses proof when %s changes whi
  const f=await localReviewFixture({verificationScript:heldChild});let pending:Promise<View>|undefined;
  try{
   const initial=await f.results.read(f.receipt.runId),before=sourceFacts(initial.candidate!.worktree);
-  pending=f.results.verify(f.receipt.runId,body(initial,'in-flight'),'owner');
+  const invoked=f.armSnapshotInvocation('check');pending=f.results.verify(f.receipt.runId,body(initial,'in-flight'),'owner');
+  await invoked(pending);
   await vi.waitFor(()=>expect(existsSync(join(f.root,'child-entered'))).toBe(true));
   const entered=JSON.parse(readFileSync(join(f.root,'child-entered'),'utf8'));
   if(change==='source')writeFileSync(join(initial.candidate!.worktree,'result.txt'),'changed during real verification\n');
@@ -142,7 +143,8 @@ it.each(['source','task','control'] as const)("refuses proof when %s changes whi
 it("cancels and drains the exact real snapshot verifier without proof or another native start",async()=>{
  const f=await localReviewFixture({verificationScript:heldChild});let pending:Promise<View>|undefined;
  try{
-  const initial=await f.results.read(f.receipt.runId);pending=f.results.verify(f.receipt.runId,body(initial,'cancel-child'),'owner');
+  const initial=await f.results.read(f.receipt.runId),invoked=f.armSnapshotInvocation('check');pending=f.results.verify(f.receipt.runId,body(initial,'cancel-child'),'owner');
+  await invoked(pending);
   await vi.waitFor(()=>expect(existsSync(join(f.root,'child-entered'))).toBe(true));
   const entered=JSON.parse(readFileSync(join(f.root,'child-entered'),'utf8')),running=await f.results.read(f.receipt.runId);
   expect(running).toMatchObject({state:'running',pendingVerification:{owned:true}});
