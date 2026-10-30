@@ -85,9 +85,14 @@ export class LocalGitDelivery {
       if(value.state!=="COMPLETE"&&!(row.id===id&&allowPending))throw this.snapshotError("OUTCOME_UNKNOWN");
     }
     const legacyId=hash({runId:input.runId,generation:input.generation});
-    const legacyRow=this.database.handle.prepare("SELECT document_json FROM entities WHERE kind=? AND id=?").get("local-git-delivery",legacyId) as {document_json:unknown}|undefined;
-    const legacy=legacyRow?this.snapshotParse(legacyRow.document_json):undefined;
-    if(legacy!==undefined&&(!record(legacy)||!keys(legacy,["version","binding","state","result"])||legacy.version!==1||legacy.state!=="COMPLETE"||!digest(legacy.binding)||!record(legacy.result)||!keys(legacy.result,["version","runId","generation","commit","branch","files","created","completedAt"])||legacy.result.version!==1||legacy.result.runId!==input.runId||legacy.result.generation!==input.generation||!sha(legacy.result.commit)||!bounded(legacy.result.branch,1024)||!Array.isArray(legacy.result.files)||!legacy.result.files.every(file=>typeof file==="string")||typeof legacy.result.created!=="boolean"||typeof legacy.result.completedAt!=="string"||!Number.isFinite(Date.parse(legacy.result.completedAt))))throw this.snapshotError("OUTCOME_UNKNOWN");
+    const legacyRows=this.database.handle.prepare("SELECT id,document_json FROM entities WHERE kind=?").all("local-git-delivery") as Array<{id:string;document_json:unknown}>;
+    let legacy:Record<string,unknown>|undefined;
+    for(const row of legacyRows){
+      const value=this.snapshotParse(row.document_json);
+      // Incomplete legacy receipts contain no run/generation: a moved key cannot safely scope their uncertainty.
+      if(!record(value)||!keys(value,["version","binding","state","result"])||value.version!==1||value.state!=="COMPLETE"||!digest(value.binding)||!record(value.result)||!keys(value.result,["version","runId","generation","commit","branch","files","created","completedAt"])||value.result.version!==1||!bounded(value.result.runId)||!Number.isSafeInteger(value.result.generation)||Number(value.result.generation)<1||!sha(value.result.commit)||!bounded(value.result.branch,1024)||!Array.isArray(value.result.files)||!value.result.files.every(file=>typeof file==="string")||typeof value.result.created!=="boolean"||typeof value.result.completedAt!=="string"||!Number.isFinite(Date.parse(value.result.completedAt)))throw this.snapshotError("OUTCOME_UNKNOWN");
+      if(row.id===legacyId){if(value.result.runId!==input.runId||value.result.generation!==input.generation)throw this.snapshotError("OUTCOME_UNKNOWN");legacy=value;}
+    }
     const commands=this.database.handle.prepare("SELECT id,document_json FROM entities WHERE kind=?").all("local-git-command") as Array<{id:string;document_json:unknown}>;
     const seen=new Set<string>();
     for(const row of commands){

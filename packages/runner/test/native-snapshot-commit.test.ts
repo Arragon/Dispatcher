@@ -68,6 +68,33 @@ for(const kind of ["strict","legacy"] as const)for(const state of ["PENDING","SE
  it(`native snapshot commit cross-proof ${kind} ${kind==="legacy"&&state==="moved"?"canonical pending control":state} barrier`,()=>using(async f=>{mutate(f);const input=await f.prepare();const id=kind==="strict"?`${digest(["native-snapshot-commit","run",1])}:${digest(["old",digest("old")])}`:digest({runId:"run",generation:1}),document=kind==="strict"?{version:1,runId:"run",generation:1,leaseId:"lease",proof:{id:"old",hash:digest("old")},candidateId:input.candidate.id,binding:digest("old binding"),state:"PENDING"}:{version:1,binding:digest("old binding"),state:"PENDING"};f.db.saveEntity(kind==="strict"?"native-snapshot-commit":"local-git-delivery",id,document);if(state==="NULL")f.db.handle.prepare("UPDATE entities SET document_json='null' WHERE id=?").run(id);else if(state==="malformed")f.db.handle.prepare("UPDATE entities SET document_json='{' WHERE id=?").run(id);else if(state==="shape")f.db.handle.prepare("UPDATE entities SET document_json='{}' WHERE id=?").run(id);else if(state==="moved"&&kind==="strict")f.db.handle.prepare("UPDATE entities SET id='moved-valid' WHERE id=?").run(id);else if(state==="state-null")f.db.saveEntity(kind==="strict"?"native-snapshot-commit":"local-git-delivery",id,{...document,state:null});else if(state==="missing-state"){const missing=Object.fromEntries(Object.entries(document).filter(([key])=>key!=="state"));f.db.saveEntity(kind==="strict"?"native-snapshot-commit":"local-git-delivery",id,missing);}else if(state!=="moved")f.db.saveEntity(kind==="strict"?"native-snapshot-commit":"local-git-delivery",id,{...document,state});await expect(f.service.commitSnapshot(input)).rejects.toMatchObject({code:"SNAPSHOT_COMMIT_OUTCOME_UNKNOWN"});expect(f.commands).toEqual([]);expect(f.service.snapshotCommitOutcome(input)).toBe("unknown");}));
 }
 it("native snapshot commit legacy COMPLETE stays history without supplying proof result",()=>using(async f=>{mutate(f);const input=await f.prepare();f.db.saveEntity("local-git-delivery",digest({runId:"run",generation:1}),{version:1,binding:digest("legacy"),state:"COMPLETE",result:{version:1,runId:"run",generation:1,commit:head(f),branch:f.workspace.branch,files:[],created:false,completedAt:new Date().toISOString()}});expect(await f.service.commitSnapshot(input)).toMatchObject({created:true,files:["result.txt"]});expect(f.commands).toHaveLength(2);}));
+it.each(["PENDING","SENDING","UNKNOWN","malformed","null","shape","state-null","missing-state"])("native snapshot commit moved legacy parent %s without commands blocks new proof and restart",state=>using(async f=>{
+ mutate(f);const input=await f.prepare("new-proof"),canonicalId=digest({runId:"run",generation:1}),movedId="moved-legacy-parent";
+ const document:{version:number;binding:string;state?:string|null}={version:1,binding:digest("old legacy binding"),state};
+ if(state==="state-null")document.state=null;else if(state==="missing-state")delete document.state;
+ f.db.saveEntity("local-git-delivery",canonicalId,document);
+ if(["malformed","null","shape"].includes(state))f.db.handle.prepare("UPDATE entities SET document_json=? WHERE kind='local-git-delivery' AND id=?").run(state==="malformed"?"{":state==="null"?"null":"{}",canonicalId);
+ f.db.handle.prepare("UPDATE entities SET id=? WHERE kind='local-git-delivery' AND id=?").run(movedId,canonicalId);
+ expect(f.db.handle.prepare("SELECT id FROM entities WHERE kind='local-git-delivery'").all()).toEqual([{id:movedId}]);
+ expect(f.db.handle.prepare("SELECT id FROM entities WHERE kind='local-git-command'").all()).toEqual([]);
+ const retained=f.facts();
+ for(const owner of [f.service,new LocalGitDelivery(f.db,f.processes,f.manager)]){
+  expect.soft(owner.snapshotCommitOutcome(input)).toBe("unknown");
+  await expect.soft(owner.commitSnapshot(input)).rejects.toMatchObject({code:"SNAPSHOT_COMMIT_OUTCOME_UNKNOWN"});
+  expect.soft(owner.snapshotCommitOutcome(input)).toBe("unknown");
+  expect.soft(f.commands).toEqual([]);
+ }
+ expect(f.facts()).toEqual(retained);
+}));
+it.each(["run","unrelated-run"])("native snapshot commit moved legacy COMPLETE for %s remains history",runId=>using(async f=>{
+ mutate(f);const input=await f.prepare("new-proof"),canonicalId=digest({runId,generation:1});
+ f.db.saveEntity("local-git-delivery",canonicalId,{version:1,binding:digest("legacy"),state:"COMPLETE",result:{version:1,runId,generation:1,commit:head(f),branch:f.workspace.branch,files:[],created:false,completedAt:new Date().toISOString()}});
+ f.db.handle.prepare("UPDATE entities SET id='moved-complete-history' WHERE kind='local-git-delivery' AND id=?").run(canonicalId);
+ const history=f.facts();expect(f.db.handle.prepare("SELECT id FROM entities WHERE kind='local-git-command'").all()).toEqual([]);
+ const restarted=new LocalGitDelivery(f.db,f.processes,f.manager);expect(restarted.snapshotCommitOutcome(input)).toBe("not-sent");
+ expect(await restarted.commitSnapshot(input)).toMatchObject({created:true,files:["result.txt"]});expect(f.commands).toHaveLength(2);
+ expect(f.facts()).toEqual(expect.arrayContaining(history));
+}));
 it("native snapshot commit storage-origin errors retain identity",()=>using(async f=>{mutate(f);const input=await f.prepare(),failure=Error("controlled storage origin");const spy=vi.spyOn(f.db.handle,"prepare").mockImplementation(()=>{throw failure;});await expect(f.service.commitSnapshot(input)).rejects.toBe(failure);spy.mockRestore();expect(f.commands).toEqual([]);}));
 
 function traceGit(f:Fixture,index:string):void{
