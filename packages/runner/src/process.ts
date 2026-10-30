@@ -114,12 +114,15 @@ interface InternalProcess {
   handle: ManagedProcessHandle;
 }
 
+export interface ProcessStartInput {runId:string;file:string;args:string[];cwd:string;timeoutMs?:number;idleTimeoutMs?:number;mode?:"process"|"pty";env?:Readonly<Record<string,string|undefined>>}
+
 export class ProcessManager {
   private readonly active = new Map<string, InternalProcess>();
   constructor(private readonly logRoot: string, private readonly budget: LogBudget = defaultBudget) {}
   get activeCount(): number { return this.active.size; }
 
-  async start(input: { runId: string; file: string; args: string[]; cwd: string; timeoutMs?: number; idleTimeoutMs?: number; mode?: "process" | "pty" }): Promise<ManagedProcessHandle> {
+  async start(request: ProcessStartInput): Promise<ManagedProcessHandle> {
+    const input={...request,args:[...request.args],env:Object.freeze({...request.env??process.env})};
     if (input.mode === "pty") return this.startPty(input);
     const id = randomUUID();
     const startedAt = Date.now();
@@ -128,7 +131,7 @@ export class ProcessManager {
     const listeners = new Set<(event: ActivityEvent) => void>();
     let classification: ExitClassification | undefined;
     let settled = false;
-    const child = spawnProcess(input.file, input.args, { cwd: input.cwd, env: childExecutionEnvironment(process.env, { PWD: input.cwd }), shell: false, detached: platform() !== "win32", stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawnProcess(input.file, input.args, { cwd: input.cwd, env: childExecutionEnvironment(input.env, { PWD: input.cwd }), shell: false, detached: platform() !== "win32", stdio: ["pipe", "pipe", "pipe"] });
     const ownership = new OwnedProcessGroup(child);
     let rejectResult: (error: unknown) => void = () => undefined;
     const spawned = new Promise<void>((resolve, reject) => {
@@ -186,7 +189,7 @@ export class ProcessManager {
     return handle;
   }
 
-  private startPty(input: { runId: string; file: string; args: string[]; cwd: string; timeoutMs?: number; idleTimeoutMs?: number }): ManagedProcessHandle {
+  private startPty(input: ProcessStartInput & {env:Readonly<Record<string,string|undefined>>}): ManagedProcessHandle {
     ensurePtySpawnHelper();
     const id = randomUUID();
     const startedAt = Date.now();
@@ -196,8 +199,8 @@ export class ProcessManager {
     let classification: ExitClassification | undefined;
     const terminal = spawnPty(input.file, input.args, {
       cwd: input.cwd,
-      env: childExecutionEnvironment(process.env, { PWD: input.cwd }),
-      name: process.env.TERM ?? "xterm-256color",
+      env: childExecutionEnvironment(input.env, { PWD: input.cwd }),
+      name: input.env?.TERM ?? "xterm-256color",
       cols: 120,
       rows: 40,
       useConpty: platform() === "win32",

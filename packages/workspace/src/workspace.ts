@@ -1,3 +1,4 @@
+import {GitContextError,readGitWorktreeContext,sameGitWorktreeContext,type GitWorktreeContext} from "./git-context.js";
 import {constants} from "node:fs";
 import {childExecutionEnvironment} from "@dispatcher/shared";
 import {gitInspectionEnvironment,gitUrlRewriteConfigured,readWorkspaceStatus} from "./git-inspection.js";
@@ -44,6 +45,8 @@ export interface WorkspaceHandle extends WorkspacePlan {
   baseRevision: string;
   createdAt: string;
 }
+
+export interface SnapshotCommitObservation {context:GitWorktreeContext;head:string;tree:string;parents:string[];branch:string;status:string;files:string[];indexMatches:boolean}
 
 export interface CleanupPlan {
   workspace: WorkspaceHandle;
@@ -303,13 +306,59 @@ export class WorkspaceManager {
     this.managed.set(path, structuredClone(handle));
   }
 
-  async resultFiles(workspace: WorkspaceHandle): Promise<string[]> {
+  async resultFiles(workspace: WorkspaceHandle,environment?:Readonly<Record<string,string|undefined>>): Promise<string[]> {
     if (!this.get(workspace.path)) throw new WorkspacePolicyError("WORKSPACE_NOT_MANAGED", "Worktree is not restored or registered");
-    const git = async (args: string[]) => (await execute("git", ["-C", workspace.path, ...args], { maxBuffer: 1024 * 1024 })).stdout.split("\0").filter(Boolean);
-    const files = [...new Set([...(await git(["diff", "--name-only", "-z", workspace.baseRevision, "--"])), ...(await git(["ls-files", "--others", "--exclude-standard", "-z"]))])].sort();
+    const query=environment?this.snapshotQuery(workspace,environment):undefined;
+    const git = async (args: string[]) => query?this.snapshotNames(await query(args)):(await execute("git", ["-C", workspace.path, ...args], { maxBuffer: 1024 * 1024 })).stdout.split("\0").filter(Boolean);
+    const files = [...new Set([...(await git(["diff", "--name-only", "-z", ...(environment?["--no-ext-diff","--no-textconv"]:[]), workspace.baseRevision, "--"])), ...(await git(["ls-files", "--others", "--exclude-standard", "-z"]))])].sort();
     if (files.length > 5000) throw new WorkspacePolicyError("RESULT_TOO_LARGE", "Change manifest exceeds 5000 files");
     for (const file of files) await this.assertPathAllowed(workspace, file);
     return files;
+  }
+
+  private snapshotUnavailable():WorkspacePolicyError{return new WorkspacePolicyError("SNAPSHOT_COMMIT_OBSERVATION_UNAVAILABLE","Complete Git observation is unavailable");}
+  private snapshotNames(output:string):string[]{
+    if(output==="")return [];if(!output.endsWith("\0"))throw this.snapshotUnavailable();
+    const names=output.slice(0,-1).split("\0");
+    if(names.some(name=>!name||isAbsolute(name)||name.split("/").some(part=>!part||part==="."||part==="..")))throw this.snapshotUnavailable();return names;
+  }
+  private snapshotQuery(workspace:WorkspaceHandle,environment:Readonly<Record<string,string|undefined>>):(args:string[],remainingMs?:number)=>Promise<string>{
+    const env=childExecutionEnvironment({...environment},{PWD:workspace.path,GIT_OPTIONAL_LOCKS:"0",GIT_NO_LAZY_FETCH:"1",GIT_TERMINAL_PROMPT:"0"});
+    return async(args,remainingMs=10_000)=>{
+      let stdout:Buffer;
+      try{stdout=(await executeFile("git",["--literal-pathspecs","--no-pager","--no-replace-objects","-C",workspace.path,"-c","diff.autoRefreshIndex=false","-c","core.fsmonitor=false","-c","core.untrackedCache=false","-c","core.ignoreStat=false","-c","core.hooksPath=/dev/null",...args],{encoding:"buffer",env,timeout:Math.min(10_000,remainingMs),maxBuffer:1024*1024})).stdout;}
+      catch(error){const failure=error as {code?:unknown;stdout?:Buffer;stderr?:Buffer};if(args[0]==="config"&&failure.code===1&&Buffer.isBuffer(failure.stdout)&&failure.stdout.length===0&&Buffer.isBuffer(failure.stderr)&&failure.stderr.length===0)throw Object.assign(Error("Git configuration is absent"),{code:1});throw this.snapshotUnavailable();}
+      try{return new TextDecoder("utf-8",{fatal:true,ignoreBOM:true}).decode(stdout);}catch{throw this.snapshotUnavailable();}
+    };
+  }
+  async observeSnapshotCommit(workspace:WorkspaceHandle,expectedTree:string,environment:Readonly<Record<string,string|undefined>>):Promise<SnapshotCommitObservation>{
+    const sha=(value:string)=>/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(value);
+    if(!sha(expectedTree))throw this.snapshotUnavailable();
+    if(!this.get(workspace.path))throw new WorkspacePolicyError("WORKSPACE_NOT_MANAGED","Worktree is not restored or registered");
+    const captured=Object.freeze({...environment}),query=this.snapshotQuery(workspace,captured),scalar=async(args:string[])=>(await query(args)).replace(/\n$/,"");
+    const contextRead=async()=>{try{return await readGitWorktreeContext(workspace.path,scalar);}catch(error){if(error instanceof GitContextError)throw this.snapshotUnavailable();throw error;}};
+    const context=await contextRead();
+    try{await readWorkspaceStatus(workspace.path,10_000,query);}catch(error){if(error instanceof WorkspacePolicyError)throw error;if(error instanceof Error&&["UNTRUSTED_GIT_FILTER_CONFIG","UNQUALIFIED_GIT_PARTIAL_CLONE","UNQUALIFIED_GIT_SUBMODULE"].includes(error.message))throw new WorkspacePolicyError("SNAPSHOT_COMMIT_ENVIRONMENT_UNAVAILABLE","Git policy does not qualify this environment");throw this.snapshotUnavailable();}
+    const head=await scalar(["rev-parse","--verify","HEAD"]);if(!sha(head))throw this.snapshotUnavailable();
+    const tree=await scalar(["rev-parse","--verify",`${head}^{tree}`]),body=await query(["cat-file","commit",head]),bytes=Buffer.from(body,"utf8");
+    // Revision walks honor grafts/shallow ancestry. Qualify the actual commit object,
+    // including all terminal bytes, before reading its structural headers.
+    if(!sha(tree)||createHash(head.length===40?"sha1":"sha256").update(`commit ${bytes.length}\0`).update(bytes).digest("hex")!==head)throw this.snapshotUnavailable();
+    const boundary=body.indexOf("\n\n"),oid=new RegExp(`^[a-f0-9]{${head.length}}$`),parents:string[]=[];
+    if(boundary<0)throw this.snapshotUnavailable();
+    const headers=body.slice(0,boundary).split("\n");let field="",trees=0;
+    for(const [index,line] of headers.entries()){
+      if(line.startsWith(" ")){if(!field||field==="tree"||field==="parent")throw this.snapshotUnavailable();continue;}
+      const separator=line.indexOf(" ");if(separator<1)throw this.snapshotUnavailable();field=line.slice(0,separator);const value=line.slice(separator+1);
+      if(index===0&&field!=="tree")throw this.snapshotUnavailable();
+      if(field==="tree"){if(++trees!==1||!oid.test(value)||value!==tree)throw this.snapshotUnavailable();}
+      if(field==="parent"){if(!oid.test(value))throw this.snapshotUnavailable();parents.push(value);}
+    }
+    if(trees!==1)throw this.snapshotUnavailable();
+    const branch=await scalar(["symbolic-ref","--short","HEAD"]);if(!branch||/[\0\r\n]/.test(branch))throw this.snapshotUnavailable();
+    const status=await query(["status","--porcelain=v1","-z","--untracked-files=all"]),indexMatches=(await query(["diff","--cached","--raw","-z","--no-ext-diff","--no-textconv",expectedTree,"--"]))==="",files=await this.resultFiles(workspace,captured);
+    if(await scalar(["rev-parse","--verify","HEAD"])!==head||!sameGitWorktreeContext(context,await contextRead()))throw this.snapshotUnavailable();
+    return {context,head,tree,parents,branch,status,files,indexMatches};
   }
 
   async fetch(repositoryId: string): Promise<void> {

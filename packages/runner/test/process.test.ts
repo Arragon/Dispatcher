@@ -120,3 +120,14 @@ it.each([
     await manager.shutdown();
   }
 });
+
+it.each(["process","pty"] as const)("frozen explicit environment in %s mode",async mode=>{
+ const root=directory(),environment={PATH:process.env.PATH,PWD:"wrong",CONTROLLED_SENTINEL:"frozen",DISPATCHER_OWNER_TOKEN:"controlled-owner",DISPATCHER_SECRET_STORE_KEY:"controlled-secret"},before={...environment},errors:unknown[]=[];
+ const manager=new ProcessManager(join(root,"logs"),{get maxFileBytes(){environment.CONTROLLED_SENTINEL="changed";vi.stubEnv("CONTROLLED_SENTINEL","ambient");return 1024;},maxTotalBytes:2048,retentionFiles:2,tailBytes:1024});
+ try{
+  const handle=await manager.start({runId:"explicit",file:process.execPath,args:["-e","console.log(JSON.stringify({value:process.env.CONTROLLED_SENTINEL,pwd:process.env.PWD,owner:process.env.DISPATCHER_OWNER_TOKEN??null,secret:process.env.DISPATCHER_SECRET_STORE_KEY??null}))"],cwd:root,mode,env:environment}),result=await handle.result();
+  let absent=false;try{process.kill(handle.pid,0);}catch(error){if((error as NodeJS.ErrnoException).code!=="ESRCH")throw error;absent=true;}
+  const evidence=process.env.DISPATCHER_STRICT_COMMIT_EVIDENCE;if(evidence){const {mkdirSync,cpSync}=await import("node:fs"),target=join(evidence,`process-explicit-${mode}-${handle.id}`);mkdirSync(target,{recursive:true});writeFileSync(join(target,"checkpoint.json"),JSON.stringify({mode,id:handle.id,pid:handle.pid,active:manager.activeCount,result,absence:{absent,errno:absent?"ESRCH":null}},null,2));cpSync(join(root,"logs"),join(target,"logs"),{recursive:true});}
+  expect(result.classification).toBe("success");expect(JSON.parse(result.stdoutTail.trim())).toEqual({value:"frozen",pwd:root,owner:null,secret:null});expect(environment).toEqual({...before,CONTROLLED_SENTINEL:"changed"});expect(absent).toBe(true);
+ }catch(error){errors.push(error);}try{await manager.shutdown();}catch(error){errors.push(error);}vi.unstubAllEnvs();if(errors.length===1)throw errors[0];if(errors.length)throw new AggregateError(errors,"Process fixture and cleanup errors");
+});

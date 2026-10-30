@@ -6,9 +6,9 @@ export function gitInspectionEnvironment():NodeJS.ProcessEnv {const env=childExe
 
 export function gitUrlRewriteConfigured(keys:string):boolean {return keys.split("\0").some(key=>/^url\.[\s\S]*\.(insteadof|pushinsteadof)$/i.test(key));}
 
-export async function readWorkspaceStatus(path:string,timeoutMs=10_000):Promise<string> {
+export async function readWorkspaceStatus(path:string,timeoutMs=10_000,query?:(args:string[],remainingMs:number)=>Promise<string>):Promise<string> {
  const deadline=Date.now()+timeoutMs,options={maxBuffer:256*1024,env:gitInspectionEnvironment()};
- const git=(args:string[])=>{const timeout=deadline-Date.now();if(timeout<1)throw Error("GIT_INSPECTION_TIMEOUT");return execute("git",["-C",path,"-c","core.fsmonitor=false","-c","core.hooksPath=/dev/null",...args],{...options,timeout});};
+ const git=(args:string[])=>{const timeout=deadline-Date.now();if(timeout<1)throw Error("GIT_INSPECTION_TIMEOUT");if(query)return query(args,timeout).then(stdout=>({stdout}));return execute("git",["-C",path,"-c","core.fsmonitor=false","-c","core.hooksPath=/dev/null",...args],{...options,timeout});};
  // Git status can invoke clean/process filters even without optional index locks.
  // Config includes/global drivers count too; an unqualified driver fails closed.
  try{const configured=await git(["config","--null","--get-regexp","^filter\\."]);if(configured.stdout)throw Error("UNTRUSTED_GIT_FILTER_CONFIG");}
