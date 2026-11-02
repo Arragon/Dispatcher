@@ -17,7 +17,24 @@ jobs:
           node-version: 24.22.1
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Prepare plain Git fixtures
+        run: |
+          # The fixtures do not qualify inherited LFS filters from the runner image.
+          for git_scope in system global; do
+            if git config --"$git_scope" --show-origin --name-only --get-regexp '^filter\.lfs\.'; then
+              if [ "$git_scope" = system ]; then
+                sudo git config --system --remove-section filter.lfs
+              else
+                git config --global --remove-section filter.lfs
+              fi
+            else
+              git_config_status=$?
+              if [ "$git_config_status" -ne 1 ]; then exit "$git_config_status"; fi
+            fi
+          done
       - run: pnpm check
+        env:
+          DISPATCHER_SECRET_STORE_KEY: ci-test-ephemeral-store-key-not-a-secret
       - run: pnpm benchmark -- --scenario smoke --duration 2
         env:
           DISPATCHER_SECRET_STORE_KEY: ci-benchmark-ephemeral-store-key-not-a-secret
