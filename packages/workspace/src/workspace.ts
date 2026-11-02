@@ -7,7 +7,7 @@ import {isGitDeliveryTarget,type GitDeliveryTarget} from "@dispatcher/domain";
 import { execFile, type ExecFileOptions } from "node:child_process";
 import { mkdir, realpath, stat, lstat, readlink, open } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
-import { promisify } from "node:util";
+import { isDeepStrictEqual, promisify } from "node:util";
 
 const executeFile = promisify(execFile);
 const execute = (file:string,args:string[],options:ExecFileOptions={}) => executeFile(file,args,{...options,encoding:"utf8",env:childExecutionEnvironment(options.env??process.env)});
@@ -149,16 +149,19 @@ export class WorkspaceManager {
   async deliveryTarget(repositoryId:string):Promise<GitDeliveryTarget>{
     const {root}=await this.inspect({repositoryId,baseRef:"HEAD",scopePaths:[]});return (await this.deliveryRemote(root)).target;
   }
-  async resolvePushTarget(workspace:WorkspaceHandle,expected:GitDeliveryTarget):Promise<string>{
-    await this.restore(workspace);const current=await this.deliveryRemote(workspace.path);
+  async resolvePushTarget(workspace:WorkspaceHandle,expected:GitDeliveryTarget,environment?:Readonly<Record<string,string|undefined>>):Promise<string>{
+    // Strict snapshot callers already own a registered tuple; restoring through later ambient Git selectors would change the admitted context.
+    if(environment){if(!isDeepStrictEqual(this.get(workspace.path),workspace))throw new WorkspacePolicyError("WORKSPACE_NOT_MANAGED","Strict push requires the current registered workspace");}
+    else await this.restore(workspace);
+    const current=await this.deliveryRemote(workspace.path,environment);
     if(expected.version!==1||current.target.host!==expected.host||current.target.repository!==expected.repository||current.target.remoteFingerprint!==expected.remoteFingerprint)throw new WorkspacePolicyError("DELIVERY_TARGET_CHANGED","Owning repository push target changed; review again");
     return current.url;
   }
-  private async deliveryRemote(cwd:string):Promise<{target:GitDeliveryTarget;url:string}>{
+  private async deliveryRemote(cwd:string,environment?:Readonly<Record<string,string|undefined>>):Promise<{target:GitDeliveryTarget;url:string}>{
     const invalid=():never=>{throw new WorkspacePolicyError("INVALID_DELIVERY_REMOTE","Delivery requires one matching credential-free HTTPS or Git SSH origin fetch/push target");};
     let urls:string[];
     try{
-      const options={cwd,signal:AbortSignal.timeout(8000),timeout:8000,maxBuffer:8192};
+      const options={cwd,signal:AbortSignal.timeout(8000),timeout:8000,maxBuffer:8192,...(environment?{env:environment}:{})};
       // Query the same inherited configuration as the owned push, not the isolated inspection environment.
       let mappings="";try{mappings=(await execute("git",["config","--name-only","--null","--get-regexp","^url\\."],options)).stdout;}catch(error){if((error as {code?:unknown}).code!==1)return invalid();}
       if(gitUrlRewriteConfigured(mappings))return invalid();

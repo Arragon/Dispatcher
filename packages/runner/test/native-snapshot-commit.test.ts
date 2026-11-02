@@ -145,3 +145,38 @@ it.each(["wrong-body","terminal-byte"])("native snapshot commit raw object %s di
 it("native snapshot commit raw peeled tag cannot impersonate pinned commit identity",()=>using(async f=>{const tree=f.gitAt(f.workspace.path,"rev-parse","HEAD^{tree}");f.gitAt(f.workspace.path,"tag","-a","fixture-tag","-m","tag");const tag=f.gitAt(f.workspace.path,"rev-parse","fixture-tag"),ref=f.gitAt(f.workspace.path,"rev-parse","--git-path",`refs/heads/${f.workspace.branch}`);writeFileSync(ref,`${tag}\n`);await expect(f.manager.observeSnapshotCommit(f.workspace,tree,Object.freeze({...process.env}))).rejects.toMatchObject({code:"SNAPSHOT_COMMIT_OBSERVATION_UNAVAILABLE"});expect(f.commands).toEqual([]);}));
 
 it.each(["source","retained"])("native snapshot commit COMPLETE replay requalifies changed %s without granting permission",side=>using(async f=>{mutate(f);const input=await f.prepare();await f.service.commitSnapshot(input);writeFileSync(join(side==="source"?f.workspace.path:input.candidate.path,"result.txt"),"changed after observed commit\n");const restarted=new LocalGitDelivery(f.db,f.processes,f.manager);expect(restarted.snapshotCommitOutcome(input)).toBe("observed");await expect(restarted.commitSnapshot(input)).rejects.toMatchObject({code:side==="source"?"SNAPSHOT_COMMIT_CHANGED":"VERIFICATION_SNAPSHOT_CHANGED"});expect(f.commands).toHaveLength(2);}));
+
+async function strictPushTarget(f:Fixture){
+ const bare=join(f.directory,"push-remote.git"),ssh=join(f.directory,"push-ssh");f.git("init","--bare",bare);
+ writeFileSync(ssh,`#!${process.execPath}\nconst {spawnSync}=require('node:child_process');const result=spawnSync('git-receive-pack',[${JSON.stringify(bare)}],{stdio:'inherit'});process.exit(result.status??1);\n`);chmodSync(ssh,0o755);
+ f.git("remote","add","origin","ssh://git@github.example/acme/repo.git");f.git("config","core.sshCommand",ssh);f.git("config","ssh.variant","ssh");return {bare,target:await f.manager.deliveryTarget("repo")};
+}
+it("native snapshot push sends the actual verified commit once and replays after restart without new Git writes",()=>using(async f=>{
+ const remote=await strictPushTarget(f);mutate(f);const input={...await f.prepare(),target:remote.target},delivered=await f.service.pushSnapshot(input),first=delivered.push,committed=delivered.commit,count=f.commands.length;
+ expect(first).toMatchObject({commit:committed.commit,branch:f.workspace.branch,target:remote.target});expect(f.gitAt(remote.bare,"rev-parse",`refs/heads/${first.branch}`)).toBe(first.commit);expect(f.gitAt(f.workspace.path,"rev-parse",`${first.commit}^{tree}`)).toBe(input.candidate.tree);expect(first.commit).not.toBe(input.candidate.commit);
+ expect(f.service.snapshotPushOutcome(input)).toBe("observed");expect(await new LocalGitDelivery(f.db,f.processes,f.manager).pushSnapshot(input)).toEqual(delivered);expect(f.commands).toHaveLength(count);expect(f.commands.filter(args=>args.includes("push"))).toHaveLength(1);
+ const next={...await f.prepare("different-proof"),target:remote.target};await expect(f.service.pushSnapshot(next)).rejects.toMatchObject({code:"PUSH_OUTCOME_UNKNOWN"});await expect(f.service.pushSnapshot({...input,target:{...remote.target,repository:"other/repo"}})).rejects.toMatchObject({code:"PUSH_OUTCOME_UNKNOWN"});expect(f.commands).toHaveLength(count);
+}));
+it("native snapshot push retains a physically successful push with lost returned result as unknown",()=>using(async f=>{
+ const remote=await strictPushTarget(f);mutate(f);const input={...await f.prepare(),target:remote.target};
+ vi.spyOn(f.processes,"start").mockImplementation(async spec=>{const handle=await f.startObserved(spec);if(spec.args.includes("push")){const result=handle.result.bind(handle);handle.result=async()=>{await result();throw Error("controlled push result loss");};}return handle;});
+ await expect(f.service.pushSnapshot(input)).rejects.toThrow("controlled push result loss");const sha=f.gitAt(remote.bare,"rev-parse",`refs/heads/${f.workspace.branch}`),count=f.commands.length;expect(sha).toBe(head(f));expect(f.service.snapshotPushOutcome(input)).toBe("unknown");await expect(new LocalGitDelivery(f.db,f.processes,f.manager).pushSnapshot(input)).rejects.toMatchObject({code:"PUSH_OUTCOME_UNKNOWN"});expect(f.commands).toHaveLength(count);expect(f.commands.filter(args=>args.includes("push"))).toHaveLength(1);
+}));
+it("native snapshot push uses its captured Git environment after authority callbacks change ambient selectors",()=>using(async f=>{
+ const remote=await strictPushTarget(f),foreign=join(f.directory,"foreign");mkdirSync(foreign);f.gitAt(foreign,"init","-b","main");f.gitAt(foreign,"-c","user.name=Fixture","-c","user.email=fixture@example.invalid","commit","--allow-empty","-m","foreign");const original=f.gitAt(foreign,"rev-parse","HEAD");mutate(f);const input={...await f.prepare(),target:remote.target};
+ input.assertAuthority=()=>{vi.stubEnv("GIT_DIR",join(foreign,".git"));vi.stubEnv("GIT_WORK_TREE",foreign);};let result;
+ try{result=await f.service.pushSnapshot(input);}finally{vi.unstubAllEnvs();}
+ expect(f.gitAt(remote.bare,"rev-parse",`refs/heads/${f.workspace.branch}`)).toBe(result.push.commit);expect(f.gitAt(foreign,"rev-parse","HEAD")).toBe(original);expect(f.gitAt(foreign,"status","--porcelain")).toBe("");expect(f.commands.filter(args=>args.includes("push"))).toHaveLength(1);
+}));
+
+it("native snapshot push refuses uncertain history inserted by the authority callback before any Git write",()=>using(async f=>{
+ const remote=await strictPushTarget(f);mutate(f);const input={...await f.prepare(),target:remote.target};
+ input.assertAuthority=()=>{f.db.saveEntity("git-push-delivery","moved-uncertain-push",{version:1,binding:digest("unscopable push"),state:"PENDING"});};
+ await expect(f.service.pushSnapshot(input)).rejects.toMatchObject({code:"PUSH_OUTCOME_UNKNOWN"});expect(f.commands).toEqual([]);expect(head(f)).toBe(input.candidate.candidate.headRevision);
+}));
+
+it("native snapshot push honors cancellation from the final authority callback before its push child",()=>using(async f=>{
+ const remote=await strictPushTarget(f);mutate(f);const controller=new AbortController(),input={...await f.prepare(),target:remote.target,signal:controller.signal};
+ input.assertAuthority=()=>{if((f.db.listEntities("local-git-command") as Array<{phase?:string;state?:string}>).some(fact=>fact.phase==="push"&&fact.state==="SENDING"))controller.abort();};
+ await expect(f.service.pushSnapshot(input)).rejects.toMatchObject({code:"COMMIT_ABORTED"});expect(f.commands.filter(args=>args.includes("push"))).toHaveLength(0);expect(f.service.snapshotPushOutcome(input)).toBe("unknown");
+}));

@@ -1957,8 +1957,18 @@ COMPLETE/REVIEW, Task revision and timestamp changes; other Task, control, proof
 or execution changes roll the transaction back. Audited lease writes and clock
 callbacks precede a final pure native/owner/lease qualification; legitimate
 heartbeat expiry renewal is refreshed before the expected Run is captured.
-Native PR and remote snapshot
-verification/delivery remain unavailable.
+Qualified local native snapshot PR delivery reuses the strict commit owner and
+the existing run/generation push journal. The owner captures one Git environment
+before authority callbacks, rechecks current receipts after those callbacks, and
+pushes the actual authored SHA to the reviewed target. It returns the existing
+RunGitDelivery result; ordinary push bindings and receipt formats stay unchanged.
+Controller retains pushed evidence before using the selected SCM's idempotent
+PR intent and lookup-first recovery. A lost PR response cannot authorize another
+Git send or POST. Completion requalifies the source after SCM work and applies
+the same final transactional proof/control/lease checks to COMPLETE/REVIEW/prUrl.
+Remote snapshot verification/delivery remains unavailable. RHIZA still requires
+matching source-verification provenance and its separate model qualification;
+this local path does not enable external submit or native capability claims.
 This active proof does not qualify completed bound canonical acceptance, and
 actual unsupported native exclusion capability remains unavailable.
 

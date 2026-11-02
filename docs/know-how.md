@@ -32,6 +32,21 @@
   SHA `tree` from explicit `verifiedTree` commits; malformed trees and incomplete
   or unscopable history still block strict delivery.
 
+## Native snapshot Git delivery
+
+- Strict push target reads and owned commands must use the same environment
+  captured before authority callbacks. The strict owner already requires a
+  registered WorkspaceHandle; do not restore it through later ambient Git
+  selectors while resolving the target.
+- Existing version1 push PENDING receipts lack Run identity. Unscopable/moved
+  uncertainty cannot be treated as no prior send. Recheck receipt inventory after
+  the original authority callback, including immediately before Git writes. Check
+  abort again after that callback too; a pre-callback signal check alone can still
+  allocate the push child after cancellation. Retain an uncertain send intent even
+  when that current-process cancellation prevented its child.
+  A completed push remains factual when a later PR or metadata step fails;
+  recovery queries the original receipt and never creates a new push identity.
+
 ## M0–M10 invariants
 
 - Native capabilities can change between reads. For legacy metadata projection,

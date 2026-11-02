@@ -218,3 +218,24 @@ acceptance (INH-1994) moves before M25/M26; complete X1/DP-009b remains after M2
 DP-010 remains unchanged, and local Dispatcher release keeps its own Gates.
 Real tuple/model/PR/GUI/stop/recovery evidence, historical M19 ordering and M17
 performance requirements are not discharged by these source readbacks.
+
+## Local native snapshot PR owner (2026-11-02)
+
+The current local PR path reuses the strict snapshot commit owner and the existing
+version1 push receipt/journal, selected SCM and DeliveryService. One Run/generation
+keeps one frozen push identity; proof/target changes cannot silently adopt that
+effect. Existing unscopable push PENDING records remain barriers. Receipt inventory
+and cancellation are checked after the original authority callback before a Git
+write. Strict source/target/commands share one captured environment and require
+the current registered workspace tuple; ordinary callers keep their prior path.
+
+The owner returns the existing RunGitDelivery, including the actual qualified
+commit/tree and push. Controller retains pushed evidence before HTTP, uses the
+original PR intent/lookup on response loss, requalifies source after SCM, and
+checks the original complete proof/control/Task/lease basis after transactional
+COMPLETE/REVIEW writes. Matching RHIZA source/model provenance remains mandatory.
+No persisted receipt format, schema18/writer14, wire artifact, remote capability
+or dependency changes. Current local regressions and milestone review pass with
+no Critical/Important/Minor findings. Final default `pnpm check` passed265files/
+5883tests and build/typecheck/lint/boundaries on the same six functional hashes. Real provider/native
+exclusion/physical-stop/GitHub and human acceptance retain their original Gates.

@@ -7,6 +7,17 @@ branch `codex/dispatcher-convergence`, based on v3 `19db456`.
 
 ## Delivery checkpoints
 
+The next local delivery increment connects qualified HUMAN-return snapshots to
+strict authored commit, frozen push and the existing selected SCM PR lifecycle.
+Controlled SCM plus actual isolated bare Git cover exact artifact identity,
+lost-response recovery and final control rollback without repeated effects.
+Original G2 verification/re-entry assertions remain intact through an explicit
+pre-send fixture hold; a separate opt-in fixture exercises the production path.
+Milestone review passed0Critical/Important/Minor; final default `pnpm check`
+passed265files/5883tests and build/typecheck/lint/boundaries with the same six
+functional hashes. This does not qualify
+actual GitHub/provider/native exclusion or the original A/B Gates.
+
 Current integration work runs in the owned
 `/Users/wangdongxin/.codex/worktrees/dispatcher-plan-completion/dispatcher` on
 `codex/dispatcher-plan-completion`; the worktree above records the original ledger

@@ -3,15 +3,18 @@ import {createHash} from "node:crypto";
 import type {DispatcherDatabase,JsonValue} from "@dispatcher/persistence";
 import {WorkspacePolicyError,isDeliveryGitContext,sameGitWorktreeContext,type DeliveryCandidate,type SnapshotCommitObservation,type WorkspaceHandle,type WorkspaceManager} from "@dispatcher/workspace";
 import type {ManagedProcessHandle,ProcessManager,ProcessResult} from "./process.js";
-import type {GitDeliveryTarget,GitPushResult,LocalCommitResult} from "@dispatcher/domain";
+import {isGitDeliveryTarget,type GitDeliveryTarget,type GitPushResult,type LocalCommitResult,type RunGitDelivery} from "@dispatcher/domain";
 export type {LocalCommitResult} from "@dispatcher/domain";
 export interface LocalCommitInput {runId:string;generation:number;leaseId:string;workspace:WorkspaceHandle;message:string;verifiedTree?:string;assertAuthority:()=>void;signal?:AbortSignal}
 export interface LocalSnapshotCommitInput extends LocalCommitInput {proof:{id:string;hash:string};candidate:DeliveryCandidate;assertSource:()=>Promise<void>;assertSnapshot:()=>Promise<void>}
+export interface LocalSnapshotPushInput extends LocalSnapshotCommitInput {target:GitDeliveryTarget}
 export interface LocalPushInput extends LocalCommitInput {target:GitDeliveryTarget}
 export class LocalGitDeliveryError extends Error{constructor(readonly code:string,message:string){super(message);}}
 const hash=(value:unknown)=>createHash("sha256").update(JSON.stringify(value)).digest("hex");
 function commitBinding(input:LocalCommitInput):string{const workspace=input.workspace;return hash({runId:input.runId,generation:input.generation,leaseId:input.leaseId,workspace:{repositoryId:workspace.repositoryId,repositoryRoot:workspace.repositoryRoot,path:workspace.path,branch:workspace.branch,baseRevision:workspace.baseRevision,runId:workspace.runId,taskId:workspace.taskId,attempt:workspace.attempt,scopePaths:workspace.scopePaths,baseRef:workspace.baseRef,baseCommit:workspace.baseCommit,targetBranch:workspace.targetBranch},message:input.message,...(input.verifiedTree?{verifiedTree:input.verifiedTree}:{})});}
 interface Receipt {version:1;binding:string;state:"PENDING"|"COMPLETE";result?:LocalCommitResult}
+interface PushReceipt {version:1;binding:string;state:"PENDING"|"COMPLETE";result?:GitPushResult}
+const pushBinding=(commitIdentity:string,target:GitDeliveryTarget)=>hash({commitBinding:commitIdentity,target:{version:target.version,host:target.host,repository:target.repository,remoteFingerprint:target.remoteFingerprint}});
 type CommandPhase="stage"|"commit"|"push";
 interface CommandOwner {ownerKind:"local-git-delivery"|"git-push-delivery"|"native-snapshot-commit";ownerId:string;binding:string;phase:CommandPhase;outgoing?:{commit:string;branch:string;target:GitDeliveryTarget}}
 interface CommandFact extends CommandOwner {version:1;id:string;runId:string;generation:number;leaseId:string;cwd:string;commandHash:string;state:"SENDING"|"SETTLED";handle?:{id:string;pid:number};result?:Pick<ProcessResult,"sessionId"|"exitCode"|"signal"|"classification"|"durationMs">;observedAt?:string}
@@ -122,7 +125,11 @@ export class LocalGitDelivery {
     }catch(error){if(error instanceof LocalGitDeliveryError)return "unknown";throw error;}
   }
   async commitSnapshot(original:LocalSnapshotCommitInput):Promise<LocalCommitResult>{
-    const {input,id,binding}=this.snapshotInput(original),environment=Object.freeze({...process.env}),pending=this.snapshotPending.get(id);
+    const {input,id,binding}=this.snapshotInput(original),environment=Object.freeze({...process.env});
+    return this.commitCapturedSnapshot(input,id,binding,environment);
+  }
+  private async commitCapturedSnapshot(input:LocalSnapshotCommitInput,id:string,binding:string,environment:Readonly<Record<string,string|undefined>>):Promise<LocalCommitResult>{
+    const pending=this.snapshotPending.get(id);
     if(pending){if(pending.binding!==binding)throw this.snapshotError("OUTCOME_UNKNOWN");return pending.work;}
     const existing=this.snapshotAttempts.get(id);if(existing&&existing.binding!==binding)throw this.snapshotError("OUTCOME_UNKNOWN");
     const attempt=existing??{input,binding,sent:false};this.snapshotAttempts.set(id,attempt);
@@ -194,10 +201,61 @@ export class LocalGitDelivery {
     this.pending.set(id,{binding,work});return work;
   }
   async push(input:LocalPushInput):Promise<GitPushResult>{
+    return this.pushOwned(input);
+  }
+  async pushSnapshot(original:LocalSnapshotPushInput):Promise<RunGitDelivery>{
+    const captured=this.snapshotInput(original);
+    if(!isGitDeliveryTarget(original.target))throw this.snapshotError("INPUT_INVALID");
+    const input={...captured.input,target:structuredClone(original.target)},environment=Object.freeze({...process.env});
+    const outcome=this.snapshotPushOutcome(input),id=hash({runId:input.runId,generation:input.generation}),binding=pushBinding(captured.binding,input.target);
+    if(outcome==="unknown"&&this.pushPending.get(id)?.binding!==binding)throw this.unknown("git-push-delivery");
+    const authorize=captured.input.assertAuthority,guard=()=>{authorize.call(captured.input);this.snapshotPushReceipt(captured.input,id,binding,input.target);if(input.signal?.aborted)throw new LocalGitDeliveryError("COMMIT_ABORTED","Commit operation was cancelled");};
+    captured.input.assertAuthority=guard;input.assertAuthority=guard;
+    const commit=()=>this.commitCapturedSnapshot(captured.input,captured.id,captured.binding,environment);
+    const result=await this.pushOwned(input,{binding:captured.binding,environment,commit});
+    // Replay is factual only after the retained proof/source and target still qualify.
+    const committed=await commit();await this.workspaces.resolvePushTarget(input.workspace,input.target,environment);this.snapshotFence(input);
+    if(result.commit!==committed.commit||this.snapshotPushOutcome(input)!=="observed")throw this.unknown("git-push-delivery");
+    return {version:1,commit:{...committed,tree:input.candidate.tree},push:result};
+  }
+  snapshotPushOutcome(original:LocalSnapshotPushInput):"not-sent"|"observed"|"unknown"{
+    try{
+      const captured=this.snapshotInput(original),input=captured.input,target=original.target;
+      if(!isGitDeliveryTarget(target))return "unknown";
+      const id=hash({runId:input.runId,generation:input.generation}),binding=pushBinding(captured.binding,target);
+      const receipt=this.snapshotPushReceipt(input,id,binding,target);
+      this.checkCommands(input,"git-push-delivery",id,binding,receipt,this.pushPending.get(id)?.binding===binding,target);
+      const result=receipt?.state==="COMPLETE"?receipt.result:this.pushKnown.get(id);
+      if(result){
+        if(!this.validPushResult(result)||result.runId!==input.runId||result.generation!==input.generation||result.branch!==input.workspace.branch||!same(result.target,target)||this.snapshotCommitOutcome(input)!=="observed")return "unknown";
+        const attempt=this.snapshotAttempts.get(captured.id),saved=this.snapshotBarriers(input,captured.id,captured.binding,Boolean(attempt?.outcome)),committed=attempt?.outcome??saved?.outcome;
+        if(result.commit!==committed?.result.commit)return "unknown";
+        this.requireKnownCommands("git-push-delivery",id,["push"]);return "observed";
+      }
+      return receipt||this.pushPending.has(id)?"unknown":"not-sent";
+    }catch(error){if(error instanceof LocalGitDeliveryError)return "unknown";throw error;}
+  }
+  private snapshotPushReceipt(input:LocalSnapshotCommitInput,id:string,binding:string,target:GitDeliveryTarget):PushReceipt|undefined{
+    const rows=this.database.handle.prepare("SELECT id,document_json FROM entities WHERE kind='git-push-delivery'").all() as Array<{id:string;document_json:unknown}>;
+    let receipt:PushReceipt|undefined;
+    for(const row of rows){
+      const value=this.snapshotParse(row.document_json);
+      if(!record(value)||value.version!==1||!digest(value.binding)||!["PENDING","COMPLETE"].includes(String(value.state))||!keys(value,["version","binding","state",...(value.state==="COMPLETE"?["result"]:[])]))throw this.unknown("git-push-delivery");
+      if(row.id===id){
+        if(value.binding!==binding||value.state==="PENDING"&&this.pushPending.get(id)?.binding!==binding&&!this.pushKnown.has(id))throw this.unknown("git-push-delivery");
+        if(value.state==="COMPLETE"&&(!this.validPushResult(value.result)||value.result.runId!==input.runId||value.result.generation!==input.generation||value.result.branch!==input.workspace.branch||!same(value.result.target,target)))throw this.unknown("git-push-delivery");
+        receipt=value as unknown as PushReceipt;
+      }else if(value.state!=="COMPLETE"||!this.validPushResult(value.result)||value.result.runId===input.runId&&value.result.generation===input.generation)throw this.unknown("git-push-delivery");
+    }
+    return receipt;
+  }
+  private validPushResult(value:unknown):value is GitPushResult{
+    return record(value)&&keys(value,["version","runId","generation","commit","branch","target","pushedAt"])&&value.version===1&&bounded(value.runId)&&Number.isSafeInteger(value.generation)&&Number(value.generation)>0&&sha(value.commit)&&bounded(value.branch,1024)&&isGitDeliveryTarget(value.target)&&typeof value.pushedAt==="string"&&Number.isFinite(Date.parse(value.pushedAt));
+  }
+  private async pushOwned(input:LocalPushInput,strict?:{binding:string;environment:Readonly<Record<string,string|undefined>>;commit:()=>Promise<LocalCommitResult>}):Promise<GitPushResult>{
     this.fence(input);
     const id=hash({runId:input.runId,generation:input.generation}),target=structuredClone(input.target);
-    const binding=hash({commitBinding:commitBinding(input),target:{version:target.version,host:target.host,repository:target.repository,remoteFingerprint:target.remoteFingerprint}});
-    type PushReceipt={version:1;binding:string;state:"PENDING"|"COMPLETE";result?:GitPushResult};
+    const binding=pushBinding(strict?.binding??commitBinding(input),target);
     const save=(receipt:PushReceipt)=>this.database.transaction(()=>{if(receipt.state==="COMPLETE")this.parent("git-push-delivery",id,binding);this.database.saveEntity("git-push-delivery",id,json(receipt));});
     const receipt=this.database.getEntity<JsonValue>("git-push-delivery",id) as unknown as PushReceipt|undefined;
     if(receipt&&receipt.binding!==binding)throw new LocalGitDeliveryError("PUSH_IDENTITY_CONFLICT","Push identity is bound to another target or request");
@@ -207,12 +265,13 @@ export class LocalGitDelivery {
     const pending=this.pushPending.get(id);if(pending){if(pending.binding!==binding)throw new LocalGitDeliveryError("PUSH_IDENTITY_CONFLICT","Another target is pending");return pending.work;}
     if(receipt)throw new LocalGitDeliveryError("PUSH_OUTCOME_UNKNOWN","Prior push outcome is unknown; inspect its remote before any retry");
     const work=Promise.resolve().then(async()=>{
-      await this.workspaces.resolvePushTarget(input.workspace,target);this.fence(input);
-      const committed=await this.commit(input);this.fence(input);
-      const url=await this.workspaces.resolvePushTarget(input.workspace,target);this.fence(input);
-      if(await this.git(input,["rev-parse","HEAD"])!==committed.commit||await this.git(input,["symbolic-ref","--short","HEAD"])!==committed.branch||await this.git(input,["status","--porcelain"]))throw new LocalGitDeliveryError("PUSH_WORKSPACE_CHANGED","Push requires the frozen clean managed commit");
-      await this.workspaces.resultFiles(input.workspace);this.fence(input);save({version:1,binding,state:"PENDING"});this.fence(input);
-      await this.git(input,["push","--porcelain","--no-force","--no-follow-tags","--recurse-submodules=no",url,`${committed.commit}:refs/heads/${committed.branch}`],120_000,{ownerKind:"git-push-delivery",ownerId:id,binding,phase:"push",outgoing:{commit:committed.commit,branch:committed.branch,target}});
+      await this.workspaces.resolvePushTarget(input.workspace,target,strict?.environment);this.fence(input);
+      const committed=strict?await strict.commit():await this.commit(input);this.fence(input);
+      const url=await this.workspaces.resolvePushTarget(input.workspace,target,strict?.environment);this.fence(input);
+      const git=(args:string[])=>this.git(input,args,30_000,undefined,strict?.environment);
+      if(await git(["rev-parse","HEAD"])!==committed.commit||await git(["symbolic-ref","--short","HEAD"])!==committed.branch||await git(["status","--porcelain"]))throw new LocalGitDeliveryError("PUSH_WORKSPACE_CHANGED","Push requires the frozen clean managed commit");
+      await this.workspaces.resultFiles(input.workspace,strict?.environment);this.fence(input);save({version:1,binding,state:"PENDING"});this.fence(input);
+      await this.git(input,["push","--porcelain","--no-force","--no-follow-tags","--recurse-submodules=no",url,`${committed.commit}:refs/heads/${committed.branch}`],120_000,{ownerKind:"git-push-delivery",ownerId:id,binding,phase:"push",outgoing:{commit:committed.commit,branch:committed.branch,target}},strict?.environment);
       const result:GitPushResult={version:1,runId:input.runId,generation:input.generation,commit:committed.commit,branch:committed.branch,target:structuredClone(target),pushedAt:new Date().toISOString()};
       this.pushKnown.set(id,result);this.fence(input);save({version:1,binding,state:"COMPLETE",result});this.pushKnown.delete(id);return result;
     }).finally(()=>this.pushPending.delete(id));this.pushPending.set(id,{binding,work});return work;

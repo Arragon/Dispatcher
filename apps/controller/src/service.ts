@@ -181,7 +181,7 @@ import {
 import { LlmRuntime, LlmRuntimeError, type FetchLike, type LlmConfiguration, type LlmRole } from "@dispatcher/llm-runtime";
 import { createLogger, redactNativeText,redactValue, redactNativePayload } from "@dispatcher/observability";
 import { DispatcherDatabase, InteractionStore, RevisionConflictError, ModelInvocationStore, RhizaVerificationStore, type JsonValue } from "@dispatcher/persistence";
-import { EmbeddedRunner, EventBus, LeaseFenceError, LocalGitDelivery, LocalGitDeliveryError, ProcessManager, RemoteRunnerServer, RunnerEnrollmentAuthority, RunnerLeaseAuthority, RunnerRegistry, VerificationRegistry, reconcileRunnerState, type LocalSnapshotCommitInput, type RunnerEnrollmentRecord, type RunnerEvents, type RuntimeLocalDisconnectResult,type VerificationCommand,type VerificationResult,type NativeEventCheckpoint } from "@dispatcher/runner";
+import { EmbeddedRunner, EventBus, LeaseFenceError, LocalGitDelivery, LocalGitDeliveryError, ProcessManager, RemoteRunnerServer, RunnerEnrollmentAuthority, RunnerLeaseAuthority, RunnerRegistry, VerificationRegistry, reconcileRunnerState, type LocalSnapshotCommitInput, type LocalSnapshotPushInput, type RunnerEnrollmentRecord, type RunnerEvents, type RuntimeLocalDisconnectResult,type VerificationCommand,type VerificationResult,type NativeEventCheckpoint } from "@dispatcher/runner";
 import {
   SemanticPolicyError,
   SemanticToolRegistry,
@@ -2975,7 +2975,7 @@ export class ControllerService {
         if(contract.delivery.type==="none")await this.assertNativeSnapshot(run,snapshotProof,"DELIVERING");
         else{
           this.assertNativeSnapshotBasis(run,snapshotProof,"DELIVERING");
-          if(contract.delivery.type!=="commit"||this.agentAdapters.get(run.profileId) instanceof RemoteNativeAdapter)this.snapshotRefusal("VERIFIED_DELIVERY_UNAVAILABLE");
+          if(!["commit","pull-request"].includes(contract.delivery.type)||this.agentAdapters.get(run.profileId) instanceof RemoteNativeAdapter)this.snapshotRefusal("VERIFIED_DELIVERY_UNAVAILABLE");
           // The strict owner performs retained/source checks at actual observation and send boundaries.
         }
       }catch(error){
@@ -2985,7 +2985,8 @@ export class ControllerService {
       }
     }
     if(contract.delivery.type==="pull-request"){
-      if(contract.delivery.scmConnectorId||this.database.getEntity("run-delivery-selection",run.id))return this.deliverExplicitPr(run,contract);
+      if(contract.delivery.scmConnectorId||this.database.getEntity("run-delivery-selection",run.id))return this.deliverExplicitPr(run,contract,snapshotProof);
+      if(snapshotProof)this.snapshotRefusal("VERIFIED_DELIVERY_UNAVAILABLE");
       if(!this.options.gitTransport)throw new ConnectorError("CONFLICT","Legacy delivery has no frozen owning target; review and dispatch a new Run",{retryable:false,operation:"delivery"});
     }
     if(contract.delivery.type==="none"||contract.delivery.type==="commit") {
@@ -3011,11 +3012,7 @@ export class ControllerService {
             const controller=new AbortController();
             if(snapshotProof){
               const captured=snapshotProof;
-              snapshotCommitInput={runId:run.id,generation:run.generation,leaseId:run.leaseId,workspace,message:commitMessage(contract.goal),signal:controller.signal,
-                proof:{id:captured.id,hash:contentHash(captured)},candidate:captured.snapshot,
-                assertAuthority:()=>{this.assertNativeSnapshotBasis(run,captured,"DELIVERING");this.fenceDelivery(run,"commit");},
-                assertSource:()=>this.assertNativeSnapshot(run,captured,"DELIVERING"),
-                assertSnapshot:async()=>{this.assertNativeSnapshotBasis(run,captured,"DELIVERING");await this.verificationSnapshots.assertSnapshot(captured.snapshot);this.assertNativeSnapshotBasis(run,captured,"DELIVERING");}};
+              snapshotCommitInput=this.nativeSnapshotCommitInput(run,captured,workspace,contract.goal,controller.signal,"commit");
             }
             const settled=(async()=>{commit=snapshotCommitInput?await this.localGitDelivery.commitSnapshot(snapshotCommitInput):await this.localGitDelivery.commit({runId:run.id,generation:run.generation,leaseId:run.leaseId,workspace,message:commitMessage(contract.goal),assertAuthority:()=>this.fenceDelivery(run,"commit"),signal:controller.signal});})();
             this.localCommands.set(run.id,{controller,settled});try{await settled;files=commit!.files;}finally{if(this.localCommands.get(run.id)?.controller===controller)this.localCommands.delete(run.id);}
@@ -3093,33 +3090,48 @@ export class ControllerService {
     };
   }
 
-  private async deliverExplicitPr(run:Run,contract:TaskContract):Promise<AdvanceResult>{
+  private nativeSnapshotCommitInput(run:Run,proof:NativeSnapshotProof,workspace:WorkspaceHandle,goal:string,signal:AbortSignal,operation:"commit"|"push"):LocalSnapshotCommitInput{
+    return {runId:run.id,generation:run.generation,leaseId:run.leaseId,workspace,message:commitMessage(goal),signal,
+      proof:{id:proof.id,hash:contentHash(proof)},candidate:proof.snapshot,
+      assertAuthority:()=>{this.assertNativeSnapshotBasis(run,proof,"DELIVERING");this.fenceDelivery(run,operation);},
+      assertSource:()=>this.assertNativeSnapshot(run,proof,"DELIVERING"),
+      assertSnapshot:async()=>{this.assertNativeSnapshotBasis(run,proof,"DELIVERING");await this.verificationSnapshots.assertSnapshot(proof.snapshot);this.assertNativeSnapshotBasis(run,proof,"DELIVERING");}};
+  }
+  private async deliverExplicitPr(run:Run,contract:TaskContract,snapshotProof?:NativeSnapshotProof):Promise<AdvanceResult>{
+    let snapshotPushInput:LocalSnapshotPushInput|undefined;
+    try{
+    const authority=(operation:"verify"|"commit"|"branch"|"push"|"pull-request"|"complete")=>{if(snapshotProof)this.assertNativeSnapshotBasis(run,snapshotProof,"DELIVERING");this.fenceDelivery(run,operation);};
     const selected=this.database.getEntity<JsonValue>("run-delivery-selection",run.id) as unknown as ScmDeliverySelection|undefined;
     if(!selected||contract.delivery.scmConnectorId&&selected.scmConnectorId!==contract.delivery.scmConnectorId||selected.repository!==contract.delivery.repository?.toLowerCase()||selected.baseBranch!==(contract.delivery.baseBranch??"main"))throw new ConnectorError("CONFLICT","Run has no matching reviewed SCM delivery selection",{retryable:false,operation:"delivery"});
-    this.fenceDelivery(run,"push");const remote=this.agentAdapters.get(run.profileId) instanceof RemoteNativeAdapter,workspace=remote?this.database.getEntity<JsonValue>("workspace-handle",run.id) as unknown as WorkspaceHandle|undefined:this.workspaces.get(run.worktree!);
+    authority("push");const remote=this.agentAdapters.get(run.profileId) instanceof RemoteNativeAdapter,workspace=remote?this.database.getEntity<JsonValue>("workspace-handle",run.id) as unknown as WorkspaceHandle|undefined:this.workspaces.get(run.worktree!);
     if(!workspace)throw new WorkspacePolicyError("WORKSPACE_UNAVAILABLE","Managed delivery workspace is unavailable");
     const external=this.rhizaJobs.executionJob(run),verification=external?new RhizaVerificationStore(this.database).get(run.id,run.generation,"source"):undefined;
     if(external){
+      if(snapshotProof&&verification?.tree!==snapshotProof.snapshot.tree)throw new AdapterContractError("VERIFICATION_PROVENANCE_UNAVAILABLE","Native snapshot delivery requires matching frozen source verification provenance");
       const commands=this.database.getEntity<JsonValue>("run-verification-config",run.id) as unknown as RepositoryConfig["verificationCommands"]|undefined;
       if(remote||!verification||verification.jobId!==external.jobId||verification.sessionId!==run.sessionId||verification.leaseId!==run.leaseId||verification.targetHash!==external.request.targetHash||!isDeepStrictEqual(verification.commandIds,contract.verification)||!commands||verification.commandsDigest!==contentHash(contract.verification.map(id=>commands.find(command=>command.id===id))))throw new AdapterContractError("VERIFICATION_PROVENANCE_UNAVAILABLE","PR delivery requires the frozen content-bound verification receipt");
     }
     let git:RunGitDelivery;
     if(remote)git=remotePushResult(await this.remoteRequest(run.runnerId,{type:"native.run_push",runId:run.id},run,`native-push:${run.id}:${run.generation}`),{runId:run.id,generation:run.generation,branch:workspace.branch,target:selected.target});
     else{
-      const controller=new AbortController(),input={runId:run.id,generation:run.generation,leaseId:run.leaseId,workspace,message:commitMessage(contract.goal),...(verification?{verifiedTree:verification.tree}:{}),signal:controller.signal,assertAuthority:()=>this.fenceDelivery(run,"push")};
-      const operation=(async()=>{const push=await this.localGitDelivery.push({...input,target:selected.target}),commit=await this.localGitDelivery.commit(input);return {version:1 as const,commit,push};})();
+      const controller=new AbortController(),input={runId:run.id,generation:run.generation,leaseId:run.leaseId,workspace,message:commitMessage(contract.goal),...(verification?{verifiedTree:verification.tree}:{}),signal:controller.signal,assertAuthority:()=>authority("push")};
+      if(snapshotProof)snapshotPushInput={...this.nativeSnapshotCommitInput(run,snapshotProof,workspace,contract.goal,controller.signal,"push"),target:selected.target};
+      const operation=(async()=>{
+        if(snapshotPushInput)return this.localGitDelivery.pushSnapshot(snapshotPushInput);
+        const push=await this.localGitDelivery.push({...input,target:selected.target}),commit=await this.localGitDelivery.commit(input);return {version:1 as const,commit,push};
+      })();
       const settled=operation.then(()=>undefined);void settled.catch(()=>undefined);this.localCommands.set(run.id,{controller,settled});
       try{git=await operation;}finally{if(this.localCommands.get(run.id)?.controller===controller)this.localCommands.delete(run.id);}
     }
-    this.fenceDelivery(run,"push");assertPublicationScope(git.commit.files,workspace.scopePaths);
-    if(external)this.database.transaction(()=>{this.fenceDelivery(run,"push");new RhizaVerificationStore(this.database).bindCommit(run.id,run.generation,git.commit);});
+    authority("push");assertPublicationScope(git.commit.files,workspace.scopePaths);
+    if(external)this.database.transaction(()=>{authority("push");new RhizaVerificationStore(this.database).bindCommit(run.id,run.generation,git.commit);});
     const previous=this.database.getEntity<JsonValue>("run-result",run.id) as {createdAt?:string}|undefined;
     const result={version:1,runId:run.id,taskId:run.taskId,runnerId:run.runnerId,generation:run.generation,deliveryType:"pull-request",deliveryState:"pushed",commit:git.commit,push:git.push,worktree:run.worktree,branch:run.branch,baseCommit:workspace.baseRevision,files:git.commit.files,verification:run.verification,summary:run.activitySummary??"",createdAt:previous?.createdAt??this.now().toISOString()};
-    this.database.transaction(()=>{this.fenceDelivery(run,"push");this.database.saveEntity("run-result",run.id,json(result));});this.fleetEvents.publish("run.changed",run.id,{id:run.id,state:run.state});
+    this.database.transaction(()=>{authority("push");this.database.saveEntity("run-result",run.id,json(result));});this.fleetEvents.publish("run.changed",run.id,{id:run.id,state:run.state});
     const scm=this.connectors.get<ScmAdapter>(selected.scmConnectorId);if(!scm)throw new ConnectorError("CONFLICT","Selected SCM connector is unavailable",{retryable:false});
-    const bridge:ScmAdapter={definition:scm.definition,instance:scm.instance,probe:()=>scm.probe(),ensureBranch:async(_repository,branch)=>{this.fenceDelivery(run,"branch");if(branch!==workspace.branch)throw new ConnectorError("CONFLICT","Managed delivery branch changed",{retryable:false});},push:async()=>{this.fenceDelivery(run,"push");return {commit:git.push.commit};},createOrGetPullRequest:request=>scm.createOrGetPullRequest(request),getCiStatus:(repository,ref,signal)=>scm.getCiStatus(repository,ref,signal)};
+    const bridge:ScmAdapter={definition:scm.definition,instance:scm.instance,probe:()=>scm.probe(),ensureBranch:async(_repository,branch)=>{authority("branch");if(branch!==workspace.branch)throw new ConnectorError("CONFLICT","Managed delivery branch changed",{retryable:false});},push:async()=>{authority("push");return {commit:git.push.commit};},createOrGetPullRequest:request=>scm.createOrGetPullRequest(request),getCiStatus:(repository,ref,signal)=>scm.getCiStatus(repository,ref,signal)};
     const controller=new AbortController(),parts=selected.repository.split("/");
-    const api=Promise.resolve().then(()=>new DeliveryService(this.database).deliver(bridge,{idempotencyKey:`delivery:${run.id}:${run.generation}`,taskId:run.taskId,run,currentGeneration:run.generation,currentLeaseId:run.leaseId,repository:{owner:parts[0]!,name:parts[1]!},headBranch:workspace.branch,baseBranch:selected.baseBranch,title:contract.goal,body:`Verified by Agent Dispatcher run ${run.id}.`,verification:run.verification,expectedHeadCommit:git.push.commit,signal:controller.signal,assertAuthority:operation=>this.fenceDelivery(run,operation)}));
+    const api=Promise.resolve().then(()=>new DeliveryService(this.database).deliver(bridge,{idempotencyKey:`delivery:${run.id}:${run.generation}`,taskId:run.taskId,run,currentGeneration:run.generation,currentLeaseId:run.leaseId,repository:{owner:parts[0]!,name:parts[1]!},headBranch:workspace.branch,baseBranch:selected.baseBranch,title:contract.goal,body:`Verified by Agent Dispatcher run ${run.id}.`,verification:run.verification,expectedHeadCommit:git.push.commit,signal:controller.signal,assertAuthority:operation=>authority(operation)}));
     // Git has already drained its owned process group. This slot waits for HTTP
     // cancellation; an uncertain provider write remains in the durable PR intent.
     const settled=api.then(()=>undefined,error=>{if(!controller.signal.aborted)throw error;});void settled.catch(()=>undefined);this.localCommands.set(run.id,{controller,settled});
@@ -3127,14 +3139,22 @@ export class ControllerService {
     const pr=delivery.evidence.find(evidence=>evidence.kind==="pull-request");
     if(!pr?.url)throw new ConnectorError("CONFLICT","Selected SCM did not confirm a PR receipt",{retryable:false});
     const prUrl=pr.url;
-    if(remote){this.fenceDelivery(run,"complete");await this.finalizeRemoteRun(run);}
+    if(remote){authority("complete");await this.finalizeRemoteRun(run);}
+    if(snapshotPushInput)await this.localGitDelivery.commitSnapshot(snapshotPushInput);
     this.database.transaction(()=>{
-      this.fenceDelivery(run,"complete");const current=this.database.getCanonicalTask<JsonValue>(run.taskId)!;
+      authority("complete");const current=this.database.getCanonicalTask<JsonValue>(run.taskId)!,task=current.document as unknown as Task;
+      if(snapshotProof)this.assertNativeSnapshotBasis(run,snapshotProof,"DELIVERING");
       assertRunTransition(run.state,"COMPLETE");run.state="COMPLETE";run.endedAt=this.now().toISOString();run.prUrl=prUrl;
-      this.saveAdvancedRun(run,"DELIVERING");this.database.saveEntity("run-result",run.id,json({...result,deliveryState:"complete",prUrl}));
+      this.saveAdvancedRun(run,"DELIVERING");const completedSnapshotRun=snapshotProof?structuredClone(run):undefined;
+      this.database.saveEntity("run-result",run.id,json({...result,deliveryState:"complete",prUrl}));
       this.tasks.execute({id:`run:${run.id}:review`,taskId:run.taskId,baseRevision:current.revision,actor:"run-worker",command:{type:"task.transition",state:"REVIEW"}});
+      if(snapshotProof&&completedSnapshotRun){this.nativeInteractions.acknowledgeTaskRevision(run);this.assertNativeSnapshotBasis(run,snapshotProof,"DELIVERING",{run:completedSnapshotRun,task});}
     });
     this.fleetEvents.publish("run.changed",run.id,{id:run.id,state:run.state});return {waiting:false,run,task:this.database.getCanonicalTask<JsonValue>(run.taskId)!.document as unknown as Task,deliveries:this.database.listDeliveryEvidence<JsonValue>(run.taskId)};
+    }catch(error){
+      if(snapshotProof&&this.snapshotReceiptsSettled(run.id)&&(!snapshotPushInput||this.localGitDelivery.snapshotCommitOutcome(snapshotPushInput)!=="unknown"&&this.localGitDelivery.snapshotPushOutcome(snapshotPushInput)!=="unknown"))this.nativeInteractions.acknowledgeSettledMutationOutcome(run.sessionId);
+      throw error;
+    }
   }
 
   private standaloneTrialSessions(): AdapterSession[] {

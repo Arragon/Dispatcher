@@ -3,6 +3,42 @@
 Local implementation/evidence backlog; none of these rows claims a passed
 Gate. Continue independent units without bypassing data/control safeguards.
 
+## 2026-11-02 local native snapshot PR integration
+
+The local HUMAN-return path now connects a qualified verified snapshot to its
+strict authored commit, frozen push target and selected SCM PR, ending at
+COMPLETE/REVIEW. Actual bare-Git/controlled-SCM tests verify the exact tree/SHA,
+lost-response lookup without another Git send or POST, and transactional control
+drift rollback with factual Git/PR receipts retained. The first HTTP run exposed
+the original VERIFIED_DELIVERY_UNAVAILABLE gap. One new safety regression also
+showed that an authority callback could insert uncertain push history after the
+initial read; the inventory now runs after that callback before any Git write.
+A final-callback cancellation regression likewise reproduced one unwanted push
+child, fixed by the strict post-callback signal check before child allocation.
+
+The shared ordinary delivery suite passed3files/77tests, strict push regressions
+passed, and original G2 re-entry purposes passed3cases with an explicit pre-send
+test fixture hold. Their assertion file remains unchanged. The existing
+RunGitDelivery output avoids an immediate duplicate commit re-read in Controller;
+necessary post-push/post-SCM source qualification remains. Milestone review
+passed with no Critical/Important/Minor findings. Final default `pnpm check`
+passed265files/5883tests plus build/typecheck/lint/boundaries (653.62s test phase).
+All six reviewed functional hashes remain unchanged. No assertion/deadline or
+check rule was weakened; original failure logs remain retained. Remote snapshot delivery, actual
+GitHub/provider/native writer/stop qualification, RHIZA model/source eligibility
+and original A/B/human acceptance Gates remain open. This unit changes no schema,
+writer, public protocol, dependency or live data and performs no real network write.
+
+## 2026-11-02 actual Codex app-server version prerequisite
+
+Read-only `mise exec -- codex --version` returns0.166.0-alpha.5.1, while the
+current app-server execution decoder pins0.162.0-alpha.17.2 and refuses mismatches
+with CODEX_PROTOCOL_VERSION_UNQUALIFIED/not-created. This blocks activation of
+that native execution path; the earlier0.166 catalog/legacy-exec proof is separate.
+CV-09 must verify the installed version's generated schema and existing authority/
+observation contract before a controlled real roundtrip. No pin relaxation,
+installation downgrade, fallback or provider execution occurred in this audit.
+
 ## 2026-11-02 current-candidate RHIZA ingress integration
 
 The committed ingress vertical slice is now adapted into the current Dispatcher
