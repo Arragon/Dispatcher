@@ -1403,8 +1403,13 @@ no native approval, history or continuation qualification.
 
 ## Internal Codex App Server contracts
 
-The preserved Codex stdio transport is internal to adapters and remains pinned to
-its source protocol version. It does not register a backend, open a session or
+The preserved Codex stdio transport is internal to adapters and is pinned to
+0.166.0-alpha.5.1, checked against that installed CLI's generated schema. Root-only
+bindings require the returned sessionId to equal thread.id; fork roots cannot be
+inferred from a thread id. Thread creation disables provider model fallback.
+Other installed versions and threads created by older versions remain rejected;
+existing stored bindings are not rewritten or adopted. The transport does not
+register a backend, open a session or
 qualify a native capability by being present. Physical home/workspace identity is
 captured before an owned, bounded version probe and checked again before the
 app-server child starts. Both children use the shared execution environment.

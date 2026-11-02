@@ -12,7 +12,7 @@ const scope={profileId:"p",runnerId:"local",nativeStoreRef:"native-store:fixture
 describe("Codex owned stdio transport",()=>{
   const executable=(reply:string)=>{
     const path=join(root,`codex-fixture-${Math.random().toString(36).slice(2)}.cjs`);
-    writeFileSync(path,`#!/usr/bin/env node\nif(process.argv.includes('--version')){console.log('codex-cli 0.162.0-alpha.17.2');process.exit(0);} const rl=require('node:readline').createInterface({input:process.stdin});rl.on('line',line=>{const request=JSON.parse(line);${reply}});`,{mode:0o755});return path;
+    writeFileSync(path,`#!/usr/bin/env node\nif(process.argv.includes('--version')){console.log('codex-cli 0.166.0-alpha.5.1');process.exit(0);} const rl=require('node:readline').createInterface({input:process.stdin});rl.on('line',line=>{const request=JSON.parse(line);${reply}});`,{mode:0o755});return path;
   };
   it("rejects a malformed error instead of losing its pending request forever",async()=>{
     const rpc=await adapters.CodexStdioTransport.open({...scope,codexHome:root,workspacePath:root,executable:executable(`console.log(JSON.stringify({id:request.id,error:'malformed'}));`)});
@@ -26,7 +26,7 @@ describe("Codex owned stdio transport",()=>{
 
 function script(source:string){const root=realpathSync(mkdtempSync(join(tmpdir(),"dispatcher-codex-native-")));directories.push(root);const executable=join(root,"codex-fixture");writeFileSync(executable,`#!/usr/bin/env node\n${source}`);chmodSync(executable,0o700);return {root,executable};}
 const localScope=(fixture:ReturnType<typeof script>)=>({profileId:"p",runnerId:"local",nativeStoreRef:"native-store:process-fixture",scopeFingerprint:"process-fixture",executionRefId:"execution",executable:fixture.executable,codexHome:fixture.root,workspacePath:fixture.root,approvalPolicy:"on-request" as const,sandbox:"read-only" as const});
-const localVersion="if(process.argv.includes('--version')){console.log('codex-cli 0.162.0-alpha.17.2');process.exit(0);}";
+const localVersion="if(process.argv.includes('--version')){console.log('codex-cli 0.166.0-alpha.5.1');process.exit(0);}";
 async function protocol(reply:string){const f=script(`${localVersion}const fs=require('node:fs'),rl=require('node:readline').createInterface({input:process.stdin});rl.on('line',line=>{const request=JSON.parse(line);${reply}});`),rpc=await adapters.CodexStdioTransport.open(localScope(f));connections.push(rpc);return {...f,rpc};}
 
 it("closes only the captured local root while a second owned host remains alive",async()=>{
@@ -52,7 +52,7 @@ it("finishes owned root cleanup even when a local disconnect observer throws",as
 
 it.each(["home","cwd"] as const)("does not spawn app-server after %s replacement during the executable version probe",async kind=>{
  const home=join(root,"home"),cwd=join(root,"cwd"),path=kind==="home"?home:cwd,marker=join(root,"spawned"),executable=join(root,"codex.cjs");mkdirSync(home);mkdirSync(cwd);
- writeFileSync(executable,`#!${process.execPath}\nconst fs=require('node:fs');if(process.argv.includes('--version')){fs.renameSync(${JSON.stringify(path)},${JSON.stringify(`${path}-retained`)});fs.mkdirSync(${JSON.stringify(path)});console.log('codex-cli 0.162.0-alpha.17.2');}else{fs.writeFileSync(${JSON.stringify(marker)},'spawned');}`,{mode:0o755});
+ writeFileSync(executable,`#!${process.execPath}\nconst fs=require('node:fs');if(process.argv.includes('--version')){fs.renameSync(${JSON.stringify(path)},${JSON.stringify(`${path}-retained`)});fs.mkdirSync(${JSON.stringify(path)});console.log('codex-cli 0.166.0-alpha.5.1');}else{fs.writeFileSync(${JSON.stringify(marker)},'spawned');}`,{mode:0o755});
  await expect(adapters.CodexStdioTransport.open({...scope,codexHome:home,workspacePath:cwd,executable})).rejects.toMatchObject({creationOutcome:"not-created",code:"CODEX_SCOPE_CHANGED"});expect(existsSync(marker)).toBe(false);
 });
 it("keeps version and RPC native context while stripping Controller authority",async()=>{
@@ -106,7 +106,7 @@ it("rejects an oversized unframed response and keeps native diagnostics private"
  const failure=await rpc.request("thread/read",{}).catch(error=>error);expect(failure).toMatchObject({code:"CODEX_NATIVE_UNREACHABLE"});expect(String(failure)).not.toContain("private-native");
 });
 
-it("refuses an unqualified installed version before starting app-server",async()=>{
- const f=script("if(process.argv.includes('--version')){console.log('codex-cli 99.0.0');process.exit(0);}require('node:fs').writeFileSync('spawned','yes');setInterval(()=>{},1000);");
+it.each(["0.162.0-alpha.17.2","99.0.0"])("refuses unqualified installed version %s before starting app-server",async version=>{
+ const f=script(`if(process.argv.includes('--version')){console.log(${JSON.stringify(`codex-cli ${version}`)});process.exit(0);}require('node:fs').writeFileSync('spawned','yes');setInterval(()=>{},1000);`);
  await expect(adapters.CodexStdioTransport.open(localScope(f))).rejects.toMatchObject({code:"CODEX_PROTOCOL_VERSION_UNQUALIFIED",creationOutcome:"not-created"});expect(existsSync(join(f.root,"spawned"))).toBe(false);
 });

@@ -7,6 +7,12 @@ branch `codex/dispatcher-convergence`, based on v3 `19db456`.
 
 ## Delivery checkpoints
 
+The installed Codex0.166.0-alpha.5.1 is now qualified through the existing exact
+App Server backend: real root binding, fixed-model/effort completion, native model
+observation and complete history. Unified review has no findings and the final
+default gate passes265files/5887tests. Canonical native progression, client/control/
+stop and release Gates remain open; see the current remaining-issues entry.
+
 The next local delivery increment connects qualified HUMAN-return snapshots to
 strict authored commit, frozen push and the existing selected SCM PR lifecycle.
 Controlled SCM plus actual isolated bare Git cover exact artifact identity,

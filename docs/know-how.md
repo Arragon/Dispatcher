@@ -1081,6 +1081,10 @@
   native-start journal id. Derive the owning Run from the managed workspace and
   compare its reserved Adapter session, immutable selection/reference and lease;
   never use that invocation id to find or manufacture another Run.
+- Codex App Server thread.sessionId is the shared session-tree root, while id is
+  the individual thread; validate both for the root-only backend before saving a
+  binding or reading history. cliVersion is creation metadata, so upgrading the
+  exact executable pin does not qualify old-created threads or cold continuation.
 - A closed native runtime must remain registered until normalized local cleanup
   and its invalidating read barrier commit together. On persistence failure,
   retry the cached receipt without another physical disconnect. Local drain does

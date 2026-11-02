@@ -13,7 +13,7 @@ import {freezeExecutionSelection} from "./execution-selection.js";
 import {NativeRequestError,assertNativeRequestChoice,normalizeNativeRequest,type NativePendingRequest,type NativeRequestEvent,type NativeRequestHandle} from "./native-requests.js";
 import {readOwnedNativeVersion} from "./native-version-probe.js";
 
-export const codexAppServerProtocolVersion="0.162.0-alpha.17.2";
+export const codexAppServerProtocolVersion="0.166.0-alpha.5.1";
 export interface CodexAppServerScope {
   profileId:string;runnerId:string;nativeStoreRef:string;scopeFingerprint:string;executionRefId:string;
   executable:string;codexHome:string;workspacePath:string;
@@ -318,7 +318,7 @@ export class CodexAppServerBackend implements CodexBackend,NativeInteractionPort
   private binding(binding:NativeBinding):void {this.assertScope();if(!isDeepStrictEqual(this.bindings.get(binding.nativeSessionId),binding))throw new AdapterContractError("CODEX_BINDING_SCOPE_CHANGED","Native binding is not registered for this runtime");}
   private validateThread(value:unknown,id?:string):Record<string,unknown> {
     const thread=object(value);const status=object(thread.status);
-    if(!validText(thread.id)||id!==undefined&&thread.id!==id||!validText(thread.sessionId)||thread.ephemeral!==false||physical(thread.cwd)!==this.workspace||thread.cliVersion!==codexAppServerProtocolVersion||!["notLoaded","idle","active","systemError"].includes(String(status.type))||!Array.isArray(thread.turns))throw new AdapterContractError("CODEX_THREAD_IDENTITY_CHANGED","Native thread identity or scope differs");
+    if(!validText(thread.id)||id!==undefined&&thread.id!==id||thread.sessionId!==thread.id||thread.ephemeral!==false||physical(thread.cwd)!==this.workspace||thread.cliVersion!==codexAppServerProtocolVersion||!["notLoaded","idle","active","systemError"].includes(String(status.type))||!Array.isArray(thread.turns))throw new AdapterContractError("CODEX_THREAD_IDENTITY_CHANGED","Native thread identity or scope differs");
     this.sources.set(thread.id,["cli","vscode","exec","appServer","unknown"].includes(String(thread.source))?String(thread.source):"unknown");
     return thread;
   }
@@ -367,7 +367,7 @@ export class CodexAppServerBackend implements CodexBackend,NativeInteractionPort
       const admit=()=>{if(this.disconnected||!turn.acceptsEvents())throw new AdapterContractError("CODEX_NATIVE_RECONCILIATION_REQUIRED","Native event continuity was lost");if(input.providerSessionId)this.binding(this.bindings.get(input.providerSessionId)!);assertAdapterWriteAdmission(input.beforePrompt);this.assertScope();};
       const previous=input.providerSessionId?this.policies.get(input.providerSessionId):undefined;
       const selectedModel=input.model??previous?.model;const selectedEffort=input.reasoningEffort??previous?.reasoningEffort;
-      const response=object(await this.request(input.providerSessionId?"thread/resume":"thread/start",{...(input.providerSessionId?{threadId:input.providerSessionId,excludeTurns:true}:{ephemeral:false}),cwd:this.workspace,approvalPolicy:this.scope.approvalPolicy,approvalsReviewer:"user",sandbox:this.scope.sandbox,...(selectedModel?{model:selectedModel}:{}),...(previous?{modelProvider:previous.modelProvider}:{}),...(selectedEffort?{config:{model_reasoning_effort:selectedEffort}}:{})},undefined,admit,()=>{creationAttempted=true;}));
+      const response=object(await this.request(input.providerSessionId?"thread/resume":"thread/start",{...(input.providerSessionId?{threadId:input.providerSessionId,excludeTurns:true}:{ephemeral:false,allowProviderModelFallback:false}),cwd:this.workspace,approvalPolicy:this.scope.approvalPolicy,approvalsReviewer:"user",sandbox:this.scope.sandbox,...(selectedModel?{model:selectedModel}:{}),...(previous?{modelProvider:previous.modelProvider}:{}),...(selectedEffort?{config:{model_reasoning_effort:selectedEffort}}:{})},undefined,admit,()=>{creationAttempted=true;}));
       const thread=this.validateThread(response.thread,input.providerSessionId);turn.threadId=String(thread.id);
       const binding:NativeBinding={version:1,product:"codex",region:"global",profileId:this.scope.profileId,backendId:this.backendId,runnerId:this.scope.runnerId,nativeStoreRef:this.scope.nativeStoreRef,nativeSessionId:turn.threadId,nativeThreadId:turn.threadId,identityState:"bound",executionRefId:this.scope.executionRefId};
       this.registerBinding(binding);

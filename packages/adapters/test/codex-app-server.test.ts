@@ -17,7 +17,7 @@ afterAll(()=>{for(const path of roots)rmSync(path,{recursive:true,force:true});}
 const scope:CodexAppServerScope={profileId:"p",runnerId:"local",nativeStoreRef:"native-store:fixture",scopeFingerprint:"tuple",executionRefId:"exec-ref",codexHome:root,workspacePath:root,executable:"codex",approvalPolicy:"on-request",sandbox:"workspace-write"};
 const binding:NativeBinding={version:1,product:"codex",region:"global",profileId:"p",backendId:"codex-app-server",runnerId:"local",nativeStoreRef:"native-store:fixture",nativeSessionId:"thread-1",nativeThreadId:"thread-1",identityState:"bound",executionRefId:"exec-ref"};
 const sandbox={type:"workspaceWrite",writableRoots:[],networkAccess:false,excludeSlashTmp:false,excludeTmpdirEnvVar:false};
-const thread=(id="thread-1",status="idle")=>({id,sessionId:id,cliVersion:"0.162.0-alpha.17.2",createdAt:1,updatedAt:2,cwd:root,ephemeral:false,modelProvider:"openai",model:"test-model",reasoningEffort:"high",source:"appServer",status:{type:status},turns:[],preview:"",projectId:null,path:null});
+const thread=(id="thread-1",status="idle")=>({id,sessionId:id,cliVersion:"0.166.0-alpha.5.1",createdAt:1,updatedAt:2,cwd:root,ephemeral:false,modelProvider:"openai",model:"test-model",reasoningEffort:"high",source:"appServer",status:{type:status},turns:[],preview:"",projectId:null,path:null});
 class ProtocolFixture implements CodexRpcTransport {
   calls:Array<{method:string;params:Record<string,unknown>}>=[];
   handlers=new Map<string,(params:Record<string,unknown>)=>unknown|Promise<unknown>>();
@@ -27,7 +27,7 @@ class ProtocolFixture implements CodexRpcTransport {
     if(signal?.aborted)throw new adapters.AdapterContractError("CODEX_NATIVE_UNREACHABLE","aborted");
     this.calls.push({method,params:structuredClone(params)});
     const custom=this.handlers.get(method);if(custom)return custom(params);
-    if(method==="initialize")return {codexHome:root,platformFamily:"unix",platformOs:"macos",userAgent:"codex_cli_rs/0.162.0-alpha.17.2"};
+    if(method==="initialize")return {codexHome:root,platformFamily:"unix",platformOs:"macos",userAgent:"codex_cli_rs/0.166.0-alpha.5.1"};
     if(method==="thread/start"||method==="thread/resume")return {thread:thread(),model:"test-model",modelProvider:"openai",cwd:root,approvalPolicy:"on-request",approvalsReviewer:"user",sandbox,reasoningEffort:"high"};
     if(method==="thread/read")return {thread:thread(String(params.threadId))};
     if(method==="turn/start")return {turn:{id:"turn-1",items:[],status:"inProgress"}};
@@ -69,6 +69,22 @@ it("captures Codex history binding and bounds before awaiting its first snapshot
 const executionRef=()=>({version:1 as const,id:"exec-ref",kind:"managed-worktree" as const,runnerId:"local",repositoryId:"repo",workspaceId:"w",pathRef:"workspace:w",branch:"task/run",baseRevision:"sha"});
 const selection=():ExecutionSelection=>({version:1,mode:"manual",source:"explicit",profileId:"p",providerId:"codex",runnerId:"local",backendId:"codex-app-server",selectionType:"explicit-model",requestedModel:"test-model",nativeParameters:{reasoningEffort:"high"},contextFingerprint:"tuple",configRevision:1,selectedAt:new Date().toISOString()});
 const input=()=>({executable:"codex",codexHome:root,workspacePath:root,prompt:"first",model:"test-model",reasoningEffort:"high",commandId:"command-1",executionRef:executionRef(),executionSelection:selection(),beforePrompt:()=>undefined,onBinding:async()=>undefined,onNativeEvent:()=>undefined});
+it.each(["start","history"] as const)("rejects a foreign root session identity during %s",async stage=>{
+ const {rpc,backend}=setup(),onBinding=vi.fn();
+ if(stage==="start"){
+  rpc.handlers.set("thread/start",()=>({thread:{...thread(),sessionId:"foreign-root"},model:"test-model",modelProvider:"openai",cwd:root,approvalPolicy:"on-request",approvalsReviewer:"user",sandbox,reasoningEffort:"high"}));
+  await expect(backend.start({...input(),onBinding}).ready!()).rejects.toMatchObject({code:"CODEX_THREAD_IDENTITY_CHANGED",creationOutcome:"unknown"});expect(onBinding).not.toHaveBeenCalled();
+ }else{
+  backend.registerBinding(binding);rpc.handlers.set("thread/read",()=>({thread:{...thread(),sessionId:"foreign-root"}}));
+  await expect(backend.history(binding,{limit:10})).rejects.toMatchObject({code:"CODEX_THREAD_IDENTITY_CHANGED"});expect(rpc.calls.some(call=>call.method==="thread/turns/list")).toBe(false);
+ }
+ expect(rpc.calls.some(call=>["turn/start","thread/resume"].includes(call.method))).toBe(false);
+ await backend.disconnectLocal();
+});
+it("refuses a thread created by the previous protocol without rewriting its binding",async()=>{
+ const {rpc,backend}=setup();backend.registerBinding(binding);rpc.handlers.set("thread/read",()=>({thread:{...thread(),cliVersion:"0.162.0-alpha.17.2"}}));
+ await expect(backend.inspect(binding)).rejects.toMatchObject({code:"CODEX_THREAD_IDENTITY_CHANGED"});expect(rpc.calls.some(call=>["thread/start","thread/resume","turn/start"].includes(call.method))).toBe(false);await backend.disconnectLocal();
+});
 const adapterInput=()=>({sessionId:"session",runId:"run",backendId:"codex-app-server",workspacePath:root,prompt:"first",executionRef:executionRef(),executionSelection:selection(),execution:{generation:1,attempt:1,leaseId:"lease"},beforeCreate:()=>undefined,beforeSend:()=>undefined});
 
 describe("Codex persistent App Server contract",()=>{
@@ -210,7 +226,7 @@ describe("Codex persistent App Server contract",()=>{
     rpc.handlers.set("turn/start",()=>{expect(persisted).toEqual(binding);return {turn:{id:"turn-1",items:[],status:"inProgress"}};});
     const turn=backend.start({...input(),onBinding:async ref=>{persisted=ref;},onNativeEvent:fact=>facts.push(fact)});
     await turn.ready!();expect(turn.status()).toBe("running");expect(facts).toContainEqual(expect.objectContaining({state:"received",nativeSessionId:"thread-1"}));
-    expect(rpc.calls.find(c=>c.method==="thread/start")?.params).toMatchObject({ephemeral:false,model:"test-model",cwd:root,sandbox:"workspace-write",approvalPolicy:"on-request"});
+    expect(rpc.calls.find(c=>c.method==="thread/start")?.params).toMatchObject({ephemeral:false,allowProviderModelFallback:false,model:"test-model",cwd:root,sandbox:"workspace-write",approvalPolicy:"on-request"});
     expect(rpc.calls.find(c=>c.method==="turn/start")?.params).toMatchObject({threadId:"thread-1",model:"test-model",effort:"high",sandboxPolicy:sandbox,input:[{type:"text",text:"first"}]});
     rpc.emit("turn/completed",{threadId:"other",turn:{id:"turn-1",status:"completed",items:[]}});expect(turn.status()).toBe("running");
     rpc.emit("turn/completed",{threadId:"thread-1",turn:{id:"turn-1",status:"completed",items:[{id:"answer",type:"agentMessage",text:"done"}]}});
