@@ -41,6 +41,23 @@ full restore activation and release remain open. Details and screenshot paths
 are in docs/evidence/convergence/README.md. No production change or repeated full
 gate was needed for this unit.
 
+## 2026-11-02 explicit-model actual browser/provider loop
+
+The old R-018 account-read block is not reproduced in the current bounded
+Adapter read: Codex0.166.0-alpha.5.1 returned8models/efforts in2146ms, and the
+Controller/browser displayed the real account-scoped directory. A browser-selected
+gpt-6.1-sol/low task executed through the fixed staged runtime, passed required
+verification and reached COMPLETE/REVIEW. Its exact file and unchanged README/
+HEAD were checked. Browser canonical snapshot verification then returned verified;
+human confirmation remains unchecked and the Task remains REVIEW.
+
+The first real task is retained FAILED because this agent registered a nonexistent
+macOS /usr/bin/test path. A ConfigPlan corrected only that owned repository command
+to verified /bin/test; a separate reviewed publication succeeded. No old record,
+assertion or deadline changed. Native-reported model remains unknown; this is
+actual explicit request/execution evidence, not an independent model-echo or
+writer/stop/client Gate. Human acceptance and full recovery remain open.
+
 ## Current checkpoint 2026-10-22: authorized continuation
 
 The user explicitly resumed the complete plan and superseded the historical

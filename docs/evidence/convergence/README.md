@@ -6100,3 +6100,61 @@ subset. Real provider, native writer/physical stop, successful system-directory
 selection, full recovery activation, human acceptance and release Gates remain
 open. Existing 224/5366 final source gate is reused; no production code changed
 for this host unit and no redundant full check was run.
+
+
+## 2026-11-02 actual explicit-model browser task and candidate verification
+
+Reuse the fixed dc6f9d3-macos-a1 runtime without production changes. Current
+Codex0.166.0-alpha.5.1 readCodexCatalog performed real account/read(refreshToken
+false) and model/list in2146ms, yielding8 native-fresh explicit models with native
+effort options. Two owned app-server roots71219/71256 exited0 and ESRCH. Initial
+wrong-placeholder executable was an ENOENT setup failure, not a native result;
+its record is preserved. No cause is assigned to the old account-read timeouts.
+
+The existing Codex profile API previewed/applied ConfigPlan6ea3682d at revision3,
+using the actual resolved installed executable and existing account native home.
+The real browser showed8models, selected gpt-6.1-sol/low and acknowledged its
+unconfirmed-access warning. Listing still does not prove access or pricing.
+Browser publication preview/confirmation used the ordinary current-context path.
+
+First Task ebc4346c-aafb-4dee-84bc-a68f3015edd9 /
+Run17f657c6-1246-43c6-9aff-2f7eba5699ef really produced exact evidence.txt but
+FAILED required verification: this agent had registered /usr/bin/test, which does
+not exist on this macOS. /bin/test was then verified executable and exit0 on the
+unchanged README. This is a setup error; the failed Task/Run/frozen command and
+owned worktree remain intact. ConfigPlan8fdd5c8a corrected only the current own
+repository command path at revision4. No assertion or deadline was weakened.
+
+A new browser-reviewed publication6dfa0abf created Task
+e53a1d21-0202-461d-88eb-8bbbaa85352e /
+Run769ea254-44f2-4c27-9061-2387c7d18545. Real Codex execution completed; registered
+readme-exists passed; Run COMPLETE/Task REVIEW. Exact evidence.txt content,
+unchanged README, only that untracked file, and unchanged source/worktree HEAD
+were independently checked. No native commit/push or automatic human acceptance.
+Both Runs freeze requested gpt-6.1-sol and reasoningEffort low with exact catalog/
+context/config identity; this does not manufacture native-reported model evidence.
+The UI still correctly reports native model unknown, no qualified binding/control
+or native handoff, and unknown billing/usage scope.
+
+The browser then verified the current canonical candidate through the existing
+isolated-snapshot path: candidate
+c217266104c112cef0c6f0aea607e6aef2705387d21ad0dbcf962176e22f6b34,
+verification ce71fc1b5b0a5f3512049adec31622c9db9fd21ac28e147852e35697b7a38f78.
+Authenticated result readback returned review.state=verified. The human checkbox
+remains unchecked and Accept disabled, with Task REVIEW preserved. Screenshots
+provider-review.png and provider-candidate-verified.png plus bounded JSON/logs
+are in the existing ignored strict-native-commit milestone directory.
+
+Own foreground Controller72569 drained through SIGTERM and exited0/ESRCH; plist
+remains absent. An immediate plain bind check returned EADDRINUSE; subsequent
+lsof found no LISTEN and normal SO_REUSEADDR bind succeeded. No cause is assigned
+to that first bind failure or blanket host-idle/child absence claim. Native home
+was used normally; no credential copying/reset/change or OS-isolation claim.
+Runtime's four final-gate source hashes and primary HEAD/three original dirty
+hashes remain unchanged. This actual host/provider unit reused the accepted
+224/5366 gate; no additional full check or product patch was required.
+
+This advances the usable explicit-selection -> real execution -> required
+verification -> REVIEW -> verified candidate path. Human acceptance, independent
+native model echo, native writer/stop/client roundtrip, system folder selection,
+full restore activation and release/CI Gates remain separately open.
