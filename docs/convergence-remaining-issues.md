@@ -18,7 +18,28 @@ preflight reads; deadlines and assertions were preserved. Missing older external
 raw evidence remains unavailable. This is local fixture/real-Git verification,
 not actual provider, native writer exclusion, bound canonical acceptance or
 release qualification. Native PR/remote snapshot delivery and the original
-roadmap remain open. Next priority is staged macOS startup/browser/recovery.
+roadmap remain open. Actual staged startup/browser/restart and database-only
+restore are now observed below; full recovery activation and provider acceptance
+remain next delivery gaps.
+
+## 2026-11-02 macOS A actual host subset
+
+Staged dc6f9d3 runtime passed immutable inventory/relocated package smoke and real
+per-user launchd startup, browser one-time login, repository ConfigPlan, restart
+with exact persisted config readback, and database-only backup/restore to a new
+target. Restored config matches and SQLite integrity is ok. Execution activation
+remains blocked by the original reconciliation barrier. No secret/native storage
+backup or full recovery Gate is implied. Own service is stopped/uninstalled;
+new release/data/repository/backup are retained.
+
+Blocked/limited: offline tarball cache was populated using the unchanged lock in
+an isolated workspace, then normal offline stage passed. Initial startup delay
+has no established cause. The tool cannot target the actual osascript folder
+dialog; UI cancellation drained its owned PID and manual path registration
+worked. Successful native selection, provider/native write-stop, human acceptance,
+full restore activation and release remain open. Details and screenshot paths
+are in docs/evidence/convergence/README.md. No production change or repeated full
+gate was needed for this unit.
 
 ## Current checkpoint 2026-10-22: authorized continuation
 

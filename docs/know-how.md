@@ -1426,3 +1426,9 @@
   history. No automatic clearing or schema migration is implied. The existing
   document_json NOT NULL constraint means corrupt-state fixtures use JSON null,
   missing state or malformed TEXT, not an impossible SQL NULL column value.
+
+- A built source node_modules does not prove pnpm's offline deployment tarballs
+  are cached. On ERR_PNPM_NO_OFFLINE_TARBALL, fetch the unchanged lock in an owned
+  isolated workspace, then use the existing offline stage with a new output
+  directory. Preserve the failed release marker; do not bypass release readiness
+  checks or modify the active checkout's dependency state to repair the cache.

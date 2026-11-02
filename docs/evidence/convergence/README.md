@@ -15,7 +15,7 @@ branch `codex/dispatcher-convergence`, based on v3 `19db456`.
 
 These checkpoints do not replace original acceptance or close milestones.
 Unresolved work: `docs/convergence-remaining-issues.md`. Check official quota
-after every unit; stop when any reported window has <=10% remaining.
+after every unit; the current user-approved stop threshold is <=7% remaining.
 Initial official quota: 99% remaining, ordinary usage allowed.
 
 ## Pre-flight interfaces and rulings
@@ -6053,3 +6053,50 @@ are not complete other-fixture/native-stream captures. No real Slack/provider/
 account/nativeGUI/physical-stop/service/release/RHIZA Gate is inferred. Continue
 39purpose bounded routing/control notices, then12purpose native workflow composition;
 allCV11/NS035 and whole-branch/release acceptance remain open.
+
+
+## 2026-11-02 actual macOS startup, browser configuration and database restore
+
+Runtime candidate dc6f9d385e652416f8f8989fa8b3b997a0b72c67 is staged at
+/Users/wangdongxin/.local/share/dispatcher/releases/dc6f9d385e652416f8f8989fa8b3b997a0b72c67-macos-a1.
+The v2 manifest pins Node24.22.1, schema11/writer7 and7313files/133041780bytes.
+Relocated HTML/assets/authenticated API/PTY smoke passed; source dependency state
+was unchanged. The first offline stage failed on a missing locked @fastify/static
+tarball. A bounded deploy diagnostic exposed ERR_PNPM_NO_OFFLINE_TARBALL; fetching
+the unchanged lock in an isolated copied workspace populated the cache. A fresh
+output then passed the original offline staging flow. Failed output is retained.
+
+After rechecking no fixed plist/loaded label/8347listener, the packaged CLI
+installed a real own per-user launchd service with fresh persistent data at
+/Users/wangdongxin/.local/share/dispatcher/acceptance/2026-11-02-dc6f9d3/data.
+Early connection reads were refused; later READY and verified release binding
+were observed. One bounded stack sample and a fast separate import diagnostic
+are retained; the first-start delay has no established cause or latency Gate.
+The existing macOS owner-token Keychain item was read for routine local login;
+no credential reset/change or Keychain-isolation claim is made.
+
+An own IAB tab used a one-time local link, displayed the actual overview, and
+applied a ConfigPlan registering the new owned macos-acceptance Git repository
+with required /usr/bin/test -f README.md. Real launchd restart retained revision2
+and the exact repository/required command through authenticated API readback.
+Screenshots and bounded logs are in the existing ignored strict-native-commit
+milestone directory, including macos-overview.png and macos-repository.png.
+
+The actual picker started owned osascript67763; the UI tool could not target that
+app. Browser cancellation showed no configuration change and PID absence was
+confirmed by ESRCH. Manual path entry completed registration. Successful native
+folder selection remains unverified; no selector bypass or picker-code change.
+
+The service stopped with owned Controller68655 ESRCH. Existing CLI backup and
+preview/confirmed restore to new restored-data succeeded. Readonly SQL confirmed
+revision2/exact repository equality and integrity_check=ok. Doctor exit1 correctly
+reports reconciliation-required; the durable restore barrier remains. This is
+database-only recovery, excluding secrets/native storage, with no restored
+execution activation or full-recovery claim. Own service was uninstalled, plist
+absence and8347 bind availability checked; source/candidate/data were retained.
+
+Evidence scope: actual packaged local launchd/browser/ConfigPlan/restart/database
+subset. Real provider, native writer/physical stop, successful system-directory
+selection, full recovery activation, human acceptance and release Gates remain
+open. Existing 224/5366 final source gate is reused; no production code changed
+for this host unit and no redundant full check was run.
