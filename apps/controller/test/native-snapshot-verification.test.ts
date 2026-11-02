@@ -65,7 +65,43 @@ it.each(["proof","run","invalidation"] as const)("rolls back %s acceptance failu
  }finally{saving.mockRestore();if(fault==="invalidation")db.handle.exec("DROP TRIGGER IF EXISTS fixture_invalidation_fault");await f.close();}
 });
 it.each([false,true])("keeps explicit empty/overlapping preparation order with required overlap=%s",async overlap=>{const f=await nativeSnapshotFixture(overlap?{requiredPreparation:true}:{preparation:[],check:"if(fs.readFileSync('result.txt','utf8')!=='candidate\\n')process.exit(1)"});try{const response=await f.advance();expect(response.statusCode,response.body).toBe(200);expect(proof(f)?.commandIds).toEqual(overlap?["prepare-0","check"]:["check"]);expect(f.children().map(c=>c.phase)).toEqual(proof(f)?.commandIds);}finally{await f.close();}});
-it("refuses physical native commit after prepared proof while preserving DELIVERING and exact source HEAD",async()=>{const f=await nativeSnapshotFixture({delivery:"commit"});try{const before=source(f),commit=vi.spyOn(f.service["localGitDelivery"],"commit"),response=await f.advance();f.facts({before,after:source(f),response:response.json(),proof:proof(f)});expect(response.statusCode,response.body).toBe(409);expect(response.json().code).toBe("VERIFIED_DELIVERY_UNAVAILABLE");expect(commit).not.toHaveBeenCalled();expect(source(f)).toEqual(before);expect(f.service.database.getEntity("run",f.run.id)).toMatchObject({state:"DELIVERING",verification:{state:"PASSED"}});expect(f.service.database.getCanonicalTask(f.run.taskId)?.document).toMatchObject({state:"VERIFYING"});expect(proof(f)?.state).toBe("VERIFIED");expect(f.service.database.listEntities("native-mutation")).not.toContainEqual(expect.objectContaining({state:"unknown"}));}finally{await f.close();}});
+it("strict native snapshot commit authors the verified source and completes to REVIEW",async()=>{
+ const f=await nativeSnapshotFixture({delivery:"commit"});
+ try{
+  const before=source(f),main=execFileSync("git",["-C",f.repo,"rev-parse","main"]).toString(),response=await f.advance();
+  expect(response.statusCode,response.body).toBe(200);
+  expect(response.json()).toMatchObject({run:{state:"COMPLETE"},task:{state:"REVIEW"}});
+  const p=proof(f)!,result=f.service.database.getEntity("run-result",f.run.id) as unknown as {commit:{commit:string;created:boolean;files:string[]}};
+  const head=source(f).head.trim();
+  expect(result.commit).toMatchObject({commit:head,created:true});
+  expect(head).not.toBe(p.snapshot.commit);
+  expect(execFileSync("git",["-C",f.run.worktree!,"rev-parse","HEAD^{tree}"]).toString().trim()).toBe(p.snapshot.tree);
+  expect(execFileSync("git",["-C",f.run.worktree!,"rev-list","--parents","-n","1","HEAD"]).toString().trim().split(" ")).toEqual([head,before.head.trim()]);
+  expect(execFileSync("git",["-C",f.run.worktree!,"status","--porcelain"]).toString()).toBe("");
+  expect(execFileSync("git",["-C",f.repo,"rev-parse","main"]).toString()).toBe(main);
+  expect(proof(f)?.state).toBe("VERIFIED");
+  expect(f.service.database.listEntities("native-snapshot-commit")).toMatchObject([{state:"COMPLETE"}]);
+  expect(f.service.database.listEntities("local-git-command")).toMatchObject([{state:"SETTLED"},{state:"SETTLED"}]);
+  expect(f.starts()).toBe(1);
+  expect(f.service.database.listEntities("native-mutation")).not.toContainEqual(expect.objectContaining({state:"unknown"}));
+ }finally{await f.close();}
+});
+it.each(["run-result","task"] as const)("strict native snapshot commit retries observed commit after %s metadata failure without resending",async target=>{
+ const f=await nativeSnapshotFixture({delivery:"commit"}),db=f.service.database;
+ try{
+  db.handle.exec(target==="run-result"?"CREATE TRIGGER strict_completion_fault BEFORE INSERT ON entities WHEN NEW.kind='run-result' BEGIN SELECT RAISE(ABORT,'strict completion fault'); END":"CREATE TRIGGER strict_completion_fault BEFORE UPDATE ON canonical_tasks WHEN json_extract(NEW.document_json,'$.state')='REVIEW' BEGIN SELECT RAISE(ABORT,'strict completion fault'); END");
+  const first=await f.advance();expect(first.statusCode,first.body).toBe(500);
+  const authored=source(f).head,commands=structuredClone(db.listEntities("local-git-command"));
+  expect(commands).toHaveLength(2);expect(db.listEntities("native-snapshot-commit")).toMatchObject([{state:"COMPLETE"}]);
+  expect(db.getEntity("run",f.run.id)).toMatchObject({state:"DELIVERING"});
+  expect(db.getCanonicalTask(f.run.taskId)?.document).toMatchObject({state:"VERIFYING"});
+  expect(db.getEntity("run-result",f.run.id)).toBeUndefined();
+  db.handle.exec("DROP TRIGGER strict_completion_fault");
+  const response=await f.advance();expect(response.statusCode,response.body).toBe(200);
+  expect(response.json()).toMatchObject({run:{state:"COMPLETE"},task:{state:"REVIEW"}});
+  expect(source(f).head).toBe(authored);expect(db.listEntities("local-git-command")).toEqual(commands);expect(f.starts()).toBe(1);
+ }finally{await f.close();}
+});
 it("cancels and drains only the owned snapshot child while retaining its returned result and invalidation",async()=>{const f=await nativeSnapshotFixture({check:barrier}),pending=f.advance().then(r=>r);await pendingFixture(f,pending,async()=>{await waitChild(f);const command=f.service["localCommands"].get(f.run.id)!;command.controller.abort();const response=await pending;f.facts({response:response.json(),children:f.children(),proof:proof(f)});expect(response.statusCode).toBe(409);expect(f.service.database.listEntities("run-verification-command")).toHaveLength(2);expect(f.service.database.listEntities("run-verification-command")).toEqual(expect.arrayContaining([expect.objectContaining({state:"SETTLED",result:expect.objectContaining({commandId:"prepare-0",status:"passed"})}),expect.objectContaining({state:"SETTLED",result:expect.objectContaining({commandId:"check",status:"failed"})})]));for(const child of f.children())expect(absent(child.pid)).toBe(true);expect(f.service.database.getEntity("native-verification-invalidation",f.run.id)).toBeDefined();});});
 it("retains failed proof, refuses its same epoch, and permits only a real fresh HUMAN return to supersede known failure",async()=>{const f=await nativeSnapshotFixture({preparation:["if(!fs.existsSync(root+'/allow-prepare'))process.exit(7);if(!fs.existsSync('env.txt'))fs.writeFileSync('env.txt','prepared');"]});try{expect((await f.advance()).statusCode).toBe(409);const failed=structuredClone(proof(f)),children=f.children();writeFileSync(join(f.root,"allow-prepare"),"allowed");expect((await f.advance()).statusCode).toBe(409);expect(f.children()).toEqual(children);expect(proof(f)).toEqual(failed);await f.returnHuman();const response=await f.advance();f.facts({failed,response:response.json(),proof:proof(f),children:f.children()});expect(response.statusCode,response.body).toBe(200);expect(proof(f)!.id).not.toBe(failed!.id);expect(f.service.database.getEntity("run-snapshot-verification",failed!.id)).toEqual(failed);expect(f.starts()).toBe(1);}finally{await f.close();}});
 it.each(["result","scope"] as const)("treats malformed SETTLED %s as a cross-candidate barrier",async field=>{const f=await nativeSnapshotFixture();try{const id="old-malformed-settled",fence=f.interactions.fenceFor(f.run,"old-command");save(f,"run-verification-command",id,{version:1,id,runId:f.run.id,generation:f.run.generation,commandId:"check",semanticsHash:"old",fence,state:"SETTLED",result:{commandId:"check",required:true,status:"passed",exitCode:field==="result"?7:0,durationMs:1,output:"",truncated:false},...(field==="scope"?{snapshotScope:{version:1,proofId:"missing"}}:{})});const response=await f.advance();f.facts({response:response.json(),children:f.children()});expect(response.statusCode).toBe(409);expect(response.json().code).toBe("VERIFICATION_OUTCOME_UNKNOWN");expect(f.children()).toEqual([]);expect(proof(f)).toBeUndefined();}finally{await f.close();}});
@@ -74,7 +110,7 @@ it("refuses HUMAN PR delivery without a commit/push/PR and preserves the owned b
 it("refuses an exact invalidation changed by an acceptance write and rolls the full transaction back",async()=>{const f=await nativeSnapshotFixture(),db=f.service.database,original=db.saveEntity.bind(db);const fault=vi.spyOn(db,"saveEntity").mockImplementation((...args)=>{const result=original(...args);if(args[0]==="run"&&(args[2] as {state?:string}).state==="DELIVERING"){const invalidation=db.getEntity("native-verification-invalidation",f.run.id) as Record<string,JsonValue>;original("native-verification-invalidation",f.run.id,{...invalidation,observationRef:"foreign-invalidation"});}return result;});try{const response=await f.advance();f.facts({response:response.json(),proof:proof(f),invalidation:db.getEntity("native-verification-invalidation",f.run.id)});expect(response.statusCode,response.body).toBe(409);expect(proof(f)?.state).toBe("CAPTURED");expect(db.getEntity("run",f.run.id)).toMatchObject({state:"VERIFYING",verification:{state:"PENDING"}});expect(db.getEntity("native-verification-invalidation",f.run.id)).not.toMatchObject({observationRef:"foreign-invalidation"});expect(db.listEntities("run-verification-command")).toHaveLength(2);}finally{fault.mockRestore();await f.close();}});
 it("does not overwrite a changed original SENDING row when its real child result cannot be recorded",async()=>{const f=await nativeSnapshotFixture({check:barrier}),pending=f.advance().then(r=>r);let changed:unknown;await pendingFixture(f,pending,async()=>{await waitChild(f);const receipt=(f.service.database.listEntities("run-verification-command") as unknown as Array<{id:string;commandId:string}>).find(r=>r.commandId==="check")!;changed={...receipt,semanticsHash:"out-of-band-authority"};save(f,"run-verification-command",receipt.id,changed);release(f);const response=await pending;f.facts({response:response.json(),changed,proof:proof(f),children:f.children(),receipt:f.service.database.getEntity("run-verification-command",receipt.id)});expect(response.statusCode).toBe(409);expect(f.service.database.getEntity("run-verification-command",receipt.id)).toEqual(changed);expect(proof(f)?.state).toBe("UNKNOWN");expect(f.service.database.getEntity("native-verification-invalidation",f.run.id)).toBeDefined();});});
 it("keeps a result-persistence failure UNKNOWN and refuses every retry without another child",async()=>{const f=await nativeSnapshotFixture(),db=f.service.database,original=db.saveEntity.bind(db);let first=true;const fault=vi.spyOn(db,"saveEntity").mockImplementation((...args)=>{if(first&&args[0]==="run-verification-command"&&(args[2] as {state?:string}).state==="SETTLED"){first=false;throw Error("fixture result persistence failure");}return original(...args);});try{expect((await f.advance()).statusCode).toBe(500);fault.mockRestore();const prior=structuredClone(proof(f)),children=f.children();expect(prior?.state).toBe("UNKNOWN");expect(db.listEntities("run-verification-command")).toMatchObject([{state:"UNKNOWN"}]);expect((await f.advance()).statusCode).toBe(409);expect(f.children()).toEqual(children);expect(proof(f)).toEqual(prior);expect(db.getEntity("native-verification-invalidation",f.run.id)).toBeDefined();}finally{fault.mockRestore();await f.close();}});
-it.each(["checks-missing","check-id","check-required","check-status","check-exit","command-order","preparation-check","definitions"] as const)("never uses %s persisted VERIFIED evidence and records no uncertain send for this known preflight refusal",async damage=>{const f=await nativeSnapshotFixture({delivery:"commit"});try{expect((await f.advance()).json().code).toBe("VERIFIED_DELIVERY_UNAVAILABLE");const p=proof(f)! as Proof&{verification:VerificationCommand[];checks:VerificationResult[];preparation:{checks:VerificationResult[]}};if(damage==="checks-missing")p.checks=[];if(damage==="check-id")p.checks[1]!.commandId="foreign";if(damage==="check-required")p.checks[1]!.required=false;if(damage==="check-status")p.checks[1]!.status="failed";if(damage==="check-exit")p.checks[1]!.exitCode=7;if(damage==="command-order")p.commandIds.reverse();if(damage==="preparation-check")p.preparation.checks[0]!.output="changed";if(damage==="definitions")p.verification[0]!.args.push("changed");save(f,"run-snapshot-verification",p.id,p);const children=f.children(),response=await f.advance();f.facts({damage,response:response.json(),proof:proof(f)});expect(response.statusCode).toBe(409);expect(f.children()).toEqual(children);expect(f.service.database.getEntity("run",f.run.id)).toMatchObject({state:"DELIVERING"});expect(f.service.database.listEntities("native-mutation")).not.toContainEqual(expect.objectContaining({state:"unknown"}));}finally{await f.close();}});
+it.each(["checks-missing","check-id","check-required","check-status","check-exit","command-order","preparation-check","definitions"] as const)("never uses %s persisted VERIFIED evidence and records no uncertain send for this known preflight refusal",async damage=>{const f=await nativeSnapshotFixture({delivery:"pull-request"});try{expect((await f.advance()).json().code).toBe("VERIFIED_DELIVERY_UNAVAILABLE");const p=proof(f)! as Proof&{verification:VerificationCommand[];checks:VerificationResult[];preparation:{checks:VerificationResult[]}};if(damage==="checks-missing")p.checks=[];if(damage==="check-id")p.checks[1]!.commandId="foreign";if(damage==="check-required")p.checks[1]!.required=false;if(damage==="check-status")p.checks[1]!.status="failed";if(damage==="check-exit")p.checks[1]!.exitCode=7;if(damage==="command-order")p.commandIds.reverse();if(damage==="preparation-check")p.preparation.checks[0]!.output="changed";if(damage==="definitions")p.verification[0]!.args.push("changed");save(f,"run-snapshot-verification",p.id,p);const children=f.children(),response=await f.advance();f.facts({damage,response:response.json(),proof:proof(f)});expect(response.statusCode).toBe(409);expect(f.children()).toEqual(children);expect(f.service.database.getEntity("run",f.run.id)).toMatchObject({state:"DELIVERING"});expect(f.service.database.listEntities("native-mutation")).not.toContainEqual(expect.objectContaining({state:"unknown"}));}finally{await f.close();}});
 it("rechecks registered repository scope independently of the broad Task scope before allocation",async()=>{const f=await nativeSnapshotFixture();try{const config=f.service.configuration.current().config;config.repositories[0]!.scopePaths=["README.md",".gitignore"];await f.service.configuration.applyPlan(f.service.configuration.buildPlan(config,"owner","fixture").id,{confirmed:true});const response=await f.advance();expect(response.statusCode).toBe(409);expect(response.json().code).toBe("PATH_OUT_OF_SCOPE");expect(f.children()).toEqual([]);expect(f.service.database.getEntity("native-verification-invalidation",f.run.id)).toBeDefined();}finally{await f.close();}});
 it("real canonical cancellation drains the owned child while unsupported native physical stop remains refused",async()=>{const f=await nativeSnapshotFixture({check:barrier}),pending=f.advance().then(r=>r);await pendingFixture(f,pending,async()=>{await waitChild(f);const cancelled=f.service.semanticTools.execute("run.cancel",{target:f.run.id},{principal:{id:"owner",roles:["operator"],channel:"api"},workflowId:"owned-native-snapshot-cancel",confirmed:true}).catch(error=>error);const response=await pending,outcome=await cancelled;f.facts({response:response.json(),outcome:{code:outcome.code,message:outcome.message},children:f.children(),proof:proof(f)});expect(response.statusCode).toBe(409);expect(outcome).toBeInstanceOf(Error);for(const child of f.children())expect(absent(child.pid)).toBe(true);expect(f.service.database.getEntity("native-verification-invalidation",f.run.id)).toBeDefined();expect(f.nativeCalls).not.toContain("turn/interrupt");expect(f.starts()).toBe(1);});});
 it("does not invent an observation age expiry while its challenged checkpoint and live lease remain current",async()=>{const f=await nativeSnapshotFixture({check:barrier}),pending=f.advance().then(r=>r);await pendingFixture(f,pending,async()=>{await waitChild(f);const future=Date.now()+31_000;f.service.options.clock=()=>new Date(future);release(f);const response=await pending;f.facts({response:response.json(),proof:proof(f)});expect(response.statusCode,response.body).toBe(200);expect(proof(f)?.state).toBe("VERIFIED");});});
@@ -184,14 +220,14 @@ it.each(["SENDING", "UNKNOWN", "malformed", "native-unknown"] as const)("preserv
 });
 
 // G2c starts each second cycle from an actually accepted first proof.
-async function deliveringCycle(delivery:"none"|"commit"|"pull-request"="commit",options:Parameters<typeof nativeSnapshotFixture>[0]={}){
+async function deliveringCycle(delivery:"none"|"commit"|"pull-request"="pull-request",options:Parameters<typeof nativeSnapshotFixture>[0]={}){
  const f=await nativeSnapshotFixture({...options,delivery});
  try{
   // Stage the actual native result, so HUMAN changes a tracked candidate without a new commit.
   execFileSync("git",["-C",f.run.worktree!,"add","result.txt"]);
-  if(delivery==="none")f.service.database.handle.exec("CREATE TRIGGER g2c_initial_completion BEFORE INSERT ON entities WHEN NEW.kind='run-result' BEGIN SELECT RAISE(ABORT,'g2c initial completion fault'); END");
+  if(delivery!=="pull-request")f.service.database.handle.exec("CREATE TRIGGER g2c_initial_completion BEFORE INSERT ON entities WHEN NEW.kind='run-result' BEGIN SELECT RAISE(ABORT,'g2c initial completion fault'); END");
   const first=await f.advance();
-  if(delivery==="none"){expect(first.statusCode).toBe(500);f.service.database.handle.exec("DROP TRIGGER g2c_initial_completion");}
+  if(delivery!=="pull-request"){expect(first.statusCode,first.body).toBe(500);f.service.database.handle.exec("DROP TRIGGER g2c_initial_completion");}
   else expect(first.json().code).toBe("VERIFIED_DELIVERY_UNAVAILABLE");
   expect(f.service.database.getEntity("run",f.run.id)).toMatchObject({state:"DELIVERING",verification:{state:"PASSED"}});
   expect(proof(f)?.state).toBe("VERIFIED");expect(f.children()).toHaveLength(2);
@@ -207,8 +243,8 @@ it.each(["none","commit","pull-request"] as const)("re-verifies a genuine %s del
   await f.returnHuman({duringHuman:()=>{expect(f.store.control(f.run.sessionId)?.state).toBe("HUMAN");writeFileSync(join(f.run.worktree!,"result.txt"),"human second candidate\n");}});
   const invalidation=f.service.database.getEntity("native-verification-invalidation",f.run.id),response=await f.advance(),fresh=proof(f)!;
   f.facts({delivery,before,old,invalidation,response:response.json(),fresh,state:cycleState(f)});
-  expect(response.statusCode,response.body).toBe(delivery==="none"?200:409);
-  if(delivery!=="none")expect(response.json().code).toBe("VERIFIED_DELIVERY_UNAVAILABLE");
+  expect(response.statusCode,response.body).toBe(delivery==="pull-request"?409:200);
+  if(delivery==="pull-request")expect(response.json().code).toBe("VERIFIED_DELIVERY_UNAVAILABLE");
   expect(fresh.id).not.toBe(old.id);expect(fresh.snapshot.id).not.toBe(old.snapshot.id);expect(fresh.state).toBe("VERIFIED");
   expect((fresh as unknown as {basis:{controlEpoch:number}}).basis.controlEpoch).toBeGreaterThan((old as unknown as {basis:{controlEpoch:number}}).basis.controlEpoch);
   expect(readFileSync(join(fresh.snapshot.path,"result.txt"),"utf8")).toBe("human second candidate\n");
@@ -218,10 +254,16 @@ it.each(["none","commit","pull-request"] as const)("re-verifies a genuine %s del
   for(const c of f.children().slice(2))expect([c.cwd,c.pwd,c.top]).toEqual([fresh.snapshot.path,fresh.snapshot.path,fresh.snapshot.path]);
   expect(f.service.database.getEntity("native-verification-invalidation",f.run.id)).toBeUndefined();
   expect(f.nativeCalls).toEqual(native);expect(f.starts()).toBe(1);expect(native.filter(x=>x==="initialize")).toHaveLength(1);expect(native.filter(x=>x==="thread/start")).toHaveLength(1);expect(native.filter(x=>x==="turn/start")).toHaveLength(1);
-  expect(source(f)).toEqual({...before,result:"human second candidate\n"});expect(commit).not.toHaveBeenCalled();expect(push).not.toHaveBeenCalled();
+  if(delivery==="commit"){
+   const after=source(f);expect(after.result).toBe("human second candidate\n");expect(after.head).not.toBe(before.head);
+   expect(execFileSync("git",["-C",f.run.worktree!,"rev-parse","HEAD^"]).toString()).toBe(before.head);
+   expect(f.service.database.listEntities("native-snapshot-commit")).toHaveLength(2);
+   expect(f.service.database.listEntities("local-git-command")).toHaveLength(4);
+  }else expect(source(f)).toEqual({...before,result:"human second candidate\n"});
+  expect(commit).not.toHaveBeenCalled();expect(push).not.toHaveBeenCalled();
   if(bare)expect(execFileSync("git",["--git-dir",join(f.root,"bare.git"),"show-ref"]).toString()).toBe(bare);
-  expect(f.service.database.getEntity("run",f.run.id)).toMatchObject({state:delivery==="none"?"COMPLETE":"DELIVERING",verification:{state:"PASSED"}});
-  expect(f.service.database.getCanonicalTask(f.run.taskId)?.document).toMatchObject({state:delivery==="none"?"REVIEW":"VERIFYING"});
+  expect(f.service.database.getEntity("run",f.run.id)).toMatchObject({state:delivery!=="pull-request"?"COMPLETE":"DELIVERING",verification:{state:"PASSED"}});
+  expect(f.service.database.getCanonicalTask(f.run.taskId)?.document).toMatchObject({state:delivery!=="pull-request"?"REVIEW":"VERIFYING"});
  }finally{await f.close();}
 });
 
@@ -275,7 +317,7 @@ it.each(["SENDING","UNKNOWN","malformed","native-unknown","native-active","nativ
  }finally{await f.close();}
 });
 it.each(["run-write","action-write","action-ignored","return-during-consume","task-during-consume","control-during-consume"] as const)("rolls back %s atomically and retries the same explicit choice once without duplicate children",async fault=>{
- const f=await deliveringCycle();try{
+ const f=await deliveringCycle("pull-request");try{
   await f.returnHuman({duringHuman:()=>writeFileSync(join(f.run.worktree!,"result.txt"),"rollback retry candidate\n")});const db=f.service.database,before=cycleState(f);
   const condition=fault==="run-write"?"NEW.kind='run' AND json_extract(NEW.document_json,'$.state')='VERIFYING'":"NEW.kind='native-reclaim-action' AND json_extract(NEW.document_json,'$.state')='consumed'";
   const effect=fault==="return-during-consume"?"UPDATE entities SET document_json=json_set(document_json,'$.commit.reportId','foreign') WHERE kind='native-reclaim' AND id='reclaim-2';":fault==="action-ignored"?"SELECT RAISE(IGNORE);":fault==="task-during-consume"?"UPDATE canonical_tasks SET document_json=json_set(document_json,'$.id','foreign');":fault==="control-during-consume"?"UPDATE session_controls SET revision=revision+1;":"SELECT RAISE(ABORT,'g2c transactional write fault');";
@@ -288,7 +330,7 @@ it.each(["run-write","action-write","action-ignored","return-during-consume","ta
  }finally{f.service.database.handle.exec("DROP TRIGGER IF EXISTS g2c_reentry_fault");await f.close();}
 });
 it.each(["preparation","verification"] as const)("a failing new %s cannot retain operative old PASSED authority",async phase=>{
- const fail="if(fs.existsSync(root+'/fail-second'))process.exit(7);",prepare="if(!fs.existsSync('env.txt'))fs.writeFileSync('env.txt','prepared');",f=await deliveringCycle("commit",phase==="preparation"?{preparation:[fail+prepare]}:{check:fail+"if(fs.readFileSync('env.txt','utf8')!=='prepared')process.exit(9);"});
+ const fail="if(fs.existsSync(root+'/fail-second'))process.exit(7);",prepare="if(!fs.existsSync('env.txt'))fs.writeFileSync('env.txt','prepared');",f=await deliveringCycle("pull-request",phase==="preparation"?{preparation:[fail+prepare]}:{check:fail+"if(fs.readFileSync('env.txt','utf8')!=='prepared')process.exit(9);"});
  try{
   const old=structuredClone(proof(f))!;await f.returnHuman({duringHuman:()=>{writeFileSync(join(f.root,"fail-second"),"fail");writeFileSync(join(f.run.worktree!,"result.txt"),"failing HUMAN candidate\n");}});
   const invalidation=f.service.database.getEntity("native-verification-invalidation",f.run.id),response=await f.advance();f.facts({phase,old,invalidation,response:response.json(),after:cycleState(f)});
@@ -571,7 +613,7 @@ it.each(["return", "action", "policy", "return-document", "foreign-unknown", "ig
 it.each(["VERIFIED", "CAPTURED"] as const)(
  "retains a legacy %s policy hash as history, refuses reuse and requires a fresh actual HUMAN return",
  async state => {
-  const f = state === "VERIFIED" ? await deliveringCycle() : await nativeSnapshotFixture({delivery: "commit"});
+  const f = state === "VERIFIED" ? await deliveringCycle("pull-request") : await nativeSnapshotFixture({delivery: "pull-request"});
   await pendingFixture(f, Promise.resolve(), async () => {
    const db = f.service.database;
    if (state === "CAPTURED") {
@@ -762,4 +804,111 @@ it.each(["owner","matching-return","historical-return"] as const)("does not norm
    expect(source(f)).toEqual(before);expect(f.starts()).toBe(1);
   }finally{reading.mockRestore();}
  });
+});
+
+
+it("strict native snapshot commit clean unchanged candidate creates no Git command",async()=>{
+ const f=await nativeSnapshotFixture({delivery:"commit"});
+ try{
+  execFileSync("git",["-C",f.run.worktree!,"add","--all"]);
+  execFileSync("git",["-C",f.run.worktree!,"commit","-m","fixture already authored"]);
+  const before=source(f),response=await f.advance();expect(response.statusCode,response.body).toBe(200);
+  expect(f.service.database.getEntity("run-result",f.run.id)).toMatchObject({commit:{created:false,commit:before.head.trim()}});
+  expect(f.service.database.listEntities("local-git-command")).toEqual([]);expect(source(f)).toEqual(before);
+ }finally{await f.close();}
+});
+it("strict native snapshot commit unknown authored readback preserves the native barrier",async()=>{
+ const f=await nativeSnapshotFixture({delivery:"commit"});
+ try{
+  const before=source(f).head,observe=f.service.workspaces.observeSnapshotCommit.bind(f.service.workspaces);
+  vi.spyOn(f.service.workspaces,"observeSnapshotCommit").mockImplementation(async(...args)=>{
+   if(source(f).head!==before)throw Error("fixture authored readback unavailable");return observe(...args);
+  });
+  const first=await f.advance();expect(first.statusCode,first.body).toBe(500);
+  const head=source(f).head,commands=structuredClone(f.service.database.listEntities("local-git-command"));expect(commands).toHaveLength(2);
+  expect(f.service.database.getEntity("run",f.run.id)).toMatchObject({state:"DELIVERING"});
+  expect(f.service.database.listEntities("native-mutation")).toContainEqual(expect.objectContaining({state:"unknown"}));
+  const retry=await f.advance();expect(retry.statusCode,retry.body).toBe(409);
+  expect(source(f).head).toBe(head);expect(f.service.database.listEntities("local-git-command")).toEqual(commands);
+ }finally{await f.close();}
+});
+it.each(["proof","control","task"] as const)("strict native snapshot commit rolls back late %s drift in completion",async drift=>{
+ const f=await nativeSnapshotFixture({delivery:"commit"}),db=f.service.database,saveEntity=db.saveEntity.bind(db);
+ try{
+  const fault=vi.spyOn(db,"saveEntity").mockImplementation((...args)=>{
+   const result=saveEntity(...args);
+   if(args[0]==="run-result"){
+    if(drift==="proof")db.handle.prepare("UPDATE entities SET document_json=json_set(document_json,'$.basis.policyHash','foreign') WHERE kind='run-snapshot-verification'").run();
+    if(drift==="control")db.handle.exec("UPDATE session_controls SET revision=revision+1");
+    if(drift==="task")db.handle.exec("UPDATE canonical_tasks SET document_json=json_set(document_json,'$.description','foreign')");
+   }
+   return result;
+  });
+  const response=await f.advance();expect(response.statusCode,response.body).toBe(409);fault.mockRestore();
+  expect(db.getEntity("run",f.run.id)).toMatchObject({state:"DELIVERING"});
+  expect(db.getCanonicalTask(f.run.taskId)?.document).toMatchObject({state:"VERIFYING"});
+  expect(db.getEntity("run-result",f.run.id)).toBeUndefined();
+  expect(db.listEntities("native-snapshot-commit")).toMatchObject([{state:"COMPLETE"}]);
+  expect(db.listEntities("local-git-command")).toHaveLength(2);
+ }finally{vi.restoreAllMocks();await f.close();}
+});
+
+it.each(["lease-revoked","lease-expired","cancelled","runner-revoked","native-blocker"] as const)("strict native completion refuses late %s authority loss",async loss=>{
+ const f=await nativeSnapshotFixture({delivery:"commit"}),db=f.service.database,original=db.saveEntity.bind(db);
+ try{
+  vi.spyOn(db,"saveEntity").mockImplementation((...args)=>{
+   const result=original(...args);
+   if(args[0]==="run-result"){
+    if(loss==="lease-revoked")f.service["leaseAuthority"].revoke(f.run.id,f.run.leaseId,f.run.generation,"fixture late revoke");
+    if(loss==="lease-expired")f.service.options.clock=()=>new Date(Date.now()+16*60_000);
+    if(loss==="cancelled")f.service["cancelledRunIds"].add(f.run.id);
+    if(loss==="runner-revoked")f.service["revokedRunnerCredentials"].add(f.run.runnerId);
+    if(loss==="native-blocker")original("native-external-write-blocker",f.run.sessionId,{version:1,sessionId:f.run.sessionId,runId:f.run.id,generation:f.run.generation,leaseId:f.run.leaseId,code:"fixture blocker"});
+   }
+   return result;
+  });
+  const response=await f.advance();expect(response.statusCode,response.body).toBe(409);
+  expect(db.getEntity("run",f.run.id)).toMatchObject({state:"DELIVERING"});
+  expect(db.getCanonicalTask(f.run.taskId)?.document).toMatchObject({state:"VERIFYING"});
+  expect(db.getEntity("run-result",f.run.id)).toBeUndefined();
+  expect(db.listEntities("native-snapshot-commit")).toMatchObject([{state:"COMPLETE"}]);
+  expect(db.listEntities("local-git-command")).toHaveLength(2);
+ }finally{vi.restoreAllMocks();await f.close();}
+});
+it("strict native completion accepts a real heartbeat renewal during commit await",async()=>{
+ const f=await nativeSnapshotFixture({delivery:"commit"}),owner=f.service["localGitDelivery"],commit=owner.commitSnapshot.bind(owner);
+ let renewed="";
+ try{
+  vi.spyOn(owner,"commitSnapshot").mockImplementation(async input=>{
+   const result=await commit(input);
+   const current=f.service.database.getEntity("run",f.run.id) as unknown as Run;
+   const lease=f.service["leaseAuthority"].renew(f.run.id,f.run.leaseId,f.run.generation,new Date(Date.now()+30*60_000).toISOString());
+   renewed=lease.expiresAt;save(f,"run",f.run.id,{...current,leaseExpiresAt:renewed});
+   return result;
+  });
+  const response=await f.advance();expect(response.statusCode,response.body).toBe(200);
+  expect(response.json()).toMatchObject({run:{state:"COMPLETE",leaseExpiresAt:renewed},task:{state:"REVIEW"}});
+  expect(f.service.database.listEntities("local-git-command")).toHaveLength(2);
+ }finally{vi.restoreAllMocks();await f.close();}
+});
+
+it.each(["native-blocker","lease-revoked"] as const)("strict native final audit cannot hide a late %s",async loss=>{
+ const f=await nativeSnapshotFixture({delivery:"commit"}),db=f.service.database,original=db.saveEntity.bind(db);let injected=false;
+ try{
+  vi.spyOn(db,"saveEntity").mockImplementation((...args)=>{
+   const result=original(...args);
+   if(!injected&&args[0]==="lease-audit"&&(db.getEntity("run",f.run.id) as unknown as Run).state==="COMPLETE"&&(db.getCanonicalTask(f.run.taskId)?.document as {state:string}).state==="REVIEW"){
+    injected=true;
+    if(loss==="native-blocker")original("native-external-write-blocker",f.run.sessionId,{version:1,sessionId:f.run.sessionId,runId:f.run.id,generation:f.run.generation,leaseId:f.run.leaseId,code:"fixture final-audit blocker"});
+    else f.service["leaseAuthority"].revoke(f.run.id,f.run.leaseId,f.run.generation,"fixture final-audit revoke");
+   }
+   return result;
+  });
+  const response=await f.advance();expect(injected).toBe(true);expect(response.statusCode,response.body).toBe(409);
+  expect(db.getEntity("run",f.run.id)).toMatchObject({state:"DELIVERING"});
+  expect(db.getCanonicalTask(f.run.taskId)?.document).toMatchObject({state:"VERIFYING"});
+  expect(db.getEntity("run-result",f.run.id)).toBeUndefined();
+  expect(db.listEntities("native-snapshot-commit")).toMatchObject([{state:"COMPLETE"}]);
+  expect(db.listEntities("local-git-command")).toHaveLength(2);
+ }finally{vi.restoreAllMocks();await f.close();}
 });

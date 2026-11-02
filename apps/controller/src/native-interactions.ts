@@ -342,6 +342,17 @@ export class NativeInteractions {
     if(adapter.nativeBinding||this.store.control(sessionId)||this.database.getEntity("session",sessionId)||this.database.getEntity("run",adapter.runId)||this.store.diagnostics().some(entry=>entry.sessionId===sessionId&&entry.code!=="LEGACY_NATIVE_BINDING_MISSING"))return {allowed:false,code:"CANONICAL_RUN_REQUIRED"};
     return {allowed:true};
   }
+  /** Requalify terminal metadata in the existing live lane; this cannot dispatch native work. */
+  assertCompletedDelivery(run:Run,at=this.now().toISOString()):void {
+    if(!Number.isFinite(Date.parse(at)))throw new InteractionGuardError("STALE_RUN_AUTHORITY");
+    this.assertPriorMutationOutcomesSettled(run.sessionId);
+    const current=this.database.getEntity<JsonValue>("run",run.id) as unknown as Run|undefined;
+    const task=this.database.getCanonicalTask<JsonValue>(run.taskId)?.document as {state?:string;currentRunId?:string}|undefined;
+    if(!current||current.state!=="COMPLETE"||!isDeepStrictEqual(current,run)||task?.state!=="REVIEW"||task.currentRunId!==run.id)throw new InteractionGuardError("RUN_PHASE_CONFLICT");
+    const fence=this.fenceFor(run,`run:${run.id}:complete`);
+    const decision=this.evaluateInteraction({id:"run-worker",roles:["operator"],profileId:run.profileId},"deliver",fence,undefined,false,false,at);
+    if(!decision.allowed)throw new InteractionGuardError(decision.code);
+  }
   authorizeInteraction(principal:InteractionPrincipal,operation:ControllerInteractionOperation,fence:MutationFence):GuardDecision {
     return this.evaluateInteraction(principal,operation,fence);
   }
@@ -353,7 +364,8 @@ export class NativeInteractions {
     if(rows.length>100)return true;
     return rows.some(row=>{const command=JSON.parse(row.document_json) as InteractionCommand;return !["completed","failed"].includes(this.commandExecution(command,this.commandReceipt(command)));});
   }
-  private evaluateInteraction(principal:InteractionPrincipal,operation:ControllerInteractionOperation,fence:MutationFence,own?:InteractionCommand,humanCancelConfirmed=false,metadataIngress=false):GuardDecision {
+  private evaluateInteraction(principal:InteractionPrincipal,operation:ControllerInteractionOperation,fence:MutationFence,own?:InteractionCommand,humanCancelConfirmed=false,metadataIngress=false,completedDeliveryAt?:string):GuardDecision {
+    const completedDelivery=completedDeliveryAt!==undefined;
     const reject=(code:string):GuardDecision=>({allowed:false,code});
     if(own&&(own.state!=="SENDING"||own.actorId!==principal.id||own.id!==fence.commandId||own.type!==operation||!isDeepStrictEqual(own.fence,fence)||!isDeepStrictEqual(this.store.command(own.id),own)))return reject("NATIVE_COMMAND_OUTCOME_UNKNOWN");
     const read=["history","access","collect"].includes(operation);
@@ -367,6 +379,7 @@ export class NativeInteractions {
     const unstartedStop=operation==="cancel"&&run.sessionId===`unstarted:${run.id}`&&!session&&!adapter&&!this.store.control(run.sessionId)&&!this.store.binding(run.sessionId);
     if(session&&(session.profileId!==run.profileId||session.providerId!==run.providerId)||adapter&&(adapter.id!==run.sessionId||adapter.runId!==run.id||adapter.profileId!==run.profileId)||!session&&!adapter&&!unstartedStop)return reject("SESSION_OWNER_MISMATCH");
     if(read)return {allowed:true};
+    if(completedDelivery&&(operation!=="deliver"||run.state!=="COMPLETE"))return reject("RUN_PHASE_CONFLICT");
     if(run.revokedLeaseIds?.includes(run.leaseId)&&!["cancel","fail","cleanup-input","cleanup-start"].includes(operation))return reject("STALE_RUN_AUTHORITY");
     if(hasNativeExternalWriteBlocker(this.database,run))return reject("NATIVE_STATE_UNKNOWN");
     if(["continue","steer","approval","resume","advance","verify","deliver","reroute"].includes(operation)){try{this.assertDriftPolicy(run);const policy=this.database.getEntity<JsonValue>("native-drift-policy",run.id) as unknown as FrozenDriftPolicy|undefined;if(this.store.control(run.sessionId)?.state==="AUTOMATED"&&!policy?.policy.permissionFingerprint&&this.firstHumanEpoch(run.sessionId)!==null)return reject("NATIVE_POLICY_UNVERIFIED");}catch(error){return reject(error instanceof InteractionGuardError?error.code:"NATIVE_DRIFT_POLICY_INVALID");}}
@@ -410,7 +423,7 @@ export class NativeInteractions {
     const task=this.database.getCanonicalTask<JsonValue>(run.taskId);
     if(!task||task.revision!==fence.expectedTaskRevision)return reject("STALE_TASK_REVISION");
     if(["DONE","FAILED","CANCELLED"].includes((task.document as {state:string}).state))return reject("TERMINAL_TASK");
-    if((task.document as {currentRunId?:string}).currentRunId!==run.id||fence.expectedCurrentRunId!==run.id||run.generation!==fence.generation||run.leaseId!==fence.leaseId||!["fail","cancel"].includes(operation)&&run.leaseExpiresAt&&(!Number.isFinite(Date.parse(run.leaseExpiresAt))||Date.parse(run.leaseExpiresAt)<=this.now().getTime()))return reject("STALE_RUN_AUTHORITY");
+    if((task.document as {currentRunId?:string}).currentRunId!==run.id||fence.expectedCurrentRunId!==run.id||run.generation!==fence.generation||run.leaseId!==fence.leaseId||!["fail","cancel"].includes(operation)&&run.leaseExpiresAt&&(!Number.isFinite(Date.parse(run.leaseExpiresAt))||Date.parse(run.leaseExpiresAt)<=(completedDeliveryAt===undefined?this.now().getTime():Date.parse(completedDeliveryAt))))return reject("STALE_RUN_AUTHORITY");
     const storedControl=this.store.control(run.sessionId);
     if((storedControl?.revision??0)!==fence.expectedControlRevision||(storedControl?.epoch??0)!==fence.expectedControlEpoch)return reject("STALE_CONTROL_REVISION");
     const control:SessionControl=storedControl??{version:1,sessionId:run.sessionId,activeRunId:run.id,state:"AUTOMATED",exclusion:"none",revision:0,epoch:0,updatedAt:run.startedAt??""};
@@ -443,7 +456,8 @@ export class NativeInteractions {
       if(observation&&["deleted","unreachable"].includes(observation.state))return reject("NATIVE_STATE_UNKNOWN");
       return {allowed:true};
     }
-    return canMutate({control,run,nativeState,humanCancelConfirmed},operation as InteractionOperation);
+    // Every live permission check above still applies. Only the completed metadata phase is projected.
+    return canMutate({control,run:completedDelivery?{...run,state:"DELIVERING"}:run,nativeState,humanCancelConfirmed},operation as InteractionOperation);
   }
 
   cancellationForRun(runId:string):CancelResolution|undefined {return structuredClone((this.database.getEntity<JsonValue>("native-cancel",runId) as unknown as CancelRecord|undefined)?.resolution);}

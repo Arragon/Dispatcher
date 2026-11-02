@@ -172,7 +172,7 @@ import {
 import { LlmRuntime, LlmRuntimeError, type FetchLike, type LlmConfiguration, type LlmRole } from "@dispatcher/llm-runtime";
 import { createLogger, redactNativeText,redactValue, redactNativePayload } from "@dispatcher/observability";
 import { DispatcherDatabase, InteractionStore, RevisionConflictError, type JsonValue } from "@dispatcher/persistence";
-import { EmbeddedRunner, EventBus, LeaseFenceError, LocalGitDelivery, LocalGitDeliveryError, ProcessManager, RemoteRunnerServer, RunnerEnrollmentAuthority, RunnerLeaseAuthority, RunnerRegistry, VerificationRegistry, reconcileRunnerState, type RunnerEnrollmentRecord, type RunnerEvents, type RuntimeLocalDisconnectResult,type VerificationCommand,type VerificationResult,type NativeEventCheckpoint } from "@dispatcher/runner";
+import { EmbeddedRunner, EventBus, LeaseFenceError, LocalGitDelivery, LocalGitDeliveryError, ProcessManager, RemoteRunnerServer, RunnerEnrollmentAuthority, RunnerLeaseAuthority, RunnerRegistry, VerificationRegistry, reconcileRunnerState, type LocalSnapshotCommitInput, type RunnerEnrollmentRecord, type RunnerEvents, type RuntimeLocalDisconnectResult,type VerificationCommand,type VerificationResult,type NativeEventCheckpoint } from "@dispatcher/runner";
 import {
   SemanticPolicyError,
   SemanticToolRegistry,
@@ -1032,20 +1032,33 @@ export class ControllerService {
     this.persistLatestLeaseAudit(run.id);
   }
 
-  private fenceDelivery(run: Run, operation: "verify" | "commit" | "branch" | "push" | "pull-request" | "complete"): void {
+  private assertDeliveryAuthority(run: Run, operation: "verify" | "commit" | "branch" | "push" | "pull-request" | "complete", completedSnapshot=false, at?:string): void {
     const current = this.database.getEntity<JsonValue>("run", run.id) as unknown as Run | undefined;
-    this.assertRunInteraction(run,current?.state==="VERIFYING"?"verify":"deliver");
+    if(completedSnapshot){
+      if(operation!=="complete")throw new ConnectorError("CONFLICT","Completed metadata cannot authorize a delivery send");
+      this.nativeInteractions.assertCompletedDelivery(run,at);
+    }else this.assertRunInteraction(run,current?.state==="VERIFYING"?"verify":"deliver");
     const task=this.database.getCanonicalTask<JsonValue>(run.taskId)?.document as unknown as Task|undefined;
-    if(task?.currentRunId!==run.id||task.state!=="VERIFYING")throw new ConnectorError("CONFLICT","Task no longer authorizes this verification/delivery",{retryable:false,operation:"delivery"});
+    if(task?.currentRunId!==run.id||task.state!==(completedSnapshot?"REVIEW":"VERIFYING"))throw new ConnectorError("CONFLICT","Task no longer authorizes this verification/delivery",{retryable:false,operation:"delivery"});
     const remote = this.configuration.current().config.runners.some(runner => runner.id === run.runnerId && runner.mode === "remote");
     if (this.revokedRunnerCredentials.has(run.runnerId) || remote && !this.runnerCredentialContext(run.runnerId).usable) throw new ConnectorError("CONFLICT", "Owning Runner authorization is revoked", { retryable: false, operation: "delivery" });
-    if (this.cancelledRunIds.has(run.id) || !current || current.generation !== run.generation || current.leaseId !== run.leaseId || !["VERIFYING", "DELIVERING"].includes(current.state)) throw new ConnectorError("CONFLICT", "Delivery authority rejected: stale or terminal run", { retryable: false, operation: "delivery" });
+    if (this.cancelledRunIds.has(run.id) || !current || current.generation !== run.generation || current.leaseId !== run.leaseId || !(completedSnapshot?["COMPLETE"]:["VERIFYING", "DELIVERING"]).includes(current.state)) throw new ConnectorError("CONFLICT", "Delivery authority rejected: stale or terminal run", { retryable: false, operation: "delivery" });
     const scmSelection=this.database.getEntity<JsonValue>("run-delivery-selection",run.id) as unknown as ScmDeliverySelection|undefined;
     if(scmSelection&&this.connectorConfigurationFingerprint(scmSelection.scmConnectorId)!==scmSelection.contextFingerprint)throw new ConnectorError("CONFLICT","Reviewed SCM context changed before delivery",{retryable:false,operation:"delivery"});
+  }
+
+  private fenceDelivery(run: Run, operation: "verify" | "commit" | "branch" | "push" | "pull-request" | "complete", completedSnapshot=false): void {
+    this.assertDeliveryAuthority(run,operation,completedSnapshot);
     this.restoreLeaseAuthority(run);
     try {
       this.leaseAuthority.fence(run.id, run.leaseId, run.generation, operation, this.now().toISOString());
       this.persistLatestLeaseAudit(run.id);
+      if(completedSnapshot){
+        // Finish all audit/clock callbacks before the final pure authority checks.
+        const at=this.now().toISOString();
+        this.assertDeliveryAuthority(run,operation,true,at);
+        this.leaseAuthority.assertCurrent(run.id,run.leaseId,run.generation,operation,at);
+      }
     } catch (error) {
       this.persistLatestLeaseAudit(run.id);
       if (error instanceof LeaseFenceError) {
@@ -2344,17 +2357,23 @@ export class ControllerService {
   }
 
   /** Verification-specific physical consistency checks; generic native reads retain their contracts. */
-  private nativeSnapshotContext(run:Run,state:"VERIFYING"|"DELIVERING",verifiedBasis?:NativeSnapshotBasis):{basis:NativeSnapshotBasis;source:CandidateSource;preparation:SnapshotPreparation;verification:VerificationCommand[]} {
+  private nativeSnapshotContext(run:Run,state:"VERIFYING"|"DELIVERING",verifiedBasis?:NativeSnapshotBasis,completion?:{run:Run;task:Task}):{basis:NativeSnapshotBasis;source:CandidateSource;preparation:SnapshotPreparation;verification:VerificationCommand[]} {
     return this.database.transaction(()=>{
       this.nativeInteractions.assertPriorMutationOutcomesSettled(run.sessionId);
       const before=this.nativeSnapshotReturn(run,["authorized","consumed"]);
-      this.fenceDelivery(run,state==="VERIFYING"?"verify":"complete");
+      this.fenceDelivery(run,state==="VERIFYING"?"verify":"complete",completion!==undefined);
       const returned=this.nativeSnapshotReturn(run,["consumed"]);
       if(returned.id!==before.id||!isDeepStrictEqual(returned.action,{...before.action,state:"consumed"})||!isDeepStrictEqual(returned.returned,before.returned))this.snapshotRefusal("NATIVE_RECLAIM_ACTION_MISMATCH");
       if(!isDeepStrictEqual(returned.frozen,before.frozen))this.snapshotRefusal("NATIVE_DRIFT_POLICY_CHANGED");
       this.nativeInteractions.assertPriorMutationOutcomesSettled(run.sessionId);
     const current=this.database.getEntity<JsonValue>("run",run.id) as unknown as Run,stored=this.database.getCanonicalTask<JsonValue>(run.taskId),task=stored?.document as unknown as Task|undefined;
-    if(current.state!==state||!stored||task?.id!==run.taskId||task.currentRunId!==run.id||task.state!=="VERIFYING"||task.revision!==stored.revision)this.snapshotRefusal("LOCAL_REVIEW_CONTEXT_CHANGED");
+    if(!stored||!task||task.id!==run.taskId||task.currentRunId!==run.id||task.revision!==stored.revision)this.snapshotRefusal("LOCAL_REVIEW_CONTEXT_CHANGED");
+    if(completion){
+      const prior=completion.task;
+      if(state!=="DELIVERING"||current.state!=="COMPLETE"||!isDeepStrictEqual(current,completion.run)
+        ||task.state!=="REVIEW"||typeof prior.revision!=="number"||stored.revision!==prior.revision+1
+        ||!isDeepStrictEqual({...task,state:prior.state,revision:prior.revision,updatedAt:prior.updatedAt},prior))this.snapshotRefusal("LOCAL_REVIEW_CONTEXT_CHANGED");
+    }else if(current.state!==state||task.state!=="VERIFYING")this.snapshotRefusal("LOCAL_REVIEW_CONTEXT_CHANGED");
     const contract=this.database.getEntity<JsonValue>("run-contract",run.id) as unknown as TaskContract|undefined,currentContract=this.database.getTaskContract<JsonValue>(run.taskId);
     if(!contract||contract.revision!==current.contractRevision||!isDeepStrictEqual(json(contract),currentContract))this.snapshotRefusal("LOCAL_REVIEW_CONTEXT_CHANGED");
     const config=this.configuration.current(),repository=config.config.repositories.find(r=>r.id===(contract.workspace?.repositoryId??contract.delivery.repository)),profile=config.config.agentProfiles.find(p=>p.id===current.profileId),runner=config.config.runners.find(r=>r.id===current.runnerId);
@@ -2448,11 +2467,11 @@ export class ControllerService {
       sessionId:current.sessionId,
       generation:current.generation,
       leaseId:current.leaseId,
-      taskRevision:stored.revision,
+      taskRevision:completion?.task.revision??stored.revision,
       controlEpoch:control.epoch,
       controlRevision:control.revision,
       configRevision:config.revision,
-      contractHash:contentHash({contract,currentContract,task}),
+      contractHash:contentHash({contract,currentContract,task:completion?.task??task}),
       repositoryHash:contentHash(repository),
       profileHash:contentHash(profile),
       executionHash:contentHash({attempt:current.attempt,
@@ -2493,8 +2512,8 @@ export class ControllerService {
     });
   }
 
-  private assertNativeSnapshotBasis(run:Run,proof:NativeSnapshotProof,state:"VERIFYING"|"DELIVERING"):void {
-    const context=this.nativeSnapshotContext(run,state,proof.state==="VERIFIED"?proof.basis:undefined);
+  private assertNativeSnapshotBasis(run:Run,proof:NativeSnapshotProof,state:"VERIFYING"|"DELIVERING",completion?:{run:Run;task:Task}):void {
+    const context=this.nativeSnapshotContext(run,state,proof.state==="VERIFIED"?proof.basis:undefined,completion);
     // The persisted source is never allowed to choose a filesystem before current registration agrees.
     const persisted=this.currentNativeSnapshot(run.id),expected=proof.state==="CAPTURED"?{...proof,preparation:{...proof.preparation,checks:[]},checks:[]}:proof;
     if(!isDeepStrictEqual(persisted,expected)
@@ -2887,8 +2906,12 @@ export class ControllerService {
       try{
         snapshotProof=this.currentNativeSnapshot(run.id);
         if(!snapshotProof||!this.qualifiedNativeProof(snapshotProof))this.snapshotRefusal("VERIFIED_CANDIDATE_REQUIRED");
-        await this.assertNativeSnapshot(run,snapshotProof,"DELIVERING");
-        if(contract.delivery.type!=="none")this.snapshotRefusal("VERIFIED_DELIVERY_UNAVAILABLE");
+        if(contract.delivery.type==="none")await this.assertNativeSnapshot(run,snapshotProof,"DELIVERING");
+        else{
+          this.assertNativeSnapshotBasis(run,snapshotProof,"DELIVERING");
+          if(contract.delivery.type!=="commit"||this.agentAdapters.get(run.profileId) instanceof RemoteNativeAdapter)this.snapshotRefusal("VERIFIED_DELIVERY_UNAVAILABLE");
+          // The strict owner performs retained/source checks at actual observation and send boundaries.
+        }
       }catch(error){
         // This preflight cannot send native delivery. Prior uncertain commands stay barriers.
         if(this.snapshotReceiptsSettled(run.id))this.nativeInteractions.acknowledgeSettledMutationOutcome(run.sessionId);
@@ -2901,13 +2924,16 @@ export class ControllerService {
     }
     if(contract.delivery.type==="none"||contract.delivery.type==="commit") {
       const remote=this.agentAdapters.get(run.profileId) instanceof RemoteNativeAdapter;
+      let snapshotCommitInput:LocalSnapshotCommitInput|undefined;
       try {
         const workspace=remote?this.database.getEntity<JsonValue>("workspace-handle",run.id) as unknown as WorkspaceHandle|undefined:this.workspaces.get(run.worktree);
         if(!workspace)throw new WorkspacePolicyError("WORKSPACE_UNAVAILABLE","Managed worktree requires restoration or inspection");
-        if(snapshotProof)await this.assertNativeSnapshot(run,snapshotProof,"DELIVERING");
-        const resultFiles=remote?await this.remoteRequest(run.runnerId,{type:"native.run_files",runId:run.id},run):await this.workspaces.resultFiles(workspace);
+        const strictCommit=snapshotProof&&contract.delivery.type==="commit"&&!remote;
+        if(snapshotProof&&!strictCommit)await this.assertNativeSnapshot(run,snapshotProof,"DELIVERING");
+        // The strict owner supplies its fully qualified manifest, including observed-commit recovery.
+        const resultFiles=strictCommit?[]:remote?await this.remoteRequest(run.runnerId,{type:"native.run_files",runId:run.id},run):await this.workspaces.resultFiles(workspace);
         if(!Array.isArray(resultFiles)||resultFiles.length>5000||resultFiles.some(file=>typeof file!=="string"||file.length>4000||/^[/\\]|^[a-z]:/i.test(file)||file.split(/[\\/]/).some(segment=>segment===".."||segment===".git"))||new Set(resultFiles).size!==resultFiles.length)throw new AdapterContractError("REMOTE_RESULT_INVALID","Owning Runner returned an invalid change manifest");
-        if(snapshotProof)await this.assertNativeSnapshot(run,snapshotProof,"DELIVERING");
+        if(snapshotProof&&!strictCommit)await this.assertNativeSnapshot(run,snapshotProof,"DELIVERING");
         let files=resultFiles as string[];if(remote)assertPublicationScope(files,workspace.scopePaths);
         let commit:Awaited<ReturnType<LocalGitDelivery["commit"]>>|undefined;
         if(contract.delivery.type==="commit"){
@@ -2916,7 +2942,16 @@ export class ControllerService {
             commit=remoteCommitResult(await this.remoteRequest(run.runnerId,{type:"native.run_commit",runId:run.id},run,`native-commit:${run.id}:${run.generation}`),{runId:run.id,generation:run.generation,branch:workspace.branch});
             this.fenceDelivery(run,"commit");assertPublicationScope(commit.files,workspace.scopePaths);files=commit.files;
           }else{
-            const controller=new AbortController(),settled=(async()=>{commit=await this.localGitDelivery.commit({runId:run.id,generation:run.generation,leaseId:run.leaseId,workspace,message:commitMessage(contract.goal),assertAuthority:()=>this.fenceDelivery(run,"commit"),signal:controller.signal});})();
+            const controller=new AbortController();
+            if(snapshotProof){
+              const captured=snapshotProof;
+              snapshotCommitInput={runId:run.id,generation:run.generation,leaseId:run.leaseId,workspace,message:commitMessage(contract.goal),signal:controller.signal,
+                proof:{id:captured.id,hash:contentHash(captured)},candidate:captured.snapshot,
+                assertAuthority:()=>{this.assertNativeSnapshotBasis(run,captured,"DELIVERING");this.fenceDelivery(run,"commit");},
+                assertSource:()=>this.assertNativeSnapshot(run,captured,"DELIVERING"),
+                assertSnapshot:async()=>{this.assertNativeSnapshotBasis(run,captured,"DELIVERING");await this.verificationSnapshots.assertSnapshot(captured.snapshot);this.assertNativeSnapshotBasis(run,captured,"DELIVERING");}};
+            }
+            const settled=(async()=>{commit=snapshotCommitInput?await this.localGitDelivery.commitSnapshot(snapshotCommitInput):await this.localGitDelivery.commit({runId:run.id,generation:run.generation,leaseId:run.leaseId,workspace,message:commitMessage(contract.goal),assertAuthority:()=>this.fenceDelivery(run,"commit"),signal:controller.signal});})();
             this.localCommands.set(run.id,{controller,settled});try{await settled;files=commit!.files;}finally{if(this.localCommands.get(run.id)?.controller===controller)this.localCommands.delete(run.id);}
           }
         }
@@ -2929,16 +2964,20 @@ export class ControllerService {
           const task=current.document as unknown as Task;
           if(task.currentRunId!==run.id||task.state!=="VERIFYING")throw new ConnectorError("CONFLICT","Task authority changed before local completion");
           assertRunTransition(run.state,"COMPLETE");run.state="COMPLETE";run.endedAt=this.now().toISOString();
-          this.saveAdvancedRun(run,"DELIVERING");this.database.saveEntity("run-result",run.id,json(result));
+          this.saveAdvancedRun(run,"DELIVERING");
+          const completedSnapshotRun=snapshotProof&&commit?structuredClone(run):undefined;
+          this.database.saveEntity("run-result",run.id,json(result));
           this.tasks.execute({id:`run:${run.id}:review`,taskId:run.taskId,baseRevision:current.revision,actor:"run-worker",command:{type:"task.transition",state:"REVIEW"}});
           this.nativeInteractions.acknowledgeTaskRevision(run);
+          if(snapshotProof&&completedSnapshotRun)this.assertNativeSnapshotBasis(run,snapshotProof,"DELIVERING",{run:completedSnapshotRun,task});
         });
         this.fleetEvents.publish("run.changed",run.id,{id:run.id,state:run.state});
         return {waiting:false,run,task:this.database.getCanonicalTask<JsonValue>(run.taskId)!.document as unknown as Task,deliveries:[]};
       } catch (error) {
-        // Local snapshot-backed none completion sends no native delivery, even on metadata failure.
-        // Unsettled or malformed receipts still retain this lane's uncertainty barrier.
-        if (snapshotProof && contract.delivery.type === "none" && !remote && this.snapshotReceiptsSettled(run.id)) {
+        // Only a factual no-send or fully observed commit settles this lane on metadata failure.
+        // Unknown strict outcomes and earlier foreign native markers remain barriers.
+        if (snapshotProof && !remote && this.snapshotReceiptsSettled(run.id)
+          && (contract.delivery.type === "none" || snapshotCommitInput && this.localGitDelivery.snapshotCommitOutcome(snapshotCommitInput)!=="unknown")) {
           this.nativeInteractions.acknowledgeSettledMutationOutcome(run.sessionId);
         }
         throw error;

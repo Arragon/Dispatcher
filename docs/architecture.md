@@ -1929,7 +1929,22 @@ their errors remain outside that boundary.
 Snapshot-backed local delivery.none can finish at Task REVIEW. Known no-send
 manifest or completion-metadata failures settle only the current mutation lane
 when all snapshot receipts are valid and settled; foreign uncertainty remains.
-Native commit/PR and remote snapshot verification still refuse before delivery.
+Qualified local snapshot commit uses LocalGitDelivery.commitSnapshot with the
+complete current proof identity. WorkspaceManager supplies complete readonly
+Git observations under the captured native environment; the existing managed
+process and command journal own stage/commit. Proof-scoped receipts distinguish
+successive HUMAN candidates within one Run. Fully observed outcomes requalify
+current authority and retained contents before metadata recovery without another
+commit; unknown outcomes retain their mutation barriers.
+
+Completion rechecks the full proof basis after Run/result/Task writes in the
+same transaction. The final readonly qualifier permits only the intended
+COMPLETE/REVIEW, Task revision and timestamp changes; other Task, control, proof
+or execution changes roll the transaction back. Audited lease writes and clock
+callbacks precede a final pure native/owner/lease qualification; legitimate
+heartbeat expiry renewal is refreshed before the expected Run is captured.
+Native PR and remote snapshot
+verification/delivery remain unavailable.
 This active proof does not qualify completed bound canonical acceptance, and
 actual unsupported native exclusion capability remains unavailable.
 

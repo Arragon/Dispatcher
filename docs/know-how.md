@@ -1408,3 +1408,21 @@
   and settle every started child on failure. A failed process.kill(pid,0) proves
   absence only for ESRCH; propagate EPERM and other errors instead of recording
   successful drain.
+
+- Strict readonly Git diff requires diff.autoRefreshIndex=false: disabling optional
+  locks alone does not prevent index stat refresh. Authored ancestry comes from
+  the pinned raw commit body and its canonical Git object hash, including exact
+  terminal bytes; revision traversal can honor grafts even with no-replace-objects.
+- A successful snapshot commit changes source HEAD and possibly its fingerprint.
+  Metadata retry must requalify the observed result and retained snapshot instead
+  of repeating the obsolete pre-stage source assertion. Final completion checks
+  belong after metadata writes inside the transaction, accounting only for the
+  intended Run/Task transition. Lease audit persistence is itself a write: finish
+  it and clock callbacks before final pure permission/lease checks. The readonly
+  lease qualifier must not emit another audit record.
+- Incomplete legacy local-git-delivery receipts lack reliable Run/generation
+  descriptors. Strict snapshot admission inventories all legacy parent rows;
+  unscopable uncertainty can block it globally, while validated COMPLETE remains
+  history. No automatic clearing or schema migration is implied. The existing
+  document_json NOT NULL constraint means corrupt-state fixtures use JSON null,
+  missing state or malformed TEXT, not an impossible SQL NULL column value.

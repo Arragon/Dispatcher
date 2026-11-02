@@ -3,6 +3,23 @@
 Local implementation/evidence backlog; none of these rows claims a passed
 Gate. Continue independent units without bypassing data/control safeguards.
 
+## Current checkpoint 2026-11-02: strict local snapshot delivery
+
+Controller now completes qualified local native snapshot commits using the actual
+authored SHA, preserving proof-scoped command facts and unknown-outcome barriers.
+A fully observed commit can recover failed completion metadata without another
+stage/commit. Final current permission/lease checks follow transactional writes.
+The frozen final functional tuple passed `mise exec -- pnpm check`: 224 files /
+5366 tests and all non-test gates; scoped review has no remaining Critical or
+Important findings. Earlier failed/cancelled runs remain historical evidence.
+
+The two original 10-second timeouts passed after removing unnecessary physical
+preflight reads; deadlines and assertions were preserved. Missing older external
+raw evidence remains unavailable. This is local fixture/real-Git verification,
+not actual provider, native writer exclusion, bound canonical acceptance or
+release qualification. Native PR/remote snapshot delivery and the original
+roadmap remain open. Next priority is staged macOS startup/browser/recovery.
+
 ## Current checkpoint 2026-10-22: authorized continuation
 
 The user explicitly resumed the complete plan and superseded the historical
