@@ -409,6 +409,16 @@ Accepted milestone baselines are copied into `benchmarks/baselines/` so they
 remain reviewable after local runtime data is cleaned.
 
 
+## Check native capabilities before publication
+
+The publication page describes compatible execution limits. Select an account and
+expand “原生交互能力与限制” to read its backend/region capability evidence; a
+server-reviewed backend narrows the view. This is a read-only account query.
+Pending, failed or mismatched configuration reads leave current capabilities
+unconfirmed; “重新读取能力说明” retries without changing the draft.
+Strict native-session/GUI requirements are not available until their server
+admission and frozen execution contracts are integrated and qualified.
+
 ## Local result review
 
 For a completed guarded local delivery.none Run, Task details shows the saved

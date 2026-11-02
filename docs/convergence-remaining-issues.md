@@ -3,6 +3,33 @@
 Local implementation/evidence backlog; none of these rows claims a passed
 Gate. Continue independent units without bypassing data/control safeguards.
 
+## 2026-11-02 publication capability view
+
+The existing publication page now explains compatible execution limits and reads
+account-scoped backend/region evidence on demand through the existing profile
+console API and capability renderer. Exact account/config revision fences,
+request cancellation and failed-refresh handling prevent old evidence from
+appearing current. Publication drafts, payloads, model routing and confirmation
+owners are unchanged. This increment does not complete INH-1527: strict native
+requirements still need server admission, frozen execution/old-writer protection
+and qualified native tuples. CV-09/CV-11 and real client/release Gates stay open.
+
+Two direct REDs became GREEN; three focused web files pass32 tests and the Web
+production build passes. An owned fresh Controller with a synthetic generic-cli
+account displayed backend/region/unknown reasons on desktop and390px; draft text
+survived refresh and scrollWidth matched390px. Only the session login wrote via
+HTTP; capability reads were GETs. Closed-host SQLite inspection confirms zero
+canonical Tasks/Runs. The temporary harness called a nonexistent process-audit
+method at shutdown and exited1 before graceful stop. Its PID/listener are gone;
+that harness issue is preserved, corrected to the existing inventory API, and
+browser acceptance was not repeated. No real provider/native qualification is
+claimed. The first full check passed all non-test gates and5938 tests but one
+existing Web text query matched the added helper too. Only the UI sentence was
+changed; original assertions stayed intact. All20 Web files/304 cases now pass,
+and affected-only re-review has no findings. Corrected final `pnpm check` passes
+all non-test gates and271 files/5939 tests (460.95s test phase), exit0. All three
+final functional hashes match the reviewed implementation and wording fix.
+
 ## 2026-11-02 orphan inspection and current-owner maintenance
 
 The original bounded orphan report and read-only CLI are restored. Authenticated
