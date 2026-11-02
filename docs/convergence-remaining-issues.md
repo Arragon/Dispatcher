@@ -3,6 +3,38 @@
 Local implementation/evidence backlog; none of these rows claims a passed
 Gate. Continue independent units without bypassing data/control safeguards.
 
+## 2026-11-02 current package and owning Runner final admission
+
+A clean1178f46 package is retained at the fixed1178f46-macos-a2 release path.
+Schema19/writer15, relocated HTML/assets/authenticated API/PTY and manifest
+verification pass. Actual packaged TCP HTTP created a compatible NEEDS_SPEC
+inbox Task, retained its body/intent across restart, and preserved identical Task
+and intent bytes in a database-only archive/restored copy. Both restore barriers
+remain; the packaged CLI rejects activation with RESTORE_RECONCILIATION_REQUIRED.
+This is package/local-inbox evidence, without a provider or restored-service Gate.
+
+The main-to-candidate617-file inventory and integration review found a Runner
+start boundary regression: STARTING was persisted before awaited CLI credentials,
+but the Runner supplied no final beforeSend admission. Actual GrokAdapter
+credential-gated expiry/revocation tests each observed an unwanted backend start.
+The owning Runner now rechecks the original envelope lease and current registration
+at that final boundary. Existing uncertainty/cancellation and post-start checks
+remain. Original test bodies are byte-identical;35 Runner and25 native CLI cases
+pass, and affected re-review closes I1. The full gate passes build/typecheck/
+lint/boundaries and5953 tests, but two unchanged Devin producer-entry timing
+cases fail under the full workload; their one focused rerun passes2/2. The
+full result remains failed. The first attempt stopped at two unused imports in
+the owned acceptance helper, fixed without changing lint rules; it ran no tests.
+The1178f46 package predates this fix; its local-inbox observations do not qualify
+the repaired Runner or a subsequent source SHA.
+
+Review M1 is explicitly deferred: doctor still reports the former24.12 Node
+floor instead of24.22.1. It is a diagnostic mismatch, not an execution waiver.
+The integration review records its actual coverage and does not certify every
+line/provider codec or reconstruct historical NS-035 provenance. Exact remote
+CI, the final single review entrypoint, real native/GUI and complete restore
+reconciliation/activation remain open.
+
 ## 2026-11-02 publication interaction requirement integration
 
 The existing publication workflow now carries compatible/native-session/specified-

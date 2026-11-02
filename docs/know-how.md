@@ -1482,3 +1482,8 @@
 - The native feature flag governs new dispatch. Continuation rechecks the frozen
   requirement and current capability evidence independently; disabling the feature
   must never become a shortcut around human-control/epoch guards.
+- An Adapter's durable STARTING save may precede awaited credential or executable
+  preparation. The owning Runner must also pass its synchronous lease and
+  registration admission through beforeSend; a persistence check alone cannot
+  fence a revocation during preparation. An unconfirmed pre-spawn cancellation
+  does not authorize the original pending send.

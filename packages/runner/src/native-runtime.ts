@@ -153,7 +153,7 @@ export class NativeRunnerRuntime {
       save: session => {
         const record = this.records.get(session.runId);
         if (!record || record.profileId !== session.profileId || record.workspace?.path !== session.workspacePath) throw new NativeRunnerError("SESSION_AUTHORITY_MISMATCH", "Session does not belong to this execution");
-        // Adapters persist STARTING after credential/config awaits, immediately before spawn.
+        // STARTING may precede async preparation; beforeSend also fences the actual spawn.
         if (session.state === "STARTING") {
           this.authority.fence(record.runId, record.lease.leaseId, record.lease.generation, "native-spawn", this.now().toISOString());
           if (this.registration(this.profile(record.profileId).profile, this.repository(record.plan.repositoryId)) !== record.registrationHash) throw new NativeRunnerError("SELECTION_CHANGED", "Runner registration changed before native spawn");
@@ -412,7 +412,10 @@ export class NativeRunnerRuntime {
     record.state = "STARTING"; record.descriptorHash = descriptorHash; record.startCommandHash = remoteCommandHash(envelope); this.save(record);
     this.attached.add(record.runId);
     try {
-      const session = await adapter.start({ runId, workspacePath: record.workspace!.path, backendId: execution.selection.backendId, prompt: execution.prompt, executionSelection: execution.selection });
+      const session = await adapter.start({ runId, workspacePath: record.workspace!.path, backendId: execution.selection.backendId, prompt: execution.prompt, executionSelection: execution.selection, beforeSend: () => {
+        this.fence(record, envelope);
+        if (this.registration(this.profile(record.profileId).profile, this.repository(record.plan.repositoryId)) !== record.registrationHash) throw new NativeRunnerError("SELECTION_CHANGED", "Runner registration changed before native spawn");
+      } });
       this.fence(record, envelope); record.session = session; record.state = "RUNNING"; this.save(record); return structuredClone(session);
     } catch (error) {
       if (record.session) { try { await adapter.cancel(record.session.id); } catch { /* Uncertain ownership remains fenced and visible. */ } }

@@ -3,7 +3,7 @@ import { chmodSync, existsSync, mkdtempSync,mkdirSync, readFileSync, rmSync, wri
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
-import { CodexAdapter, type SessionStore } from "@dispatcher/adapters";
+import { CodexAdapter, GrokAdapter, type SessionStore } from "@dispatcher/adapters";
 import { defaultDispatcherConfig } from "@dispatcher/config";
 import type { AccountModelCatalog, ExecutionSelection,GitDeliveryTarget } from "@dispatcher/domain";
 import { createEnvelope, type CommandPayload } from "@dispatcher/protocol";
@@ -231,6 +231,41 @@ it("rechecks expiry after durable STARTING storage returns and before the backen
   });
   try { await expect(f.start()).rejects.toMatchObject({ code: "LEASE_EXPIRED" }); expect(f.starts()).toBe(0); }
   finally { delayed.mockRestore(); }
+});
+
+it.each(["expiry", "revocation"] as const)("fences %s during CLI credential preparation after STARTING persistence", async reason => {
+  const f = fixture(); f.runtime.close();
+  const entered = Promise.withResolvers<void>(), credential = Promise.withResolvers<string>();
+  let starts = 0, sequence = 0;
+  const catalog = { ...f.catalog, providerId: "grok", backendId: "grok-cli-json" };
+  const runtime = new NativeRunnerRuntime({ ...f.options, createAdapter: (_profile, store) => {
+    const adapter = new GrokAdapter({ id: "p", alias: "P", executable: process.execPath, credentialRef: "secret://grok/fixture" }, {
+      start: () => {
+        starts++;
+        return { status: () => "running", cancel: async () => undefined, result: async () => ({ state: "waiting", summary: "fixture", events: [] }) };
+      },
+    }, store, async () => { entered.resolve(); return credential.promise; });
+    adapter.modelCatalog = async () => structuredClone(catalog);
+    return adapter;
+  } });
+  cleanups.push(() => runtime.close());
+  f.config.agentProfiles = [{ id: "p", alias: "P", provider: "grok", runnerId: "remote", settings: { executable: process.execPath, credentialRef: "secret://grok/fixture" } }];
+  runtime.configuration.applyPlan(runtime.configuration.buildPlan(f.config, "fixture", "cli").id, { confirmed: true });
+  const call = (payload: CommandPayload) => runtime.handle(payload, createEnvelope({ kind: "command", runnerId: "remote", traceId: "trace", messageId: `credential-${++sequence}`, sequence, leaseId: "lease", generation: 1, leaseExpiresAt: "2026-10-16T12:01:00Z", payload }));
+  await call({ type: "native.workspace_prepare", runId: "run", profileId: "p", plan: f.plan, verificationCommandIds: ["check"] });
+  const pending = call({ type: "run.start", runId: "run", execution: { version: 1, profileId: "p", workspaceId: "run", prompt: "write result", selection: { ...f.selection, providerId: "grok", backendId: "grok-cli-json" } } }).then(() => undefined, error => error as unknown);
+  try {
+    await Promise.race([entered.promise, pending.then(error => { throw error ?? Error("Start completed before credential preparation"); })]);
+    expect(runtime.database.listEntities("adapter-session")).toMatchObject([{ state: "STARTING" }]);
+    if (reason === "expiry") f.expire();
+    else {
+      await expect(call({ type: "lease.revoke", leaseId: "lease", generation: 1, reason: "operator cancelled during preparation" })).rejects.toMatchObject({ code: "COMMAND_OUTCOME_UNKNOWN" });
+      expect(runtime.database.getEntity("native-execution", "run")).toMatchObject({ lease: { revokedAt: expect.any(String) } });
+    }
+    credential.resolve("fixture-local-key");
+    expect(await pending).toMatchObject({ code: reason === "expiry" ? "LEASE_EXPIRED" : "LEASE_REVOKED" });
+    expect(starts).toBe(0);
+  } finally { credential.resolve("fixture-local-key"); await pending; }
 });
 
 it("ignores foreign native paths and rejects cross-device repository use and scope widening", async () => {
