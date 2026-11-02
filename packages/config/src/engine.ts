@@ -62,6 +62,7 @@ function inferRisk(before: DispatcherConfig, after: DispatcherConfig): ConfigRis
     before.controller.adminStrategy!==after.controller.adminStrategy || before.controller.listen!==after.controller.listen || before.controller.port!==after.controller.port || before.controller.deploymentMode!==after.controller.deploymentMode ||
     JSON.stringify(before.runners.map(r=>({id:r.id,mode:r.mode,credentialRef:r.credentialRef})))!==JSON.stringify(after.runners.map(r=>({id:r.id,mode:r.mode,credentialRef:r.credentialRef}))) ||
     JSON.stringify(before.policies) !== JSON.stringify(after.policies) ||
+    JSON.stringify(before.nativeInteraction)!==JSON.stringify(after.nativeInteraction) ||
     JSON.stringify(before.rhizaIngress) !== JSON.stringify(after.rhizaIngress)
   ) {
     return "privileged";
@@ -80,9 +81,9 @@ function inferRisk(before: DispatcherConfig, after: DispatcherConfig): ConfigRis
 
 function changes(before: DispatcherConfig, after: DispatcherConfig): ConfigChange[] {
   const result: ConfigChange[] = [];
-  for (const key of Object.keys(after) as Array<keyof DispatcherConfig>) {
+  for (const key of new Set([...Object.keys(before),...Object.keys(after)]) as Set<keyof DispatcherConfig>) {
     if (JSON.stringify(before[key]) !== JSON.stringify(after[key])) {
-      result.push({ op: "replace", path: `/${key}`, before: asJson(before[key]), after: asJson(after[key]) });
+      result.push({ op: "replace", path: `/${key}`, before: asJson(before[key]??null), after: asJson(after[key]??null) });
     }
   }
   return result;

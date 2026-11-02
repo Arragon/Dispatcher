@@ -18,8 +18,10 @@ export const RHIZA_OBSERVATION_SCHEMA_NAME = "rhiza_durable_observation_writer_p
 export const RHIZA_CONTROL_SCHEMA_NAME = "rhiza_external_control_writer_protocol";
 export const RHIZA_INPUT_SCHEMA_NAME = "rhiza_external_input_writer_protocol";
 export const RHIZA_LINEAGE_SCHEMA_NAME = "rhiza_explicit_reassignment_writer_protocol";
-export function databaseWriterProtocol(db:DatabaseSync):1|2|3|4|5|6|7|8|9|10|11|12|13|14 {
+export const INTERACTION_REQUIREMENT_SCHEMA_NAME="frozen_interaction_requirement_writer_protocol";
+export function databaseWriterProtocol(db:DatabaseSync):1|2|3|4|5|6|7|8|9|10|11|12|13|14|15 {
   if(!hasTable(db,"schema_migrations"))return 1;
+  if(db.prepare("SELECT name FROM schema_migrations WHERE version=19").get()?.name===INTERACTION_REQUIREMENT_SCHEMA_NAME)return 15;
   if(db.prepare("SELECT name FROM schema_migrations WHERE version=18").get()?.name===RHIZA_LINEAGE_SCHEMA_NAME)return 14;
   if(db.prepare("SELECT name FROM schema_migrations WHERE version=17").get()?.name===RHIZA_INPUT_SCHEMA_NAME)return 13;
   if(db.prepare("SELECT name FROM schema_migrations WHERE version=16").get()?.name===RHIZA_CONTROL_SCHEMA_NAME)return 12;
@@ -66,7 +68,7 @@ export function assertDatabaseLocationOperational(path:string):void {
 
 // SQLite keeps these triggers when an older process ignores the migration ledger.
 // That process has no matching connection-local function, so DML fails closed.
-export function installWriterGate(db:DatabaseSync,protocol:1|2|3|4|5|6|7|8|9|10|11|12|13|14=1):void {
+export function installWriterGate(db:DatabaseSync,protocol:1|2|3|4|5|6|7|8|9|10|11|12|13|14|15=1):void {
   for(const row of db.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'").all()) {
     const table=String(row.name);
     if(!/^[a-z_]+$/.test(table))throw new DatabaseCompatibilityError("DATABASE_SCHEMA_UNSUPPORTED");
@@ -103,7 +105,7 @@ export function upgradeRhizaObservationWriterGate(db:DatabaseSync):void {replace
 export function upgradeRhizaControlWriterGate(db:DatabaseSync):void {replaceWriterGate(db,12);}
 export function upgradeRhizaInputWriterGate(db:DatabaseSync):void {replaceWriterGate(db,13);}
 export function upgradeRhizaLineageWriterGate(db:DatabaseSync):void {replaceWriterGate(db,14);}
-function replaceWriterGate(db:DatabaseSync,protocol:2|3|4|5|6|7|8|9|10|11|12|13|14):void {
+function replaceWriterGate(db:DatabaseSync,protocol:2|3|4|5|6|7|8|9|10|11|12|13|14|15):void {
   for(const row of db.prepare("SELECT name FROM sqlite_schema WHERE type='trigger' AND name GLOB 'writer_gate_*'").all()){
     const name=String(row.name);
     if(!/^writer_gate_[a-z_]+_(insert|update|delete)$/.test(name))throw new DatabaseCompatibilityError("DATABASE_SCHEMA_UNSUPPORTED");
@@ -111,3 +113,5 @@ function replaceWriterGate(db:DatabaseSync,protocol:2|3|4|5|6|7|8|9|10|11|12|13|
   }
   installWriterGate(db,protocol);
 }
+
+export function upgradeInteractionRequirementWriterGate(db:DatabaseSync):void {replaceWriterGate(db,15);}

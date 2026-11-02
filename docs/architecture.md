@@ -685,6 +685,24 @@ verification command descriptions and physical repository roots survive later
 configuration edits. Local workspace repository IDs are separate from remote
 SCM owner/name values.
 
+Publication drafts may carry the existing versioned InteractionRequirement. An
+explicit requirement, or a stricter configured profile policy, is assessed for execution against
+the selected backend/current model-context fingerprint and frozen in the reviewed
+ExecutionSelection and Run. Preview, commit, final synchronous start admission and
+continuation preserve the requirement; model/account/context changes require review.
+Omission retains compatible behavior. Compatible create-only requests may remain
+intent on an inbox/NEEDS_SPEC Task, with no Run or native preparation; later dispatch
+requires a fresh owning execution review. Strict profile policies require an explicit
+native feature configuration; its privileged ConfigPlan flag controls new dispatch,
+while existing control/epoch guards and frozen continuation requirements remain
+independent. Legacy reroute reuses its fresh admission callback to reject any
+requirement-bearing Run or a strict target policy before stopping or replacing
+its execution; a new publication
+review must authorize the next choice. Unqualified native/GUI capability blocks publication without changing
+account, execution location or mode. Remote requirement enforcement is unavailable
+and rejected explicitly. Schema19/writer15 prevents older writers from erasing this
+new frozen contract; migrations1–18 and RHIZA wire/artifact contracts are unchanged.
+
 Native model catalogs stay inside each execution adapter. Codex uses isolated
 read-only app-server RPCs; Cursor, Qoder CN, Grok and Antigravity use fixed,
 bounded native CLI queries. OpenCode uses an owned private v2 service with

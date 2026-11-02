@@ -61,7 +61,7 @@ it("rolls back the convergence writer upgrade and keeps the previous connection 
     expect(db.getEntity("receipt","temporary")).toBeUndefined();
     expect(()=>db.saveEntity("receipt","old-writer",{id:"old-writer"})).not.toThrow();
     db.migrate();
-    expect(db.schemaVersion()).toBe(18);
+    expect(db.schemaVersion()).toBe(19);
     expect(db.getEntity("receipt","old-writer")).toEqual({id:"old-writer"});
   } finally {db.close();}
 });
@@ -73,6 +73,13 @@ it("restores connection writer state when an outer transaction rolls back a succ
     expect(db.schemaVersion()).toBe(5);
     expect(()=>db.saveEntity("receipt","after-rollback",{id:"after-rollback"})).not.toThrow();
     db.migrate();
-    expect(db.schemaVersion()).toBe(18);
+    expect(db.schemaVersion()).toBe(19);
   } finally {db.close();}
+});
+
+it("fences an already-open writer14 before a frozen interaction requirement can be erased",()=>{
+ const root=mkdtempSync(join(tmpdir(),"dispatcher-native-requirement-writer-")),path=join(root,"db.sqlite"),db=new DispatcherDatabase(path,migrations.filter(m=>m.version<=18)),old=new DatabaseSync(path);old.function("dispatcher_writer_protocol",()=>14);
+ try{old.prepare("INSERT INTO entities(kind,id,document_json,updated_at) VALUES ('receipt','before','{}','now')").run();db.migrate();expect(db.schemaVersion()).toBe(19);db.saveEntity("receipt","frozen",{interactionRequirement:{version:1,mode:"native-gui",profileId:"p",backendId:"codex-app-server",surface:"desktop",executionLocation:"managed-worktree"}});
+ expect(()=>old.prepare("UPDATE entities SET document_json='{}' WHERE kind='receipt' AND id='frozen'").run()).toThrow(/DATABASE_WRITER_UNSUPPORTED/);expect(db.getEntity("receipt","frozen")).toMatchObject({interactionRequirement:{mode:"native-gui",surface:"desktop"}});expect(()=>new DispatcherDatabase(path,migrations.filter(m=>m.version<=18))).toThrowError(expect.objectContaining({code:"DATABASE_SCHEMA_UNSUPPORTED"}));
+ }finally{old.close();db.close();rmSync(root,{recursive:true,force:true});}
 });

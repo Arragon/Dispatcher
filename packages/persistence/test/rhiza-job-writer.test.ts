@@ -10,7 +10,7 @@ it("rejects protocol-eight execution writers that do not preserve RHIZA Context/
   try {
     old.saveEntity("fixture", "retained", { id: "retained" }); const current = new DispatcherDatabase(path);
     try {
-      expect(current.schemaVersion()).toBe(18); expect(databaseWriterProtocol(current.handle)).toBe(14);
+      expect(current.schemaVersion()).toBe(19); expect(databaseWriterProtocol(current.handle)).toBe(15);
       expect(() => old.saveEntity("fixture", "old", {})).toThrow("DATABASE_WRITER_UNSUPPORTED");
       expect(() => new DispatcherDatabase(path, previous)).toThrowError(expect.objectContaining({ code: "DATABASE_SCHEMA_UNSUPPORTED" }));
       expect(current.getEntity("fixture", "retained")).toEqual({ id: "retained" });

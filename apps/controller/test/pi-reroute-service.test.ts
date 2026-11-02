@@ -6,7 +6,7 @@ import type {RepositoryConfig,SecretStore} from "@dispatcher/config";
 import {join} from "node:path";
 import {afterEach,expect,it,vi} from "vitest";
 import type {AgentAdapter,CodexBackend} from "@dispatcher/adapters";
-import type {Run,Task} from "@dispatcher/domain";
+import type {Run,Task,ExecutionSelection} from "@dispatcher/domain";
 import {InteractionStore} from "@dispatcher/persistence";
 import {piRpcFixture} from "../../../packages/adapters/test/fixtures/pi-rpc.js";
 import {ControllerService} from "../src/service.js";
@@ -27,7 +27,7 @@ afterEach(async()=>{
  }}
 });
 
-async function fixture(initialProfile="codex",registration:Pick<RepositoryConfig,"verificationCommands"|"snapshotVerification">={verificationCommands:[]}){
+async function fixture(initialProfile="codex",registration:Pick<RepositoryConfig,"verificationCommands"|"snapshotVerification">={verificationCommands:[]},frozenCompatibleRequirement=false){
  const f=piRpcFixture(roots,"exec-ok"),observations:unknown[]=[];captures.set(f.root,{observations});
  const record=(kind:string,value:unknown)=>{if(process.env.DISPATCHER_CANONICAL_SNAPSHOT_EVIDENCE)observations.push({kind,at:new Date().toISOString(),value});};
  const secrets=new Map<string,string>(),metadata=(reference:string)=>({reference,backend:"encrypted-local" as const,exists:secrets.has(reference)});
@@ -49,6 +49,10 @@ async function fixture(initialProfile="codex",registration:Pick<RepositoryConfig
  config.repositories=[{id:"repo",root:f.scope.workspacePath,defaultBaseRef:"main",scopePaths:[],...registration}];
  const plan=service.configuration.buildPlan(config,"fixture","web"),applied=await service.app.inject({headers,method:"POST",url:`/api/config/plans/${plan.id}/apply`,payload:{confirmed:true}});
  expect(applied.statusCode,applied.body).toBe(200);
+ if(frozenCompatibleRequirement){
+  const compiler=service as unknown as {compileLegacyRunSelection:(run:Run,repositoryId:string,adapter:AgentAdapter)=>ExecutionSelection},compile=compiler.compileLegacyRunSelection.bind(service);
+  vi.spyOn(compiler,"compileLegacyRunSelection").mockImplementationOnce((...args)=>{const selection=compile(...args);return {...selection,interactionRequirement:{version:1,profileId:selection.profileId,backendId:selection.backendId,mode:"compatible",executionLocation:"managed-worktree"}};});
+ }
  const now=new Date().toISOString(),taskId="task";
  service.tasks.execute({id:"create-task",taskId,baseRevision:0,actor:"fixture",command:{type:"task.create",task:{id:taskId,projectId:"fixture",title:"Pi reroute fixture",state:"READY",labels:[],createdAt:now,updatedAt:now},bindings:[]}});
  service.database.saveTaskContract(taskId,{version:1,revision:1,goal:"Frozen reroute goal",scope:["README.md"],acceptanceCriteria:["done"],verification:[],constraints:[],delivery:{type:"none",repository:"repo",baseBranch:"main"}});
@@ -119,4 +123,14 @@ it("keeps an old Run's missing preparation marker absent when replacing it under
  const f=await fixture();f.service.database.handle.prepare("DELETE FROM entities WHERE kind='run-snapshot-verification-config' AND id=?").run(f.old.id);
  const config=f.service.configuration.current().config;config.repositories[0]!.snapshotVerification={version:1,id:"new",preparationCommandIds:[]};await f.service.configuration.applyPlan(f.service.configuration.buildPlan(config,"owner","cli").id,{confirmed:true});
  const result=await f.service.semanticTools.execute("run.reroute",{target:f.old.id,profileId:"pi"},context) as unknown as {run:Run};expect(result.run.state,result.run.failureReason).toBe("ACTIVE");expect(f.service.database.getEntity("run-snapshot-verification-config",result.run.id)).toBeUndefined();
+});
+
+it.each(["frozen-source","strict-target"] as const)("requires fresh publication review before legacy reroute: %s",async kind=>{
+ const f=await fixture("codex",{verificationCommands:[]},kind==="frozen-source");
+ if(kind==="frozen-source")expect(f.old.executionSelection?.interactionRequirement).toMatchObject({mode:"compatible",profileId:"codex"});
+ else {const config=structuredClone(f.service.configuration.current().config);config.nativeInteraction={enabled:true};config.agentProfiles.find(p=>p.id==="pi")!.nativeInteraction!.mode="native-session";const plan=f.service.configuration.buildPlan(config,"fixture","web");f.service.configuration.applyPlan(plan.id,{confirmed:true});}
+
+ const before=f.service.database.getEntity("run",f.old.id),task=f.service.database.getCanonicalTask<Task>(f.old.taskId),workspace=structuredClone(f.service.workspaces.get(f.old.worktree!)),body=readFileSync(join(f.old.worktree!,"README.md"),"utf8"),starts=f.start.mock.calls.length;
+ await expect(f.service.semanticTools.execute("run.reroute",{target:f.old.id,profileId:"pi"},context)).rejects.toMatchObject({code:"INTERACTION_REVIEW_REQUIRED"});
+ expect(f.cancel).not.toHaveBeenCalled();expect(f.start).toHaveBeenCalledTimes(starts);expect(f.service.database.getEntity("run",f.old.id)).toEqual(before);expect(f.service.database.getCanonicalTask<Task>(f.old.taskId)).toEqual(task);expect(f.service.workspaces.get(f.old.worktree!)).toEqual(workspace);expect(readFileSync(join(f.old.worktree!,"README.md"),"utf8")).toBe(body);expect(f.service.database.listEntities("workspace-transfer")).toHaveLength(0);
 });

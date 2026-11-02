@@ -416,8 +416,26 @@ expand “原生交互能力与限制” to read its backend/region capability e
 server-reviewed backend narrows the view. This is a read-only account query.
 Pending, failed or mismatched configuration reads leave current capabilities
 unconfirmed; “重新读取能力说明” retries without changing the draft.
-Strict native-session/GUI requirements are not available until their server
-admission and frozen execution contracts are integrated and qualified.
+Use “原生交互要求” to inherit account policy, choose compatible execution, require
+native history/handoff, or require a specific native interface. Changing this choice
+clears the previous model review and keeps the task body. A blocked preview preserves
+the selected requirement and disables confirmation; it never downgrades it silently. Compatible intent can be
+saved on a create-only inbox/NEEDS_SPEC Task; actual execution is reviewed when
+dispatching. Strict requests still need the required qualification.
+
+Strict requests require an explicit `nativeInteraction: { enabled: true }` feature
+policy applied through a confirmed privileged ConfigPlan, plus current qualified
+backend/context evidence. The flag alone does not qualify a native session or GUI.
+Set it to false to prevent new strict dispatch; existing human-control locks and
+frozen continuation requirements still apply. Compatible profile policy cannot carry
+a GUI surface. Strict profile defaults require the explicit feature configuration,
+and existing provider registration restrictions remain in force.
+
+The optional requirement is frozen with the reviewed execution choice and protected
+by schema19/writer15. A Run carrying it, or a reroute target with a strict native policy,
+requires a new publication review before changing accounts; the legacy reroute command preserves the original execution and
+returns `INTERACTION_REVIEW_REQUIRED`. Remote Runner requirement enforcement and real native/GUI
+qualification remain unavailable until separately proven.
 
 ## Local result review
 

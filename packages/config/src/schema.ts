@@ -1,3 +1,4 @@
+import type {InteractionMode,InteractionRequirement,NativeSurface,ExecutionContextRef} from "@dispatcher/domain";
 import {taskModelRoutingSchema,type TaskModelRoutingConfig} from "@dispatcher/domain";
 import { RHIZA_SCOPES, type RhizaScope } from "@dispatcher/protocol";
 import type { ErrorObject } from "ajv";
@@ -43,7 +44,7 @@ export interface AgentProfileConfig {
   runnerId: string;
   credentialRef?: string;
   settings?: Record<string, JsonValue>;
-  nativeInteraction?:{mode:"compatible";backendId:"pi-rpc"|"codex-app-server"|"opencode-server-v2"|"devin-local-acp"|"copilot-rpc";executionLocation:"managed-worktree";surface?:never};
+  nativeInteraction?:{mode:InteractionMode;backendId:"pi-rpc"|"codex-app-server"|"opencode-server-v2"|"devin-local-acp"|"copilot-rpc";executionLocation:"managed-worktree";surface?:NativeSurface};
 }
 
 export interface RepositoryConfig {
@@ -96,6 +97,7 @@ export interface LlmRoleBindingConfig {
 export interface DispatcherConfig {
   schemaVersion: 1;
   rhizaIngress?: RhizaIngressConfig;
+  nativeInteraction?:{enabled:boolean};
   controller: {
     id: string;
     listen: string;
@@ -160,6 +162,7 @@ export const dispatcherConfigSchema = {
   additionalProperties: false,
   required: ["schemaVersion", "controller", "runners", "integrations", "connectors", "repositories", "internalLlm", "agentProfiles", "policies"],
   properties: {
+    nativeInteraction:{type:"object",additionalProperties:false,required:["enabled"],properties:{enabled:{type:"boolean"}}},
     schemaVersion: { const: 1 },
     rhizaIngress: rhizaIngressSchema,
     controller: {
@@ -331,7 +334,7 @@ export const dispatcherConfigSchema = {
           enabled: { type: "boolean" },
           nativeInteraction: {
             type: "object", additionalProperties: false, required: ["mode", "backendId", "executionLocation"],
-            properties: { mode: { const: "compatible" }, backendId: { enum: ["pi-rpc","codex-app-server","opencode-server-v2","devin-local-acp","copilot-rpc"] }, executionLocation: { const: "managed-worktree" } },
+            properties: { mode: { enum: ["compatible","native-session","native-gui"] }, surface:{enum:["desktop","ide","web","mobile","tui"]}, backendId: { enum: ["pi-rpc","codex-app-server","opencode-server-v2","devin-local-acp","copilot-rpc"] }, executionLocation: { const: "managed-worktree" } },
           },
           credentialRef: integrationSchema.properties.credentialRef,
           settings: { type: "object", additionalProperties: true },
@@ -475,6 +478,9 @@ export function validateConfig(input: unknown): DispatcherConfig {
     if (profile.provider === "devin-local" && !profile.nativeInteraction) throw new ConfigValidationError([`/agentProfiles/${profile.id}/nativeInteraction is required for Devin Local ACP`]);
     if (profile.provider === "copilot" && !profile.nativeInteraction) throw new ConfigValidationError([`/agentProfiles/${profile.id}/nativeInteraction is required for Copilot RPC`]);
     if (profile.nativeInteraction) {
+      if(profile.nativeInteraction.mode!=="compatible"&&!config.nativeInteraction)throw new ConfigValidationError([`/agentProfiles/${profile.id}/nativeInteraction requires an explicit native feature policy`]);
+      if(profile.nativeInteraction.mode==="compatible"&&profile.nativeInteraction.surface!==undefined)throw new ConfigValidationError([`/agentProfiles/${profile.id}/nativeInteraction/surface requires a native policy`]);
+      if(profile.nativeInteraction.mode==="native-gui"&&!profile.nativeInteraction.surface)throw new ConfigValidationError([`/agentProfiles/${profile.id}/nativeInteraction/surface is required for native GUI`]);
       const backendId = profile.nativeInteraction.backendId;
       let provider: string, label: string, pathKeys: string[];
       switch (backendId) {
@@ -679,4 +685,15 @@ export function resolveEffectiveConfig(input: {
   const mergedBootstrap = mergeObjects(defaultDispatcherConfig as unknown as Record<string, unknown>, input.bootstrap as Record<string, unknown> ?? {});
   const canonical = input.canonical ?? validateConfig(mergedBootstrap);
   return validateConfig(mergeObjects(canonical as unknown as Record<string, unknown>, input.runtime as Record<string, unknown> ?? {}));
+}
+
+export class InteractionRequirementError extends Error {constructor(readonly code:string){super(code);this.name="InteractionRequirementError";}}
+export function resolveInteractionRequirement(config:DispatcherConfig,request:{profileId:string;mode?:InteractionMode;backendId?:string;surface?:NativeSurface;executionLocation?:ExecutionContextRef["kind"]}):InteractionRequirement {
+ const profile=config.agentProfiles.find(p=>p.id===request.profileId);if(!profile||profile.enabled===false)throw new InteractionRequirementError("PROFILE_UNAVAILABLE");
+ const policy=profile.nativeInteraction,mode=request.mode??policy?.mode??"compatible",rank={compatible:0,"native-session":1,"native-gui":2};
+ if(policy&&(rank[mode]<rank[policy.mode]||policy.mode==="native-gui"&&request.surface!==undefined&&request.surface!==policy.surface))throw new InteractionRequirementError("NATIVE_REQUIREMENT_WEAKENED");
+ if(mode!=="compatible"&&!config.nativeInteraction?.enabled)throw new InteractionRequirementError("NATIVE_INTERACTION_DISABLED");
+ if(policy&&(request.backendId!==undefined&&request.backendId!==policy.backendId||request.executionLocation!==undefined&&request.executionLocation!==policy.executionLocation))throw new InteractionRequirementError("EXECUTION_CONTEXT_DRIFT");
+ const backendId=request.backendId??policy?.backendId,surface=request.surface??policy?.surface;if(mode!=="compatible"&&!backendId)throw new InteractionRequirementError("NATIVE_BACKEND_REQUIRED");if(mode==="native-gui"&&!surface)throw new InteractionRequirementError("NATIVE_SURFACE_REQUIRED");
+ return {version:1,profileId:profile.id,mode,executionLocation:request.executionLocation??policy?.executionLocation??"managed-worktree",...(backendId?{backendId}:{}),...(surface?{surface}:{})};
 }

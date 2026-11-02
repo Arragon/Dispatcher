@@ -5,6 +5,12 @@ export type EvidenceLevel="documented"|"installed-probed"|"runtime-verified"|"ui
 export type NativeSurface="desktop"|"ide"|"web"|"mobile"|"tui";
 export type InteractionMode="compatible"|"native-session"|"native-gui";
 export interface InteractionRequirement {version:1;profileId:string;backendId?:string;mode:InteractionMode;surface?:NativeSurface;executionLocation:ExecutionContextRef["kind"]}
+export const interactionRequirementSchema={type:"object",additionalProperties:false,required:["version","profileId","mode","executionLocation"],properties:{version:{const:1},profileId:{type:"string",minLength:1,maxLength:200},backendId:{type:"string",minLength:1,maxLength:200},mode:{enum:["compatible","native-session","native-gui"]},executionLocation:{enum:["managed-worktree","provider-self-hosted","provider-cloud"]},surface:{enum:["desktop","ide","web","mobile","tui"]}},allOf:[{if:{required:["mode"],properties:{mode:{const:"native-gui"}}},then:{required:["surface"]}}]} as const;
+export function isInteractionRequirement(value:unknown):value is InteractionRequirement {
+ if(!value||typeof value!=="object"||Array.isArray(value))return false;
+ const v=value as Record<string,unknown>,text=(x:unknown)=>typeof x==="string"&&x.length>0&&x.length<=200&&!Array.from(x).some(c=>c.charCodeAt(0)<32||c.charCodeAt(0)===127);
+ return v.version===1&&text(v.profileId)&&["compatible","native-session","native-gui"].includes(String(v.mode))&&["managed-worktree","provider-self-hosted","provider-cloud"].includes(String(v.executionLocation))&&(v.backendId===undefined||text(v.backendId))&&(v.surface===undefined||["desktop","ide","web","mobile","tui"].includes(String(v.surface)))&&(v.mode!=="native-gui"||v.surface!==undefined)&&Object.keys(v).every(k=>["version","profileId","backendId","mode","surface","executionLocation"].includes(k));
+}
 export interface CapabilityEvidence {
   version:1;support:CapabilitySupport;level:EvidenceLevel;scopeFingerprint:string;
   reasonCode?:string;verifiedAt?:string;evidenceRef?:string;

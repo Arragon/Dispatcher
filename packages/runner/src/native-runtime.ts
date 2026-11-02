@@ -406,6 +406,7 @@ export class NativeRunnerRuntime {
     if (record.descriptorHash && record.session) return structuredClone(record.session);
     if (record.state !== "PREPARED" || record.profileId !== execution.profileId) throw new NativeRunnerError("EXECUTION_CONFLICT", "Run is not prepared for this profile");
     const { profile, adapter } = this.profile(record.profileId), repository = this.repository(record.plan.repositoryId);
+    if(profile.nativeInteraction&&profile.nativeInteraction.mode!=="compatible")throw new NativeRunnerError("NATIVE_INTERACTION_UNAVAILABLE","Runner cannot enforce strict interaction requirements");
     if (this.registration(profile, repository) !== record.registrationHash) throw new NativeRunnerError("SELECTION_CHANGED", "Runner registration changed after preparation");
     const catalog = await this.catalog(profile.id, repository.id, "before-start", record); this.fence(record, envelope); this.validateSelection(execution.selection, catalog);
     record.state = "STARTING"; record.descriptorHash = descriptorHash; record.startCommandHash = remoteCommandHash(envelope); this.save(record);

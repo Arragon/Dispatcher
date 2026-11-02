@@ -1475,3 +1475,10 @@
   isolated workspace, then use the existing offline stage with a new output
   directory. Preserve the failed release marker; do not bypass release readiness
   checks or modify the active checkout's dependency state to repair the cache.
+
+- ConfigPlan root diffs must compare keys from both snapshots. Optional feature
+  deletion needs an explicit JSON-null before/after entry and the same privileged
+  confirmation as enabling it; iterating only the new object loses removals.
+- The native feature flag governs new dispatch. Continuation rechecks the frozen
+  requirement and current capability evidence independently; disabling the feature
+  must never become a shortcut around human-control/epoch guards.

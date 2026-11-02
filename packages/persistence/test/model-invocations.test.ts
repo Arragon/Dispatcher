@@ -19,7 +19,7 @@ it("appends immutable per-invocation facts across reopen and never stores a seco
 it("rejects already-open prior writers which can bypass RHIZA candidate evidence policy",()=>{
  const dir=mkdtempSync(join(tmpdir(),"model-writer-")),path=join(dir,"db.sqlite"),previous=migrations.filter(m=>m.version<=13),old=new DispatcherDatabase(path,previous);
  try{expect(databaseWriterProtocol(old.handle)).toBe(9);const current=new DispatcherDatabase(path);try{
-  expect(current.schemaVersion()).toBe(18);expect(databaseWriterProtocol(current.handle)).toBe(14);
+  expect(current.schemaVersion()).toBe(19);expect(databaseWriterProtocol(current.handle)).toBe(15);
   expect(()=>old.saveEntity("run","old-complete",{})).toThrow("DATABASE_WRITER_UNSUPPORTED");
   expect(()=>new DispatcherDatabase(path,previous)).toThrowError(expect.objectContaining({code:"DATABASE_SCHEMA_UNSUPPORTED"}));
  }finally{current.close();}}finally{old.close();rmSync(dir,{recursive:true,force:true});}
@@ -57,7 +57,7 @@ it("preserves invocation records and writer fences through backup/restore withou
   new ModelInvocationStore(db).append(record);await createDispatcherBackup(source,bundle);
   expect(restoreDispatcherBackup(bundle,target,{execute:true,confirmed:true})).toMatchObject({applied:true,reconciliationRequired:true});
   const raw=new DatabaseSync(join(target,"dispatcher.sqlite"),{readOnly:true});try{
-   expect(databaseWriterProtocol(raw)).toBe(14);expect(JSON.parse(String(raw.prepare("SELECT record_json FROM native_model_invocations WHERE id=?").get(record.id)?.record_json))).toEqual(record);
+   expect(databaseWriterProtocol(raw)).toBe(15);expect(JSON.parse(String(raw.prepare("SELECT record_json FROM native_model_invocations WHERE id=?").get(record.id)?.record_json))).toEqual(record);
   }finally{raw.close();}
   expect(()=>new DispatcherDatabase(join(target,"dispatcher.sqlite"))).toThrowError(expect.objectContaining({code:"RESTORE_RECONCILIATION_REQUIRED"}));expect(new ModelInvocationStore(db).get(record.id)).toEqual(record);
  }finally{db.close();rmSync(dir,{recursive:true,force:true});}

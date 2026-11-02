@@ -1,3 +1,4 @@
+import {publicationInteraction,assertFrozenInteractionRequirement} from "./interaction-requirements.js";
 import {registerOrphanRoutes} from "./orphans.js";
 import {readRecoveryInventoryFromDatabase} from "@dispatcher/persistence";
 import {NativeWorkflowAuthority} from "./native-workflow-authority.js";
@@ -2166,6 +2167,7 @@ export class ControllerService {
     const assertAuthority = (): void => {
       this.runInputs.assertAvailable(input,reserved?input:undefined);
       this.nativeInteractions.assertInteraction({id:context.actorId,roles:["operator"],profileId:run.profileId},"resume",fence);
+      this.assertRunSelectionRequirement(run,adapter);
       const current = this.database.getEntity<JsonValue>("run", run.id) as unknown as Run | undefined;
       const task = this.database.getCanonicalTask<JsonValue>(run.taskId);
       if (this.cancelledRunIds.has(run.id) || this.pendingSessionCancellations.has(run.sessionId) || !current || current.state !== state || current.generation !== authority.generation || current.leaseId !== authority.leaseId || current.lastActivityAt !== authority.lastActivityAt || current.sessionId !== input.sessionId || current.profileId !== input.profileId || !task || task.revision !== taskRecord?.revision || (task.document as unknown as Task).currentRunId !== run.id || !["RUNNING", "WAITING_USER", "WAITING_RESOURCE"].includes((task.document as unknown as Task).state)) throw new ConnectorError("CONFLICT", "Run authority changed before continuation", { retryable: false });
@@ -2244,6 +2246,8 @@ export class ControllerService {
       this.rhizaJobs.assertTask(run.taskId);
       if(this.cancelledRunIds.has(run.id))throw new InteractionGuardError("STALE_RUN_AUTHORITY");
       if(this.configuration.current().revision!==run.executionSelection!.configRevision||this.resolveProfileExecutionContext(run.profileId,repositoryId,"start").fingerprint!==fingerprint||this.agentAdapters.get(run.profileId)!==adapter)throw new InteractionGuardError("EXECUTION_CONTEXT_DRIFT");
+      const currentRequirement=publicationInteraction(this.configuration.current().config,adapter,run.profileId,run.executionSelection!.interactionRequirement,run.executionSelection!.backendId,run.executionSelection!.contextFingerprint);
+      if(contentHash(currentRequirement)!==contentHash(run.executionSelection!.interactionRequirement))throw new PublicationError("SELECTION_CHANGED",409,"Native interaction requirement changed before startup");
       admit();
     },settled:outcome=>{this.nativeInteractions.settleNativeStart(command.id,outcome);},assertProjection:()=>this.nativeInteractions.assertNativeStartProjection(command.id)};
   }
@@ -3580,11 +3584,15 @@ export class ControllerService {
     const decision=routeDeterministically({capabilities:["code","git"]},candidates);
     if(!decision.selected)throw new PublicationError("EXECUTION_UNAVAILABLE",409,decision.explanation);
     const backendId=decision.selected.adapter.manifest.backends[0]!.id;
+    const requiresInteraction=draft.execution.interactionRequirement!==undefined||Boolean(profile.nativeInteraction&&profile.nativeInteraction.mode!=="compatible");
+    if(requiresInteraction&&decision.selected.adapter instanceof RemoteNativeAdapter)throw new PublicationError("REMOTE_INTERACTION_UNAVAILABLE",409,"Owning Runner has no qualified interaction-requirement admission");
+    if(requiresInteraction&&catalog.backendId!==backendId)throw new PublicationError("EXECUTION_CONTEXT_DRIFT",409,"Actual model catalog backend changed; review the native requirement again");
+    const interactionRequirement=publicationInteraction(snapshot.config,decision.selected.adapter,profile.id,draft.execution.interactionRequirement,backendId,catalog.contextFingerprint);
     const requestedModel=explicit?automatic?routingDecision!.target!.modelId:draft.execution.nativeModelId!:undefined;
     const price=requestedModel&&catalog.backendId===backendId?admitCatalogPricing(catalog,requestedModel,nativeParameters,this.now().toISOString()):undefined;
     if(price?.status==="available"&&this.agentAdapters.get(profile.id) instanceof RemoteNativeAdapter&&!this.runners.list().find(runner=>runner.id===profile.runnerId)?.capabilities.includes(NATIVE_MODEL_PRICING_CAPABILITY))throw new PublicationError("REMOTE_PRICING_UNAVAILABLE",409,"Update the owning Runner before reviewing a priced native selection");
     const pricingSnapshot=price?.status==="available"?context?.reviewed?.pricingSnapshot&&samePricingTerms(context.reviewed.pricingSnapshot,price.snapshot)?structuredClone(context.reviewed.pricingSnapshot):price.snapshot:undefined;
-    return {version:1,mode:automatic?"policy-auto":"manual",source:automatic?"policy":explicit?requestedSource==="account-default"?"account-default":"explicit":"native-default",selectionType:explicit?"explicit-model":"native-default",...(requestedModel?{requestedModel,catalogRevision:catalog.revision}:{}),profileId:profile.id,runnerId:profile.runnerId,providerId:profile.provider,backendId,nativeParameters,...(routingDecision?{routingDecision}:{}),...(pricingSnapshot?{pricingSnapshot}:{}),contextFingerprint:catalog.contextFingerprint,configRevision:snapshot.revision,selectedAt:this.now().toISOString()};
+    return {version:1,mode:automatic?"policy-auto":"manual",source:automatic?"policy":explicit?requestedSource==="account-default"?"account-default":"explicit":"native-default",selectionType:explicit?"explicit-model":"native-default",...(requestedModel?{requestedModel,catalogRevision:catalog.revision}:{}),profileId:profile.id,runnerId:profile.runnerId,providerId:profile.provider,backendId,nativeParameters,...(interactionRequirement?{interactionRequirement}:{}),...(routingDecision?{routingDecision}:{}),...(pricingSnapshot?{pricingSnapshot}:{}),contextFingerprint:catalog.contextFingerprint,configRevision:snapshot.revision,selectedAt:this.now().toISOString()};
   }
 
   private compileLegacyRunSelection(run:Run,repositoryId:string,adapter:AgentAdapter):ExecutionSelection {
@@ -3592,15 +3600,24 @@ export class ControllerService {
     const defaults=adapter.legacyInvocationDefaults?.();
     const backendId=defaults?.backendId??(adapter.manifest.backends.length===1?adapter.manifest.backends[0]!.id:undefined);
     if(!backendId||!adapter.manifest.backends.some(backend=>backend.id===backendId))throw new PublicationError("NATIVE_BACKEND_UNAVAILABLE",409,"The owning adapter has no unambiguous legacy execution backend");
-    return {version:1,mode:"legacy",source:"legacy-config",profileId:run.profileId,runnerId:run.runnerId,providerId:run.providerId,backendId,selectionType:defaults?.model?"explicit-model":"native-default",...(defaults?.model?{requestedModel:defaults.model}:{}),nativeParameters:{},contextFingerprint:scope.fingerprint,configRevision:scope.configRevision,selectedAt:this.now().toISOString()};
+    const interactionRequirement=publicationInteraction(this.configuration.current().config,adapter,run.profileId,undefined,backendId,scope.fingerprint);
+    return {version:1,mode:"legacy",source:"legacy-config",profileId:run.profileId,runnerId:run.runnerId,providerId:run.providerId,backendId,...(interactionRequirement?{interactionRequirement}:{}),selectionType:defaults?.model?"explicit-model":"native-default",...(defaults?.model?{requestedModel:defaults.model}:{}),nativeParameters:{},contextFingerprint:scope.fingerprint,configRevision:scope.configRevision,selectedAt:this.now().toISOString()};
   }
 
+  private assertRunSelectionRequirement(run:Run,adapter:AgentAdapter):void {
+    if(!run.executionSelection?.interactionRequirement)return;
+    const current=this.database.getEntity<JsonValue>("run",run.id) as unknown as Run|undefined;
+    if(this.agentAdapters.get(run.profileId)!==adapter||!current||contentHash(current.executionSelection)!==contentHash(run.executionSelection))throw new PublicationError("SELECTION_CHANGED",409,"Frozen native interaction requirement changed");
+    assertFrozenInteractionRequirement(run.executionSelection,adapter);
+  }
   private async validateRunSelection(run:Run):Promise<void> {
     const registeredContract=(this.database.getEntity<JsonValue>("run-contract",run.id)??this.database.getTaskContract<JsonValue>(run.taskId)) as unknown as TaskContract|undefined;
     this.resolveProfileExecutionContext(run.profileId,registeredContract?.workspace?.repositoryId,"resume");
     if(!run.executionSelection)return;
     if(run.recoveryReason==="NATIVE_OUTCOME_UNKNOWN")throw new PublicationError("NATIVE_OUTCOME_UNKNOWN",409,"Inspect the original native process before continuing");
     const selection=run.executionSelection;
+    const adapter=this.agentAdapters.get(run.profileId);if(!adapter)throw new PublicationError("PROFILE_UNAVAILABLE",409,"Original account adapter is unavailable");
+    assertFrozenInteractionRequirement(selection,adapter);
     const contract=this.database.getEntity<JsonValue>("run-contract",run.id) as unknown as TaskContract|undefined;
     if(!contract?.workspace||!run.worktree)throw new PublicationError("RUN_CONTEXT_UNAVAILABLE",409,"Frozen run context is unavailable");
     if(selection.mode==="legacy"){
@@ -3844,7 +3861,12 @@ export class ControllerService {
       return { supersededRunId: runId, run };
     }
     if(!authority)throw new SemanticPolicyError("INVALID_INPUT","Original reroute authority is unavailable");
-    const assertReroute=()=>this.nativeInteractions.assertInteraction(authority.principal,"reroute",authority.fence);
+    const assertReroute=()=>{
+      this.nativeInteractions.assertInteraction(authority.principal,"reroute",authority.fence);
+      const current=this.database.getEntity<JsonValue>("run",runId) as unknown as Run|undefined;
+      const targetPolicy=this.configuration.current().config.agentProfiles.find(p=>p.id===profileId)?.nativeInteraction;
+      if(current?.executionSelection?.interactionRequirement!==undefined||targetPolicy&&targetPolicy.mode!=="compatible")throw new PublicationError("INTERACTION_REVIEW_REQUIRED",409,"原生交互要求需要重新审阅发布，不能直接重路由。");
+    };
     assertReroute();await this.refreshLocalTrialSessions();assertReroute();
     const run = this.database.getEntity<JsonValue>("run", runId) as unknown as Run | undefined;
     const snapshot = this.configuration.current(), profile = snapshot.config.agentProfiles.find(entry => entry.id === profileId), adapter = this.agentAdapters.get(profileId);
@@ -4411,7 +4433,7 @@ export class ControllerService {
       if (!agent) throw new ConnectorError("PERMANENT", "The run profile is unavailable", { retryable: false, operation: "write" });
       const fence=this.nativeInteractions.fenceFor(run,`messaging:${resumeKey}`);
       return this.nativeInteractions.withMutationLane(run.sessionId,async()=>{
-      const assertAuthority=()=>{this.runInputs.assertAvailable(input,reserved?input:undefined);this.nativeInteractions.assertInteraction({id:principal.principalId,roles:principal.roles,profileId:run.profileId},"continue",fence);this.assertMessagingInputAuthority(run,binding,expectedRevision);};
+      const assertAuthority=()=>{this.runInputs.assertAvailable(input,reserved?input:undefined);this.nativeInteractions.assertInteraction({id:principal.principalId,roles:principal.roles,profileId:run.profileId},"continue",fence);this.assertMessagingInputAuthority(run,binding,expectedRevision);this.assertRunSelectionRequirement(run,agent);};
       const input:RunInputIdentity={inputId:`messaging-${contentHash(resumeKey)}`,actorId:principal.principalId,runId:run.id,profileId:run.profileId,sessionId:run.sessionId,generation:run.generation,authorityHash:contentHash({runId:run.id,generation:run.generation,leaseId:run.leaseId,lastActivityAt:run.lastActivityAt}),payloadHash:contentHash({message:message.text,bindingRevision:expectedRevision})};
       let reserved=false,sent=false;
       try{
@@ -4778,6 +4800,7 @@ export class ControllerService {
           if(this.sessionStopState(storedSession)!=="none")throw new AdapterContractError("SESSION_CANCELLED","A requested stop forbids further input");
           return;
         }
+        this.assertRunSelectionRequirement(run,adapter);
         const expected = body.authority;
         const current = this.database.getEntity<JsonValue>("run", run.id) as unknown as Run | undefined;
         const task = this.database.getCanonicalTask<JsonValue>(run.taskId);

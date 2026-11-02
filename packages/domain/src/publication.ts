@@ -1,3 +1,4 @@
+import {interactionRequirementSchema,type InteractionRequirement} from "./session-interaction.js";
 import type {ScmDeliverySelection} from "./delivery.js";
 import type { ModelRoutingDecision } from "./model-routing.js";
 import type {PricingSnapshotV1} from "./metering.js";
@@ -15,6 +16,7 @@ export interface ExecutionSelection {
   routingDecision?: ModelRoutingDecision;
   /** Owning native price evidence frozen with this reviewed explicit choice. */
   pricingSnapshot?:PricingSnapshotV1;
+  interactionRequirement?:InteractionRequirement;
 }
 export interface PublishDraftV1 {
   schemaVersion: 1; clientDraftId: string; title?: string; description: string;
@@ -22,7 +24,7 @@ export interface PublishDraftV1 {
   scopePaths?: string[]; acceptanceCriteria: string[]; referenceLinks?: string[]; verificationCommandIds?: string[];
   constraints?: string[]; inputContext?: TaskInputContext;
   startMode: "create-only" | "dispatch";
-  execution: { profileId?: string; selectionMode: "manual" | "policy-auto"; taskTypeId?:string; selectionType?: "explicit-model" | "native-default"; selectionSource?: "explicit" | "account-default" | "policy" | "native-default"; nativeModelId?: string; nativeParameters?: Record<string, NativeParameter>; catalogRevision?: string; contextFingerprint?: string; allowUnconfirmedModelAccess?: boolean };
+  execution: { interactionRequirement?:InteractionRequirement; profileId?: string; selectionMode: "manual" | "policy-auto"; taskTypeId?:string; selectionType?: "explicit-model" | "native-default"; selectionSource?: "explicit" | "account-default" | "policy" | "native-default"; nativeModelId?: string; nativeParameters?: Record<string, NativeParameter>; catalogRevision?: string; contextFingerprint?: string; allowUnconfirmedModelAccess?: boolean };
   delivery: { type: "none" | "commit" | "pull-request"; scmConnectorId?: string; targetRepository?: string; baseBranch?: string };
 }
 export interface PublicationPreview {
@@ -49,7 +51,7 @@ export const publishDraftSchema = {
     baseRef: short, targetBranch: short, scopePaths: strings, acceptanceCriteria: strings, referenceLinks: strings, verificationCommandIds: strings, constraints: strings,
     inputContext: { type: "object", additionalProperties: false, required: ["packetId", "formatVersion", "content", "inputHash"], properties: { packetId: { ...short, minLength: 1 }, formatVersion: { ...short, minLength: 1 }, content: { type: "string", maxLength: 65536 }, inputHash: { type: "string", pattern: "^[a-f0-9]{64}$" } } },
     startMode: { enum: ["create-only","dispatch"] },
-    execution: {type:"object",additionalProperties:false,required:["selectionMode"],properties:{profileId:short,taskTypeId:short,selectionMode:{enum:["manual","policy-auto"]},selectionType:{enum:["explicit-model","native-default"]},selectionSource:{enum:["explicit","account-default","policy","native-default"]},nativeModelId:short,nativeParameters:{type:"object",maxProperties:20,additionalProperties:{anyOf:[{type:"string"},{type:"number"},{type:"boolean"}]}},catalogRevision:short,contextFingerprint:short,allowUnconfirmedModelAccess:{type:"boolean"}},allOf:[{if:{required:["selectionType"],properties:{selectionType:{const:"explicit-model"}}},then:{required:["nativeModelId","catalogRevision","contextFingerprint"]}}]},
+    execution: {type:"object",additionalProperties:false,required:["selectionMode"],properties:{interactionRequirement:interactionRequirementSchema,profileId:short,taskTypeId:short,selectionMode:{enum:["manual","policy-auto"]},selectionType:{enum:["explicit-model","native-default"]},selectionSource:{enum:["explicit","account-default","policy","native-default"]},nativeModelId:short,nativeParameters:{type:"object",maxProperties:20,additionalProperties:{anyOf:[{type:"string"},{type:"number"},{type:"boolean"}]}},catalogRevision:short,contextFingerprint:short,allowUnconfirmedModelAccess:{type:"boolean"}},allOf:[{if:{required:["selectionType"],properties:{selectionType:{const:"explicit-model"}}},then:{required:["nativeModelId","catalogRevision","contextFingerprint"]}}]},
     delivery: {type:"object",additionalProperties:false,required:["type"],properties:{type:{enum:["none","commit","pull-request"]},scmConnectorId:short,targetRepository:short,baseBranch:short}},
   },
 } as const;

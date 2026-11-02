@@ -1,3 +1,4 @@
+import type {InteractionMode,NativeSurface} from "@dispatcher/domain";
 import { AdapterContractError, type AgentAdapter } from "./contracts.js";
 import { CodexAdapter, probeCodexProfile, type CodexBackend, type CodexProfileConfig } from "./codex.js";
 import type { CodexReadRequest } from "./codex-catalog.js";
@@ -12,7 +13,7 @@ import {isAbsolute,join} from "node:path";
 /** Structural registration contract; adapters do not depend on configuration or persistence. */
 export interface NativeProfileRegistration {
   id: string; alias: string; provider: string; enabled?: boolean; credentialRef?: string; settings?: Record<string, unknown>;
-  nativeInteraction?:{mode:"compatible";backendId:"pi-rpc"|"codex-app-server"|"opencode-server-v2"|"devin-local-acp"|"copilot-rpc";executionLocation:"managed-worktree"};
+  nativeInteraction?:{mode:InteractionMode;surface?:NativeSurface;backendId:"pi-rpc"|"codex-app-server"|"opencode-server-v2"|"devin-local-acp"|"copilot-rpc";executionLocation:"managed-worktree"};
 }
 /** Native account locations used by our registered adapters/catalogs; owning host only. */
 export function nativePrivatePaths(profiles:readonly NativeProfileRegistration[]):string[]{

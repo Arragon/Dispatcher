@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CodexAdapter, StructuredCliAdapter, type CodexBackend, type CliStartInput,type AgentAdapter } from "@dispatcher/adapters";
-import {InteractionStore,type JsonValue} from "@dispatcher/persistence";
+import {InteractionStore,ModelInvocationStore,type JsonValue} from "@dispatcher/persistence";
 import type {Run,TaskContract} from "@dispatcher/domain";
 import type {NativeInteractions} from "../src/native-interactions.js";
 import {contentHash,type PublicationRecord} from "../src/task-publications.js";
@@ -653,4 +653,27 @@ it("exports applied configuration references without native settings, command ar
  const exported=response.json();expect(exported).toMatchObject({schemaVersion:1,revision:before.revision,config:{connectors:[{id:"github",credentialRef:"secret://github/opaque-reference"}],repositories:[{id:"repo",remote:"https://example.invalid/repo"}]}});
  expect(JSON.stringify(exported)).not.toMatch(/private-pass|private-query|private-fragment|private-custom-setting|process.exit/);expect(JSON.stringify(exported)).not.toContain(String(before.config.agentProfiles[0]?.settings?.codexHome));expect(exported.config.agentProfiles[0]).not.toHaveProperty("settings");expect(exported.config.repositories[0]).not.toHaveProperty("root");expect(exported.config.repositories[0].verificationCommands[0]).not.toHaveProperty("args");expect(exported.omittedPaths.length).toBeGreaterThan(0);
  expect(f.service.configuration.current()).toEqual(before);expect(f.starts).toHaveLength(0);expect((await f.service.app.inject({url:"/api/config/export"})).statusCode).toBe(401);
+});
+
+it("rejects unqualified native requirements in preflight without losing the task body or starting a provider",async()=>{
+ const f=await setup();const requirement={version:1,profileId:"codex-local",mode:"native-gui",backendId:"codex-exec-json",surface:"desktop",executionLocation:"managed-worktree"};
+ const draft={...f.draft,startMode:"dispatch",execution:{...f.draft.execution,profileId:"codex-local",interactionRequirement:requirement}};
+ const disabled=await f.preview(draft);expect(disabled.statusCode).toBe(200);expect(disabled.json()).toMatchObject({canCommit:false,effectiveTask:{description:draft.description},checks:expect.arrayContaining([expect.objectContaining({status:"blocked",code:"NATIVE_INTERACTION_DISABLED"})])});
+ const config=structuredClone(f.service.configuration.current().config);Object.assign(config,{nativeInteraction:{enabled:true}});const plan=f.service.configuration.buildPlan(config,"owner","api");f.service.configuration.applyPlan(plan.id,{confirmed:true});
+ const unverified=await f.preview(draft);expect(unverified.statusCode).toBe(200);expect(unverified.json()).toMatchObject({canCommit:false,checks:expect.arrayContaining([expect.objectContaining({code:"NATIVE_CAPABILITY_UNVERIFIED"})])});
+ expect((await f.commit(unverified.json())).statusCode).toBe(409);expect(f.starts).toHaveLength(0);expect(f.service.database.listCanonicalTasks()).toHaveLength(0);expect(f.service.database.listEntities("run")).toHaveLength(0);
+});
+it("freezes an explicit compatible requirement through preview commit Run and restart without changing the account default",async()=>{
+ const f=await setup();const requirement={version:1,profileId:"codex-local",mode:"compatible",backendId:"codex-exec-json",executionLocation:"managed-worktree"};
+ const draft={...f.draft,startMode:"dispatch",execution:{...f.draft.execution,profileId:"codex-local",interactionRequirement:requirement}};
+ const p=await f.preview(draft);expect(p.statusCode).toBe(200);expect(p.json()).toMatchObject({canCommit:true,effectiveExecution:{interactionRequirement:requirement}});
+ const receipt=await f.commit(p.json());expect(receipt.statusCode).toBe(200);const run=f.service.database.getEntity<JsonValue>("run",receipt.json().runId) as unknown as Run;expect(run.state,run.failureReason).toBe("ACTIVE");expect(run.executionSelection?.interactionRequirement).toEqual(requirement);expect(new ModelInvocationStore(f.service.database).list(run.id)).toContainEqual(expect.objectContaining({executionSelection:expect.objectContaining({interactionRequirement:requirement})}));expect(f.starts).toHaveLength(1);
+ await f.service.stop();const restored=await f.make();expect((restored.database.getEntity<JsonValue>("run",run.id) as unknown as Run)?.executionSelection?.interactionRequirement).toEqual(requirement);expect(restored.configuration.current().config.agentProfiles[0]!.settings?.model).toBe("profile-default");expect(f.starts).toHaveLength(1);
+});
+
+it("creates an inbox task with compatible interaction intent without requiring execution readiness",async()=>{
+ const f=await setup(),requirement={version:1,profileId:"codex-local",mode:"compatible",executionLocation:"managed-worktree"};
+ const draft={...f.draft,projectId:"local:inbox",repositoryId:"",scopePaths:[],verificationCommandIds:[],acceptanceCriteria:[],execution:{...f.draft.execution,profileId:"codex-local",interactionRequirement:requirement}};
+ const preview=await f.preview(draft);expect(preview.statusCode).toBe(200);expect(preview.json()).toMatchObject({canCommit:true,effectiveTask:{contractState:"NEEDS_SPEC",description:draft.description}});
+ const committed=await f.commit(preview.json());expect(committed.statusCode).toBe(200);const context=await f.service.app.inject({headers:OWNER,url:`/api/tasks/${committed.json().taskId}`});expect(context.json()).toMatchObject({document:{state:"NEEDS_SPEC"},executionIntent:{execution:{interactionRequirement:requirement}}});expect(f.starts).toHaveLength(0);expect(f.service.database.listEntities("run")).toHaveLength(0);
 });

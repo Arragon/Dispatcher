@@ -1,5 +1,5 @@
 import {isDeepStrictEqual} from "node:util";
-import {capturePricingSnapshot,type ExecutionSelection} from "@dispatcher/domain";
+import {capturePricingSnapshot,isInteractionRequirement,type ExecutionSelection} from "@dispatcher/domain";
 import {AdapterContractError,type AdapterSession} from "./contracts.js";
 
 const text=(value:unknown):value is string=>typeof value==="string"&&value.length>0&&value.length<=240&&!Array.from(value).some(character=>character.charCodeAt(0)<32||character.charCodeAt(0)===127);
@@ -10,6 +10,7 @@ export function freezeExecutionSelection(value:ExecutionSelection|undefined,owne
   if(value===undefined)return;
   if(!value||typeof value!=="object"||value.version!==1||!text(value.profileId)||!text(value.providerId)||!text(value.backendId)||!text(value.runnerId)||!text(value.contextFingerprint)||!text(value.selectedAt)||!Number.isSafeInteger(value.configRevision)||value.configRevision<0||!value.nativeParameters||typeof value.nativeParameters!=="object"||Array.isArray(value.nativeParameters))return fail("EXECUTION_SELECTION_INVALID","Frozen execution selection is malformed");
   if(value.profileId!==owner.profileId||value.providerId!==owner.providerId||value.backendId!==owner.backendId)return fail("EXECUTION_SELECTION_CONTEXT_MISMATCH","Frozen selection belongs to another account or backend");
+  if(value.interactionRequirement!==undefined&&(!isInteractionRequirement(value.interactionRequirement)||value.interactionRequirement.profileId!==value.profileId||value.interactionRequirement.backendId!==value.backendId||value.interactionRequirement.executionLocation!=="managed-worktree"))return fail("EXECUTION_SELECTION_CONTEXT_MISMATCH","Frozen native interaction requirement belongs to another execution");
   const explicit=value.selectionType==="explicit-model",source=value.source;
   if(!["manual","policy-auto","legacy"].includes(value.mode)||!["explicit-model","native-default"].includes(value.selectionType)||(value.mode==="policy-auto"?source!=="policy":value.mode==="legacy"?source!=="legacy-config":!["explicit","account-default","native-default"].includes(source)))return fail("EXECUTION_SELECTION_INVALID","Frozen selection provenance is malformed");
   if(explicit? !text(value.requestedModel)||source==="native-default" : value.requestedModel!==undefined||Object.keys(value.nativeParameters).length>0||!["native-default","legacy-config"].includes(source))return fail("EXECUTION_SELECTION_INVALID","Model choice contradicts native-default semantics");

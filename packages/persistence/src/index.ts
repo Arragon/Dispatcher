@@ -1,3 +1,4 @@
+import {INTERACTION_REQUIREMENT_SCHEMA_NAME,upgradeInteractionRequirementWriterGate} from "./database-compatibility.js";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -380,6 +381,7 @@ export const migrations: readonly Migration[] = [
    CREATE TRIGGER rhiza_control_event_update AFTER UPDATE ON session_controls BEGIN UPDATE rhiza_job_revisions SET revision=revision+1,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE job_id IN(SELECT a.job_id FROM rhiza_admissions a JOIN canonical_tasks t ON t.id=a.task_id JOIN entities r ON r.kind='run' AND r.id=json_extract(t.document_json,'$.currentRunId') WHERE json_extract(r.document_json,'$.sessionId') IN (NEW.session_id,OLD.session_id)); END;
   `,afterApply:database=>{migrateRhizaInputObservations(database.handle);upgradeRhizaInputWriterGate(database.handle);}},
   {version:18,name:RHIZA_LINEAGE_SCHEMA_NAME,sql:"",afterApply:database=>{migrateRhizaLineage(database.handle);upgradeRhizaLineageWriterGate(database.handle);}},
+  {version:19,name:INTERACTION_REQUIREMENT_SCHEMA_NAME,sql:"",afterApply:database=>upgradeInteractionRequirementWriterGate(database.handle)},
 ] as const;
 
 export class MigrationError extends Error {
@@ -539,6 +541,7 @@ export class DispatcherDatabase {
           if(migration.version===16&&migration.name===RHIZA_CONTROL_SCHEMA_NAME)this.writerProtocol=12;
           if(migration.version===17&&migration.name===RHIZA_INPUT_SCHEMA_NAME)this.writerProtocol=13;
           if(migration.version===18&&migration.name===RHIZA_LINEAGE_SCHEMA_NAME)this.writerProtocol=14;
+          if(migration.version===19&&migration.name===INTERACTION_REQUIREMENT_SCHEMA_NAME)this.writerProtocol=15;
           this.handle.exec(migration.sql);
           migration.afterApply?.(this);
           this.handle

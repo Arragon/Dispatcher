@@ -3,6 +3,40 @@
 Local implementation/evidence backlog; none of these rows claims a passed
 Gate. Continue independent units without bypassing data/control safeguards.
 
+## 2026-11-02 publication interaction requirement integration
+
+The existing publication workflow now carries compatible/native-session/specified-
+interface requirements through its draft, review hash, immutable selection and Run.
+ConfigPlan controls explicit feature enablement and profile policy; current backend/
+context capability evidence decides admission. Unknown native/GUI capability blocks
+publication, while compatible create-only intent may remain on a NEEDS_SPEC Task
+until a later execution review. Source requirements and strict reroute target policies
+require publication review before the old execution is stopped or replaced.
+
+The model invocation ledger preserves and validates the frozen requirement, and
+start/continuation rechecks keep the existing control/lease/epoch guards. Schema19/
+writer15 fences already-open14 writers. Old migration bodies1–18 and fixed RHIZA
+artifacts remain unchanged. Current-version test expectations and synthetic release
+headers moved to19/15; historical partial schemas, archive bytes and rollback checks
+remain. One old top-level feature test intentionally now verifies privileged
+confirmation, compatible policy preservation and rejection of qualification claims.
+
+Actual Controller HTTP with synthetic native reader/backend was observed on desktop
+and390px: required desktop UI blocked with disabled confirmation; body/requirement
+survived restart, and only an explicit compatible choice produced a ready preview.
+Both owned hosts stopped gracefully with zero Task/Run/process/provider starts.
+Controlled execution tests additionally assert ACTIVE Run, matching invocation
+ledger and restart retention. Real native/GUI/remote qualification remains OPEN;
+current producer registration restrictions continue to apply.
+
+Review found and closed legacy reroute loss of the requirement; health checks also
+found and fixed the invocation-ledger whitelist. Final basic-mode checks preserve
+compatible inbox creation and reject a strict reroute target before stopping the
+old Run. Related publication/reroute81 cases and final focused review pass;45 final
+functional hashes match. Earlier failed/obsolete gates remain recorded. Final fixed-code `pnpm check`
+passes all non-test gates and272 files/5953 tests (475.14s test phase), exit0; all45
+functional hashes match. This integration does not close the real client Gates.
+
 ## 2026-11-02 publication capability view
 
 The existing publication page now explains compatible execution limits and reads

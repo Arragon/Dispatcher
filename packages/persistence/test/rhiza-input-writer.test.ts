@@ -12,7 +12,7 @@ it("notifies intervention control changes atomically without changing the canoni
 });
 it("fences writers that predate external input reservation and restores their gate on interrupted migration",()=>{
  const root=mkdtempSync(join(tmpdir(),"rhiza-input-writer-")),path=join(root,"db"),previous=migrations.filter(m=>m.version<=16),old=new DispatcherDatabase(path,previous);try{
-  const current=new DispatcherDatabase(path);try{expect(databaseWriterProtocol(current.handle)).toBe(14);expect(()=>old.saveEntity("fixture","unsafe",{})).toThrow("DATABASE_WRITER_UNSUPPORTED");}finally{current.close();}
+  const current=new DispatcherDatabase(path);try{expect(databaseWriterProtocol(current.handle)).toBe(15);expect(()=>old.saveEntity("fixture","unsafe",{})).toThrow("DATABASE_WRITER_UNSUPPORTED");}finally{current.close();}
  }finally{old.close();rmSync(root,{recursive:true,force:true});}
  const db=new DispatcherDatabase(":memory:",previous),upgrade=migrations.find(m=>m.version===17)!;try{const before=db.handle.prepare("SELECT name,sql FROM sqlite_schema WHERE type='trigger' ORDER BY name").all();expect(()=>db.migrate([...previous,{...upgrade,afterApply:database=>{upgrade.afterApply?.(database);throw Error("interrupted input");}}])).toThrow(MigrationError);expect(db.schemaVersion()).toBe(16);expect(databaseWriterProtocol(db.handle)).toBe(12);expect(db.handle.prepare("SELECT name,sql FROM sqlite_schema WHERE type='trigger' ORDER BY name").all()).toEqual(before);expect(()=>db.saveEntity("fixture","old-safe",{})).not.toThrow();}finally{db.close();}
 });

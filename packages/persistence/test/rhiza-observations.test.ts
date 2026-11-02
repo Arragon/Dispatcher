@@ -49,7 +49,7 @@ it("cannot reset or delete a job revision through a current-writer replacement",
 it("fences already-open writers before installing durable observations and backfills prior acceptances",()=>{
  const dir=mkdtempSync(join(tmpdir(),"rhiza-observation-writer-")),path=join(dir,"db.sqlite"),previous=migrations.filter(m=>m.version<=14),old=new DispatcherDatabase(path,previous);
  try{accept(old);const current=new DispatcherDatabase(path);try{
-  expect(current.schemaVersion()).toBe(18);expect(databaseWriterProtocol(current.handle)).toBe(14);expect(new RhizaObservationStore(current).head("job-a")?.revision).toBe(1);
+  expect(current.schemaVersion()).toBe(19);expect(databaseWriterProtocol(current.handle)).toBe(15);expect(new RhizaObservationStore(current).head("job-a")?.revision).toBe(1);
   expect(()=>old.saveEntity("fixture","unsafe-writer",{})).toThrow("DATABASE_WRITER_UNSUPPORTED");expect(()=>new DispatcherDatabase(path,previous)).toThrowError(expect.objectContaining({code:"DATABASE_SCHEMA_UNSUPPORTED"}));
  }finally{current.close();}}finally{old.close();rmSync(dir,{recursive:true,force:true});}
 });

@@ -377,3 +377,9 @@ it("acknowledges remote push revocation only after its owned pre-push hook is ab
   let absent=false;try{process.kill(pid,0);}catch(error){absent=Boolean(error&&typeof error==="object"&&"code" in error&&error.code==="ESRCH");}expect(absent).toBe(true);expect(f.runtime.database.getEntity("native-execution","run")).toMatchObject({state:"CANCELLED",deliveryState:"unknown"});expect(execFileSync("git",["--git-dir",f.bare,"for-each-ref","--format=%(objectname)",`refs/heads/${workspace.branch}`],{encoding:"utf8"}).trim()).toBe("");
  }finally{await f.runtime.shutdown();}
 });
+
+it("refuses a legacy start descriptor when the owning profile requires unsupported native interaction",async()=>{
+ const f=fixture();f.options.runnerId="local";f.config.runners=structuredClone(defaultDispatcherConfig.runners);f.config.agentProfiles[0]!.runnerId="local";f.config.agentProfiles[0]!.settings={...f.config.agentProfiles[0]!.settings,executable:process.execPath};f.config.agentProfiles[0]!.nativeInteraction={mode:"native-session",backendId:"codex-app-server",executionLocation:"managed-worktree"};f.config.nativeInteraction={enabled:true};f.config.repositories[0]!.runnerId="local";f.selection.runnerId="local";f.catalog.runnerId="local";f.apply();
+ await f.call({type:"native.workspace_prepare",runId:"run",profileId:"p",plan:f.plan,verificationCommandIds:["check"]},"strict-prepare",{runnerId:"local"});
+ await expect(f.call({type:"run.start",runId:"run",execution:{version:1,profileId:"p",workspaceId:"run",prompt:"must not run",selection:f.selection}},"strict-start",{runnerId:"local"})).rejects.toMatchObject({code:"NATIVE_INTERACTION_UNAVAILABLE"});expect(f.starts()).toBe(0);
+});

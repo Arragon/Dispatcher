@@ -35,15 +35,14 @@ it.each([
     expect(database.handle.prepare("SELECT COUNT(*) AS count FROM config_plans").get()?.count).toBe(0);
   } finally { database.close(); }
 });
-it("rejects unsupported interaction fields at top-level enablement", () => {
-  const config = { ...candidate(), nativeInteraction: { enabled: true } };
-  const database = new DispatcherDatabase(":memory:");
+it("requires a confirmed privileged feature plan while preserving the compatible backend policy", () => {
+  const config = { ...candidate(), nativeInteraction: { enabled: true } },database=new DispatcherDatabase(":memory:");
   try {
-    expect(() => validateConfig(config)).toThrow(/additional properties/);
-    expect(() => new ConfigurationEngine(database).buildPlan(config, "fixture", "web")).toThrow(/additional properties/);
-    expect(database.handle.prepare("SELECT COUNT(*) AS count FROM config_plans").get()?.count).toBe(0);
-  }
-  finally { database.close(); }
+    expect(validateConfig(config)).toEqual(config);const engine=new ConfigurationEngine(database),before=engine.current(),plan=engine.buildPlan(config,"fixture","web");
+    expect(plan).toMatchObject({risk:"privileged",requiresConfirmation:true});expect(()=>engine.applyPlan(plan.id,{confirmed:false})).toThrow();expect(engine.current()).toEqual(before);
+    engine.applyPlan(plan.id,{confirmed:true});expect(engine.current().config.agentProfiles[0]!.nativeInteraction?.mode).toBe("compatible");
+    expect(()=>validateConfig({...config,nativeInteraction:{enabled:true,claimQualified:true}})).toThrow(/additional properties/);
+  }finally{database.close();}
 });
 it.each(["codex", "pi", "cursor", "generic"])("rejects a server backend on a foreign provider %s", provider => {
   const config = candidate(); config.agentProfiles[0]!.provider = provider;

@@ -16,7 +16,7 @@ it("commits immutable command/observation notifications atomically and cannot re
 });
 it("fences prior observation-only writers and preserves uncertain commands across reopen",()=>{
  const directory=mkdtempSync(join(tmpdir(),"rhiza-command-writer-")),path=join(directory,"db"),old=new DispatcherDatabase(path,migrations.filter(m=>m.version<=15));let current:DispatcherDatabase|undefined;
- try{admission(old);current=new DispatcherDatabase(path);expect(databaseWriterProtocol(current.handle)).toBe(14);expect(()=>old.saveEntity("fixture","old",{})).toThrow("DATABASE_WRITER_UNSUPPORTED");const store=new RhizaCommandStore(current);store.insert(command);store.observe("cmd","claimed",{},"2026-10-23T10:00:00.000Z");current.close();current=new DispatcherDatabase(path);expect(new RhizaCommandStore(current).latest("cmd")?.state).toBe("claimed");expect(new RhizaCommandStore(current).get("c","jobs.cancel","stop")).toEqual(command);
+ try{admission(old);current=new DispatcherDatabase(path);expect(databaseWriterProtocol(current.handle)).toBe(15);expect(()=>old.saveEntity("fixture","old",{})).toThrow("DATABASE_WRITER_UNSUPPORTED");const store=new RhizaCommandStore(current);store.insert(command);store.observe("cmd","claimed",{},"2026-10-23T10:00:00.000Z");current.close();current=new DispatcherDatabase(path);expect(new RhizaCommandStore(current).latest("cmd")?.state).toBe("claimed");expect(new RhizaCommandStore(current).get("c","jobs.cancel","stop")).toEqual(command);
  }finally{current?.close();old.close();rmSync(directory,{recursive:true,force:true});}
 });
 it("rolls back the control writer gate and journals on migration interruption",()=>{

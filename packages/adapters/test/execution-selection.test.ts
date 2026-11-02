@@ -114,3 +114,8 @@ it.each(["codex","opencode"] as const)("preserves pre-snapshot %s data without g
   const old={...base,id:"old-model",modelSelection:{version:1,nativeSelectionId:"legacy-chosen"}};f.store.save(old);
   await expect(f.adapter.send(old.id,"do not guess")).rejects.toMatchObject({code:"MODEL_LEGACY_REVIEW_REQUIRED"});expect(f.store.load(old.id)).toEqual(old);expect(f.start).not.toHaveBeenCalled();
 });
+
+it("refuses a frozen interaction requirement for another account before native startup",async()=>{
+ const f=fixture("codex");f.selection.interactionRequirement={version:1,profileId:"foreign",backendId:f.selection.backendId,mode:"compatible",executionLocation:"managed-worktree"};
+ await expect(f.adapter.start({runId:"r",workspacePath:"/work",executionSelection:f.selection})).rejects.toMatchObject({code:"EXECUTION_SELECTION_CONTEXT_MISMATCH"});expect(f.start).not.toHaveBeenCalled();
+});

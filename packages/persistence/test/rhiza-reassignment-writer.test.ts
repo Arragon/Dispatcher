@@ -28,7 +28,7 @@ it.each(["rowid","origin","predecessor"] as const)("protects immutable acceptanc
 });
 it("fences pre-lineage writers and rolls back completion indexes and gates on migration interruption",()=>{
  const root=mkdtempSync(join(tmpdir(),"rhiza-lineage-writer-")),path=join(root,"db"),previous=migrations.filter(m=>m.version<=17),old=new DispatcherDatabase(path,previous);try{
-  const current=new DispatcherDatabase(path);try{expect(databaseWriterProtocol(current.handle)).toBe(14);expect(()=>old.saveEntity("fixture","unsafe",{})).toThrow("DATABASE_WRITER_UNSUPPORTED");}finally{current.close();}
+  const current=new DispatcherDatabase(path);try{expect(databaseWriterProtocol(current.handle)).toBe(15);expect(()=>old.saveEntity("fixture","unsafe",{})).toThrow("DATABASE_WRITER_UNSUPPORTED");}finally{current.close();}
  }finally{old.close();rmSync(root,{recursive:true,force:true});}
  const db=new DispatcherDatabase(":memory:",previous),upgrade=migrations.find(m=>m.version===18)!;try{
   const before=db.handle.prepare("SELECT name,sql FROM sqlite_schema WHERE type IN ('trigger','index') ORDER BY name").all();expect(()=>db.migrate([...previous,{...upgrade,afterApply:database=>{upgrade.afterApply?.(database);throw Error("interrupted lineage");}}])).toThrow();expect(db.schemaVersion()).toBe(17);expect(databaseWriterProtocol(db.handle)).toBe(13);expect(db.handle.prepare("SELECT name,sql FROM sqlite_schema WHERE type IN ('trigger','index') ORDER BY name").all()).toEqual(before);

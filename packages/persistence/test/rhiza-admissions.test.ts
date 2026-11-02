@@ -77,7 +77,7 @@ describe("durable immutable RHIZA admission", () => {
     try {
       const current = new DispatcherDatabase(path);
       try {
-        expect(current.schemaVersion()).toBe(18); expect(databaseWriterProtocol(current.handle)).toBe(14);
+        expect(current.schemaVersion()).toBe(19); expect(databaseWriterProtocol(current.handle)).toBe(15);
         expect(() => old.saveEntity("fixture", "old", {})).toThrow("DATABASE_WRITER_UNSUPPORTED");
         expect(() => raw.exec("DELETE FROM entities")).toThrow("DATABASE_WRITER_UNSUPPORTED");
         expect(() => new DispatcherDatabase(path, previous)).toThrowError(expect.objectContaining({ code: "DATABASE_SCHEMA_UNSUPPORTED" }));
@@ -94,7 +94,7 @@ describe("durable immutable RHIZA admission", () => {
       expect(db.schemaVersion()).toBe(11); expect(databaseWriterProtocol(db.handle)).toBe(7); expect(gates()).toEqual(before);
       expect(() => db.transaction(() => { db.migrate(); throw Error("outer rollback"); })).toThrow("outer rollback");
       expect(db.schemaVersion()).toBe(11); expect(gates()).toEqual(before);
-      expect(() => db.saveEntity("fixture", "still-seven", {})).not.toThrow(); db.migrate(); expect(db.schemaVersion()).toBe(18);
+      expect(() => db.saveEntity("fixture", "still-seven", {})).not.toThrow(); db.migrate(); expect(db.schemaVersion()).toBe(19);
     } finally { db.close(); }
   });
   it("retains the original receipt through backup and restore behind reconciliation barriers", async () => {
@@ -104,7 +104,7 @@ describe("durable immutable RHIZA admission", () => {
       await createDispatcherBackup(path, join(root, "backup"));
       restoreDispatcherBackup(join(root, "backup"), join(root, "restored"), { execute: true, confirmed: true });
       const restored = new DatabaseSync(join(root, "restored", "dispatcher.sqlite"), { readOnly: true });
-      try { expect(databaseWriterProtocol(restored)).toBe(14); expect(JSON.parse(String(restored.prepare("SELECT receipt_json FROM rhiza_admissions").get()?.receipt_json))).toEqual(accepted.receipt); }
+      try { expect(databaseWriterProtocol(restored)).toBe(15); expect(JSON.parse(String(restored.prepare("SELECT receipt_json FROM rhiza_admissions").get()?.receipt_json))).toEqual(accepted.receipt); }
       finally { restored.close(); }
       expect(() => new DispatcherDatabase(join(root, "restored", "dispatcher.sqlite"))).toThrowError(expect.objectContaining({ code: "RESTORE_RECONCILIATION_REQUIRED" }));
     } finally { db.close(); rmSync(root, { recursive: true, force: true }); }

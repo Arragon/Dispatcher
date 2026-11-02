@@ -239,3 +239,26 @@ or dependency changes. Current local regressions and milestone review pass with
 no Critical/Important/Minor findings. Final default `pnpm check` passed265files/
 5883tests and build/typecheck/lint/boundaries on the same six functional hashes. Real provider/native
 exclusion/physical-stop/GitHub and human acceptance retain their original Gates.
+
+## Publication interaction requirements (2026-11-02 integration)
+
+Reuse domain InteractionRequirement; do not add another model-selection owner.
+Omission retains compatible behavior. An explicit requirement is carried by the
+publication draft, review hash and immutable ExecutionSelection; capability
+assessment uses the selected backend and current context fingerprint. ConfigPlan
+controls the optional native feature gate and profile policy. A stricter configured
+policy cannot be weakened by a per-task request. Unknown native capabilities block
+publication/start; only compatible mode may proceed without native qualification.
+The same requirement is rechecked at commit, owning execution admission and
+continuation. Existing control/epoch/native-write guards remain independent.
+Append schema19/writer15 so an old Controller cannot erase the frozen requirement.
+Existing migrations1–18 and RHIZA wire1.1/artifact1.1.0 bytes remain unchanged.
+Remote execution with an explicit requirement remains unavailable until its
+owning Runner can preserve and enforce it; never silently strip it from a command.
+This contract integration is not real native or GUI qualification.
+
+Compatible create-only requirements remain task intent until a later dispatch review;
+strict requests/profile policies retain qualification checks. Legacy reroute requires
+a new publication review when either the source carries a requirement or the target
+profile has a strict policy, before stopping the original execution. Invocation
+facts preserve the same validated optional requirement as the owning Run.
