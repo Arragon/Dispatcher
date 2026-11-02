@@ -114,7 +114,10 @@ export class VerificationSnapshots {
       await this.assertIndex(candidate.path);
       if(await this.content(candidate.path)!==candidate.contentFingerprint)throw Error("snapshot content");
       await assertRepositoryIdentity({root:candidate.path,rootIdentity:candidate.rootIdentity});
-      if(await realpath(await this.gitRaw(candidate.path,["rev-parse","--show-toplevel"]))!==candidate.path||await realpath(await this.gitRaw(candidate.path,["rev-parse","--path-format=absolute","--git-common-dir"]))!==candidate.commonDirectory||await this.git(candidate.path,["rev-parse","HEAD"])!==candidate.commit||await this.git(candidate.path,["rev-parse","HEAD^{tree}"])!==candidate.tree||await this.git(candidate.path,["status","--porcelain=v1","--untracked-files=all"]))throw Error("snapshot");
+      if(await realpath(await this.gitRaw(candidate.path,["rev-parse","--show-toplevel"]))!==candidate.path||await realpath(await this.gitRaw(candidate.path,["rev-parse","--path-format=absolute","--git-common-dir"]))!==candidate.commonDirectory)throw Error("snapshot");
+      // Qualify both object identities in one read before status traverses the worktree.
+      const revisions=(await this.gitRaw(candidate.path,["rev-parse","HEAD","HEAD^{tree}"])).split("\n");
+      if(revisions.length!==2||revisions[0]!==candidate.commit||revisions[1]!==candidate.tree||await this.git(candidate.path,["status","--porcelain=v1","--untracked-files=all"]))throw Error("snapshot");
     }catch{throw new WorkspacePolicyError("VERIFICATION_SNAPSHOT_CHANGED","Verification snapshot identity or code changed");}
   }
 }
