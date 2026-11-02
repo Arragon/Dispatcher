@@ -1,3 +1,4 @@
+import {recordModelInvocation} from "./model-invocation.js";
 import { childExecutionEnvironment } from "@dispatcher/shared";
 import {readReadyTurnResult,rememberTurnResult,usageSnapshotUnavailable,type PassiveTurnResult} from "./usage-snapshot.js";
 import {turnExecutionResource} from "./execution-resource.js";
@@ -140,6 +141,8 @@ export class CodexCliBackend implements CodexBackend {
 class SpawnedCodexTurn implements CodexTurn {
   get processId(): number | undefined { return this.child.pid; }
   private completed = false;
+  private drainedAt?:string;
+  drainProof():{producer:"owned-process-group";completedAt:string}|undefined {const status=this.ownership.treeStatus();return this.drainedAt&&status.state==="empty"&&status.scope==="owned-process-group"?{producer:"owned-process-group",completedAt:this.drainedAt}:undefined;}
   private cancelled = false;
   private readonly outcome: Promise<CodexTurnResult>;
   private readonly ownership:OwnedProcessGroup;
@@ -181,6 +184,7 @@ class SpawnedCodexTurn implements CodexTurn {
       });
       child.on("close", (code) => {void (async()=>{
         await this.ownership.stop();
+        this.drainedAt=new Date().toISOString();
         this.completed = true;
         const normalized = code===0 ? undefined : normalizeCodexError(stderr);
         if (normalized)this.record(normalized.type==="resource"?{...normalized,observedAt:new Date().toISOString()}:normalized);
@@ -300,7 +304,7 @@ export class CodexAdapter implements AgentAdapter {
     }
     session.state = "RUNNING";
     if (turn.processId !== undefined) session.processId = turn.processId;
-    try { this.store.save(session); } catch (error) { await turn.cancel(); throw error; }
+    try { recordModelInvocation(this.store,session,"start",{id:model??null,options:typeof session.executionSelection?.nativeParameters.reasoningEffort==="string"?{reasoningEffort:session.executionSelection.nativeParameters.reasoningEffort}:{}});this.store.save(session); } catch (error) { await turn.cancel(); throw error; }
     return structuredClone(session);
     }catch(error){if(this.supportsExecutionRef&&!invoked)throw startPreparationFailure(error);throw error;}
     finally{this.pending--;}
@@ -334,7 +338,7 @@ export class CodexAdapter implements AgentAdapter {
     });
     this.turns.set(sessionId, turn);
     const persisted = { ...this.require(sessionId) }; delete persisted.processId;
-    try { this.store.save({ ...persisted, state: "RUNNING", ...(turn.processId !== undefined ? { processId: turn.processId } : {}), updatedAt: new Date().toISOString() }); }
+    try { recordModelInvocation(this.store,persisted,"input",{id:model??null,options:typeof session.executionSelection?.nativeParameters.reasoningEffort==="string"?{reasoningEffort:session.executionSelection.nativeParameters.reasoningEffort}:{}});this.store.save({ ...persisted, state: "RUNNING", ...(turn.processId !== undefined ? { processId: turn.processId } : {}), updatedAt: new Date().toISOString() }); }
     catch (error) { await turn.cancel(); throw error; }
     return { type: "session.message", sessionId, occurredAt: new Date().toISOString(), data: { acceptedCharacters: message.length } };
     } finally { this.sending.delete(sessionId); }
@@ -354,6 +358,10 @@ export class CodexAdapter implements AgentAdapter {
       assertAdapterWriteAdmission(beforeSend);
       this.cancelled.add(sessionId);
       if (turn) await turn.cancel();
+      if(turn instanceof SpawnedCodexTurn){
+        const result=await turn.result();assertSessionModelBinding(this.store.load(sessionId),session,result.providerSessionId);this.recordOwnedCompletion(session,turn,result);
+        return this.update(sessionId,{state:"CANCELLED",...(result.providerSessionId?{providerSessionId:result.providerSessionId}:{})});
+      }
       return this.update(sessionId, { state: "CANCELLED" });
     } finally { this.pending--; }
   }
@@ -393,13 +401,20 @@ export class CodexAdapter implements AgentAdapter {
     if (!turn || session.state === "CANCELLED") return structuredClone(session);
     const result = await turn.result();
     rememberTurnResult(this.usageResults,turn,result);
-    assertSessionModelBinding(this.store.load(sessionId),session);
+    assertSessionModelBinding(this.store.load(sessionId),session,result.providerSessionId);
     if (this.cancelled.has(sessionId)||this.require(sessionId).state === "CANCELLED") return structuredClone(this.require(sessionId));
+    this.recordOwnedCompletion(session,turn,result);
     return this.update(sessionId, {
       state: result.state === "completed" ? "COMPLETED" : result.state === "cancelled" ? "CANCELLED" : result.state === "waiting" ? "PAUSED" : "FAILED",
       executionResource:turnExecutionResource(result.events,result.state,new Date().toISOString()),
       ...(result.providerSessionId ? { providerSessionId: result.providerSessionId } : {}),
     });
+  }
+  private recordOwnedCompletion(session:AdapterSession,turn:CodexTurn,result:CodexTurnResult):void {
+    const drain=turn instanceof SpawnedCodexTurn?turn.drainProof():undefined;
+    if(drain&&session.modelInvocationId&&session.profileId&&result.providerSessionId&&session.execution?.leaseId){
+      this.store.recordTurnCompletion?.({version:1,invocationId:session.modelInvocationId,sessionId:session.id,runId:session.runId,profileId:session.profileId,backendId:session.backendId,providerSessionId:result.providerSessionId,outcome:result.state,...drain,execution:{generation:session.execution.generation,attempt:session.execution.attempt,leaseId:session.execution.leaseId}});
+    }
   }
   private require(id: string): AdapterSession {
     const session = this.store.load(id);

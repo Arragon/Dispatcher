@@ -40,6 +40,7 @@ export interface AdapterSession {
   legacyModel?:{id?:string};
   turnId?:string;
   turnStartedAt?:string;
+  modelInvocationId?:string;
   id: string;
   runId: string;
   backendId: string;

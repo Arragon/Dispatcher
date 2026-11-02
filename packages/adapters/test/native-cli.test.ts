@@ -12,7 +12,11 @@ import {
 } from "../src/index.js";
 
 function backend(result: CliTurnResult): CliAgentBackend {
-  return { start: vi.fn(() => ({ status: () => "completed", result: async () => result, cancel: async () => undefined })) };
+  return { start: vi.fn(input => {
+    const index=input.args.findIndex(arg=>["--session-id","--resume","--session"].includes(arg));
+    const providerSessionId=index<0?result.providerSessionId:input.args[index+1];
+    return { status: () => "completed", result: async () => ({...result,providerSessionId}), cancel: async () => undefined };
+  }) };
 }
 
 describe("installed native CLI harnesses", () => {
@@ -24,12 +28,13 @@ describe("installed native CLI harnesses", () => {
     const calls = backend({ state: "completed", summary: "done", events: [], providerSessionId: "provider-exact-id" });
     const adapter = new Adapter({ id: "local", alias: "Local", executable: "/bin/harness", model: "provider/model" }, calls);
     const session = await adapter.start({ runId: "run", workspacePath: "/workspace", prompt: "-prompt; $(literal)" });
-    expect((await adapter.status(session.id)).providerSessionId).toBe("provider-exact-id");
+    const expectedId=session.providerSessionId??"provider-exact-id";
+    expect((await adapter.status(session.id)).providerSessionId).toBe(expectedId);
     await adapter.send(session.id, "-next; $(literal)");
     const inputs = vi.mocked(calls.start).mock.calls.map(([input]) => input);
     expect(inputs[0]?.args).toContain(Adapter === GrokAdapter ? "--single=-prompt; $(literal)" : "-prompt; $(literal)");
     const args = inputs[1]!.args;
-    expect(args[args.indexOf(resumeFlag) + 1]).toBe("provider-exact-id");
+    expect(args[args.indexOf(resumeFlag) + 1]).toBe(expectedId);
     expect(args).toContain(Adapter === GrokAdapter ? "--single=-next; $(literal)" : "-next; $(literal)");
     expect(adapter.manifest.id).toBe(manifest.id);
     expect(inputs[0]?.args).not.toContain("--always-approve");
@@ -179,7 +184,11 @@ describe("installed native CLI harnesses", () => {
       : Adapter === GrokAdapter ? { type: "system", subtype: "init", session_id: "id" }
       : { type: "session", id: "id" };
     for (const output of ["", "not JSON: startup failed", JSON.stringify(init)]) {
-      const calls: CliAgentBackend = { start: (input) => new SpawnCliAgentBackend().start({ ...input, executable: process.execPath, args: ["-e", `console.log(${JSON.stringify(output)})`] }) };
+      const calls: CliAgentBackend = { start: (input) => {
+        const sessionId=input.args[input.args.indexOf("--session-id")+1];
+        const record=output===JSON.stringify(init)?JSON.stringify(Adapter===PiAdapter?{...init,id:sessionId}:Adapter===GrokAdapter?{...init,session_id:sessionId}:init):output;
+        return new SpawnCliAgentBackend().start({ ...input, executable: process.execPath, args: ["-e", `console.log(${JSON.stringify(record)})`] });
+      } };
       const adapter = new Adapter({ id: "local", alias: "Local" }, calls);
       const session = await adapter.start({ runId: "run", workspacePath: process.cwd() });
       expect(await adapter.result(session.id)).toMatchObject({ state: "FAILED", summary: "CLI exited without valid native execution evidence" });
@@ -190,7 +199,10 @@ describe("installed native CLI harnesses", () => {
     const message = Adapter === OpenCodeAdapter ? { type: "text", sessionID: "id", part: { text: "done" } }
       : Adapter === GrokAdapter ? { type: "result", is_error: false, result: "done", session_id: "id" }
       : { type: "message_end", message: { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "done" }] } };
-    const calls: CliAgentBackend = { start: (input) => new SpawnCliAgentBackend().start({ ...input, executable: process.execPath, args: ["-e", `console.log('not a protocol record');console.log(${JSON.stringify(JSON.stringify(message))})`] }) };
+    const calls: CliAgentBackend = { start: (input) => {
+      const record=Adapter===GrokAdapter?{...message,session_id:input.args[input.args.indexOf("--session-id")+1]}:message;
+      return new SpawnCliAgentBackend().start({ ...input, executable: process.execPath, args: ["-e", `console.log('not a protocol record');console.log(${JSON.stringify(JSON.stringify(record))})`] });
+    } };
     const adapter = new Adapter({ id: "local", alias: "Local" }, calls);
     const session = await adapter.start({ runId: "run", workspacePath: process.cwd() });
     expect(await adapter.result(session.id)).toMatchObject({ state: "COMPLETED", summary: "done" });

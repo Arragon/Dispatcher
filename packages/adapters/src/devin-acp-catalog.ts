@@ -81,7 +81,7 @@ export async function readDevinLocalCatalog(original: { profileId: string; scope
     if (exitCode !== 0) throw fail("MODEL_CATALOG_UNAVAILABLE");
     guard(); let value: unknown;
     try { new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(diagnosticChunks)); value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks))); } catch { throw fail("INVALID_MODEL_CATALOG"); }
-    const contextFingerprint = digest({ profileId, runnerId: context.runnerId, repositoryId: context.repositoryId, executionContextRef: context.executionContextRef, reason: context.reason, roots: paths.map(p => ({ path: p.path, dev: String(p.dev), ino: String(p.ino) })) });
+    const contextFingerprint = digest({ profileId, runnerId: context.runnerId, repositoryId: context.repositoryId, executionContextRef: context.executionContextRef, roots: paths.map(p => ({ path: p.path, dev: String(p.dev), ino: String(p.ino) })) });
     const catalog = normalizeDevinLocalCatalog(value, { context, contextFingerprint, fetchedAt: new Date().toISOString() }); guard(); return catalog;
   } finally { clearTimeout(timer); signal?.removeEventListener("abort", onAbort); }
 }

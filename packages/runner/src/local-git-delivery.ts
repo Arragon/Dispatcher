@@ -5,12 +5,12 @@ import {WorkspacePolicyError,isDeliveryGitContext,sameGitWorktreeContext,type De
 import type {ManagedProcessHandle,ProcessManager,ProcessResult} from "./process.js";
 import type {GitDeliveryTarget,GitPushResult,LocalCommitResult} from "@dispatcher/domain";
 export type {LocalCommitResult} from "@dispatcher/domain";
-export interface LocalCommitInput {runId:string;generation:number;leaseId:string;workspace:WorkspaceHandle;message:string;assertAuthority:()=>void;signal?:AbortSignal}
+export interface LocalCommitInput {runId:string;generation:number;leaseId:string;workspace:WorkspaceHandle;message:string;verifiedTree?:string;assertAuthority:()=>void;signal?:AbortSignal}
 export interface LocalSnapshotCommitInput extends LocalCommitInput {proof:{id:string;hash:string};candidate:DeliveryCandidate;assertSource:()=>Promise<void>;assertSnapshot:()=>Promise<void>}
 export interface LocalPushInput extends LocalCommitInput {target:GitDeliveryTarget}
 export class LocalGitDeliveryError extends Error{constructor(readonly code:string,message:string){super(message);}}
 const hash=(value:unknown)=>createHash("sha256").update(JSON.stringify(value)).digest("hex");
-function commitBinding(input:LocalCommitInput):string{const workspace=input.workspace;return hash({runId:input.runId,generation:input.generation,leaseId:input.leaseId,workspace:{repositoryId:workspace.repositoryId,repositoryRoot:workspace.repositoryRoot,path:workspace.path,branch:workspace.branch,baseRevision:workspace.baseRevision,runId:workspace.runId,taskId:workspace.taskId,attempt:workspace.attempt,scopePaths:workspace.scopePaths,baseRef:workspace.baseRef,baseCommit:workspace.baseCommit,targetBranch:workspace.targetBranch},message:input.message});}
+function commitBinding(input:LocalCommitInput):string{const workspace=input.workspace;return hash({runId:input.runId,generation:input.generation,leaseId:input.leaseId,workspace:{repositoryId:workspace.repositoryId,repositoryRoot:workspace.repositoryRoot,path:workspace.path,branch:workspace.branch,baseRevision:workspace.baseRevision,runId:workspace.runId,taskId:workspace.taskId,attempt:workspace.attempt,scopePaths:workspace.scopePaths,baseRef:workspace.baseRef,baseCommit:workspace.baseCommit,targetBranch:workspace.targetBranch},message:input.message,...(input.verifiedTree?{verifiedTree:input.verifiedTree}:{})});}
 interface Receipt {version:1;binding:string;state:"PENDING"|"COMPLETE";result?:LocalCommitResult}
 type CommandPhase="stage"|"commit"|"push";
 interface CommandOwner {ownerKind:"local-git-delivery"|"git-push-delivery"|"native-snapshot-commit";ownerId:string;binding:string;phase:CommandPhase;outgoing?:{commit:string;branch:string;target:GitDeliveryTarget}}
@@ -90,7 +90,7 @@ export class LocalGitDelivery {
     for(const row of legacyRows){
       const value=this.snapshotParse(row.document_json);
       // Incomplete legacy receipts contain no run/generation: a moved key cannot safely scope their uncertainty.
-      if(!record(value)||!keys(value,["version","binding","state","result"])||value.version!==1||value.state!=="COMPLETE"||!digest(value.binding)||!record(value.result)||!keys(value.result,["version","runId","generation","commit","branch","files","created","completedAt"])||value.result.version!==1||!bounded(value.result.runId)||!Number.isSafeInteger(value.result.generation)||Number(value.result.generation)<1||!sha(value.result.commit)||!bounded(value.result.branch,1024)||!Array.isArray(value.result.files)||!value.result.files.every(file=>typeof file==="string")||typeof value.result.created!=="boolean"||typeof value.result.completedAt!=="string"||!Number.isFinite(Date.parse(value.result.completedAt)))throw this.snapshotError("OUTCOME_UNKNOWN");
+      if(!record(value)||!keys(value,["version","binding","state","result"])||value.version!==1||value.state!=="COMPLETE"||!digest(value.binding)||!record(value.result)||!keys(value.result,["version","runId","generation","commit","branch","files","created","completedAt",...(Object.hasOwn(value.result,"tree")?["tree"]:[])])||(Object.hasOwn(value.result,"tree")&&!sha(value.result.tree))||value.result.version!==1||!bounded(value.result.runId)||!Number.isSafeInteger(value.result.generation)||Number(value.result.generation)<1||!sha(value.result.commit)||!bounded(value.result.branch,1024)||!Array.isArray(value.result.files)||!value.result.files.every(file=>typeof file==="string")||typeof value.result.created!=="boolean"||typeof value.result.completedAt!=="string"||!Number.isFinite(Date.parse(value.result.completedAt)))throw this.snapshotError("OUTCOME_UNKNOWN");
       if(row.id===legacyId){if(value.result.runId!==input.runId||value.result.generation!==input.generation)throw this.snapshotError("OUTCOME_UNKNOWN");legacy=value;}
     }
     const commands=this.database.handle.prepare("SELECT id,document_json FROM entities WHERE kind=?").all("local-git-command") as Array<{id:string;document_json:unknown}>;
@@ -179,7 +179,7 @@ export class LocalGitDelivery {
   }
   async commit(input:LocalCommitInput):Promise<LocalCommitResult>{
     this.fence(input);
-    if(!input.runId||!Number.isSafeInteger(input.generation)||input.generation<1||input.workspace.runId!==input.runId||!input.message.trim()||input.message.length>1000||input.message.includes(String.fromCharCode(0)))throw new LocalGitDeliveryError("COMMIT_INPUT_INVALID","Commit requires a bound run and bounded message");
+    if(!input.runId||!Number.isSafeInteger(input.generation)||input.generation<1||input.workspace.runId!==input.runId||!input.message.trim()||input.message.length>1000||input.message.includes(String.fromCharCode(0))||input.verifiedTree!==undefined&&!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(input.verifiedTree))throw new LocalGitDeliveryError("COMMIT_INPUT_INVALID","Commit requires a bound run and bounded message");
     const id=hash({runId:input.runId,generation:input.generation}),binding=commitBinding(input);
     const receipt=this.database.getEntity<JsonValue>("local-git-delivery",id) as unknown as Receipt|undefined;
     if(receipt&&receipt.binding!==binding)throw new LocalGitDeliveryError("COMMIT_IDENTITY_CONFLICT","Commit identity is already bound to another workspace or request");
@@ -307,11 +307,14 @@ export class LocalGitDelivery {
     if(dirty){
       await this.git(input,["add","--all","--","."],30_000,{ownerKind:"local-git-delivery",ownerId:id,binding,phase:"stage"});
       await this.workspaces.resultFiles(input.workspace);this.fence(input);
+      if(input.verifiedTree&&await this.git(input,["write-tree"])!==input.verifiedTree)throw new LocalGitDeliveryError("VERIFIED_TREE_CHANGED","Staged content differs from the verified source tree");
       await this.git(input,["commit","--quiet","-m",`${input.message}\n\nDispatcher-Run: ${input.runId}\nDispatcher-Generation: ${input.generation}`],30_000,{ownerKind:"local-git-delivery",ownerId:id,binding,phase:"commit"});
     }
     const commit=await this.git(input,["rev-parse","--verify","HEAD"]),files=await this.workspaces.resultFiles(input.workspace);this.fence(input);
     if(!/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(commit)||await this.git(input,["symbolic-ref","--short","HEAD"])!==input.workspace.branch||await this.git(input,["status","--porcelain"]))throw new LocalGitDeliveryError("COMMIT_OUTCOME_UNKNOWN","Git completion did not establish a clean managed branch");
-    const result:LocalCommitResult={version:1,runId:input.runId,generation:input.generation,commit,branch:input.workspace.branch,files,created:commit!==before,completedAt:new Date().toISOString()};
+    const tree=input.verifiedTree?await this.git(input,["rev-parse",`${commit}^{tree}`]):undefined;
+    if(tree!==input.verifiedTree)throw new LocalGitDeliveryError("VERIFIED_TREE_CHANGED","Committed content differs from the verified source tree");
+    const result:LocalCommitResult={version:1,runId:input.runId,generation:input.generation,commit,...(tree?{tree}:{}),branch:input.workspace.branch,files,created:commit!==before,completedAt:new Date().toISOString()};
     // Repair follows the commands actually sent, even if a hook moved HEAD back to its original SHA.
     this.known.set(id,{result,phases:dirty?["stage","commit"]:[]});this.fence(input);this.save(id,{version:1,binding,state:"COMPLETE",result});this.known.delete(id);return structuredClone(result);
   }

@@ -75,7 +75,7 @@ function producer(f: ReturnType<typeof fixture>) {
   clients.push({ close: () => backend.disconnectLocal() }); return backend;
 }
 function executionInput(f: ReturnType<typeof fixture>): CliStartInput {
-  return { executable: f.scope.executable, args: [], workspacePath: f.scope.workspacePath, executionRef: structuredClone(executionRef), beforePrompt: () => {}, onBinding: async () => {},
+  return { executable: f.scope.executable, args: [], workspacePath: f.scope.workspacePath, executionRef: structuredClone(executionRef), beforePrompt: () => {}, beforeObserve: () => {}, onBinding: async () => {},
     nativeInput: { version: 1, profileId: "local-devin", backendId: "devin-local-acp", runId: "run", sessionId: "dispatcher-exact", commandId: "observer-exact", newSession: true, prompt: "inspect", approveTools: false, executionSelection: structuredClone(executionSelection) } };
 }
 function delayTerminal(f: ReturnType<typeof fixture>): void {
@@ -104,7 +104,7 @@ it.each(["model", "profile", "execution", "environment", "argv", "approve", "res
 it("producer captures the original selection/reference and callbacks before acquisition", async () => {
   const f = fixture(), backend = producer(f), input = executionInput(f), saved: NativeBinding[] = [];
   input.onBinding = async binding => { saved.push(binding); }; const turn = backend.start(input);
-  input.onBinding = async () => { throw Error("replacement"); }; input.beforePrompt = () => { throw Error("replacement"); }; input.nativeInput!.prompt = "changed"; input.nativeInput!.executionSelection!.requestedModel = "other"; input.executionRef!.id = "foreign";
+  input.onBinding = async () => { throw Error("replacement"); }; input.beforePrompt = () => { throw Error("replacement"); }; input.beforeObserve = () => { throw Error("replacement"); }; input.nativeInput!.prompt = "changed"; input.nativeInput!.executionSelection!.requestedModel = "other"; input.executionRef!.id = "foreign";
   await turn.ready?.(); expect((await turn.result()).state).toBe("completed"); expect(saved).toMatchObject([{ nativeSessionId: "native-exact", executionRefId: "execution" }]); expect(f.calls().at(-1)).toMatchObject({ params: { prompt: [{ text: "inspect" }] } });
 });
 it("producer refuses prompt after failed original binding persistence", async () => {
@@ -170,7 +170,7 @@ it("producer preserves constructor scope and reference when caller options chang
 });
 it.each(["authority", "workspace", "shutdown"])("producer rechecks %s after the terminal consumer before successful result", async mode => {
   const f = fixture(), backend = producer(f), input = executionInput(f); let allowed = true;
-  input.beforePrompt = () => { if (!allowed) throw Error("revoked"); };
+  input.beforeObserve = () => { if (!allowed) throw Error("revoked"); };
   input.onNativeEvent = fact => { if (fact.state === "completed") { if (mode === "authority") allowed = false; if (mode === "workspace") renameSync(f.scope.workspacePath, f.scope.workspacePath + "-moved"); if (mode === "shutdown") backend.beginShutdown(); } };
   const turn = backend.start(input); await turn.ready?.(); expect((await turn.result()).state).toBe(mode === "shutdown" ? "cancelled" : "failed");
 });
@@ -218,7 +218,7 @@ it("retains raw observer activity after bounded failure and preserves the cached
 }));
 it.each(["running", "completed"] as const)("rechecks authority after asynchronous %s observation settles", async state => withOpenSetup(async opened => {
   const f = fixture(), backend = producer(f), input = executionInput(f), held = deferred(); let allowed = true, entered = false;
-  input.beforePrompt = () => { if (!allowed) throw Error("revoked"); };
+  input.beforeObserve = () => { if (!allowed) throw Error("revoked"); };
   input.onNativeEvent = async fact => { if (fact.state === state) { entered = true; await held.promise; allowed = false; } };
   const turn = backend.start(input), result = turn.result(); void result.catch(() => {}); void turn.ready?.().catch(() => {});
   await opened; await vi.waitFor(() => expect(entered).toBe(true)); held.resolve();
@@ -341,4 +341,11 @@ it("propagates actual open rejection before observer entry", async () => {
     await expect(turn.ready?.()).rejects.toMatchObject({ creationOutcome: "not-created", code: "DEVIN_ACP_VERSION_UNQUALIFIED" }); await expect(turn.result()).rejects.toMatchObject({ creationOutcome: "not-created" });
     expect(existsSync(join(f.root, "started"))).toBe(false); expect(f.calls()).toEqual([]); expect(await backend.disconnectLocal()).toMatchObject({ ownedRoot: "unknown", backgroundTools: "unknown", nativeSessionDeleted: false });
   });
+});
+
+it.each(['missing','async'] as const)('requires %s observation authority before owned ACP acquisition',async mode=>{
+ const f=fixture(),backend=producer(f),input=executionInput(f),held=Promise.withResolvers<void>(),open=vi.spyOn(adapters.DevinLocalAcpClient,'open');let turn:ReturnType<typeof backend.start>|undefined;
+ if(mode==='missing')delete input.beforeObserve;else input.beforeObserve=()=>held.promise;
+ try{expect(()=>{turn=backend.start(input);}).toThrowError(expect.objectContaining({code:mode==='missing'?'DEVIN_ACP_START_INVALID':'DEVIN_ACP_AUTHORITY_CHANGED'}));expect(open.mock.calls.length).toBe(0);if(mode==='async'){expect(backend.hasActiveOperations()).toBe(true);expect((await backend.disconnectLocal()).callbacks).toBe('unknown');held.resolve();await vi.waitFor(()=>expect(backend.hasActiveOperations()).toBe(false));expect((await backend.disconnectLocal()).callbacks).toBe('unknown');}}
+ finally{held.resolve();if(turn){await turn.ready?.().catch(()=>{});await turn.result().catch(()=>{});}await backend.disconnectLocal();open.mockRestore();}
 });

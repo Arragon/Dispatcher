@@ -10,6 +10,10 @@ import {ControllerService} from "../src/service.js";
 import {isGuardedControllerStart,isReadableManagedCodexRun,isReadableManagedOpenCodeRun,isReadableManagedPiRun} from "../src/start-recovery.js";
 import {editStored,replaceBindingCopies,type StoredEdit} from "./fixtures/managed-restart-storage.js";
 import type {PiExecutionRuntime} from "../src/pi-runtime.js";
+import {EncryptedLocalSecretStore} from "@dispatcher/config";
+import {admitRhizaNative} from "./fixtures/rhiza-native-admission.js";
+import {assertRhizaUnknownRestart} from "./fixtures/rhiza-native-restart.js";
+import {clientHeaders} from "./fixtures/rhiza-service.js";
 
 const roots:string[]=[],services:ControllerService[]=[];
 const headers={authorization:"Bearer fixture-owner"};
@@ -18,7 +22,7 @@ async function fixture(capacity=1){
  const f=piRpcFixture(roots,"exec-ok");
  const git=(...args:string[])=>execFileSync("git",["-C",f.scope.workspacePath,...args],{stdio:"pipe"});
  git("init","--initial-branch=main");git("config","user.email","fixture@example.invalid");git("config","user.name","Fixture");writeFileSync(join(f.scope.workspacePath,"README.md"),"fixture\n");git("add",".");git("commit","-m","fixture");
- const service=new ControllerService({dataDirectory:join(f.root,"controller"),ownerToken:"fixture-owner",withRunner:true,backgroundWorker:{enabled:false}});services.push(service);await service.start({listen:false});
+ const service=new ControllerService({dataDirectory:join(f.root,"controller"),ownerToken:"fixture-owner",secretStore:new EncryptedLocalSecretStore(join(f.root,"vault"),"synthetic-pi-runtime-master"),withRunner:true,backgroundWorker:{enabled:false}});services.push(service);await service.start({listen:false});
  const config=structuredClone(service.configuration.current().config);
  config.runners[0]!.capacity=capacity;
  config.agentProfiles=[{id:"pi",alias:"Pi",provider:"pi",runnerId:"local",nativeInteraction:{mode:"compatible",backendId:"pi-rpc",executionLocation:"managed-worktree"},settings:{executable:f.scope.executable,agentDirectory:f.scope.agentDirectory,sessionDirectory:f.scope.sessionDirectory,model:"fixture/exec-ok"}}];
@@ -37,6 +41,14 @@ async function fixture(capacity=1){
 }
 it("registers the configured Pi RPC backend without starting native processes",async()=>{
  const f=await fixture();expect(f.adapter.supportsExecutionRef).toBe(true);expect(f.adapter.legacyInvocationDefaults?.()).toMatchObject({backendId:"pi-rpc"});expect(existsSync(join(f.root,"environment.jsonl"))).toBe(false);
+});
+it("keeps a RHIZA Pi restart queryable without restoring a native writer or candidate",async()=>{
+ const f=await fixture(),accepted=await admitRhizaNative(f.service,async context=>({profileId:context.profileId,runnerId:context.runnerId,providerId:"pi",backendId:"pi-rpc",contextFingerprint:"c".repeat(64),revision:"d".repeat(64),freshness:"native-fresh",fetchedAt:new Date().toISOString(),source:"native-rpc",selectionSupport:"explicit",entries:[{id:"fixture/exec-ok",displayName:"Synthetic Pi",kind:"model",access:"account-listed",selectable:true,parameterOptions:{}}]}),"pi");await f.service["rhizaJobs"].drain();const current=f.service.database.listEntities("run")[0] as unknown as Run;await f.adapter.result(current.sessionId);
+ const run=f.service.database.getEntity("run",current.id) as unknown as Run,oldSession=f.service.database.getEntity("session",run.sessionId),oldAdapter=f.service.database.getEntity("adapter-session",run.sessionId),binding=new InteractionStore(f.service.database).binding(run.sessionId)!;
+ const before=(await f.service.app.inject({url:`/api/integrations/rhiza/v1/jobs/${accepted.receipt.jobId}`,headers:clientHeaders})).json();await f.service.stop();const wire=readFileSync(join(f.root,"wire-types"),"utf8");
+ const restored=new ControllerService({dataDirectory:join(f.root,"controller"),ownerToken:"fixture-owner",secretStore:f.service.secrets,withRunner:true,backgroundWorker:{enabled:false}});
+ try{await restored.start({listen:false});await assertRhizaUnknownRestart(restored,accepted,run,before);expect(restored.database.getEntity("session",run.sessionId)).toEqual(oldSession);expect(restored.database.getEntity("adapter-session",run.sessionId)).toEqual(oldAdapter);expect(new InteractionStore(restored.database).binding(run.sessionId)).toEqual(binding);expect(restored["nativePort"](binding)).toBeUndefined();expect(readFileSync(join(f.root,"wire-types"),"utf8")).toBe(wire);}
+ finally{await restored.stop();}
 });
 it("binds a canonical Pi session before prompting and keeps continuation unqualified",async()=>{
  const f=await fixture(),run=await f.dispatch();expect(run.state,run.failureReason).toBe("ACTIVE");expect(run.resumePolicy).toBe("controlled-reroute");expect(run.executionRef).toMatchObject({kind:"managed-worktree",runnerId:"local",repositoryId:"repo",workspaceId:run.id});

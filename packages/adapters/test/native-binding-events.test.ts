@@ -1,4 +1,4 @@
-import {expect,it} from "vitest";
+import {expect,it,vi} from "vitest";
 import type {NativeBinding,NativeBindingEvent} from "@dispatcher/domain";
 import type {AdapterSession} from "../src/contracts.js";
 import {MemorySessionStore} from "../src/generic.js";
@@ -13,6 +13,15 @@ function fixture(input:Partial<AdapterSession>={}){
  const options=()=>observer.startOptions(session,emit,"codex",()=>undefined,"codex-thread");
  return {store,session,observer,emit,ref,events,options,ownsAuthority:()=>current,revoke:()=>{current=false;}};
 }
+it("keeps observation checks independent of one-shot write admission after binding",async()=>{
+ const f=fixture(),write=vi.fn(),options=f.observer.startOptions(f.session,f.emit,"codex",write,"codex-thread");await options.onBinding(f.ref);const writes=write.mock.calls.length;
+ options.beforeObserve();expect(write).toHaveBeenCalledTimes(writes);options.beforePrompt();expect(write).toHaveBeenCalledTimes(writes+1);f.revoke();expect(()=>options.beforeObserve()).toThrowError(expect.objectContaining({code:"STALE_NATIVE_OBSERVER"}));
+});
+it.each(["generation","invocation","session","cancelled"] as const)("keeps %s drift fenced by observation without write admission",async drift=>{
+ const f=fixture(),write=vi.fn(),options=f.observer.startOptions(f.session,f.emit,"codex",write,"codex-thread");await options.onBinding(f.ref);const writes=write.mock.calls.length,current=f.store.load("session")!;
+ f.store.save({...current,...(drift==="generation"?{execution:{...current.execution!,generation:2}}:drift==="invocation"?{nativeInvocationId:"foreign"}:drift==="session"?{providerSessionId:"foreign"}:{state:"CANCELLED" as const})});
+ expect(()=>options.beforeObserve()).toThrowError(expect.objectContaining({code:drift==="session"?"NATIVE_IDENTITY_CHANGED":drift==="cancelled"?"SESSION_CANCELLED":"STALE_NATIVE_OBSERVER"}));expect(write).toHaveBeenCalledTimes(writes);
+});
 
 it("saves allocated exact Codex thread identity before the owning durable waiting event",async()=>{
  const f=fixture();let seen=false;

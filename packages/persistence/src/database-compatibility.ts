@@ -11,8 +11,22 @@ export const GUARDED_START_SCHEMA_NAME = "guarded_controller_start_writer_protoc
 export const AUTOMATIC_VERIFICATION_SCHEMA_NAME = "automatic_verification_receipt_writer_protocol";
 export const USAGE_ORIGIN_SCHEMA_NAME = "canonical_usage_origin_writer_protocol";
 export const PRICING_ADMISSION_SCHEMA_NAME = "frozen_native_pricing_writer_protocol";
-export function databaseWriterProtocol(db:DatabaseSync):1|2|3|4|5|6|7 {
+export const RHIZA_ADMISSION_SCHEMA_NAME = "rhiza_immutable_admission_writer_protocol";
+export const RHIZA_JOB_SCHEMA_NAME = "rhiza_canonical_job_authority_writer_protocol";
+export const MODEL_EVIDENCE_SCHEMA_NAME = "native_model_evidence_writer_protocol";
+export const RHIZA_OBSERVATION_SCHEMA_NAME = "rhiza_durable_observation_writer_protocol";
+export const RHIZA_CONTROL_SCHEMA_NAME = "rhiza_external_control_writer_protocol";
+export const RHIZA_INPUT_SCHEMA_NAME = "rhiza_external_input_writer_protocol";
+export const RHIZA_LINEAGE_SCHEMA_NAME = "rhiza_explicit_reassignment_writer_protocol";
+export function databaseWriterProtocol(db:DatabaseSync):1|2|3|4|5|6|7|8|9|10|11|12|13|14 {
   if(!hasTable(db,"schema_migrations"))return 1;
+  if(db.prepare("SELECT name FROM schema_migrations WHERE version=18").get()?.name===RHIZA_LINEAGE_SCHEMA_NAME)return 14;
+  if(db.prepare("SELECT name FROM schema_migrations WHERE version=17").get()?.name===RHIZA_INPUT_SCHEMA_NAME)return 13;
+  if(db.prepare("SELECT name FROM schema_migrations WHERE version=16").get()?.name===RHIZA_CONTROL_SCHEMA_NAME)return 12;
+  if(db.prepare("SELECT name FROM schema_migrations WHERE version=15").get()?.name===RHIZA_OBSERVATION_SCHEMA_NAME)return 11;
+  if(db.prepare("SELECT name FROM schema_migrations WHERE version=14").get()?.name===MODEL_EVIDENCE_SCHEMA_NAME)return 10;
+  if(db.prepare("SELECT name FROM schema_migrations WHERE version=13").get()?.name===RHIZA_JOB_SCHEMA_NAME)return 9;
+  if(db.prepare("SELECT name FROM schema_migrations WHERE version=12").get()?.name===RHIZA_ADMISSION_SCHEMA_NAME)return 8;
   if(db.prepare("SELECT name FROM schema_migrations WHERE version=11").get()?.name===PRICING_ADMISSION_SCHEMA_NAME)return 7;
   if(db.prepare("SELECT name FROM schema_migrations WHERE version=10").get()?.name===USAGE_ORIGIN_SCHEMA_NAME)return 6;
   if(db.prepare("SELECT name FROM schema_migrations WHERE version=9").get()?.name===AUTOMATIC_VERIFICATION_SCHEMA_NAME)return 5;
@@ -52,7 +66,7 @@ export function assertDatabaseLocationOperational(path:string):void {
 
 // SQLite keeps these triggers when an older process ignores the migration ledger.
 // That process has no matching connection-local function, so DML fails closed.
-export function installWriterGate(db:DatabaseSync,protocol:1|2|3|4|5|6|7=1):void {
+export function installWriterGate(db:DatabaseSync,protocol:1|2|3|4|5|6|7|8|9|10|11|12|13|14=1):void {
   for(const row of db.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'").all()) {
     const table=String(row.name);
     if(!/^[a-z_]+$/.test(table))throw new DatabaseCompatibilityError("DATABASE_SCHEMA_UNSUPPORTED");
@@ -78,7 +92,18 @@ export function upgradeUsageOriginWriterGate(db:DatabaseSync):void {
 export function upgradePricingAdmissionWriterGate(db:DatabaseSync):void {
   replaceWriterGate(db,7);
 }
-function replaceWriterGate(db:DatabaseSync,protocol:2|3|4|5|6|7):void {
+export function upgradeRhizaAdmissionWriterGate(db:DatabaseSync):void {
+  replaceWriterGate(db,8);
+}
+export function upgradeRhizaJobWriterGate(db:DatabaseSync):void {
+  replaceWriterGate(db,9);
+}
+export function upgradeModelEvidenceWriterGate(db:DatabaseSync):void {replaceWriterGate(db,10);}
+export function upgradeRhizaObservationWriterGate(db:DatabaseSync):void {replaceWriterGate(db,11);}
+export function upgradeRhizaControlWriterGate(db:DatabaseSync):void {replaceWriterGate(db,12);}
+export function upgradeRhizaInputWriterGate(db:DatabaseSync):void {replaceWriterGate(db,13);}
+export function upgradeRhizaLineageWriterGate(db:DatabaseSync):void {replaceWriterGate(db,14);}
+function replaceWriterGate(db:DatabaseSync,protocol:2|3|4|5|6|7|8|9|10|11|12|13|14):void {
   for(const row of db.prepare("SELECT name FROM sqlite_schema WHERE type='trigger' AND name GLOB 'writer_gate_*'").all()){
     const name=String(row.name);
     if(!/^writer_gate_[a-z_]+_(insert|update|delete)$/.test(name))throw new DatabaseCompatibilityError("DATABASE_SCHEMA_UNSUPPORTED");

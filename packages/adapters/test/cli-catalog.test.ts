@@ -73,7 +73,7 @@ describe("native CLI catalogs", () => {
 describe("frozen CLI selection", () => {
   it.each([CursorAdapter, QoderCnAdapter, GrokAdapter, AntigravityAdapter, OpenCodeAdapter])("isolates concurrent models on the same account (%s)", async Adapter => {
     const calls: string[][] = [];
-    const backend: CliAgentBackend = { start: input => { calls.push(input.args); const id = `native-${calls.length}`; return { status: () => "completed", cancel: async () => undefined, result: async () => ({ state: "completed", summary: "done", providerSessionId: id, events: [] }) }; } };
+    const backend: CliAgentBackend = { start: input => { calls.push(input.args); const index=input.args.findIndex(arg=>["--session-id","--resume","--session","--conversation"].includes(arg));const id = index<0?`native-${calls.length}`:input.args[index+1]; return { status: () => "completed", cancel: async () => undefined, result: async () => ({ state: "completed", summary: "done", providerSessionId: id, events: [] }) }; } };
     const adapter = new Adapter({id:"account",alias:"A",model:"default"}, backend);
     const [a,b] = await Promise.all(["model-a","model-b"].map(requestedModel => adapter.start({runId:requestedModel,prompt:`prompt-${requestedModel}`,workspacePath:"/tmp",executionSelection:{...selection,providerId:adapter.manifest.id,backendId:adapter.manifest.backends[0]!.id,requestedModel}})));
     await Promise.all([adapter.send(a!.id,"continue-a"),adapter.send(b!.id,"continue-b")]);
@@ -85,7 +85,7 @@ describe("frozen CLI selection", () => {
   });
   it.each([CursorAdapter, QoderCnAdapter, GrokAdapter, AntigravityAdapter, OpenCodeAdapter])("binds explicit and native-default choices on start and continuation (%s)", async (Adapter) => {
     const calls: string[][] = [];
-    const backend: CliAgentBackend = { start: input => { calls.push(input.args); return { status: () => "completed", cancel: async () => undefined, result: async () => ({ state: "completed", summary: "done", providerSessionId: "native-thread", events: [] }) }; } };
+    const backend: CliAgentBackend = { start: input => { calls.push(input.args); const index=input.args.findIndex(arg=>["--session-id","--resume","--session","--conversation"].includes(arg));const providerSessionId=index<0?"native-thread":input.args[index+1];return { status: () => "completed", cancel: async () => undefined, result: async () => ({ state: "completed", summary: "done", providerSessionId, events: [] }) }; } };
     const profile = { id: "account", alias: "A", model: "profile-default" };
     const adapter = new Adapter(profile, backend);
     const choice={...selection,providerId:adapter.manifest.id,backendId:adapter.manifest.backends[0]!.id};

@@ -36,6 +36,7 @@ export class CanonicalTaskService {
   constructor(
     private readonly database: DispatcherDatabase,
     private readonly clock: () => Date = () => new Date(),
+    private readonly beforeWrite?: (next:Task,current:Task|undefined)=>void,
   ) {}
 
   ingest(event: ExternalEvent): boolean {
@@ -117,6 +118,7 @@ export class CanonicalTaskService {
       const updatedAt = this.clock().toISOString();
       next.updatedAt = updatedAt;
       next.revision = input.baseRevision + 1;
+      this.beforeWrite?.(next,current);
       const revision = this.database.writeCanonicalTask(input.taskId, input.baseRevision, json(next), updatedAt);
       next.revision = revision;
 

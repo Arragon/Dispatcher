@@ -1,5 +1,6 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { verifyOwnerPassword } from "./owner-password.js";
+import { RHIZA_API_PREFIX } from "@dispatcher/protocol";
 
 export const OWNER_TOKEN_REFERENCE = "secret://controller/owner-token";
 export const OWNER_PASSWORD_REFERENCE = "secret://controller/owner-password";
@@ -13,7 +14,8 @@ export interface ControlPrincipal {
   id: string;
   roles: string[];
   channel: "web" | "api";
-  authenticatedBy: "bearer" | "session";
+  authenticatedBy: "bearer" | "session" | "service-bearer";
+  service?: { clientId: string; authorityId: string; grantHash: string; credentialEpoch: string; authorizationRevision: number };
 }
 
 export interface ControlRequest {
@@ -21,12 +23,14 @@ export interface ControlRequest {
   url: string;
   headers: Record<string, string | string[] | undefined>;
   ip: string;
+  routePath?: string;
+  protocol?: string;
 }
 
 export type ControlDecision =
   | { kind: "public" }
   | { kind: "authenticated"; principal: ControlPrincipal }
-  | { kind: "rejected"; status: 400 | 401 | 403 | 429; code: string; message: string; retryAfterSeconds?: number };
+  | { kind: "rejected"; status: 400 | 401 | 403 | 429 | 503; code: string; message: string; retryAfterSeconds?: number };
 
 export interface ControlSession {
   sessionId: string;
@@ -45,6 +49,17 @@ export interface ControlAuthOptions {
   authFailuresPerWindow?: number;
   authFailureWindowMs?: number;
   ownerTokenCacheMs?: number;
+  evaluateServiceBearer?: (token: string, request: ControlRequest) => Promise<ControlDecision>;
+}
+
+export function isRhizaIngressPath(url: string): boolean {
+  let path = url.split("?")[0] ?? url;
+  for (let pass = 0; pass < 3; pass++) {
+    if (path === RHIZA_API_PREFIX || path.startsWith(`${RHIZA_API_PREFIX}/`)) return true;
+    try { const decoded = decodeURIComponent(path); if (decoded === path) break; path = decoded; }
+    catch { break; }
+  }
+  return false;
 }
 
 type RouteClass = "public" | "signed" | "login" | "protected";
@@ -120,7 +135,8 @@ export class ControlPlaneAuth {
 
   async evaluate(request: ControlRequest): Promise<ControlDecision> {
     const method = request.method.toUpperCase();
-    const route = classifyControlRoute(method, request.url);
+    const serviceRoute = isRhizaIngressPath(request.url) || isRhizaIngressPath(request.routePath ?? "");
+    const route = serviceRoute ? "protected" : classifyControlRoute(method, request.url);
     if (route === "public") return { kind: "public" };
     const now = this.nowMs();
     this.prune(now);
@@ -136,14 +152,25 @@ export class ControlPlaneAuth {
     const host = header(request.headers, "host");
     if (!host || !this.allowedHosts.has(hostname(host))) return { kind: "rejected", status: 403, code: "HOST_REJECTED", message: "Host is not allowed" };
     if (header(request.headers, "sec-fetch-site") === "cross-site") return { kind: "rejected", status: 403, code: "ORIGIN_REJECTED", message: "Cross-site requests are not allowed" };
-    if (UNSAFE_METHODS.has(method) && !this.sameOrigin(header(request.headers, "origin"), host)) {
+    const origin = header(request.headers, "origin");
+    if (serviceRoute ? !this.sameServiceOrigin(origin, host, request.protocol) : UNSAFE_METHODS.has(method) && !this.sameOrigin(origin, host)) {
       return { kind: "rejected", status: 403, code: "ORIGIN_REJECTED", message: "Origin is not allowed" };
     }
     if (this.lockedOut(request.ip, now)) {
-      return { kind: "rejected", status: 429, code: "AUTH_LOCKED", message: "Too many failed authentication attempts", retryAfterSeconds: Math.ceil(this.failureWindowMs() / 1_000) };
+      return { kind: "rejected", status: 429, code: serviceRoute ? "RATE_LIMITED" : "AUTH_LOCKED", message: "Too many failed authentication attempts", retryAfterSeconds: Math.ceil(this.failureWindowMs() / 1_000) };
     }
     if (route === "login") return { kind: "public" };
     const authorization = header(request.headers, "authorization");
+    if (serviceRoute) {
+      const token = authorization?.startsWith("Bearer ") ? authorization.slice(7).trim() : "";
+      if (Array.isArray(request.headers.authorization) || !this.options.evaluateServiceBearer || token && await this.matchesOwnerToken(token)) {
+        this.recordFailure(request.ip);
+        return { kind: "rejected", status: 401, code: "AUTH_REQUIRED", message: "A current service credential is required" };
+      }
+      const decision = await this.options.evaluateServiceBearer(token, request);
+      if (decision.kind === "rejected" && decision.status === 401) this.recordFailure(request.ip);
+      return decision;
+    }
     if (authorization?.startsWith("Bearer ")) {
       if (await this.matchesOwnerToken(authorization.slice("Bearer ".length).trim())) return { kind: "authenticated", principal: this.principal("api", "bearer") };
       this.recordFailure(request.ip);
@@ -239,6 +266,16 @@ export class ControlPlaneAuth {
       this.cachedOwnerToken = { value: await this.options.resolveOwnerToken(), expiresAt: now + (this.options.ownerTokenCacheMs ?? 30_000) };
     }
     return safeEqual(candidate, this.cachedOwnerToken.value);
+  }
+
+  private sameServiceOrigin(origin: string | undefined, host: string, protocol: string | undefined): boolean {
+    if (!origin) return true;
+    if (protocol !== "http" && protocol !== "https") return false;
+    try {
+      const parsed = new URL(origin);
+      return !parsed.username && !parsed.password && parsed.pathname === "/" && !parsed.search && !parsed.hash
+        && parsed.origin === new URL(`${protocol}://${host}`).origin;
+    } catch { return false; }
   }
 
   private sameOrigin(origin: string | undefined, host: string): boolean {

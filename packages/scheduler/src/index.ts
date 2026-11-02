@@ -157,6 +157,7 @@ export function renderTaskContract(contract: TaskContract): string {
   return [
     `Goal: ${contract.goal}`,
     ...(contract.instructions !== undefined ? [`Instructions:\n${contract.instructions}`] : []),
+    ...(contract.inputContext ? [`Input Context (JSON):\n${JSON.stringify(contract.inputContext)}`] : []),
     `Scope:\n${contract.scope.map((item) => `- ${item}`).join("\n")}`,
     `Acceptance criteria:\n${contract.acceptanceCriteria.map((item) => `- ${item}`).join("\n")}`,
     `Verification:\n${contract.verification.map((item) => `- ${item}`).join("\n")}`,

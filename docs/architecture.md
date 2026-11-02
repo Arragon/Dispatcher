@@ -8,8 +8,9 @@ the frozen design is authoritative.
 
 The [adopted cross-product architecture](https://linear.app/inhandy/document/013da3a666f5)
 and [roadmap](https://linear.app/inhandy/document/b15aa19a4b54) specialize the
-external-Agent ownership boundary. They are target constraints, not a claim that
-the current convergence candidate implements or qualifies the integration.
+external-Agent ownership boundary. The current candidate adopts the committed
+Dispatcher ingress implementation; native tuple and bilateral release qualification
+remain separate from source integration and local conformance.
 RHIZA owns Workflow, business attempts/origin/approval, Context, Evaluate and
 accepted artifacts, plus its existing ordinary Chat/Provider calls. Dispatcher
 alone owns external-Agent canonical Task/Contract/Run, Native Session/Harness and
@@ -22,9 +23,9 @@ Dispatcher owns the wire schema/artifact generation source; the RHIZA consumer p
 its version and digest rather than importing Dispatcher TypeScript or its database.
 RHIZA's frozen exact Harness/model/options selection must not be routed through
 local Policy again. Existing local manual/policy and none/commit/PR paths retain
-their contracts. The fixed compatibility source currently exposes protocol 1.1 /
-artifact 1.1.0 for code+PR only; this is not a declaration that this candidate has
-adopted it. Unsupported external research/document tasks require explicit refusal
+their contracts. The ingress uses protocol 1.1 / artifact 1.1.0 for code+PR only,
+with the fixed compatibility artifact bytes retained. Unsupported external
+research/document tasks require explicit refusal
 or a separately reviewed versioned extension, never an implicit native fallback.
 
 One original semantic request key identifies one immutable receipt. A lost response
@@ -41,6 +42,19 @@ field ownership, test preservation and distinct migration/writer catalogs are re
 in `docs/evidence/convergence/contract-decisions.md`; moving WIP is never an
 integration baseline. Original Done records and real-provider/GUI/stop/recovery Gates
 retain their original scope.
+
+`/api/integrations/rhiza/v1` uses service grants and SecretStore credentials;
+owner tokens and browser sessions cannot authenticate an external client. RHIZA
+jobs reuse canonical publication, Task/Run and owning Runtime boundaries, with
+immutable request-key receipts, durable observations, cancellation/input fences
+and explicit successor admission. Input Context reaches the canonical contract
+and native prompt without changing its UTF-8 content. Ingress is disabled by
+default; production model-evidence capabilities remain empty, so integration
+does not advertise `jobs.submit` or `model.verified` without qualification.
+Persistence retains migrations1–11 and adds RHIZA12–18/writer8–14, including
+original private16 rejection. Observation admission is distinct from one-shot
+write admission; native shutdown begins before draining dependent ingress work.
+The full wire and operational contract is in `docs/rhiza-ingress-v1.md`.
 
 Task, provider, catalog, probe, verification and Git subprocesses use the shared
 child execution environment boundary. It removes Controller owner-token and

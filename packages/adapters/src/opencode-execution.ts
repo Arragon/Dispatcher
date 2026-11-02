@@ -55,20 +55,20 @@ export class OpenCodeV2ExecutionBackend implements CliAgentBackend {
  get interaction():OpenCodeV2InteractionPort|undefined {return this.binding?this.source(this.binding):undefined;}
  hasActiveOperations():boolean {return this.operations.size>0||this.callbacks.size>0;}
  private track<T>(work:Promise<T>,set=this.operations):Promise<T>{set.add(work);void work.finally(()=>set.delete(work)).catch(()=>undefined);return work;}
- private guard(input:CliStartInput):void {
+ private guard(input:CliStartInput,phase:"start"|"observation"="start"):void {
   if(this.closed)fail("OPENCODE_LOCAL_CONNECTION_CLOSED");
   if(this.persistenceFailed)fail("OPENCODE_BINDING_PERSISTENCE_UNKNOWN");
   this.assertWorkspace();
   if(!isDeepStrictEqual(input.executionRef,this.reference)||input.executable!==this.scope.executable||!isDeepStrictEqual(directory(input.workspacePath),this.workspace))fail("OPENCODE_SCOPE_CHANGED");
   let returned:unknown;
-  try{returned=input.beforePrompt!();}catch{fail("OPENCODE_AUTHORITY_CHANGED");}
-  if(returned!==undefined){void Promise.resolve(returned).catch(()=>undefined);fail("OPENCODE_ADMISSION_MUST_BE_SYNCHRONOUS");}
+  try{returned=(phase==="start"?input.beforePrompt:input.beforeObserve)!();}catch{fail("OPENCODE_AUTHORITY_CHANGED");}
+  if(returned!==undefined){this.track(Promise.resolve(returned),this.callbacks);fail("OPENCODE_ADMISSION_MUST_BE_SYNCHRONOUS");}
   if(this.closed)fail("OPENCODE_LOCAL_CONNECTION_CLOSED");
   this.assertWorkspace();if(!isDeepStrictEqual(directory(input.workspacePath),this.workspace))fail("OPENCODE_SCOPE_CHANGED");
  }
  private validate(input:CliStartInput):OpenCodeV2Model {
   const native=input.nativeInput;
-  if(!native||native.version!==1||native.profileId!==this.scope.profileId||native.backendId!==this.backendId||![native.runId,native.sessionId,native.commandId].every(identifier)||typeof native.prompt!=="string"||!native.prompt.length||native.prompt.length>262_144||typeof input.beforePrompt!=="function"||typeof input.onBinding!=="function"||typeof input.onNativeEvent!=="function")fail("OPENCODE_START_INVALID");
+  if(!native||native.version!==1||native.profileId!==this.scope.profileId||native.backendId!==this.backendId||![native.runId,native.sessionId,native.commandId].every(identifier)||typeof native.prompt!=="string"||!native.prompt.length||native.prompt.length>262_144||typeof input.beforePrompt!=="function"||typeof input.beforeObserve!=="function"||typeof input.onBinding!=="function"||typeof input.onNativeEvent!=="function")fail("OPENCODE_START_INVALID");
   if(!native.newSession||Object.hasOwn(native,"providerSessionId"))fail("OPENCODE_CONTINUATION_REQUIRES_COMMAND_LANE");
   if(native.approveTools!==false)fail("OPENCODE_TOOL_APPROVAL_UNQUALIFIED");
   if(input.environment&&Object.keys(input.environment).length)fail("OPENCODE_ENVIRONMENT_UNSUPPORTED");
@@ -79,7 +79,7 @@ export class OpenCodeV2ExecutionBackend implements CliAgentBackend {
   try{freezeExecutionSelection(selection,{profileId:this.scope.profileId,providerId:"opencode",backendId:this.backendId,selection:true,reasoning:false});}catch(error){fail(error instanceof AdapterContractError?error.code:"OPENCODE_MODEL_SELECTION_INVALID");}
   const check=validateExecutionBinding({profileId:this.scope.profileId,providerId:"opencode",backendId:this.backendId,runnerId:this.scope.runnerId,executionRef:this.reference},selection,{repositoryId:this.reference.repositoryId,baseRevision:this.reference.baseRevision});
   if(!check.valid)fail(check.code);
-  this.guard(input);return {providerID:choice.slice(0,slash),id:choice.slice(slash+1)};
+  this.guard(input);this.guard(input,"observation");return {providerID:choice.slice(0,slash),id:choice.slice(slash+1)};
  }
  private assertBinding(binding:NativeBinding):void {
   const c=this.scope;
@@ -98,10 +98,10 @@ export class OpenCodeV2ExecutionBackend implements CliAgentBackend {
    if(this.closed)closed();
   });
  }
- private fact(input:CliStartInput,callback:()=>void|Promise<void>):Promise<void>{
+ private fact(input:CliStartInput,callback:()=>void|Promise<void>,phase:"start"|"observation"="observation"):Promise<void>{
   const work=this.pipeline.then(async()=>{
-   this.guard(input);
-   await callback();this.guard(input);
+   this.guard(input,phase);
+   await callback();this.guard(input,phase);
   }).catch(error=>{this.persistenceFailed=true;this.port?.markDisconnected();throw error;});
   this.pipeline=work;this.track(work,this.callbacks);return work;
  }
@@ -124,7 +124,7 @@ export class OpenCodeV2ExecutionBackend implements CliAgentBackend {
    this.creationPossible=true;
    const created=await port.create({executionRefId:this.reference.id,executionRef:structuredClone(this.reference),commandId:native.commandId,prompt:native.prompt,model,permissions:[],beforePrompt:()=>this.guard(input),onBinding:async originalBinding=>{
     this.creationObserved=true;const binding=structuredClone(originalBinding);this.guard(input);this.assertBinding(binding);
-    await this.fact(input,async()=>{await input.onBinding!(structuredClone(binding));});this.guard(input);this.binding=structuredClone(binding);
+    await this.fact(input,async()=>{await input.onBinding!(structuredClone(binding));},"start");this.guard(input);this.binding=structuredClone(binding);
    },onNativeEvent:emit});
    this.creationObserved=true;this.guard(input);this.assertBinding(created.binding);
    if(created.receipt.state!=="accepted")throw new OpenCodeV2Error(created.receipt.code??"OPENCODE_PROMPT_OUTCOME_UNKNOWN");
@@ -133,7 +133,7 @@ export class OpenCodeV2ExecutionBackend implements CliAgentBackend {
   const ready=this.lifetime(preparation);void ready.catch(()=>undefined);
   const rawWork=this.track(preparation.then(async binding=>{
    for(;;){
-    this.guard(input);const result=await this.port!.readTurn(binding,native.commandId,{signal:this.abort.signal});this.guard(input);
+    this.guard(input,"observation");const result=await this.port!.readTurn(binding,native.commandId,{signal:this.abort.signal,beforeSend:()=>this.guard(input,"observation")});this.guard(input,"observation");
     if(result.state!=="pending"){
      let state:CliTurnResult["state"]=result.state==="succeeded"?"completed":result.state==="interrupted"?"cancelled":"failed";
      let summary=result.summary??`Native turn ${result.state}`;

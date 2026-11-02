@@ -3,13 +3,13 @@ import { AntigravityAdapter, ZCodeAdapter, WorkBuddyCliAdapter, QoderCnAdapter, 
 
 describe("Mac priority native harnesses", () => {
   it.each([[AntigravityAdapter, "--conversation"], [ZCodeAdapter, "--resume"], [WorkBuddyCliAdapter, "--resume"], [QoderCnAdapter, "--resume"]] as const)("continues the exact session with safe permissions and literal argv (%s)", async (Adapter, flag) => {
-    const backend: CliAgentBackend = { start: vi.fn(() => ({ status: () => "completed", cancel: async () => undefined, result: async () => ({ state: "completed", summary: "done", events: [], providerSessionId: "exact-session" }) })) };
+    const backend: CliAgentBackend = { start: vi.fn(input => { const index=input.args.findIndex(arg=>["--session-id","--resume","--conversation"].includes(arg));const providerSessionId=index<0?"exact-session":input.args[index+1];return { status: () => "completed", cancel: async () => undefined, result: async () => ({ state: "completed", summary: "done", events: [], providerSessionId }) };}) };
     const adapter = new Adapter({ id: "local", alias: "Local", executable: "/bin/local-harness", configDir: "/isolated/config" }, backend);
     const session = await adapter.start({ runId: "run", workspacePath: "/worktree", prompt: "-literal; $(never)" });
     await adapter.status(session.id);
     await adapter.send(session.id, "-next; $(never)");
     const inputs = vi.mocked(backend.start).mock.calls.map(([input]) => input);
-    expect(inputs[1]!.args[inputs[1]!.args.indexOf(flag) + 1]).toBe("exact-session");
+    expect(inputs[1]!.args[inputs[1]!.args.indexOf(flag) + 1]).toBe(session.providerSessionId??"exact-session");
     expect(inputs[0]!.args).toContain("-literal; $(never)");
     expect(inputs[1]!.args).toContain("-next; $(never)");
     for (const input of inputs) {
@@ -24,7 +24,7 @@ describe("Mac priority native harnesses", () => {
 
   it.each([CursorAdapter, AntigravityAdapter, ZCodeAdapter, WorkBuddyCliAdapter, QoderCnAdapter])("refuses all cross-profile session access and mutation (%s)", async (Adapter) => {
     const store = new MemorySessionStore();
-    const backend: CliAgentBackend = { start: vi.fn(() => ({ status: () => "completed", cancel: async () => undefined, result: async () => ({ state: "completed", summary: "private", events: [], providerSessionId: "private-session-a" }) })) };
+    const backend: CliAgentBackend = { start: vi.fn(input => {const index=input.args.indexOf("--session-id"),providerSessionId=index<0?"private-session-a":input.args[index+1];return { status: () => "completed", cancel: async () => undefined, result: async () => ({ state: "completed", summary: "private", events: [], providerSessionId }) };}) };
     const a = new Adapter({ id: "a", alias: "A", configDir: "/accounts/a" }, backend, store);
     const b = new Adapter({ id: "b", alias: "B", configDir: "/accounts/b" }, backend, store);
     const session = await a.start({ runId: "run", workspacePath: "/worktree" });

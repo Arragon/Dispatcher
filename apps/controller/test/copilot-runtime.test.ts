@@ -12,6 +12,20 @@ import { CopilotExecutionRuntime } from "../src/copilot-runtime.js";
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+
+it("captures the shared observation callback without cloning it as Copilot data", async () => {
+  const f = fixture(), input = f.input();
+  input.beforeObserve = function () { expect(this).toBe(input); };
+  let turn: ReturnType<CopilotExecutionRuntime["start"]> | undefined;
+  try {
+    turn = f.runtime.start(input);
+    await turn.ready!();
+    const captured = f.entries[0]!.starts.mock.calls[0]![0];
+    expect(captured.beforeObserve).toBeTypeOf("function");
+    captured.beforeObserve!();
+    expect((await turn.result()).providerSessionId).toBe("native-a");
+  } finally { await f.runtime.disconnectLocal(); }
+});
 function captureActualFixture(root: string, phase: string, receipt?: unknown): void {
  const destination = process.env.DISPATCHER_COPILOT_FIXTURE_EVIDENCE; if (!destination) return;
  const key = createHash("sha256").update(root).digest("hex"), output = join(destination, key, phase); mkdirSync(output, { recursive: true });

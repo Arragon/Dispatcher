@@ -30,15 +30,15 @@ interface Host {
   backend: DevinLocalAcpExecutionBackend; handle: Promise<RuntimeHandle>; creator: symbol; binding?: NativeBinding; bindingPersisted?: boolean;
 }
 function copy(input: CliStartInput): CliStartInput {
-  const { beforePrompt, onBinding, onNativeEvent, normalizeLine, ...data } = input;
-  return { ...structuredClone(data), ...(beforePrompt ? { beforePrompt } : {}), ...(onBinding ? { onBinding } : {}), ...(onNativeEvent ? { onNativeEvent } : {}), ...(normalizeLine ? { normalizeLine } : {}) };
+  const { beforePrompt, beforeObserve, onBinding, onNativeEvent, normalizeLine, ...data } = input;
+  return { ...structuredClone(data), ...(beforePrompt ? { beforePrompt } : {}), ...(beforeObserve ? { beforeObserve } : {}), ...(onBinding ? { onBinding } : {}), ...(onNativeEvent ? { onNativeEvent } : {}), ...(normalizeLine ? { normalizeLine } : {}) };
 }
 function capture(original: CliStartInput): CliStartInput {
   try {
     // Read getter-backed inputs once; preserve callbacks' original receivers.
-    const { beforePrompt, onBinding, onNativeEvent, normalizeLine, ...data } = { ...original };
-    if ([beforePrompt, onBinding, onNativeEvent, normalizeLine].some(callback => callback !== undefined && typeof callback !== "function")) reject();
-    return { ...structuredClone(data), ...(beforePrompt ? { beforePrompt: beforePrompt.bind(original) } : {}), ...(onBinding ? { onBinding: onBinding.bind(original) } : {}), ...(onNativeEvent ? { onNativeEvent: onNativeEvent.bind(original) } : {}), ...(normalizeLine ? { normalizeLine: normalizeLine.bind(original) } : {}) };
+    const { beforePrompt, beforeObserve, onBinding, onNativeEvent, normalizeLine, ...data } = { ...original };
+    if ([beforePrompt, beforeObserve, onBinding, onNativeEvent, normalizeLine].some(callback => callback !== undefined && typeof callback !== "function")) reject();
+    return { ...structuredClone(data), ...(beforePrompt ? { beforePrompt: beforePrompt.bind(original) } : {}), ...(beforeObserve ? { beforeObserve: beforeObserve.bind(original) } : {}), ...(onBinding ? { onBinding: onBinding.bind(original) } : {}), ...(onNativeEvent ? { onNativeEvent: onNativeEvent.bind(original) } : {}), ...(normalizeLine ? { normalizeLine: normalizeLine.bind(original) } : {}) };
   } catch { return reject(); }
 }
 class AcquiringTurn implements CliTurn {
@@ -110,7 +110,7 @@ export class DevinExecutionRuntime implements CliAgentBackend {
       if (n.newSession !== true || Object.hasOwn(n, "providerSessionId")) reject("DEVIN_ACP_CONTINUATION_REQUIRES_COMMAND_LANE");
       if (Object.hasOwn(n, "legacyModel") || Object.hasOwn(n, "modelSelection")) reject("MODEL_LEGACY_REVIEW_REQUIRED");
       const selection = freezeExecutionSelection(n.executionSelection, { profileId: this.options.profile.id, providerId: "devin-local", backendId: this.backendId, selection: true, reasoning: false });
-      if (!selection || selection.mode === "legacy" || selection.selectionType !== "explicit-model" || !identifier(selection.requestedModel) || !validateExecutionBinding({ profileId: this.options.profile.id, providerId: "devin-local", backendId: this.backendId, runnerId: this.options.runnerId, executionRef: ref }, selection, { repositoryId: ref.repositoryId, baseRevision: ref.baseRevision }).valid || ![n.runId, n.sessionId, n.commandId].every(identifier) || typeof n.prompt !== "string" || !n.prompt.length || Buffer.byteLength(n.prompt) > 240_000 || n.approveTools !== false || !Array.isArray(input.args) || input.args.length || input.environment && Object.keys(input.environment).length || typeof input.beforePrompt !== "function" || typeof input.onBinding !== "function" || input.onNativeEvent !== undefined && typeof input.onNativeEvent !== "function") reject("DEVIN_ACP_START_INVALID");
+      if (!selection || selection.mode === "legacy" || selection.selectionType !== "explicit-model" || !identifier(selection.requestedModel) || !validateExecutionBinding({ profileId: this.options.profile.id, providerId: "devin-local", backendId: this.backendId, runnerId: this.options.runnerId, executionRef: ref }, selection, { repositoryId: ref.repositoryId, baseRevision: ref.baseRevision }).valid || ![n.runId, n.sessionId, n.commandId].every(identifier) || typeof n.prompt !== "string" || !n.prompt.length || Buffer.byteLength(n.prompt) > 240_000 || n.approveTools !== false || !Array.isArray(input.args) || input.args.length || input.environment && Object.keys(input.environment).length || typeof input.beforePrompt !== "function" || typeof input.beforeObserve !== "function" || typeof input.onBinding !== "function" || input.onNativeEvent !== undefined && typeof input.onNativeEvent !== "function") reject("DEVIN_ACP_START_INVALID");
       this.assertPaths(input.workspacePath, workspace); this.sync(() => this.options.assertInput(copy(input)), "DEVIN_ACP_SCOPE_CHANGED"); this.assertPaths(input.workspacePath, workspace);
       if (this.closed) reject("DEVIN_ACP_LOCAL_CONNECTION_CLOSED");
     } catch (error) { if (error instanceof AdapterStartError) throw error; reject(); }
@@ -132,6 +132,7 @@ export class DevinExecutionRuntime implements CliAgentBackend {
   }
   start(original: CliStartInput): CliTurn {
     const input = capture(original), workspace = physical(input.workspacePath); this.validate(input, workspace);
+    this.sync(input.beforeObserve!, "DEVIN_ACP_AUTHORITY_CHANGED"); this.validate(input, workspace);
     const reference = input.executionRef as Host["reference"], selection = input.nativeInput!.executionSelection!, token = Symbol("creation"), cancel = new AbortController();
     let ownsCreation = false, creationObserved = false, producerEntered = false, captured: Host | undefined, boundaryFailure: AdapterStartError | undefined;
     const pending = new Set<Promise<unknown>>();
@@ -174,7 +175,7 @@ export class DevinExecutionRuntime implements CliAgentBackend {
       entry = { reference: structuredClone(reference), selection: structuredClone(selection), workspace, workspacePath: input.workspacePath, scope, backend, handle, creator: token }; this.executions.set(reference.id, entry);
       captured = entry; ownsCreation = true; await handle; guard();
       producerEntered = true;
-      return backend.start({ ...copy(input), beforePrompt: () => { try { guard(); this.sync(input.beforePrompt!, "DEVIN_ACP_AUTHORITY_CHANGED"); guard(); } catch (error) { throw failure(error); } }, ...(input.onNativeEvent ? { onNativeEvent: originalFact => {
+      return backend.start({ ...copy(input), beforePrompt: () => { try { guard(); this.sync(input.beforePrompt!, "DEVIN_ACP_AUTHORITY_CHANGED"); guard(); } catch (error) { throw failure(error); } }, beforeObserve: () => { try { guard(); this.sync(input.beforeObserve!, "DEVIN_ACP_AUTHORITY_CHANGED"); guard(); } catch (error) { throw failure(error); } }, ...(input.onNativeEvent ? { onNativeEvent: originalFact => {
         let fact: typeof originalFact; try { fact = structuredClone(originalFact); } catch (error) { throw failure(error); }
         return durable(() => { if (!captured!.bindingPersisted || fact.nativeSessionId !== captured!.binding!.nativeSessionId) reject("DEVIN_ACP_IDENTITY_CHANGED", "unknown"); return input.onNativeEvent!(fact); }, "DEVIN_ACP_CALLBACK_FAILED", () => {});
       } } : {}), onBinding: originalBinding => {

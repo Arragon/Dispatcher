@@ -1,4 +1,6 @@
 import {isCursorLocalSessionId} from "./cursor-native-history.js";
+import {randomUUID} from "node:crypto";
+import {recordModelInvocation} from "./model-invocation.js";
 import { childExecutionEnvironment } from "@dispatcher/shared";
 import {assertSessionModelBinding,freezeExecutionSelection,sessionModel} from "./execution-selection.js";
 import {turnExecutionResource} from "./execution-resource.js";
@@ -79,6 +81,7 @@ export interface CliStartInput {
   executionRef?:ExecutionContextRef;
   nativeInput?:{version:1;profileId:string;backendId:string;runId:string;sessionId:string;commandId:string;newSession:boolean;prompt:string;approveTools:boolean;providerSessionId?:string;executionSelection?:ExecutionSelection};
   beforePrompt?:()=>void;
+  beforeObserve?:()=>void;
   onBinding?:(binding:NativeBinding)=>void|Promise<void>;
   onNativeEvent?:(fact:NativeTurnFact)=>void|Promise<void>;
   executable: string;
@@ -350,6 +353,7 @@ export class StructuredCliAdapter implements AgentAdapter {
         ...(input.executionRef?{executionRef:input.executionRef}:{}),
         ...(selection?{executionSelection:selection}:{legacyModel:{...(this.profile.model?{id:this.profile.model}:{})}}),
         ...(this.definition.newSessionId ? { providerSessionId: this.definition.newSessionId() } : {}),
+        turnId:randomUUID(),turnStartedAt:now,
         createdAt: now,
         updatedAt: now,
       };
@@ -381,7 +385,7 @@ export class StructuredCliAdapter implements AgentAdapter {
       }
       session.state = "RUNNING";
       if (turn.processId !== undefined) session.processId = turn.processId;
-      try { this.store.save(session); } catch (error) { await turn.cancel(); throw error; }
+      try { const index=nativeInput.args.indexOf("--model");recordModelInvocation(this.store,session,"start",{id:index<0?null:nativeInput.args[index+1]??null,options:{}});this.store.save(session); } catch (error) { await turn.cancel(); throw error; }
       return structuredClone(session);
     } finally { this.starting--; }
   }
@@ -406,8 +410,9 @@ export class StructuredCliAdapter implements AgentAdapter {
       const environment = await this.environment();
       const executable = await this.executable();
       if (this.cancelled.has(sessionId)||this.require(sessionId).state === "CANCELLED") throw new AdapterContractError("SESSION_CANCELLED", "Session was cancelled before the next turn started");
-      assertSessionModelBinding(this.store.load(sessionId),expected);
-      this.store.save({ ...session, state: "STARTING", updatedAt: new Date().toISOString() });
+      assertSessionModelBinding(this.store.load(sessionId),session);
+      session.turnId=randomUUID();session.turnStartedAt=new Date().toISOString();
+      this.store.save({ ...session, state: "STARTING", updatedAt: session.turnStartedAt });
       const nativeInput:CliStartInput={
         executable,
         args: this.definition.startArgs({ prompt: message, providerSessionId: session.providerSessionId, approveTools: this.profile.approveTools === true, trustWorkspace: this.profile.trustWorkspace === true, ...(this.profile.configDir ? { configDir: this.profile.configDir } : {}), ...this.selectionArgs(session) }),
@@ -420,7 +425,7 @@ export class StructuredCliAdapter implements AgentAdapter {
       const turn=this.backend.start(nativeInput);
       this.turns.set(sessionId, turn);
       const persisted = { ...session }; delete persisted.processId;
-      try { this.store.save({ ...persisted, state: "RUNNING", ...(turn.processId !== undefined ? { processId: turn.processId } : {}), updatedAt: new Date().toISOString() }); }
+      try { const index=nativeInput.args.indexOf("--model");recordModelInvocation(this.store,persisted,"input",{id:index<0?null:nativeInput.args[index+1]??null,options:{}});this.store.save({ ...persisted, state: "RUNNING", ...(turn.processId !== undefined ? { processId: turn.processId } : {}), updatedAt: new Date().toISOString() }); }
       catch (error) { await turn.cancel(); throw error; }
       return { type: "session.message", sessionId, occurredAt: new Date().toISOString(), data: { acceptedCharacters: message.length, providerSessionId: session.providerSessionId } };
     } finally { this.sending.delete(sessionId); }
@@ -488,7 +493,7 @@ export class StructuredCliAdapter implements AgentAdapter {
     }
     const result = await turn.result();
     const observer=this.turnObservers.get(turn);if(observer&&!observer.canProject())throw new AdapterContractError("STALE_NATIVE_OBSERVER","Native observer authority changed before result projection");
-    assertSessionModelBinding(this.store.load(sessionId),session);
+    assertSessionModelBinding(this.store.load(sessionId),session,result.providerSessionId);
     if (this.cancelled.has(sessionId)||this.require(sessionId).state === "CANCELLED") return structuredClone(this.require(sessionId));
     return this.update(sessionId, {
       state: result.state === "completed" ? "COMPLETED" : result.state === "cancelled" ? "CANCELLED" : result.state === "waiting" ? "PAUSED" : "FAILED",

@@ -1,6 +1,7 @@
 import type { ResourceSnapshot, RunState, Runner } from "@dispatcher/domain";
 import {isNativeExecutionCommand,validateNativeExecutionCommand,type NativeCommandPayload,type NativeStartDescriptor} from "./native-execution.js";
 export * from "./native-execution.js";
+export * from "./rhiza-v1.js";
 
 export const LEGACY_PROTOCOL_VERSION = "1.0" as const;
 export const RESOURCE_PROTOCOL_VERSION = "1.1" as const;

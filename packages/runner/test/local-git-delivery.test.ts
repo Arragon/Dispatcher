@@ -4,7 +4,7 @@ import {tmpdir} from "node:os";
 import {join} from "node:path";
 import {expect,it,vi} from "vitest";
 import {DispatcherDatabase} from "@dispatcher/persistence";
-import {RepositoryRegistry,WorkspaceManager} from "@dispatcher/workspace";
+import {RepositoryRegistry,WorkspaceManager,VerificationSnapshots} from "@dispatcher/workspace";
 import {ProcessManager} from "../src/process.js";
 import {LocalGitDelivery} from "../src/local-git-delivery.js";
 // Keep actual fixture commands and bytes before cleanup, including failed tests.
@@ -33,6 +33,28 @@ it("fences unauthorized and out-of-scope writes before staging/commit",async()=>
  const f=await fixture();try{
   writeFileSync(join(f.workspace.path,"outside.txt"),"out of scope");await expect(f.service.commit(f.input)).rejects.toMatchObject({code:"PATH_OUT_OF_SCOPE"});
   await expect(f.service.commit({...f.input,assertAuthority:()=>{throw new Error("lease revoked");}})).rejects.toThrow("lease revoked");expect(execFileSync("git",["-C",f.workspace.path,"diff","--cached","--name-only"],{encoding:"utf8"})).toBe("");
+ }finally{await f.close();}
+});
+it("refuses post-verification edits before commit and never labels their tree as verified",async()=>{
+ const f=await fixture();try{
+  writeFileSync(join(f.workspace.path,"result.txt"),"verified\n");
+  const snapshots=new VerificationSnapshots(f.workspaces,join(f.directory,"snapshots")),snapshot=await snapshots.createDeliveryCandidate({repositoryId:"repo",worktree:f.workspace.path,branch:f.workspace.branch,scopePaths:["result.txt"],repositoryScopePaths:["result.txt"]},()=>undefined);
+  await snapshots.assertCandidateAuthority(snapshot,()=>undefined);
+  writeFileSync(join(f.workspace.path,"result.txt"),"not verified\n");
+  await expect(f.service.commit({...f.input,verifiedTree:snapshot.tree})).rejects.toMatchObject({code:"VERIFIED_TREE_CHANGED"});
+  expect(execFileSync("git",["-C",f.workspace.path,"rev-parse","HEAD"],{encoding:"utf8"}).trim()).toBe(f.workspace.baseRevision);
+ }finally{await f.close();}
+});
+it("records the actual committed tree when it matches the content-bound verification",async()=>{
+ const f=await fixture();try{
+  writeFileSync(join(f.workspace.path,"result.txt"),"verified\n");
+  const snapshots=new VerificationSnapshots(f.workspaces,join(f.directory,"snapshots")),snapshot=await snapshots.createDeliveryCandidate({repositoryId:"repo",worktree:f.workspace.path,branch:f.workspace.branch,scopePaths:["result.txt"],repositoryScopePaths:["result.txt"]},()=>undefined);
+  const result=await f.service.commit({...f.input,verifiedTree:snapshot.tree});
+  expect(result.tree).toBe(snapshot.tree);expect(execFileSync("git",["-C",f.workspace.path,"rev-parse",`${result.commit}^{tree}`],{encoding:"utf8"}).trim()).toBe(snapshot.tree);
+  const candidate=await snapshots.createDeliveryCandidate(snapshot.source,()=>undefined),input={...f.input,proof:{id:"after-verified-tree",hash:"a".repeat(64)},candidate,assertSource:()=>snapshots.assertCandidateAuthority(candidate,()=>undefined),assertSnapshot:()=>snapshots.assertSnapshot(candidate)};
+  expect(await f.service.commitSnapshot(input)).toMatchObject({commit:result.commit,created:false});
+  const row=f.db.handle.prepare("SELECT id,document_json FROM entities WHERE kind='local-git-delivery'").get() as {id:string;document_json:string},receipt=JSON.parse(row.document_json);receipt.result.tree="invalid-tree";f.db.saveEntity("local-git-delivery",row.id,receipt);
+  await expect(new LocalGitDelivery(f.db,f.processes,f.workspaces).commitSnapshot(input)).rejects.toMatchObject({code:"SNAPSHOT_COMMIT_OUTCOME_UNKNOWN"});
  }finally{await f.close();}
 });
 it("does not repeat a commit after receipt persistence fails, and keeps restart uncertainty explicit",async()=>{

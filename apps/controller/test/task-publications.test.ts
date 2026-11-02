@@ -9,6 +9,8 @@ import {InteractionStore,type JsonValue} from "@dispatcher/persistence";
 import type {Run,TaskContract} from "@dispatcher/domain";
 import type {NativeInteractions} from "../src/native-interactions.js";
 import {contentHash,type PublicationRecord} from "../src/task-publications.js";
+import { createHash } from "node:crypto";
+import { renderTaskContract } from "@dispatcher/scheduler";
 import type { DispatcherConfig, SecretStore } from "@dispatcher/config";
 import { ControllerService } from "../src/service.js";
 const OWNER = { authorization: "Bearer publication-test-owner" };
@@ -66,6 +68,26 @@ it("preserves native event conflicts through background collection and clears th
  f.clock.now=new Date(f.clock.now.getTime()+5*60_000);read.mockResolvedValue({observations:[event]});await collect();const restored=(await f.service.app.inject({headers:OWNER,url:`/api/usage?runId=${run.id}`})).json();expect(restored.errors).toHaveLength(0);expect(restored.estimation).toMatchObject({status:"available",estimate:{value:"0.01",completeness:"complete"}});expect(f.starts).toHaveLength(1);
 });
 describe("task publication receipts", () => {
+  it("retains structured input Context and constraints through canonical publication and prompt rendering", async () => {
+    const f = await setup(), content = "\n上下文 😀\r\n  preserve exact bytes\n";
+    const inputContext = { packetId: "packet-a", formatVersion: "1", content, inputHash: createHash("sha256").update(content, "utf8").digest("hex") };
+    const constraints = ["保持导出接口不变", "Do not edit credentials"];
+    const response = await f.preview({ ...f.draft, constraints, inputContext }); expect(response.statusCode).toBe(200);
+    const receipt = (await f.commit(response.json())).json(); expect(receipt.state).toBe("TASK_CREATED");
+    const contract = f.service.database.getTaskContract<JsonValue>(receipt.taskId) as unknown as TaskContract;
+    expect(contract).toMatchObject({ constraints, inputContext });
+    expect(renderTaskContract(contract)).toContain(JSON.stringify(inputContext));
+    expect(f.starts).toHaveLength(0);
+  });
+  it("rejects mismatched, malformed and oversized Context before canonical creation", async () => {
+    const f = await setup();
+    for (const content of ["changed", "😀".repeat(20000), "\ud800"]) {
+      const inputHash = content === "changed" ? "a".repeat(64) : createHash("sha256").update(content,"utf8").digest("hex");
+      const response = await f.preview({ ...f.draft, inputContext: { packetId: "packet-a", formatVersion: "1", content, inputHash } });
+      expect(response.statusCode).toBe(400);
+    }
+    expect(f.service.database.listCanonicalTasks()).toEqual([]); expect(f.starts).toHaveLength(0);
+  });
   it("cancels a reserved unsent local startup atomically and never invokes the SDK after restart/retry",async()=>{
     const f=await setup(),adapter=(f.service as unknown as {agentAdapters:Map<string,AgentAdapter>}).agentAdapters.get("codex-local")!,start=adapter.start.bind(adapter),entered=Promise.withResolvers<void>(),ready=Promise.withResolvers<void>();vi.spyOn(adapter,"start").mockImplementation(async input=>{entered.resolve();await ready.promise;return start(input);});
     const catalog=(await f.service.app.inject({headers:OWNER,url:"/api/agents/profiles/codex-local/models?repositoryId=repo"})).json();const p=(await f.preview({...f.draft,startMode:"dispatch",execution:{profileId:"codex-local",selectionMode:"manual",selectionType:"explicit-model",nativeModelId:"catalog-model",nativeParameters:{},catalogRevision:catalog.revision,contextFingerprint:catalog.contextFingerprint,allowUnconfirmedModelAccess:true}})).json();expect(p.canCommit).toBe(true);const pending=f.commit(p,"unsent-cancel").then(value=>value);

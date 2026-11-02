@@ -46,7 +46,7 @@ it("rejects changed data, tampered artifacts and missing confirmation before any
 });
 it("leaves the known deployment barrier intact if a non-cooperating writer changed the database",async()=>{
   const f=await fixture();await expect(switchServiceUpgrade(f.options,{rename:renameSync,link:()=>{throw Error("fixture-install-failure");}})).rejects.toThrow("SERVICE_UPGRADE_SWITCH_UNCONFIRMED");
-  const db=new DatabaseSync(f.path);try{db.function("dispatcher_writer_protocol",()=>7);db.prepare("INSERT INTO entities(kind,id,document_json,updated_at) VALUES ('fixture','foreign-write','{}','2026-10-21T00:00:00Z')").run();db.exec("PRAGMA wal_checkpoint(TRUNCATE)");}finally{db.close();}
+  const db=new DatabaseSync(f.path);try{db.function("dispatcher_writer_protocol",()=>14);db.prepare("INSERT INTO entities(kind,id,document_json,updated_at) VALUES ('fixture','foreign-write','{}','2026-10-21T00:00:00Z')").run();db.exec("PRAGMA wal_checkpoint(TRUNCATE)");}finally{db.close();}
   await expect(reconcileServiceUpgrade(f.options)).rejects.toThrow("SERVICE_UPGRADE_PLAN_CHANGED");expect(existsSync(f.barrier)).toBe(true);expect(existsSync(f.input.plistPath)).toBe(false);
 });
 it("rejects service start at the existing database location barrier before supervisor mutation",async()=>{

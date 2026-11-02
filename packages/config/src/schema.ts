@@ -1,4 +1,5 @@
 import {taskModelRoutingSchema,type TaskModelRoutingConfig} from "@dispatcher/domain";
+import { RHIZA_SCOPES, type RhizaScope } from "@dispatcher/protocol";
 import type { ErrorObject } from "ajv";
 import Ajv2020Module, { type Ajv2020 as Ajv2020Instance, type Options } from "ajv/dist/2020.js";
 import type { JsonValue } from "@dispatcher/persistence";
@@ -17,6 +18,12 @@ export interface IntegrationConfig {
   enabled: boolean;
   credentialRef?: string;
 }
+
+export interface RhizaClientGrant {
+  id: string; authorityId: string; enabled: boolean; credentialRef: string; expiresAt: string;
+  scopes: RhizaScope[]; repositoryIds: string[]; profileIds: string[];
+}
+export interface RhizaIngressConfig { enabled: boolean; clients: RhizaClientGrant[] }
 
 export interface ConnectorInstanceConfig {
   id: string;
@@ -88,6 +95,7 @@ export interface LlmRoleBindingConfig {
 
 export interface DispatcherConfig {
   schemaVersion: 1;
+  rhizaIngress?: RhizaIngressConfig;
   controller: {
     id: string;
     listen: string;
@@ -129,6 +137,21 @@ const integrationSchema = {
   },
 } as const;
 
+const rhizaId = { type: "string", minLength: 1, maxLength: 200, pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]*$" };
+const rhizaIds = { type: "array", minItems: 1, maxItems: 200, uniqueItems: true, items: rhizaId };
+const rhizaIngressSchema = {
+  type: "object", additionalProperties: false, required: ["enabled", "clients"],
+  properties: { enabled: { type: "boolean" }, clients: { type: "array", maxItems: 100, items: {
+    type: "object", additionalProperties: false, required: ["id", "authorityId", "enabled", "credentialRef", "expiresAt", "scopes", "repositoryIds", "profileIds"],
+    properties: { id: rhizaId, authorityId: rhizaId, enabled: { type: "boolean" },
+      credentialRef: { type: "string", maxLength: 512, pattern: "^secret://rhiza/[a-z0-9][a-z0-9._/-]*$" },
+      expiresAt: { type: "string", maxLength: 30, pattern: "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{3})?Z$" },
+      scopes: { type: "array", minItems: 1, maxItems: RHIZA_SCOPES.length, uniqueItems: true, items: { enum: RHIZA_SCOPES } },
+      repositoryIds: rhizaIds, profileIds: rhizaIds,
+    },
+  } } },
+} as const;
+
 export const dispatcherConfigSchema = {
   $schema: "https://json-schema.org/draft/2020-12/schema",
   $id: "https://dispatcher.local/schemas/config-v1.json",
@@ -138,6 +161,7 @@ export const dispatcherConfigSchema = {
   required: ["schemaVersion", "controller", "runners", "integrations", "connectors", "repositories", "internalLlm", "agentProfiles", "policies"],
   properties: {
     schemaVersion: { const: 1 },
+    rhizaIngress: rhizaIngressSchema,
     controller: {
       type: "object",
       title: "Controller",
@@ -349,6 +373,7 @@ export function repositoryRunnerId(config: Pick<DispatcherConfig, "runners">, re
 
 export const defaultDispatcherConfig: DispatcherConfig = {
   schemaVersion: 1,
+  rhizaIngress: { enabled: false, clients: [] },
   controller: {
     id: "home-controller",
     listen: "127.0.0.1",
@@ -393,6 +418,7 @@ function issueText(error: ErrorObject): string {
 
 export function normalizeConfig(input: DispatcherConfig): DispatcherConfig {
   const normalized = structuredClone(input);
+  normalized.rhizaIngress ??= { enabled: false, clients: [] };
   normalized.runners.sort((left, right) => left.id.localeCompare(right.id));
   normalized.runners = normalized.runners.map((runner) => ({ ...runner, tags: [...runner.tags].sort() }));
   normalized.agentProfiles.sort((left, right) => left.id.localeCompare(right.id));
@@ -552,6 +578,14 @@ export function validateConfig(input: unknown): DispatcherConfig {
     if (commandIds.size !== repository.verificationCommands.length) throw new ConfigValidationError([`/repositories/${repository.id}/verificationCommands contains duplicate id`]);
     if (repository.snapshotVerification?.preparationCommandIds.some(id => !commandIds.has(id))) throw new ConfigValidationError([`/repositories/${repository.id}/snapshotVerification references an unregistered command`]);
   }
+  const rhizaClients = new Set<string>(), rhizaCredentials = new Set<string>();
+  for (const client of config.rhizaIngress?.clients ?? []) {
+    if (rhizaClients.has(client.id) || rhizaCredentials.has(client.credentialRef)) throw new ConfigValidationError(["/rhizaIngress/clients has duplicate identity or credential reference"]);
+    rhizaClients.add(client.id); rhizaCredentials.add(client.credentialRef);
+    const expiresAt = Date.parse(client.expiresAt);
+    if (!Number.isFinite(expiresAt) || ![new Date(expiresAt).toISOString(), new Date(expiresAt).toISOString().replace(".000Z", "Z")].includes(client.expiresAt)) throw new ConfigValidationError(["/rhizaIngress/clients has invalid expiry"]);
+    if (client.repositoryIds.some(id => !repositoryIds.has(id)) || client.profileIds.some(id => !profileIds.has(id))) throw new ConfigValidationError(["/rhizaIngress/clients references unknown repository or Profile"]);
+  }
   if(config.policies.modelRouting){
     const routing=config.policies.modelRouting;
     const typeIds=new Set(routing.taskTypes.map(type=>type.id)),ruleIds=new Set(routing.rules.map(rule=>rule.id));
@@ -607,6 +641,7 @@ export function requiredSecretReferences(config: DispatcherConfig): string[] {
   const references = Object.values(config.integrations)
     .filter((integration) => integration.enabled)
     .flatMap((integration) => integration.credentialRef ? [integration.credentialRef] : []);
+  if (config.rhizaIngress?.enabled) for (const client of config.rhizaIngress.clients) if (client.enabled) references.push(client.credentialRef);
   for (const profile of config.agentProfiles) {
     if (profile.credentialRef) references.push(profile.credentialRef);
   }

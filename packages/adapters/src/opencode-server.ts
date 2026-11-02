@@ -50,7 +50,7 @@ export class OpenCodeV2HttpTransport implements OpenCodeV2Transport {
       if(abort.signal.aborted)throw new OpenCodeV2Error("OPENCODE_NATIVE_UNREACHABLE");
       const headers=await Promise.race([Promise.resolve().then(()=>this.headers?.()??{}),new Promise<never>((_,reject)=>{abortHeaders=()=>reject(new OpenCodeV2Error("OPENCODE_NATIVE_UNREACHABLE"));abort.signal.addEventListener("abort",abortHeaders,{once:true});})]);
       const options:RequestInit={method,redirect:"error",signal:abort.signal,headers:{...headers,...(body!==undefined?{"content-type":"application/json"}:{})},...(body!==undefined?{body}:{})};
-      try{synchronousAdmission(beforeSend);}catch{throw new OpenCodeV2PreSendRejection();}
+      try{synchronousAdmission(beforeSend);}catch{if(method==="GET")throw new OpenCodeV2Error("OPENCODE_OBSERVATION_ADMISSION_REJECTED");throw new OpenCodeV2PreSendRejection();}
       if(abort.signal.aborted)throw new OpenCodeV2PreSendRejection();
       const response=await fetch(url,options);
       if(!response.ok)throw new OpenCodeV2Error(response.status===401||response.status===403?"OPENCODE_NATIVE_AUTH_REQUIRED":response.status===404?"OPENCODE_NATIVE_NOT_FOUND":"OPENCODE_NATIVE_REQUEST_FAILED");
@@ -160,15 +160,16 @@ export class OpenCodeV2InteractionPort implements NativeInteractionPort {
   private async request(input:OpenCodeV2Request):Promise<unknown>{
     this.assertScope();
     const signal=input.signal;if(signal?.aborted)throw new OpenCodeV2Error("OPENCODE_NATIVE_UNREACHABLE");
-    try {const result=await this.read(input);this.assertScope();if(signal?.aborted)throw new OpenCodeV2Error("OPENCODE_NATIVE_UNREACHABLE");return result;}catch(error){if(error instanceof OpenCodeV2Error)throw error;throw new OpenCodeV2Error("OPENCODE_NATIVE_UNREACHABLE");}
+    const assertRead=()=>{if(input.method==="GET"&&input.beforeSend){try{synchronousAdmission(input.beforeSend);}catch{throw new OpenCodeV2Error("OPENCODE_OBSERVATION_ADMISSION_REJECTED");}}};
+    try {assertRead();const result=await this.read(input);this.assertScope();assertRead();if(signal?.aborted)throw new OpenCodeV2Error("OPENCODE_NATIVE_UNREACHABLE");return result;}catch(error){if(error instanceof OpenCodeV2Error)throw error;throw new OpenCodeV2Error("OPENCODE_NATIVE_UNREACHABLE");}
   }
   private admitWrite(guard:(()=>void)|undefined,ref?:NativeBinding):void {
     this.assertScope();if(this.disconnected)throw new OpenCodeV2Error("OPENCODE_RECONCILIATION_REQUIRED");if(ref)this.binding(ref);
     synchronousAdmission(guard);
     this.assertScope();if(this.disconnected)throw new OpenCodeV2Error("OPENCODE_RECONCILIATION_REQUIRED");if(ref)this.binding(ref);
   }
-  private async verifyServerIdentity(signal?:AbortSignal):Promise<void>{
-    const r=record(await this.request({method:"GET",path:"/api/info",...(signal?{signal}:{})}));
+  private async verifyServerIdentity(signal?:AbortSignal,beforeSend?:()=>void):Promise<void>{
+    const r=record(await this.request({method:"GET",path:"/api/info",...(signal?{signal}:{}),...(beforeSend?{beforeSend}:{})}));
     if(r.version!==(this.configuration.protocolVersion??opencodeV2ProtocolVersion))throw new OpenCodeV2Error("OPENCODE_VERSION_UNSUPPORTED");
     if(!Number.isSafeInteger(r.pid)||Number(r.pid)<0||!Array.isArray(r.urls)||!text(record(r.paths).tmp))throw new OpenCodeV2Error("OPENCODE_V2_SCHEMA_INVALID");
     const tmp=String(record(r.paths).tmp);const expected=this.configuration.server;
@@ -180,9 +181,9 @@ export class OpenCodeV2InteractionPort implements NativeInteractionPort {
     if(this.serverIdentity&&identity!==this.serverIdentity){this.markDisconnected();throw new OpenCodeV2Error("OPENCODE_SERVER_IDENTITY_CHANGED");}
     this.serverIdentity=identity;
   }
-  private async handshake(signal?:AbortSignal):Promise<string>{
-    await this.verifyServerIdentity(signal);
-    const location=record(await this.request({method:"GET",path:"/api/location",query:{"location[directory]":this.configuration.workspacePath},...(signal?{signal}:{})}));
+  private async handshake(signal?:AbortSignal,beforeSend?:()=>void):Promise<string>{
+    await this.verifyServerIdentity(signal,beforeSend);
+    const location=record(await this.request({method:"GET",path:"/api/location",query:{"location[directory]":this.configuration.workspacePath},...(signal?{signal}:{}),...(beforeSend?{beforeSend}:{})}));
     this.location(location);
     const project=record(location.project);if(!text(project.id)||!text(project.directory)||!text(project.canonical))throw new OpenCodeV2Error("OPENCODE_V2_SCHEMA_INVALID");
     if(this.projectIdentity!==undefined&&project.id!==this.projectIdentity){this.markDisconnected();throw new OpenCodeV2Error("OPENCODE_LOCATION_MISMATCH");}
@@ -214,8 +215,8 @@ export class OpenCodeV2InteractionPort implements NativeInteractionPort {
     this.location(r.location);const time=record(r.time);if(typeof time.created!=="number"||!Number.isFinite(time.created)||typeof time.updated!=="number"||!Number.isFinite(time.updated))throw new OpenCodeV2Error("OPENCODE_V2_SCHEMA_INVALID");
     return {id:r.id,projectID:r.projectID,location:{directory:this.configuration.workspacePath},time,...(r.model!==undefined?{model:model(r.model)}:{}),...(r.permissions!==undefined?{permissions:permissions(r.permissions)}:{})};
   }
-  private async get(ref:NativeBinding,signal?:AbortSignal):Promise<SessionSnapshot>{
-    this.binding(ref);return this.session(await this.request({method:"GET",path:`/api/session/${ref.nativeSessionId}`,...(signal?{signal}:{})}),ref.nativeSessionId);
+  private async get(ref:NativeBinding,signal?:AbortSignal,beforeSend?:()=>void):Promise<SessionSnapshot>{
+    this.binding(ref);return this.session(await this.request({method:"GET",path:`/api/session/${ref.nativeSessionId}`,...(signal?{signal}:{}),...(beforeSend?{beforeSend}:{})}),ref.nativeSessionId);
   }
   async create(input:OpenCodeV2Start):Promise<{binding:NativeBinding;receipt:NativeCommandReceipt}>{
     input={...input};
@@ -319,17 +320,17 @@ export class OpenCodeV2InteractionPort implements NativeInteractionPort {
   }
 
   /** The durable idle marker settles this accepted input; an idle read alone does not. */
-  async readTurn(ref:NativeBinding,commandId:string,request?:{signal?:AbortSignal}):Promise<OpenCodeV2TurnResult> {
-    const selected=this.binding(ref),accepted=this.acceptedTurns.get(commandId),signal=request?.signal;
+  async readTurn(ref:NativeBinding,commandId:string,request?:{signal?:AbortSignal;beforeSend?:()=>void}):Promise<OpenCodeV2TurnResult> {
+    const selected=this.binding(ref),accepted=this.acceptedTurns.get(commandId),signal=request?.signal,beforeSend=request?.beforeSend;
     if(!accepted||!isDeepStrictEqual(accepted.binding,selected))throw new OpenCodeV2Error("OPENCODE_TURN_RECEIPT_UNAVAILABLE");
     if(this.disconnected)throw new OpenCodeV2Error("OPENCODE_RECONCILIATION_REQUIRED");
-    await this.handshake(signal);const initial=await this.get(selected,signal),policy=this.policies.get(selected.nativeSessionId);
+    await this.handshake(signal,beforeSend);const initial=await this.get(selected,signal,beforeSend),policy=this.policies.get(selected.nativeSessionId);
     if(!policy||!isDeepStrictEqual(initial.model,policy.model)||!isDeepStrictEqual(initial.permissions??[],policy.permissions))throw new OpenCodeV2Error("OPENCODE_NATIVE_POLICY_DRIFT");
     const initialTime=structuredClone(initial.time),pending:OpenCodeV2TurnResult={state:"pending",nativeSessionId:selected.nativeSessionId,nativeMessageId:accepted.nativeMessageId};
     let found=false,priorTurnContent=false,terminal:{id:string;outcome:"succeeded"|"failed"|"interrupted"}|undefined,summary="",unsettled=false,cursor:string|undefined;
     const ids=new Set<string>(),cursors=new Set<string>();
     for(let page=0;page<20;page++){
-      const response=record(await this.request({method:"GET",path:`/api/session/${selected.nativeSessionId}/message`,query:{limit:"100",...(cursor?{cursor}:{order:"asc"})},...(signal?{signal}:{})}));
+      const response=record(await this.request({method:"GET",path:`/api/session/${selected.nativeSessionId}/message`,query:{limit:"100",...(cursor?{cursor}:{order:"asc"})},...(signal?{signal}:{}),...(beforeSend?{beforeSend}:{})}));
       if(!Array.isArray(response.data)||response.data.length>100)throw new OpenCodeV2Error("OPENCODE_V2_SCHEMA_INVALID");
       const pagination=record(response.cursor);if([pagination.previous,pagination.next].some(value=>value!==undefined&&value!==null&&!text(value,4096)))throw new OpenCodeV2Error("OPENCODE_V2_SCHEMA_INVALID");
       for(const value of response.data){
@@ -363,12 +364,12 @@ export class OpenCodeV2InteractionPort implements NativeInteractionPort {
       if(cursors.has(pagination.next as string))throw new OpenCodeV2Error("OPENCODE_V2_SCHEMA_INVALID");cursors.add(pagination.next as string);cursor=pagination.next as string;
       if(page===19)throw new OpenCodeV2Error("OPENCODE_TURN_HISTORY_LIMIT");
     }
-    const active=record(record(await this.request({method:"GET",path:"/api/session/active",...(signal?{signal}:{})})).data);
+    const active=record(record(await this.request({method:"GET",path:"/api/session/active",...(signal?{signal}:{}),...(beforeSend?{beforeSend}:{})})).data);
     for(const [id,value] of Object.entries(active)){if(!sessionId(id)||record(value).type!=="running")throw new OpenCodeV2Error("OPENCODE_V2_SCHEMA_INVALID");}
-    const inbox=record(await this.request({method:"GET",path:`/api/session/${selected.nativeSessionId}/inbox`,...(signal?{signal}:{})}));
-    const approvals=record(await this.request({method:"GET",path:`/api/session/${selected.nativeSessionId}/permission`,...(signal?{signal}:{})}));
+    const inbox=record(await this.request({method:"GET",path:`/api/session/${selected.nativeSessionId}/inbox`,...(signal?{signal}:{}),...(beforeSend?{beforeSend}:{})}));
+    const approvals=record(await this.request({method:"GET",path:`/api/session/${selected.nativeSessionId}/permission`,...(signal?{signal}:{}),...(beforeSend?{beforeSend}:{})}));
     if(!Array.isArray(inbox.data)||!Array.isArray(approvals.data))throw new OpenCodeV2Error("OPENCODE_V2_SCHEMA_INVALID");
-    await this.handshake(signal);const current=await this.get(selected,signal);this.binding(selected);
+    await this.handshake(signal,beforeSend);const current=await this.get(selected,signal,beforeSend);this.binding(selected);
     if(this.disconnected)throw new OpenCodeV2Error("OPENCODE_RECONCILIATION_REQUIRED");
     if(!isDeepStrictEqual(current.model,policy.model)||!isDeepStrictEqual(current.permissions??[],policy.permissions))throw new OpenCodeV2Error("OPENCODE_NATIVE_POLICY_DRIFT");
     if(!isDeepStrictEqual(current.time,initialTime)||!found||!terminal||unsettled||active[selected.nativeSessionId]||inbox.data.length||approvals.data.length)return pending;

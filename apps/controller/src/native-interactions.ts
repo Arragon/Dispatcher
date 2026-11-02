@@ -4,7 +4,7 @@ import { createHash, randomUUID } from "node:crypto";
 import type { AdapterSession, AdapterStartOutcome, NativeInteractionPort, NativeObserverContext } from "@dispatcher/adapters";
 import { assertNativeRequestChoice, captureNativeRequestHandle, NativeRequestError, normalizeNativeRequest, type NativePendingRequest, type NativeRequestHandle } from "@dispatcher/adapters";
 import { assessInteractionCapability, assessNativeDrift, normalizeNativeDriftPolicy, canMutate, isTerminalRunState, mergeTurnObservation, normalizeNativeBinding, validateExecutionBinding, type CapabilityEvidence, type GuardDecision, type InteractionOperation, type MutationFence, type NativeBinding, type NativeDriftPolicy, type NativeBindingEvent, type NativeCommandReceipt, type NativeObservation, type TaskContract, type TurnObservation, type Run, type Session, type SessionControl } from "@dispatcher/domain";
-import { InteractionStore, InteractionStoreError, type DispatcherDatabase, type InteractionCommand, type JsonValue } from "@dispatcher/persistence";
+import { InteractionStore, InteractionStoreError, RhizaCommandStore,hasRhizaSuccessor, type DispatcherDatabase, type InteractionCommand, type JsonValue } from "@dispatcher/persistence";
 import { NativeRuntime, recoverNativeEvents, createNativeEventCheckpoint, dispatchInteraction as dispatchNativeInteraction, normalizeInteractionCommand, normalizeNativeEvent, reconcileNativeEvents, recordNativeEvent, releaseNativeControl, isSafeNativeMetadataId, reclaimFingerprint, reconcileForReclaim as readForReclaim, type NativeReclaimSource, type ReclaimReport, type NativeDispatchCommand, type NativeDispatchSource, type NativeEventCheckpoint, type NativeEventStream, type NativeHistoryRead, type NativeReleaseSource } from "@dispatcher/runner";
 
 import { blockNativeExternalWrites, hasNativeExternalWriteBlocker, NativeExternalChanges, normalizeNativeExternalSnapshot, resetNativeExternalBaseline, type NativeExternalRead } from "./native-external-changes.js";
@@ -372,6 +372,9 @@ export class NativeInteractions {
     if(!principal.id||!(read?principal.roles.some(role=>["viewer","operator","admin"].includes(role)):principal.roles.some(role=>["operator","admin"].includes(role))))return reject("FORBIDDEN");
     const run=this.database.getEntity<JsonValue>("run",fence.runId) as unknown as Run|undefined;
     if(!run||run.sessionId!==fence.sessionId||principal.profileId!==undefined&&principal.profileId!==run.profileId)return reject("SESSION_OWNER_MISMATCH");
+    const externalJob=this.database.getEntity<JsonValue>("task-rhiza-binding",run.taskId) as {jobId?:string}|undefined;
+    if(!read&&!["cancel","cleanup-input","cleanup-start","fail"].includes(operation)&&externalJob?.jobId&&hasRhizaSuccessor(this.database,externalJob.jobId))return reject("TARGET_AUTHORITY_CHANGED");
+    if(!read&&!["cancel","cleanup-input","cleanup-start","fail"].includes(operation)&&new RhizaCommandStore(this.database).hasCancellation(run.taskId))return reject("NATIVE_WRITE_LOCKED");
     const session=this.database.getEntity<JsonValue>("session",fence.sessionId) as unknown as Session|undefined;
     const adapter=this.database.getEntity<JsonValue>("adapter-session",fence.sessionId) as unknown as AdapterSession|undefined;
     // A lost legacy Runner start reply can leave only its reserved Run/lease.

@@ -31,14 +31,14 @@ interface Host {
   handle: Promise<RuntimeHandle>; creator: symbol; binding?: NativeBinding; bindingPersisted?: boolean;
 }
 function copy(input: CliStartInput): CliStartInput {
-  const { beforePrompt, onBinding, onNativeEvent, normalizeLine, ...data } = input;
-  return { ...structuredClone(data), ...(beforePrompt ? { beforePrompt } : {}), ...(onBinding ? { onBinding } : {}), ...(onNativeEvent ? { onNativeEvent } : {}), ...(normalizeLine ? { normalizeLine } : {}) };
+  const { beforeObserve, beforePrompt, onBinding, onNativeEvent, normalizeLine, ...data } = input;
+  return { ...structuredClone(data), ...(beforeObserve ? { beforeObserve } : {}), ...(beforePrompt ? { beforePrompt } : {}), ...(onBinding ? { onBinding } : {}), ...(onNativeEvent ? { onNativeEvent } : {}), ...(normalizeLine ? { normalizeLine } : {}) };
 }
 function capture(original: CliStartInput): CliStartInput {
   try {
-    const { beforePrompt, onBinding, onNativeEvent, normalizeLine, ...data } = { ...original };
-    if ([beforePrompt, onBinding, onNativeEvent, normalizeLine].some(callback => callback !== undefined && typeof callback !== "function")) reject();
-    return { ...structuredClone(data), ...(beforePrompt ? { beforePrompt: beforePrompt.bind(original) } : {}), ...(onBinding ? { onBinding: onBinding.bind(original) } : {}), ...(onNativeEvent ? { onNativeEvent: onNativeEvent.bind(original) } : {}), ...(normalizeLine ? { normalizeLine: normalizeLine.bind(original) } : {}) };
+    const { beforeObserve, beforePrompt, onBinding, onNativeEvent, normalizeLine, ...data } = { ...original };
+    if ([beforeObserve, beforePrompt, onBinding, onNativeEvent, normalizeLine].some(callback => callback !== undefined && typeof callback !== "function")) reject();
+    return { ...structuredClone(data), ...(beforeObserve ? { beforeObserve: beforeObserve.bind(original) } : {}), ...(beforePrompt ? { beforePrompt: beforePrompt.bind(original) } : {}), ...(onBinding ? { onBinding: onBinding.bind(original) } : {}), ...(onNativeEvent ? { onNativeEvent: onNativeEvent.bind(original) } : {}), ...(normalizeLine ? { normalizeLine: normalizeLine.bind(original) } : {}) };
   } catch { return reject(); }
 }
 class AcquiringTurn implements CliTurn {

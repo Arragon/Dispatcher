@@ -7,11 +7,26 @@ import { assertDatabaseLocationOperational, assertDatabaseOperational, assertDat
 import { AUTOMATIC_VERIFICATION_SCHEMA_NAME, upgradeAutomaticVerificationWriterGate } from "./database-compatibility.js";
 import { USAGE_ORIGIN_SCHEMA_NAME, upgradeUsageOriginWriterGate } from "./database-compatibility.js";
 import {PRICING_ADMISSION_SCHEMA_NAME,upgradePricingAdmissionWriterGate} from "./database-compatibility.js";
+import { RHIZA_ADMISSION_SCHEMA_NAME, upgradeRhizaAdmissionWriterGate } from "./database-compatibility.js";
+import { RHIZA_JOB_SCHEMA_NAME, upgradeRhizaJobWriterGate } from "./database-compatibility.js";
 
 export * from "./interaction-store.js";
 export * from "./database-compatibility.js";
 export * from "./backup.js";
 export * from "./instance-lock.js";
+export * from "./rhiza-admissions.js";
+export * from "./model-invocations.js";
+export * from "./rhiza-observations.js";
+export * from "./rhiza-commands.js";
+export * from "./rhiza-lineage.js";
+import {migrateRhizaLineage} from "./rhiza-lineage.js";
+import {RHIZA_LINEAGE_SCHEMA_NAME,upgradeRhizaLineageWriterGate} from "./database-compatibility.js";
+import {migrateRhizaCommands} from "./rhiza-commands.js";
+import {RHIZA_CONTROL_SCHEMA_NAME,upgradeRhizaControlWriterGate} from "./database-compatibility.js";
+import {RHIZA_INPUT_SCHEMA_NAME,upgradeRhizaInputWriterGate} from "./database-compatibility.js";
+import {migrateRhizaObservations,migrateRhizaInputObservations} from "./rhiza-observations.js";
+import {RHIZA_OBSERVATION_SCHEMA_NAME,upgradeRhizaObservationWriterGate} from "./database-compatibility.js";
+import {MODEL_EVIDENCE_SCHEMA_NAME,upgradeModelEvidenceWriterGate} from "./database-compatibility.js";
 
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
@@ -316,6 +331,55 @@ export const migrations: readonly Migration[] = [
     sql: "",
     afterApply: database => upgradePricingAdmissionWriterGate(database.handle),
   },
+  {
+    version:12,
+    name: RHIZA_ADMISSION_SCHEMA_NAME,
+    sql: `
+      CREATE TABLE rhiza_admissions (
+        client_id TEXT NOT NULL,
+        command_scope TEXT NOT NULL CHECK (command_scope = 'jobs.submit'),
+        request_id TEXT NOT NULL,
+        request_hash TEXT NOT NULL CHECK (length(request_hash) = 64 AND request_hash NOT GLOB '*[^a-f0-9]*'),
+        repository_id TEXT NOT NULL,
+        profile_id TEXT NOT NULL,
+        authority_id TEXT NOT NULL,
+        job_id TEXT NOT NULL UNIQUE,
+        task_id TEXT NOT NULL UNIQUE,
+        receipt_json TEXT NOT NULL CHECK (json_valid(receipt_json)),
+        PRIMARY KEY (client_id, command_scope, request_id)
+      ) STRICT;
+      CREATE TRIGGER rhiza_admission_no_replace BEFORE INSERT ON rhiza_admissions
+        WHEN EXISTS (SELECT 1 FROM rhiza_admissions
+          WHERE (client_id=NEW.client_id AND command_scope=NEW.command_scope AND request_id=NEW.request_id)
+            OR job_id=NEW.job_id OR task_id=NEW.task_id)
+        BEGIN SELECT RAISE(ABORT,'RHIZA_RECEIPT_IMMUTABLE'); END;
+      CREATE TRIGGER rhiza_admission_no_update BEFORE UPDATE ON rhiza_admissions
+        BEGIN SELECT RAISE(ABORT,'RHIZA_RECEIPT_IMMUTABLE'); END;
+      CREATE TRIGGER rhiza_admission_no_delete BEFORE DELETE ON rhiza_admissions
+        BEGIN SELECT RAISE(ABORT,'RHIZA_RECEIPT_IMMUTABLE'); END;
+    `,
+    afterApply: database => upgradeRhizaAdmissionWriterGate(database.handle),
+  },
+  {
+    version:13,
+    name: RHIZA_JOB_SCHEMA_NAME,
+    sql: "",
+    afterApply: database => upgradeRhizaJobWriterGate(database.handle),
+  },
+  {version:14,name:MODEL_EVIDENCE_SCHEMA_NAME,sql:`
+    CREATE TABLE native_model_invocations(id TEXT PRIMARY KEY,run_id TEXT NOT NULL,session_id TEXT NOT NULL,record_json TEXT NOT NULL CHECK(json_valid(record_json)),sequence INTEGER NOT NULL UNIQUE CHECK(sequence>0)) WITHOUT ROWID;
+    CREATE INDEX native_model_invocations_run ON native_model_invocations(run_id);
+    CREATE TRIGGER native_model_invocations_immutable_update BEFORE UPDATE ON native_model_invocations BEGIN SELECT RAISE(ABORT,'MODEL_INVOCATION_IMMUTABLE'); END;
+    CREATE TRIGGER native_model_invocations_immutable_delete BEFORE DELETE ON native_model_invocations BEGIN SELECT RAISE(ABORT,'MODEL_INVOCATION_IMMUTABLE'); END;
+    CREATE TRIGGER native_model_invocations_immutable_replace BEFORE INSERT ON native_model_invocations WHEN EXISTS(SELECT 1 FROM native_model_invocations WHERE id=NEW.id OR sequence=NEW.sequence) BEGIN SELECT RAISE(ABORT,'MODEL_INVOCATION_IMMUTABLE'); END;
+  `,afterApply:database=>upgradeModelEvidenceWriterGate(database.handle)},
+  {version:15,name:RHIZA_OBSERVATION_SCHEMA_NAME,sql:"",afterApply:database=>{migrateRhizaObservations(database.handle);upgradeRhizaObservationWriterGate(database.handle);}},
+  {version:16,name:RHIZA_CONTROL_SCHEMA_NAME,sql:"",afterApply:database=>{migrateRhizaCommands(database.handle);upgradeRhizaControlWriterGate(database.handle);}},
+  {version:17,name:RHIZA_INPUT_SCHEMA_NAME,sql:`
+   CREATE TRIGGER rhiza_control_event_insert AFTER INSERT ON session_controls BEGIN UPDATE rhiza_job_revisions SET revision=revision+1,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE job_id IN(SELECT a.job_id FROM rhiza_admissions a JOIN canonical_tasks t ON t.id=a.task_id JOIN entities r ON r.kind='run' AND r.id=json_extract(t.document_json,'$.currentRunId') WHERE json_extract(r.document_json,'$.sessionId')=NEW.session_id); END;
+   CREATE TRIGGER rhiza_control_event_update AFTER UPDATE ON session_controls BEGIN UPDATE rhiza_job_revisions SET revision=revision+1,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE job_id IN(SELECT a.job_id FROM rhiza_admissions a JOIN canonical_tasks t ON t.id=a.task_id JOIN entities r ON r.kind='run' AND r.id=json_extract(t.document_json,'$.currentRunId') WHERE json_extract(r.document_json,'$.sessionId') IN (NEW.session_id,OLD.session_id)); END;
+  `,afterApply:database=>{migrateRhizaInputObservations(database.handle);upgradeRhizaInputWriterGate(database.handle);}},
+  {version:18,name:RHIZA_LINEAGE_SCHEMA_NAME,sql:"",afterApply:database=>{migrateRhizaLineage(database.handle);upgradeRhizaLineageWriterGate(database.handle);}},
 ] as const;
 
 export class MigrationError extends Error {
@@ -468,6 +532,13 @@ export class DispatcherDatabase {
           if(migration.version===9&&migration.name===AUTOMATIC_VERIFICATION_SCHEMA_NAME)this.writerProtocol=5;
           if(migration.version===10&&migration.name===USAGE_ORIGIN_SCHEMA_NAME)this.writerProtocol=6;
           if(migration.version===11&&migration.name===PRICING_ADMISSION_SCHEMA_NAME)this.writerProtocol=7;
+          if(migration.version===12&&migration.name===RHIZA_ADMISSION_SCHEMA_NAME)this.writerProtocol=8;
+          if(migration.version===13&&migration.name===RHIZA_JOB_SCHEMA_NAME)this.writerProtocol=9;
+          if(migration.version===14&&migration.name===MODEL_EVIDENCE_SCHEMA_NAME)this.writerProtocol=10;
+          if(migration.version===15&&migration.name===RHIZA_OBSERVATION_SCHEMA_NAME)this.writerProtocol=11;
+          if(migration.version===16&&migration.name===RHIZA_CONTROL_SCHEMA_NAME)this.writerProtocol=12;
+          if(migration.version===17&&migration.name===RHIZA_INPUT_SCHEMA_NAME)this.writerProtocol=13;
+          if(migration.version===18&&migration.name===RHIZA_LINEAGE_SCHEMA_NAME)this.writerProtocol=14;
           this.handle.exec(migration.sql);
           migration.afterApply?.(this);
           this.handle
@@ -508,9 +579,13 @@ export class DispatcherDatabase {
   }
 
   saveEntity(kind: string, id: string, document: JsonValue, updatedAt = new Date().toISOString()): void {
-    const previous=["run","session","adapter-session","model-routing-decision"].includes(kind)?this.getEntity<JsonValue>(kind,id):undefined;
+    const previous=["run","session","adapter-session","model-routing-decision","rhiza-job","task-rhiza-binding"].includes(kind)?this.getEntity<JsonValue>(kind,id):undefined;
     const before=previous&&typeof previous==="object"&&!Array.isArray(previous)?previous:undefined;
     const after=document&&typeof document==="object"&&!Array.isArray(document)?document:undefined;
+    if((kind==="rhiza-job"||kind==="task-rhiza-binding")&&before){
+      const frozen=(value:Record<string,JsonValue>)=>Object.fromEntries(Object.entries(value).filter(([key])=>kind!=="rhiza-job"||key!=="dispatch"));
+      if(!after||!isDeepStrictEqual(frozen(before),frozen(after)))throw Object.assign(new Error("Frozen RHIZA job authority cannot change"),{code:"IMMUTABLE_RHIZA_JOB"});
+    }
     if((kind==="session"||kind==="adapter-session")&&before?.nativeBinding){
       const binding=before.nativeBinding as Record<string,JsonValue>;
       const projection=kind==="session"?"nativeSessionId":"providerSessionId";

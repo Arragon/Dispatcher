@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -25,6 +25,18 @@ function repository(): { root: string; worktrees: string } {
 afterEach(() => { for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true }); });
 
 describe("WorkspaceManager", () => {
+  it("checks physical scope without Git or child-process creation", async () => {
+    const base = mkdtempSync(join(tmpdir(), "dispatcher-scope-")); directories.push(base);
+    const root = join(base, "root"), outside = join(base, "outside"), worktrees = join(base, "worktrees"); mkdirSync(root); mkdirSync(outside);
+    const registry = new RepositoryRegistry(); registry.register({ id: "repo", root });
+    const manager = new WorkspaceManager(registry, worktrees, () => [join(root, "private")]);
+    expect(await manager.inspectScope({ repositoryId: "repo", scopePaths: ["new/file.ts"] })).toMatchObject({ root: realpathSync(root) });
+    expect(existsSync(join(root, ".git"))).toBe(false); expect(existsSync(worktrees)).toBe(false);
+    symlinkSync(outside, join(root, "escape"));
+    await expect(manager.inspectScope({ repositoryId: "repo", scopePaths: ["escape/new.ts"] })).rejects.toMatchObject({ code: "SYMLINK_ESCAPE" });
+    await expect(manager.inspectScope({ repositoryId: "repo", scopePaths: ["private/new.ts"] })).rejects.toMatchObject({ code: "PRIVATE_PATH_SCOPE" });
+    await expect(manager.inspectScope({ repositoryId: "repo", scopePaths: ["../outside", ".git/config"] })).rejects.toMatchObject({ code: "INVALID_SCOPE" });
+  });
   it("plans an owning-runner path without creating a worktree or branch",async()=>{
     const fixture=repository(),registry=new RepositoryRegistry();registry.register({id:"repo",root:fixture.root});const manager=new WorkspaceManager(registry,fixture.worktrees);
     const request={repositoryId:"repo",taskId:"task",runId:"run",attempt:1,baseRef:"main",scopePaths:["src"]};

@@ -19,13 +19,17 @@ export function freezeExecutionSelection(value:ExecutionSelection|undefined,owne
   return structuredClone(value);
 }
 
-export function assertSessionModelBinding(current:AdapterSession|undefined,expected:AdapterSession):void{
+export function assertSessionModelBinding(current:AdapterSession|undefined,expected:AdapterSession,reportedProviderSessionId?:string):void{
   for(const session of current?[current,expected]:[expected]){
     if(Object.hasOwn(session,"modelSelection"))fail("MODEL_LEGACY_REVIEW_REQUIRED","Legacy model selection requires source-specific reconciliation before continuation");
     if(session.executionSelection===undefined&&session.legacyModel===undefined)fail("MODEL_SNAPSHOT_UNKNOWN","Historical session model choice is unknown; review before continuation");
     if(session.legacyModel!==undefined&&(session.executionSelection!==undefined||!session.legacyModel||typeof session.legacyModel!=="object"||Array.isArray(session.legacyModel)||session.legacyModel.id!==undefined&&!text(session.legacyModel.id)))fail("EXECUTION_SELECTION_INVALID","Legacy default snapshot is malformed or conflicts with a current choice");
   }
   if(current&&!isDeepStrictEqual([current.execution,current.executionRef],[expected.execution,expected.executionRef]))fail("EXECUTION_CONTEXT_DRIFT","Stored execution context changed during native preparation");
+  // The first completed turn may establish its native identity. Once learned,
+  // neither another store callback nor a later turn may silently replace it.
+  if(expected.providerSessionId!==undefined&&current?.providerSessionId!==expected.providerSessionId
+    ||reportedProviderSessionId!==undefined&&[expected.providerSessionId,current?.providerSessionId].some(id=>id!==undefined&&id!==reportedProviderSessionId))fail("NATIVE_IDENTITY_CHANGED","The original provider session identity changed");
   const fields=(session:AdapterSession)=>[session.id,session.runId,session.profileId,session.backendId,session.workspacePath,session.executionSelection,session.legacyModel];
   if(!current||!isDeepStrictEqual(fields(current),fields(expected)))fail("MODEL_BINDING_DRIFT","Stored model binding changed during native preparation");
 }

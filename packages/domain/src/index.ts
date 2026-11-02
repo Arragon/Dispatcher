@@ -15,7 +15,8 @@ export * from "./delivery.js";
 export * from "./usage.js";
 export * from "./account-quota.js";
 export * from "./diagnostics.js";
-import type { ExecutionSelection } from "./publication.js";
+import type { ExecutionSelection, TaskInputContext } from "./publication.js";
+export type {NativeModelInvocation,NativeTurnCompletion} from "./model-invocation.js";
 export * from "./publication.js";
 export * from "./model-routing.js";
 export const TASK_STATES = [
@@ -158,6 +159,7 @@ export interface TaskContract {
   revision: number;
   goal: string;
   instructions?: string;
+  inputContext?: TaskInputContext;
   referenceLinks?: string[];
   workspace?: { repositoryId: string; baseRef: string; baseCommit?: string; targetBranch?: string };
   scope: string[];

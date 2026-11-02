@@ -24,7 +24,7 @@ export class NativeBindingEvents {
   this.failedInvocations.add(invocationId);
   try{const current=this.store.load(sessionId);if(current?.nativeInvocationId===invocationId&&(!canProject||canProject()))this.store.save({...current,nativeIdentityIssue:current.nativeIdentityIssue??"NATIVE_EVENT_PERSISTENCE_FAILED"});}catch{/* Original invocation stays closed when persistence itself is unavailable. */}
  }
- startOptions(session:AdapterSession,emit:NativeTurnObserver,product:string,admit:()=>void,identity:"reserved"|"codex-thread"|"opencode-session"|"devin-local-session"|"copilot-session"="reserved"):{beforePrompt:()=>void;onBinding:(binding:NativeBinding)=>Promise<void>} {
+ startOptions(session:AdapterSession,emit:NativeTurnObserver,product:string,admit:()=>void,identity:"reserved"|"codex-thread"|"opencode-session"|"devin-local-session"|"copilot-session"="reserved"):{beforePrompt:()=>void;beforeObserve:()=>void;onBinding:(binding:NativeBinding)=>Promise<void>} {
   const expected=structuredClone(session),invocationId=this.store.load(session.id)?.nativeInvocationId,observer=this.observers.get(emit);
   if(!invocationId||observer?.sessionId!==session.id||observer.invocationId!==invocationId)throw new AdapterContractError("STALE_NATIVE_OBSERVER","Native observer does not own this invocation");
   let bound=structuredClone(expected.nativeBinding);
@@ -42,7 +42,7 @@ export class NativeBindingEvents {
    if(!isDeepStrictEqual(current.nativeBinding,bound)||current.providerSessionId!==expected.providerSessionId)throw new AdapterContractError("NATIVE_IDENTITY_CHANGED","Native binding differs from the reserved identity");
   };
   const beforePrompt=()=>{assertCurrent();assertAdapterWriteAdmission(admit);assertCurrent();};
-  return {beforePrompt,onBinding:async original=>{
+  return {beforePrompt,beforeObserve:assertCurrent,onBinding:async original=>{
    const binding=structuredClone(original);beforePrompt();const current=this.store.load(expected.id)!;
    const wrongIdentity=codexThread?binding.region!=="global"||binding.nativeThreadId!==binding.nativeSessionId||expected.providerSessionId!==undefined&&binding.nativeSessionId!==expected.providerSessionId:binding.nativeThreadId!==undefined||sessionAllocated&&(binding.region!=="global"||expected.providerSessionId!==undefined&&binding.nativeSessionId!==expected.providerSessionId)||!allocated&&binding.nativeSessionId!==expected.providerSessionId;
    if(binding.version!==1||binding.identityState!=="bound"||![binding.product,binding.region,binding.profileId,binding.backendId,binding.runnerId,binding.nativeStoreRef,binding.nativeSessionId,binding.executionRefId].every(validId)||wrongIdentity||binding.parentSessionId!==undefined||binding.nativeSessionId.startsWith("unstarted:")||binding.product!==product||binding.profileId!==expected.profileId||binding.backendId!==expected.backendId||binding.executionRefId!==expected.executionRef?.id||expected.executionRef.kind!=="managed-worktree"||binding.runnerId!==expected.executionRef.runnerId||bound&&!isDeepStrictEqual(binding,bound))throw new AdapterContractError("NATIVE_IDENTITY_CHANGED","Native binding differs from the frozen execution scope");

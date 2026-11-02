@@ -31,10 +31,10 @@ describe("native harness Controller composition", () => {
     let blockedProvider: string | undefined;
     let runningProvider: string | undefined;
     const calls = vi.fn((provider: string) => {
-      const result = (): CliTurnResult => provider === blockedProvider
-        ? { state: "failed", summary: "requires more credits", events: [{ type: "resource", state: "QUOTA_EXHAUSTED", reason: "requires more credits", source: "error", confidence: "high" }], providerSessionId: `${provider}-exact-session` }
-        : { state: "completed", summary: "done", events: [], providerSessionId: `${provider}-exact-session` };
-      const backend: CliAgentBackend = { start: vi.fn(() => ({ status: () => provider === runningProvider ? "running" : "completed", result: async () => result(), cancel: async () => undefined })) };
+      const result = (providerSessionId:string): CliTurnResult => provider === blockedProvider
+        ? { state: "failed", summary: "requires more credits", events: [{ type: "resource", state: "QUOTA_EXHAUSTED", reason: "requires more credits", source: "error", confidence: "high" }], providerSessionId }
+        : { state: "completed", summary: "done", events: [], providerSessionId };
+      const backend: CliAgentBackend = { start: vi.fn(input => {const index=input.args.findIndex(arg=>["--session-id","--resume","--session","--conversation"].includes(arg));const providerSessionId=index<0?`${provider}-exact-session`:input.args[index+1]!;return { status: () => provider === runningProvider ? "running" : "completed", result: async () => result(providerSessionId), cancel: async () => undefined };}) };
       return backend;
     });
     const codexCalls = vi.fn(() => ({ start: vi.fn(() => ({ status: () => "running" as const, result: async () => ({ state: "completed" as const, summary: "done", events: [], providerSessionId: "codex-exact" }), cancel: async () => undefined })) }));

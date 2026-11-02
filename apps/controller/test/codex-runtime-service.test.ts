@@ -7,8 +7,10 @@ import {CodexAdapter,CodexAppServerBackend,codexAppServerProtocolVersion,normali
 import type {Run,MutationFence,HistoryPage} from "@dispatcher/domain";
 import {DispatcherDatabase,InteractionStore,type JsonValue} from "@dispatcher/persistence";
 import {ControllerService} from "../src/service.js";
+import {EncryptedLocalSecretStore} from "@dispatcher/config";
 import {isReadableManagedCodexRun,isReadableManagedOpenCodeRun} from "../src/start-recovery.js";
 import type {PiExecutionRuntime} from "../src/pi-runtime.js";
+import {admitRhizaNative} from "./fixtures/rhiza-native-admission.js";
 const fixtures:Array<{service:ControllerService;root:string;manualClose?:boolean}>=[];
 const codexNativeReader=async(input:CodexReadRequest)=>{
  input.signal?.throwIfAborted();
@@ -18,7 +20,7 @@ const codexNativeReader=async(input:CodexReadRequest)=>{
 afterEach(async()=>{for(const f of fixtures.splice(0)){if(!f.manualClose)await f.service.stop();rmSync(f.root,{recursive:true,force:true});}vi.useRealTimers();});
 const json=(value:unknown):JsonValue=>JSON.parse(JSON.stringify(value)) as JsonValue;
 function registry(service:ControllerService){return (service as unknown as {agentAdapters:Map<string,AgentAdapter>}).agentAdapters;}
-async function fixture(options:{bindingGate?:()=>Promise<void>;initializeGate?:()=>Promise<void>;onPrompt?:(scope:CodexAppServerScope)=>void;onTurnStart?:(scope:CodexAppServerScope,incoming:(request:CodexRpcRequest)=>void,turnId:string)=>void;nativeRequests?:boolean;nativeReads?:boolean}={}){
+async function fixture(options:{nativeReader?:(input:CodexReadRequest)=>Promise<unknown>;bindingGate?:()=>Promise<void>;initializeGate?:()=>Promise<void>;onPrompt?:(scope:CodexAppServerScope)=>void;onTurnStart?:(scope:CodexAppServerScope,incoming:(request:CodexRpcRequest)=>void,turnId:string)=>void;nativeRequests?:boolean;nativeReads?:boolean}={}){
  const root=realpathSync(mkdtempSync(join(tmpdir(),"dispatcher-native-compose-"))),home=join(root,"home"),repo=join(root,"repo");mkdirSync(home);mkdirSync(repo);
  execFileSync("git",["init","--initial-branch=main",repo]);execFileSync("git",["-C",repo,"config","user.email","fixture@example.invalid"]);execFileSync("git",["-C",repo,"config","user.name","Fixture"]);writeFileSync(join(repo,"README.md"),"fixture\n");execFileSync("git",["-C",repo,"add","README.md"]);execFileSync("git",["-C",repo,"commit","-m","fixture"]);
  const ports:Array<{scope:CodexAppServerScope;port:CodexAppServerBackend;calls:string[];disconnect:ReturnType<typeof vi.fn>;incoming:(request:CodexRpcRequest)=>void}>=[];
@@ -32,7 +34,8 @@ async function fixture(options:{bindingGate?:()=>Promise<void>;initializeGate?:(
   if(options.bindingGate){const start=port.start.bind(port);vi.spyOn(port,"start").mockImplementation(input=>start({...input,onBinding:async binding=>{await options.bindingGate!();await input.onBinding?.(binding);}}));}
   ports.push({scope,port,calls,disconnect,incoming:request=>requestListener?.(request)});return port;
  });
- const service=new ControllerService({dataDirectory:join(root,"data"),ownerToken:"fixture-owner",withRunner:true,codexNativeReader,codexAppServerFactory:factory,directoryPicker:async()=>repo});const holder:{service:ControllerService;root:string;manualClose?:boolean}={service,root};fixtures.push(holder);await service.start({listen:false});
+ const nativeReader=options.nativeReader??codexNativeReader;
+ const service=new ControllerService({dataDirectory:join(root,"data"),ownerToken:"fixture-owner",secretStore:new EncryptedLocalSecretStore(join(root,"vault"),"synthetic-codex-runtime-master"),withRunner:true,codexNativeReader:nativeReader,codexAppServerFactory:factory,directoryPicker:async()=>repo});const holder:{service:ControllerService;root:string;manualClose?:boolean}={service,root};fixtures.push(holder);await service.start({listen:false});
  const config=structuredClone(service.configuration.current().config);config.agentProfiles=[{id:"p",alias:"P",provider:"codex",runnerId:"local",settings:{codexHome:home,executable:"/fixture/codex"},nativeInteraction:{mode:"compatible",backendId:"codex-app-server",executionLocation:"managed-worktree"}}];config.repositories=[{id:"repo",root:repo,defaultBaseRef:"main",scopePaths:[],verificationCommands:[]}];service.configuration.applyPlan(service.configuration.buildPlan(config,"owner","fixture").id,{confirmed:true});
  const create=async(id:string)=>{
   const w=await service.workspaces.create({repositoryId:"repo",taskId:id,runId:id,attempt:1,baseRef:"main",scopePaths:[]});
@@ -42,7 +45,7 @@ async function fixture(options:{bindingGate?:()=>Promise<void>;initializeGate?:(
   service.database.writeCanonicalTask(run.taskId,0,json({id:run.taskId,projectId:"local:repo",state:"RUNNING",currentRunId:id}),new Date().toISOString());service.database.saveEntity("run",id,json(run));service.database.saveEntity("session",run.sessionId,json({id:run.sessionId,profileId:"p",providerId:"codex",resumable:true,executionRef:run.executionRef,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()}));new InteractionStore(service.database).initializeControl({sessionId:run.sessionId,activeRunId:run.id,exclusion:"none",at:new Date().toISOString()});return run;
  };
  const start=(run:Run)=>registry(service).get("p")!.start({runId:run.id,sessionId:run.sessionId,workspacePath:run.worktree,backendId:"codex-app-server",prompt:"fixture",executionSelection:run.executionSelection,beforeCreate:()=>{},beforeSend:()=>{},executionRef:run.executionRef,execution:{generation:1,attempt:1,leaseId:run.leaseId}});
- return {service,holder,root,home,repo,ports,factory,create,start};
+ return {service,holder,root,home,repo,ports,factory,create,start,nativeReader};
 }
 // Source a499d84 assertions use current reviewed publication and immutable selection contracts.
 async function endFixtureRun(f:Awaited<ReturnType<typeof fixture>>,run:Run):Promise<void>{
@@ -157,7 +160,7 @@ it("dispatches canonical local publication once while refusing progression on mi
  const started=await f.service.app.inject(request);expect(started.statusCode).toBe(200);const run=publishedRun(f,started.json());expect(run.executionRef.id).toBe(f.ports[0]!.scope.executionRefId);expect(run.providerSessionId).toBe(`native:${run.executionRef.id}`);expect((await f.service.app.inject(request)).json().runId).toBe(run.id);expect(f.ports[0]!.calls.filter(method=>method==="thread/start")).toHaveLength(1);
  await f.service.runBackgroundCycle();expect(f.service.database.getEntity("run",run.id)).toMatchObject({state:"ACTIVE",verification:{state:"PENDING"}});expect(f.service.database.getCanonicalTask(taskId)?.document).toMatchObject({state:"RUNNING"});expect(existsSync(join(run.worktree,"verification-ran"))).toBe(false);expect(f.service.database.listDeliveryEvidence(taskId)).toHaveLength(0);
  const denied=await f.service.app.inject({method:"POST",url:`/api/runs/${run.id}/advance`,headers});expect(denied.statusCode).toBe(409);expect(denied.json().code).toBe("NATIVE_STATE_UNKNOWN");
- await f.service.stop();const restored=new ControllerService({dataDirectory:join(f.root,"data"),ownerToken:"fixture-owner",withRunner:true,codexNativeReader,codexAppServerFactory:f.factory,directoryPicker:async()=>f.repo});
+ await f.service.stop();const restored=new ControllerService({dataDirectory:join(f.root,"data"),ownerToken:"fixture-owner",withRunner:true,codexNativeReader:f.nativeReader,codexAppServerFactory:f.factory,directoryPicker:async()=>f.repo});
  try{await restored.start({listen:false});const retry=await restored.app.inject(request);expect(retry.statusCode).toBe(200);expect(retry.json().runId).toBe(run.id);expect(restored.database.getEntity("run",run.id)).toMatchObject({id:run.id,providerSessionId:run.providerSessionId});expect(f.factory).toHaveBeenCalledTimes(1);expect(new InteractionStore(restored.database).binding(run.sessionId)?.nativeSessionId).toBe(run.providerSessionId);}finally{await restored.stop();}
 });
 it("instantiates configured App Server lazily per canonical managed execution and binds exact threads",async()=>{
@@ -168,7 +171,7 @@ it("instantiates configured App Server lazily per canonical managed execution an
 it("allocates durable epochs above legacy request watermarks before opening scoped connections",async()=>{
  const f=await fixture(),a=await f.create("epoch-a"),b=await f.create("epoch-b");f.service.database.saveEntity("native-request-connection","legacy-session",{version:1,connectionId:"legacy",connectionEpoch:40});await f.start(a);await f.start(b);
  expect(f.factory.mock.calls.map(call=>call[1]?.connectionEpoch)).toEqual([41,42]);expect(f.service.database.getEntity("native-connection-epoch","controller")).toEqual({version:1,connectionEpoch:42});
- await f.service.stop();const restored=new ControllerService({dataDirectory:join(f.root,"data"),ownerToken:"fixture-owner",withRunner:true,codexNativeReader,codexAppServerFactory:f.factory});try{await restored.start({listen:false});expect(restored["nativeInteractions"].allocateNativeConnectionEpoch()).toBe(43);}finally{await restored.stop();}
+ await f.service.stop();const restored=new ControllerService({dataDirectory:join(f.root,"data"),ownerToken:"fixture-owner",withRunner:true,codexNativeReader:f.nativeReader,codexAppServerFactory:f.factory});try{await restored.start({listen:false});expect(restored["nativeInteractions"].allocateNativeConnectionEpoch()).toBe(43);}finally{await restored.stop();}
 });
 it.each(["malformed","exhausted","storage-fault"] as const)("does not open a backend when epoch allocation is %s",async variant=>{
  const f=await fixture(),run=await f.create("epoch-failure");if(variant==="storage-fault"){const save=f.service.database.saveEntity.bind(f.service.database);vi.spyOn(f.service.database,"saveEntity").mockImplementation((kind,id,value)=>{if(kind==="native-connection-epoch")throw Error("fixture storage failure");return save(kind,id,value);});}else f.service.database.saveEntity("native-connection-epoch","controller",{version:1,connectionEpoch:variant==="malformed"?"broken":Number.MAX_SAFE_INTEGER});
@@ -298,7 +301,7 @@ it("restores only unknown metadata after restart without opening a native connec
  const f=await fixture({nativeReads:true,nativeRequests:true}),run=await f.create("restart"),session=await f.start(run),store=new InteractionStore(f.service.database);
  const writes=f.service.database.handle.prepare("SELECT total_changes() AS count").get();expect(isReadableManagedCodexRun(f.service.database,run)).toBe(true);expect(isReadableManagedOpenCodeRun(f.service.database,run)).toBe(false);expect(f.service.database.handle.prepare("SELECT total_changes() AS count").get()).toEqual(writes);
  store.saveObservation({sessionId:run.sessionId,observerGeneration:1,observerSequence:1,controlEpoch:1,observation:await f.ports[0]!.port.inspect(session.nativeBinding!)});
- await f.service.stop();const restored=new ControllerService({dataDirectory:join(f.root,"data"),ownerToken:"fixture-owner",withRunner:true,codexNativeReader,codexAppServerFactory:f.factory});
+ await f.service.stop();const restored=new ControllerService({dataDirectory:join(f.root,"data"),ownerToken:"fixture-owner",withRunner:true,codexNativeReader:f.nativeReader,codexAppServerFactory:f.factory});
  try{await restored.start({listen:false});expect(f.factory).toHaveBeenCalledOnce();const read=await restored.app.inject({url:`/api/runs/${run.id}`,headers:{authorization:"Bearer fixture-owner"}});expect(read.json()).toMatchObject({run:{id:run.id,sessionId:run.sessionId,state:"RUNNER_UNAVAILABLE",recoveryReason:"NATIVE_OUTCOME_UNKNOWN",resumePolicy:"manual"},nativeSession:{state:"unknown",mutationAvailable:false}});expect(new InteractionStore(restored.database).binding(run.sessionId)).toEqual(session.nativeBinding);expect(new InteractionStore(restored.database).observation(run.sessionId)).toMatchObject({state:"unknown",pendingTools:"unknown",pendingApprovals:"unknown"});const advance=await restored.app.inject({method:"POST",url:`/api/runs/${run.id}/advance`,headers:{authorization:"Bearer fixture-owner"}});expect(advance.statusCode).toBe(409);expect(f.factory).toHaveBeenCalledOnce();}finally{await restored.stop();}
 });
 it.each(["selection","binding","contract","control","canonical-provider","product","region","thread","parent","control-shape","adapter-thread"] as const)("keeps restart closed for corrupted native %s metadata without changing the original Run",async drift=>{
@@ -315,7 +318,7 @@ it.each(["selection","binding","contract","control","canonical-provider","produc
   for(const kind of ["session","adapter-session"]){const row=db.getEntity(kind,run.sessionId)!;db.handle.prepare("UPDATE entities SET document_json=? WHERE kind=? AND id=?").run(JSON.stringify({...row as object,nativeBinding:changed}),kind,run.sessionId);}
  }
  if(drift==="control-shape"){const control=new InteractionStore(db).control(run.sessionId)!;db.handle.prepare("UPDATE session_controls SET document_json=? WHERE session_id=?").run(JSON.stringify({...control,epoch:"corrupt"}),run.sessionId);}
- const before=db.getEntity("run",run.id);db.close();expect(()=>new ControllerService({dataDirectory:join(f.root,"data"),ownerToken:"fixture-owner",withRunner:true,codexNativeReader,codexAppServerFactory:f.factory})).toThrow(expect.objectContaining({code:"NATIVE_CONTROL_RUNTIME_UNAVAILABLE"}));const checked=new DispatcherDatabase(join(f.root,"data","dispatcher.sqlite"));try{expect(checked.getEntity("run",run.id)).toEqual(before);expect(f.factory).toHaveBeenCalledOnce();}finally{checked.close();}
+ const before=db.getEntity("run",run.id);db.close();expect(()=>new ControllerService({dataDirectory:join(f.root,"data"),ownerToken:"fixture-owner",withRunner:true,codexNativeReader:f.nativeReader,codexAppServerFactory:f.factory})).toThrow(expect.objectContaining({code:"NATIVE_CONTROL_RUNTIME_UNAVAILABLE"}));const checked=new DispatcherDatabase(join(f.root,"data","dispatcher.sqlite"));try{expect(checked.getEntity("run",run.id)).toEqual(before);expect(f.factory).toHaveBeenCalledOnce();}finally{checked.close();}
 });
 it.each(["pi-disconnect","codex-receipt"] as const)("drains both backend registries and closes HTTP when %s fails",async failure=>{
  const f=await fixture(),run=await f.create("mixed-shutdown");await f.start(run);const runtime={beginShutdown:vi.fn(),disconnectLocal:vi.fn(async()=>{if(failure==="pi-disconnect")throw Error("fixture Pi disconnect failed");return [{version:1,connection:"closed",ownedRoot:"not-created",callbacks:"drained",backgroundTools:"unknown",nativeSessionDeleted:false}];}),hasUnclosedHosts:()=>false};
@@ -327,7 +330,7 @@ it("keeps an uncertain canonical creation bound to its original invocation after
  const f=await fixture(),p=await publication(f),save=f.service.database.saveEntity.bind(f.service.database);
  const fault=vi.spyOn(f.service.database,"saveEntity").mockImplementation((...args)=>{if(args[0]==="native-binding-event")throw Error("fixture observer storage failed");return save(...args);});let response;try{response=await f.service.app.inject(p.request);}finally{fault.mockRestore();}
  expect(response.statusCode,response.body).toBe(200);expect(response.json()).toMatchObject({state:"OUTCOME_UNKNOWN"});const run=publishedRun(f,response.json());expect(run).toMatchObject({state:"RUNNER_UNAVAILABLE",recoveryReason:"NATIVE_OUTCOME_UNKNOWN"});expect(new InteractionStore(f.service.database).command(`native-start:${run.id}`)?.state).toBe("UNKNOWN");expect(f.service.database.getEntity("adapter-session",run.sessionId)).toMatchObject({nativeIdentityIssue:"NATIVE_EVENT_PERSISTENCE_FAILED"});expect(f.ports[0]!.calls.filter(method=>method==="thread/start")).toHaveLength(1);expect(f.ports[0]!.calls).not.toContain("turn/start");
- const retry=await f.service.app.inject(p.request);expect(retry.json().runId).toBe(run.id);expect(f.factory).toHaveBeenCalledOnce();await f.service.stop();expect(()=>new ControllerService({dataDirectory:join(f.root,"data"),ownerToken:"fixture-owner",withRunner:true,codexNativeReader,codexAppServerFactory:f.factory})).toThrow(expect.objectContaining({code:"NATIVE_CONTROL_RUNTIME_UNAVAILABLE"}));expect(f.factory).toHaveBeenCalledOnce();
+ const retry=await f.service.app.inject(p.request);expect(retry.json().runId).toBe(run.id);expect(f.factory).toHaveBeenCalledOnce();await f.service.stop();expect(()=>new ControllerService({dataDirectory:join(f.root,"data"),ownerToken:"fixture-owner",withRunner:true,codexNativeReader:f.nativeReader,codexAppServerFactory:f.factory})).toThrow(expect.objectContaining({code:"NATIVE_CONTROL_RUNTIME_UNAVAILABLE"}));expect(f.factory).toHaveBeenCalledOnce();
 });
 it("reads bounded authorized native history from only the exact selected execution without persisting transcript",async()=>{
  const f=await fixture({nativeReads:true}),a=await f.create("history-a"),b=await f.create("history-b"),sa=await f.start(a);await f.start(b);const leaf=f.ports[0]!,history=vi.spyOn(leaf.port,"history").mockResolvedValue({version:1,nativeSessionId:sa.nativeBinding!.nativeSessionId,state:"available",range:"native-history",source:"codex",completeness:"partial",entries:[{id:"entry",kind:"assistant",text:"Authorized native transcript",occurredAt:"2026-10-23T00:00:00Z"}],nextCursor:"native-next"}),other=vi.spyOn(f.ports[1]!.port,"history");
@@ -362,4 +365,47 @@ it.each(["invocation","reserved-session","selection","reference","generation","a
    f.service.database.handle.prepare("UPDATE entities SET document_json=json_set(document_json,?,json(?)) WHERE kind=? AND id=?").run("$."+path,JSON.stringify(value),kind,id);
   }return start(input);
  });await expect(f.start(run)).rejects.toMatchObject({creationOutcome:"not-created"});expect(f.factory).not.toHaveBeenCalled();
+});
+
+async function admitNative(f:Awaited<ReturnType<typeof fixture>>){
+ return admitRhizaNative(f.service,async context=>{
+  const catalog=normalizeCodexCatalog({data:[{model:"test-model",displayName:"Synthetic",isDefault:true,hidden:false,defaultReasoningEffort:"low",supportedReasoningEfforts:[{reasoningEffort:"low"}]}]},context,"synthetic-native-context",new Date().toISOString(),"codex-app-server");
+  for(const entry of catalog.entries)entry.access="account-listed";return catalog;
+ });
+}
+it.each(["initialize","binding"] as const)("disconnects an accepted RHIZA native %s waiter before dependent drains and preserves unknown callbacks",async phase=>{
+ const held=Promise.withResolvers<void>(),entered=vi.fn(()=>held.promise),f=await fixture(phase==="initialize"?{initializeGate:entered}:{bindingGate:entered});
+ const accepted=await admitNative(f);await vi.waitFor(()=>expect(entered).toHaveBeenCalledOnce());
+ const run=f.service.database.listEntities("run")[0] as unknown as Run,close=vi.spyOn(f.service.database,"close");
+ expect(f.service.database.getEntity("task-rhiza-binding",run.taskId)).toMatchObject({jobId:accepted.receipt.jobId});
+ vi.spyOn(f.service["localResults"],"close").mockImplementation(()=>f.service["rhizaJobs"].drain());
+ f.holder.manualClose=true;vi.useFakeTimers();
+ try{
+  const stopping=f.service.stop().catch(error=>error);await vi.advanceTimersByTimeAsync(5_001);const result=await stopping;
+  if(phase==="binding"){expect(result).toMatchObject({code:"NATIVE_RUNTIME_CLEANUP_UNKNOWN"});expect(close).not.toHaveBeenCalled();expect(f.service.database.getEntity("rhiza-job",accepted.receipt.jobId)).toMatchObject({dispatch:{state:"unknown"}});}
+  else expect(result).toBeUndefined();
+  expect(f.ports[0]!.disconnect).toHaveBeenCalledOnce();expect(f.ports[0]!.calls).not.toContain("turn/start");
+ }finally{held.resolve();vi.useRealTimers();await f.service["rhizaJobs"].drain();await new Promise(done=>setImmediate(done));if(!close.mock.calls.length)f.service.database.close();}
+ expect(f.ports[0]!.calls).not.toContain("turn/start");
+});
+it.each((["initialize","binding"] as const).flatMap(phase=>(["grant","lease","lineage","runtime","adapter"] as const).map(drift=>({phase,drift}))))("refuses a RHIZA native prompt after $drift changes during $phase",async({phase,drift})=>{
+ const held=Promise.withResolvers<void>(),entered=vi.fn(()=>held.promise),f=await fixture(phase==="initialize"?{initializeGate:entered}:{bindingGate:entered}),accepted=await admitNative(f);await vi.waitFor(()=>expect(entered).toHaveBeenCalledOnce());
+ const run=f.service.database.listEntities("run")[0] as unknown as Run,runtime=f.service["codexRuntimes"].get("p")!,adapter=registry(f.service).get("p")!;
+ if(drift==="grant"){const config=structuredClone(f.service.configuration.current().config);config.rhizaIngress!.clients[0]!.enabled=false;f.service.configuration.applyPlan(f.service.configuration.buildPlan(config,"owner","revoke synthetic client").id,{confirmed:true});}
+ else if(drift==="lease")f.service.database.saveEntity("run",run.id,json({...run,leaseId:"replaced"}));
+ else if(drift==="lineage"){
+  expect(()=>f.service.database.saveEntity("task-rhiza-binding",run.taskId,json({version:1,jobId:"foreign",clientId:"client-a"}))).toThrow("Frozen RHIZA job authority cannot change");
+  // Simulate out-of-band corruption after proving supported writes preserve the immutable association.
+  f.service.database.handle.prepare("UPDATE entities SET document_json=json_set(document_json,'$.jobId','foreign') WHERE kind='task-rhiza-binding' AND id=?").run(run.taskId);
+ }
+ else if(drift==="runtime")f.service["codexRuntimes"].delete("p");else registry(f.service).set("p",{} as AgentAdapter);
+ try{held.resolve();await f.service["rhizaJobs"].drain();expect(f.ports[0]!.calls).not.toContain("turn/start");expect(f.service.database.getEntity("rhiza-job",accepted.receipt.jobId)).toMatchObject({dispatch:{state:"unknown"}});expect(f.service.database.listEntities("model-invocation")).toEqual([]);}
+ finally{held.resolve();f.service["codexRuntimes"].set("p",runtime);registry(f.service).set("p",adapter);}
+});
+it("retains the async Codex invocation and binding without fabricating legacy model or owned-turn proof",async()=>{
+ const f=await fixture(),accepted=await admitNative(f);await f.service["rhizaJobs"].drain();const run=f.service.database.listEntities("run")[0] as unknown as Run;
+ expect(f.service.database.getEntity("rhiza-job",accepted.receipt.jobId)).toMatchObject({dispatch:{state:"observed",runId:run.id}});
+ const adapterSession=f.service.database.getEntity("adapter-session",run.sessionId) as {nativeInvocationId:string;nativeBinding:unknown;modelInvocationId?:string};
+ expect(adapterSession.nativeInvocationId).toBeTruthy();expect(adapterSession.nativeBinding).toEqual(new InteractionStore(f.service.database).binding(run.sessionId));expect(adapterSession.modelInvocationId).toBeUndefined();
+ expect(f.service.database.handle.prepare("SELECT COUNT(*) AS n FROM native_model_invocations").get()?.n).toBe(0);expect(f.service.database.handle.prepare("SELECT COUNT(*) AS n FROM native_turn_completions").get()?.n).toBe(0);
 });

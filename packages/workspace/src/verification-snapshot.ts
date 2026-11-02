@@ -11,6 +11,7 @@ import { assertRepositoryIdentity, mutateWorktrees, type WorkspaceManager, Works
 const execute=promisify(execFile);
 export interface CandidateSource {repositoryId:string;worktree:string;branch:string;scopePaths:string[];repositoryScopePaths:string[]}
 export interface DeliveryCandidate {version:1;id:string;source:CandidateSource;candidate:WorkspaceCandidate;commit:string;tree:string;path:string;rootIdentity:{device:number;inode:number};commonDirectory:string;contentFingerprint:string;pushRemoteFingerprint:string;pushUrl?:string;gitContext?:DeliveryGitContext}
+export interface VerificationSource {source:CandidateSource;candidate:WorkspaceCandidate;tree:string}
 /** Snapshot capacity includes uncertain/failed directories; they are retained, never force-deleted. */
 export class VerificationSnapshots {
   private allocation:Promise<unknown>=Promise.resolve();
@@ -57,6 +58,17 @@ export class VerificationSnapshots {
   private async tree(source:CandidateSource):Promise<string>{
     const index=join(this.root,`.index-${randomUUID()}`);
     try{await this.git(source.worktree,["read-tree","HEAD"],index);await this.git(source.worktree,["add","--all","--"],index);return await this.git(source.worktree,["write-tree"],index);}finally{await rm(index,{force:true});await rm(`${index}.lock`,{force:true});}
+  }
+  /** Content identity for verification in the managed source, without allocating a delivery worktree. */
+  async captureSource(input:CandidateSource,assertAuthority:()=>void):Promise<VerificationSource>{
+    const source=structuredClone(input);assertAuthority();await mkdir(this.root,{recursive:true,mode:0o700});await this.assertIndex(source.worktree);
+    const candidate=await this.capture(source),tree=await this.tree(source);assertAuthority();
+    if((await this.git(source.worktree,["ls-tree","-r",tree])).split("\n").some(line=>line.startsWith("160000 ")))throw new WorkspacePolicyError("VERIFICATION_ENVIRONMENT_UNAVAILABLE","Submodule verification environment is not registered");
+    const result={source,candidate,tree};await this.assertSource(result,assertAuthority);return result;
+  }
+  async assertSource(source:VerificationSource,assertAuthority:()=>void):Promise<void>{
+    assertAuthority();await this.assertIndex(source.source.worktree);const current=await this.capture(source.source);assertAuthority();
+    if(current.id!==source.candidate.id||await this.tree(source.source)!==source.tree)throw new WorkspacePolicyError("CANDIDATE_CHANGED","Verification no longer describes the managed source content");assertAuthority();
   }
   createDeliveryCandidate(input:CandidateSource,assertAuthority:()=>void):Promise<DeliveryCandidate>{
     const captured=structuredClone(input);

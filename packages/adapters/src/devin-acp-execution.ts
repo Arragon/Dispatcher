@@ -52,7 +52,7 @@ export class DevinLocalAcpExecutionBackend implements CliAgentBackend {
     // Normalize the original returned work once; local wait cancellation cannot end it.
     return this.track(Promise.resolve(returned).then(() => {}), this.consumers);
   }
-  private guard(input: CliStartInput): void {
+  private guard(input: CliStartInput, phase: "write" | "observation" = "write"): void {
     if (this.closed) this.reject("DEVIN_ACP_LOCAL_CONNECTION_CLOSED");
     if (this.persistenceFailed) this.reject("DEVIN_ACP_CALLBACK_FAILED");
     try {
@@ -60,7 +60,7 @@ export class DevinLocalAcpExecutionBackend implements CliAgentBackend {
     } catch { this.reject("DEVIN_ACP_SCOPE_CHANGED"); }
     if (this.consumers.size >= 64) this.reject("DEVIN_ACP_CALLBACK_LIMIT");
     let returned: unknown;
-    try { returned = input.beforePrompt!(); } catch { this.reject("DEVIN_ACP_AUTHORITY_CHANGED"); }
+    try { returned = phase === "write" ? input.beforePrompt!() : input.beforeObserve!(); } catch { this.reject("DEVIN_ACP_AUTHORITY_CHANGED"); }
     if (returned !== undefined) { this.consume(returned); this.reject("DEVIN_ACP_AUTHORITY_CHANGED"); }
     if (this.closed) this.reject("DEVIN_ACP_LOCAL_CONNECTION_CLOSED");
     try { if (!isDeepStrictEqual(this.identities(), this.paths)) this.reject("DEVIN_ACP_SCOPE_CHANGED"); }
@@ -70,13 +70,13 @@ export class DevinLocalAcpExecutionBackend implements CliAgentBackend {
     const n = input.nativeInput;
     if (!n || n.version !== 1 || n.profileId !== this.scope.profileId || n.backendId !== this.backendId || ![n.runId, n.sessionId, n.commandId].every(text)) this.reject("DEVIN_ACP_SCOPE_CHANGED");
     if (n.newSession !== true || Object.hasOwn(n, "providerSessionId")) this.reject("DEVIN_ACP_CONTINUATION_REQUIRES_COMMAND_LANE");
-    if (n.approveTools !== false || input.args.length || input.environment && Object.keys(input.environment).length || typeof n.prompt !== "string" || !n.prompt.length || Buffer.byteLength(n.prompt) > 240_000 || typeof input.beforePrompt !== "function" || typeof input.onBinding !== "function" || input.onNativeEvent !== undefined && typeof input.onNativeEvent !== "function") this.reject("DEVIN_ACP_START_INVALID");
+    if (n.approveTools !== false || input.args.length || input.environment && Object.keys(input.environment).length || typeof n.prompt !== "string" || !n.prompt.length || Buffer.byteLength(n.prompt) > 240_000 || typeof input.beforePrompt !== "function" || typeof input.beforeObserve !== "function" || typeof input.onBinding !== "function" || input.onNativeEvent !== undefined && typeof input.onNativeEvent !== "function") this.reject("DEVIN_ACP_START_INVALID");
     if (Object.hasOwn(n, "modelSelection") || Object.hasOwn(n, "legacyModel")) this.reject("MODEL_LEGACY_REVIEW_REQUIRED");
     try {
       const selection = freezeExecutionSelection(n.executionSelection, { profileId: this.scope.profileId, providerId: "devin-local", backendId: this.backendId, selection: true, reasoning: false });
       if (!selection || selection.selectionType !== "explicit-model" || !text(selection.requestedModel) || !validateExecutionBinding({ profileId: this.scope.profileId, providerId: "devin-local", backendId: this.backendId, runnerId: this.scope.runnerId, executionRef: this.reference }, selection, { repositoryId: this.reference.repositoryId, baseRevision: this.reference.baseRevision }).valid) this.reject("DEVIN_ACP_MODEL_SELECTION_INVALID");
     } catch { this.reject("DEVIN_ACP_MODEL_SELECTION_INVALID"); }
-    this.guard(input);
+    this.guard(input); this.guard(input, "observation");
   }
   private async bounded<T>(work: Promise<T>, code: string): Promise<T> {
     let timer: ReturnType<typeof setTimeout> | undefined, abort: (() => void) | undefined;
@@ -92,12 +92,12 @@ export class DevinLocalAcpExecutionBackend implements CliAgentBackend {
   private observe(input: CliStartInput, original: NativeTurnFact): Promise<void> {
     const fact = structuredClone(original);
     const observation = this.pipeline.then(async () => {
-      this.guard(input);
+      this.guard(input, "observation");
       let returned: unknown;
       try { returned = input.onNativeEvent?.(fact); } catch { this.reject("DEVIN_ACP_CALLBACK_FAILED"); }
       try { await this.bounded(this.consume(returned), "DEVIN_ACP_CALLBACK_FAILED"); }
       catch { this.reject("DEVIN_ACP_CALLBACK_FAILED"); }
-      this.guard(input);
+      this.guard(input, "observation");
     }).catch(error => { this.persistenceFailed = true; throw error; });
     this.pipeline = this.track(observation);
     return observation;
@@ -110,6 +110,7 @@ export class DevinLocalAcpExecutionBackend implements CliAgentBackend {
       ...(original.executionRef ? { executionRef: structuredClone(original.executionRef) } : {}),
       ...(original.nativeInput ? { nativeInput: structuredClone(original.nativeInput) } : {}),
       ...(typeof original.beforePrompt === "function" ? { beforePrompt: original.beforePrompt.bind(original) } : {}),
+      ...(typeof original.beforeObserve === "function" ? { beforeObserve: original.beforeObserve.bind(original) } : {}),
       ...(typeof original.onBinding === "function" ? { onBinding: original.onBinding.bind(original) } : {}),
       ...(typeof original.onNativeEvent === "function" ? { onNativeEvent: original.onNativeEvent.bind(original) } : {}),
     };
@@ -117,7 +118,7 @@ export class DevinLocalAcpExecutionBackend implements CliAgentBackend {
     const n = input.nativeInput!, events: NormalizedCliEvent[] = [];
     let completed = false, confirmed = false, nativeId: string | undefined, resolveReady!: () => void, rejectReady!: (error: unknown) => void;
     const ready = new Promise<void>((resolve, reject) => { resolveReady = resolve; rejectReady = reject; }); void ready.catch(() => {});
-    const confirm = () => { this.guard(input); if (!confirmed) { confirmed = true; resolveReady(); } };
+    const confirm = () => { this.guard(input, "observation"); if (!confirmed) { confirmed = true; resolveReady(); } };
     this.acquisitionEnded = false; this.acquisitionAttempted = true;
     this.opening = this.track(DevinLocalAcpClient.open(this.scope, { signal: this.shutdown.signal, beforeCreate: () => this.guard(input) }).then(client => {
       this.client = client;
@@ -142,18 +143,18 @@ export class DevinLocalAcpExecutionBackend implements CliAgentBackend {
         const result = await client.prompt({ binding, message: n.prompt }, {
           timeoutMs: 30_000, signal: this.shutdown.signal, beforeSend: () => this.guard(input),
           onUpdate: () => {
-            this.guard(input);
+            this.guard(input, "observation");
             events.push({ type: "activity", summary: "Native Devin Local activity", providerSessionId: binding.nativeSessionId, executionEvidence: true }); if (events.length > 256) events.shift();
             // Client updates stay synchronous; the producer owns and bounds durable work.
             const observed = this.observe(input, { state: "running", observedAt: new Date().toISOString(), nativeSessionId: binding.nativeSessionId });
             void observed.then(confirm).catch(error => { if (!this.closed) this.observationFailureClosed = true; rejectReady(error); this.beginShutdown(); });
           },
         });
-        await this.bounded(this.pipeline, "DEVIN_ACP_CALLBACK_FAILED"); this.guard(input);
+        await this.bounded(this.pipeline, "DEVIN_ACP_CALLBACK_FAILED"); this.guard(input, "observation");
         if (!confirmed) this.reject("DEVIN_ACP_ACTIVITY_UNCONFIRMED");
         const state = result.stopReason === "cancelled" ? "cancelled" : result.stopReason === "end_turn" && result.executionEvidence && !result.toolFailure && !result.permissionDenied && result.pendingTools === 0 ? "completed" : "failed";
         await this.observe(input, { state: state === "completed" ? "completed" : "failed", observedAt: new Date().toISOString(), nativeSessionId: binding.nativeSessionId });
-        this.guard(input);
+        this.guard(input, "observation");
         return { state, summary: state === "completed" ? "Native Devin Local turn completed" : state === "cancelled" ? "Native Devin Local turn cancelled" : "Native Devin Local turn could not be confirmed", providerSessionId: binding.nativeSessionId, events };
       } catch (error) {
         if (error instanceof AdapterStartError && error.creationOutcome === "unknown") this.creationPossible = true;

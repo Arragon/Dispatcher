@@ -12,6 +12,22 @@ afterEach(async () => { for (const client of clients.splice(0)) await client.clo
 const fixture = (mode = "normal") => devinAcpFixture(roots, mode);
 async function open(f: ReturnType<typeof fixture>) { const client = await adapters.DevinLocalAcpClient.open(f.scope); clients.push(client); return client; }
 
+it.each(["stdin", "stderr", "stdout"] as const)("contains owned ACP %s errors and settles pending reads without raw diagnostics", async stream => {
+  const f = fixture("ignore"), client = await open(f);
+  const pending = client.listSessions({}); void pending.catch(() => {});
+  await vi.waitFor(() => expect(f.calls()).toHaveLength(2));
+  const pipe = (client as unknown as { child: Record<typeof stream, NodeJS.EventEmitter> }).child[stream];
+  const error = Object.assign(Error("private fixture pipe diagnostic"), { code: "EPIPE" });
+  expect(() => pipe.emit("error", error)).not.toThrow();
+  await expect(pending).rejects.toMatchObject({ code: "DEVIN_ACP_DISCONNECTED", message: "DEVIN_ACP_DISCONNECTED" });
+  expect(client.disconnectSignal.aborted).toBe(true);
+  expect(client.disconnectSignal.reason).toMatchObject({ code: "DEVIN_ACP_DISCONNECTED", message: "DEVIN_ACP_DISCONNECTED" });
+  const receipt = await client.close();
+  expect(receipt).toMatchObject({ connection: "closed", backgroundTools: "unknown", nativeSessionDeleted: false });
+  expect(() => pipe.emit("error", error)).not.toThrow();
+  expect(await client.close()).toEqual(receipt);
+});
+
 it("opens a pinned local ACP with literal worktree and native homes", async () => {
   const f = fixture(), client = await open(f);
   expect(JSON.parse(readFileSync(join(f.root, "started"), "utf8"))).toMatchObject({ args: ["acp"], cwd: f.scope.workspacePath, pwd: f.scope.workspacePath, data: f.scope.dataHome, config: f.scope.configHome });

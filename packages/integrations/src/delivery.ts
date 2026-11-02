@@ -43,7 +43,7 @@ export class DeliveryService {
     const metadata = { idempotencyKey: request.idempotencyKey, generation: request.run.generation };
     const values = [
       deliveryEvidence({ id: randomUUID(), taskId: request.taskId, runId: request.run.id, connectorInstanceId: adapter.instance.id, kind: "commit", externalId: pushed.commit, state: "READY", metadata, now }),
-      deliveryEvidence({ id: randomUUID(), taskId: request.taskId, runId: request.run.id, connectorInstanceId: adapter.instance.id, kind: "pull-request", externalId: pullRequest.id, url: pullRequest.url, state: pullRequest.state === "MERGED" ? "MERGED" : pullRequest.state === "CLOSED" ? "FAILED" : "READY", metadata: { ...metadata, pullRequestNumber: pullRequest.number, headCommit: pullRequest.headCommit ?? pushed.commit, pullRequestState: pullRequest.state }, now }),
+      deliveryEvidence({ id: randomUUID(), taskId: request.taskId, runId: request.run.id, connectorInstanceId: adapter.instance.id, kind: "pull-request", externalId: pullRequest.id, url: pullRequest.url, state: pullRequest.state === "MERGED" ? "MERGED" : pullRequest.state === "CLOSED" ? "FAILED" : "READY", metadata: { ...metadata, pullRequestNumber: pullRequest.number, headCommit: pullRequest.headCommit ?? pushed.commit, headCommitSource:pullRequest.headCommit?"provider":"push-record", pullRequestState: pullRequest.state }, now }),
       deliveryEvidence({ id: randomUUID(), taskId: request.taskId, runId: request.run.id, connectorInstanceId: adapter.instance.id, kind: "ci", externalId: pushed.commit, state: "PENDING", metadata, now }),
     ];
     // Persist delivery before reading CI: an unavailable read must not repeat push/PR.
@@ -84,9 +84,10 @@ export class DeliveryService {
     const ciRevision = ci.revision;
     if (status) {
       const state = status.state === "MERGED" ? "MERGED" : status.state === "CLOSED" ? "FAILED" : "READY";
-      if (pullRequest.state !== state || pullRequest.metadata.headCommit !== ref) {
+      const headCommitSource=status.headCommit?"provider":"unavailable";
+      if (pullRequest.state !== state || pullRequest.metadata.headCommit !== ref || pullRequest.metadata.headCommitSource!==headCommitSource) {
         pullRequest.state = state;
-        pullRequest.metadata = { ...pullRequest.metadata, headCommit: ref, pullRequestState: status.state, pullRequestNumber: number };
+        pullRequest.metadata = { ...pullRequest.metadata, headCommit: ref, headCommitSource, pullRequestState: status.state, pullRequestNumber: number };
         pullRequest.revision += 1;
         pullRequest.updatedAt = now;
       }

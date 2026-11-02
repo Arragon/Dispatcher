@@ -43,6 +43,7 @@ export class CodexExecutionRuntime implements CodexBackend {
  private readonly profile:CodexProfileConfig;
  private readonly home:DirectoryIdentity;
  private starting=0;
+ private readonly operations=new Set<Promise<unknown>>();
  private readonly hosts=new NativeRuntimeHosts();
  private readonly executions=new Map<string,ExecutionHost>();
  private requestSink?: (event:NativeRequestEvent)=>void;
@@ -51,11 +52,14 @@ export class CodexExecutionRuntime implements CodexBackend {
  private receipts?:RuntimeLocalDisconnectResult[];
  private readonly options:RuntimeOptions;
  constructor(options:RuntimeOptions){this.profile=structuredClone(options.profile);if(typeof this.profile.executable!=="string"||!isAbsolute(this.profile.executable))throw new AdapterStartError("not-created","CODEX_SCOPE_CHANGED","Native runtime requires an explicit absolute executable");this.home=directory(this.profile.codexHome);this.options=Object.freeze({profile:this.profile,runnerId:options.runnerId,assertInput:options.assertInput.bind(options),bindingFor:options.bindingFor.bind(options),...(options.authorityFor?{authorityFor:options.authorityFor.bind(options)}:{}),...(options.factory?{factory:options.factory.bind(options)}:{})});}
- hasActiveOperations():boolean{return this.starting>0||[...this.executions.values()].some(entry=>entry.port.hasActiveOperations());}
+ hasActiveOperations():boolean{return this.starting>0||this.operations.size>0||[...this.executions.values()].some(entry=>entry.port.hasActiveOperations());}
  hasUnclosedHosts():boolean {return this.executions.size>0&&(!this.receipts||this.receipts.some(r=>r.connection!=="closed"||r.ownedRoot==="unknown"||r.callbacks!=="drained"));}
  isClosed():boolean {return this.closed;}
  beginShutdown():void {this.closed=true;}
  setNativeRequestSink(sink:(event:NativeRequestEvent)=>void):void {this.requestSink=sink;}
+ private synchronous(callback:()=>void):void {
+  assertAdapterWriteAdmission(()=>{const result:unknown=callback();if(result!==undefined){const work=Promise.resolve(result);this.operations.add(work);void work.finally(()=>this.operations.delete(work)).catch(()=>undefined);return work;}});
+ }
  private assertBindingScope(entry:ExecutionHost,binding:NativeBinding):void {
   const scope=entry.scope;
   if(binding.version!==1||binding.identityState!=="bound"||binding.product!=="codex"||binding.region!=="global"||binding.profileId!==scope.profileId||binding.backendId!==this.backendId||binding.runnerId!==scope.runnerId||binding.nativeStoreRef!==scope.nativeStoreRef||binding.executionRefId!==scope.executionRefId||!binding.nativeSessionId||binding.nativeThreadId!==binding.nativeSessionId||binding.parentSessionId!==undefined)throw new AdapterContractError("CODEX_BINDING_SCOPE_CHANGED","Native binding differs from its registered execution host");
@@ -77,7 +81,7 @@ export class CodexExecutionRuntime implements CodexBackend {
   const ref=input.executionRef;
   if(!isExecutionContextRef(ref)||ref.kind!=="managed-worktree"||ref.runnerId!==this.options.runnerId||input.executable!==this.profile.executable||!input.executionSelection||typeof input.beforePrompt!=="function"||typeof input.onBinding!=="function"||typeof input.onNativeEvent!=="function")throw new AdapterStartError("not-created","CODEX_SCOPE_CHANGED","A current managed execution context and observer are required");
   if(!validateExecutionBinding({profileId:this.profile.id,providerId:"codex",backendId:this.backendId,runnerId:this.options.runnerId,executionRef:ref},input.executionSelection,{repositoryId:ref.repositoryId,baseRevision:ref.baseRevision}).valid)throw new AdapterStartError("not-created","CODEX_SCOPE_CHANGED","Canonical selection differs from the owning runtime");
-  try{this.assertDirectories(input.codexHome,input.workspacePath,workspace);assertAdapterWriteAdmission(()=>this.options.assertInput({...input,executionRef:structuredClone(ref),executionSelection:structuredClone(input.executionSelection!)}));this.assertDirectories(input.codexHome,input.workspacePath,workspace);}
+  try{this.assertDirectories(input.codexHome,input.workspacePath,workspace);this.synchronous(()=>this.options.assertInput({...input,executionRef:structuredClone(ref),executionSelection:structuredClone(input.executionSelection!)}));this.assertDirectories(input.codexHome,input.workspacePath,workspace);}
   catch{throw new AdapterStartError("not-created","CODEX_SCOPE_CHANGED","The canonical native execution scope is unavailable");}
   if(this.closed)throw new AdapterStartError("not-created","CODEX_LOCAL_CONNECTION_CLOSED","Local native runtime admission is closed");
   if(input.providerSessionId){
@@ -100,7 +104,7 @@ export class CodexExecutionRuntime implements CodexBackend {
    const assertCurrent=(binding:NativeBinding)=>{if(this.source(binding)!==port)throw new AdapterContractError("CODEX_AUTHORITY_CHANGED","Native authority source is no longer current");};
    const fenceFor=supplied?.fenceFor.bind(supplied),assert=supplied?.assert.bind(supplied),prepare=supplied?.prepareIngress?.bind(supplied);
    const authority:CodexNativeAuthority|undefined=supplied?{connectionEpoch:supplied.connectionEpoch,fenceFor:binding=>{assertCurrent(binding);const fence=fenceFor!(structuredClone(binding));assertCurrent(binding);return structuredClone(fence);},...(prepare?{prepareIngress:async(binding:NativeBinding)=>{const captured=structuredClone(binding);assertCurrent(captured);const fence=await prepare(structuredClone(captured));assertCurrent(captured);return structuredClone(fence);}}:{}),assert:(binding,fence,operation)=>{assertCurrent(binding);assertAdapterWriteAdmission(()=>assert!(structuredClone(binding),structuredClone(fence),operation));assertCurrent(binding);}}:undefined;
-   const port=this.options.factory?this.options.factory(structuredClone(scope),authority):new CodexAppServerBackend(scope,undefined,authority);
+   const port=this.options.factory?this.options.factory(structuredClone(scope),authority):new CodexAppServerBackend(scope,undefined,authority,()=>{guard();this.synchronous(input.beforePrompt!);guard();});
    if(port.backendId!==this.backendId)throw new AdapterStartError("not-created","BACKEND_MISMATCH","Configured native factory returned a different backend");
    port.setNativeRequestSink(event=>{
     const captured=structuredClone(event);
@@ -121,7 +125,7 @@ export class CodexExecutionRuntime implements CodexBackend {
     captured.port.registerBinding(binding);captured.binding=structuredClone(binding);
    }else if(captured.creationAdmitted||captured.binding)throw new AdapterStartError("not-created","CODEX_SESSION_ALREADY_ADMITTED","This execution already admitted a native creation");
    else {captured.creationAdmitted=true;ownsCreation=true;}
-   invoked=true;return captured.port.start({...input,beforePrompt:()=>{guard();assertAdapterWriteAdmission(input.beforePrompt);guard();},onBinding:async binding=>{
+   invoked=true;return captured.port.start({...input,beforePrompt:()=>{guard();this.synchronous(input.beforePrompt!);guard();},onBinding:async binding=>{
     this.validate(input,workspaceIdentity);this.assertBindingScope(captured,binding);captured.binding=structuredClone(binding);await input.onBinding!(structuredClone(binding));guard();
    }});
   },async error=>{const failure=error instanceof AdapterStartError?error:new AdapterStartError(invoked?"unknown":"not-created","CODEX_RUNTIME_ADMISSION_FAILED","Native runtime was not safely admitted");if(failure.creationOutcome==="not-created"&&!captured.binding&&(ownsCreation||!captured.creationAdmitted))await this.closeNotCreated(captured);return failure;},()=>{this.starting--;});

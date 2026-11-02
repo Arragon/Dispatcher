@@ -1,0 +1,21 @@
+{
+  "artifactVersion": "1.1.0",
+  "protocolVersion": "1.1",
+  "eventSchemaVersion": "1",
+  "synthetic": true,
+  "files": {
+    "schema.json": {
+      "sha256": "69f2f205c21a5da8ee7a97b4be603169ddbb420d8f537409132cc591ea7bd23f",
+      "bytes": 55925
+    },
+    "fixtures.json": {
+      "sha256": "6da0ac4d4f6e4556c966f3deeb8f50486a71056dcd5072f5dabf1be07f8d874a",
+      "bytes": 18633
+    }
+  },
+  "sources": {
+    "src/rhiza-v1.ts": "20e636f25d0c32dbf39305506b095aeed0d1d1e22eda772d35eb80edf97c49e9",
+    "test/fixtures/rhiza-v1.ts": "68ba52f23016c6bccd25ab12c4130c649bef52d65975de1560e58adb4d3e330e",
+    "scripts/export-rhiza-contract.ts": "377b40695389dbc613e18bbb400c4fa55ac4b224a5ca9539ecc75ecb760548ca"
+  }
+}

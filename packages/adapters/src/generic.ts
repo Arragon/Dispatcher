@@ -1,6 +1,7 @@
 import { childExecutionEnvironment } from "@dispatcher/shared";
 import {freezeExecutionSelection} from "./execution-selection.js";
 import { randomUUID } from "node:crypto";
+import type {NativeModelInvocation,NativeTurnCompletion} from "@dispatcher/domain";
 import { OwnedProcessGroup } from "./owned-process.js";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { promisify } from "node:util";
@@ -26,6 +27,8 @@ const execFileAsync = promisify(execFile);
 export interface SessionStore {
   load(id: string): AdapterSession | undefined;
   save(session: AdapterSession): void;
+  recordModelInvocation?(record:NativeModelInvocation):void;
+  recordTurnCompletion?(record:NativeTurnCompletion):void;
 }
 
 export class MemorySessionStore implements SessionStore {

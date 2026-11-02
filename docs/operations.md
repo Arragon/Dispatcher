@@ -117,6 +117,27 @@ master key before starting:
 export DISPATCHER_SECRET_STORE_KEY='<at-least-16-characters>'
 ```
 
+## RHIZA service ingress
+
+The versioned ingress is `/api/integrations/rhiza/v1`; see
+[`rhiza-ingress-v1.md`](rhiza-ingress-v1.md) for the wire contract and scopes.
+It is disabled by default. Configure `rhizaIngress` through the existing
+ConfigPlan flow, after creating each referenced `secret://rhiza/<client-id>`
+credential in SecretStore. Each grant binds its authority, scopes, repositories,
+Profiles and expiry. Owner tokens and Dashboard sessions cannot act as a client.
+
+Consumers pin protocol1.1/artifact1.1.0 and its manifest digest. Query the original
+semantic request key after a lost response; never submit a replacement key to
+retry a physical effect. Production model-evidence capabilities remain empty:
+the installed ingress exposes authenticated read/control paths, while new
+submission and verified-model negotiation remain unavailable until qualified.
+The conformance client uses synthetic fixtures, not a real RHIZA/provider Gate.
+
+This source appends RHIZA migrations12–18/writer8–14 while retaining1–11. Older
+schema11/writer7 releases cannot be treated as rollback writers after migration;
+the incompatible original private16 catalog is refused. Use the existing backup
+and isolated restore preparation flow before any separately authorized activation.
+
 ## Prepare a fixed Controller release
 
 Use a committed clean integration checkout. Staging preserves dirty work by

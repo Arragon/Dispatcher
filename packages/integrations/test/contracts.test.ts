@@ -307,4 +307,17 @@ describe("SCM delivery contract", () => {
     expect(database.listDeliveryEvidence("task-1")).toHaveLength(3);
     database.close();
   });
+  it("distinguishes pushed-commit inference from a provider-reported PR head",async()=>{
+    const database=new DispatcherDatabase(":memory:"),adapter=new FakeScmConnector(),delivery=new DeliveryService(database),input=request();input.idempotencyKey="delivery:run-1:2";
+    try{
+      const first=await delivery.deliver(adapter,input),pr=first.evidence.find(e=>e.kind==="pull-request")!;
+      expect(pr.metadata.headCommitSource).toBe("push-record");
+      let reported=false;
+      const readable=adapter as typeof adapter & {getPullRequest:()=>Promise<{id:string;url:string;number:number;state:"OPEN";headCommit?:string}>};
+      readable.getPullRequest=async()=>({id:pr.externalId,url:pr.url!,number:1,state:"OPEN",...(reported?{headCommit:String(pr.metadata.headCommit)}:{})});
+      const missing=await delivery.reconcile(readable,{taskId:input.taskId,runId:input.run.id,generation:input.run.generation,repository:input.repository,assertCurrent:()=>undefined});expect(missing?.pullRequest.metadata.headCommitSource).toBe("unavailable");
+      reported=true;const confirmed=await delivery.reconcile(readable,{taskId:input.taskId,runId:input.run.id,generation:input.run.generation,repository:input.repository,assertCurrent:()=>undefined});
+      expect(confirmed?.pullRequest.metadata.headCommitSource).toBe("provider");expect(confirmed!.pullRequest.revision).toBeGreaterThan(pr.revision);
+    }finally{database.close();}
+  });
 });

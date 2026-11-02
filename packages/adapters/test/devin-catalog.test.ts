@@ -34,6 +34,22 @@ it("projects exact variant IDs with unconfirmed access and no alias/default/pric
   expect(catalog.entries).toEqual([expect.objectContaining({ kind: "native-auto", selectable: true, access: "unconfirmed", parameterOptions: {}, billing: { mode: "unknown" } }), expect.objectContaining({ kind: "model", displayName: "Chosen", selectable: true, access: "unconfirmed", parameterOptions: {}, billing: { mode: "unknown" } })]);
   expect(JSON.stringify(catalog)).not.toMatch(/cog-|cost_summary|family_uid|dynamic-alias|latest/); expect(catalog.entries.every(e => e.billing?.mode === "unknown" && !e.billing.pricing)).toBe(true);
 });
+it("keeps catalog identity stable across query reasons while retaining scope and inventory drift", async () => {
+  const f = fixture();
+  const read = (supplied: ModelCatalogContext) => adapters.readDevinLocalCatalog({ profileId: "p", scope: f.scope, context: supplied });
+  const opened = await read({ ...context, reason: "open" });
+  for (const reason of ["preflight", "before-start", "selection-change", "manual-refresh"] as const) {
+    const next = await read({ ...context, reason });
+    expect(next.contextFingerprint).toBe(opened.contextFingerprint);
+    expect(next.revision).toBe(opened.revision);
+    expect(next.entries).toEqual(opened.entries);
+  }
+  const moved = await read({ ...context, repositoryId: "different-repository", reason: "preflight" });
+  expect(moved.contextFingerprint).not.toBe(opened.contextFingerprint);
+  expect(moved.revision).not.toBe(opened.revision);
+  const changed = inventory(); changed.families[0]!.variants[0]!.model_uid = "different-model";
+  expect(adapters.normalizeDevinLocalCatalog(changed, { ...options, contextFingerprint: opened.contextFingerprint }).revision).not.toBe(opened.revision);
+});
 it("keeps catalog identity stable across timestamp and native inventory order", () => {
   const a = inventory(), b = inventory(); b.families[0]!.variants.reverse();
   expect(adapters.normalizeDevinLocalCatalog(a, options).revision).toBe(adapters.normalizeDevinLocalCatalog(b, { ...options, fetchedAt: "2026-10-14T00:00:00.000Z" }).revision);

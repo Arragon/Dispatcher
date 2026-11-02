@@ -1,9 +1,10 @@
-import {mkdirSync,mkdtempSync,realpathSync,renameSync,rmSync} from "node:fs";
+import {mkdirSync,mkdtempSync,realpathSync,renameSync,rmSync,chmodSync,writeFileSync,existsSync} from "node:fs";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
 import {afterEach,expect,it,vi} from "vitest";
 import {CodexAppServerBackend,codexAppServerProtocolVersion,type CodexAppServerScope,type CodexNativeAuthority,type CodexRpcTransport,type CodexStartInput,type NativeRequestEvent} from "@dispatcher/adapters";
 import type {MutationFence,NativeBinding} from "@dispatcher/domain";
+import * as versionProbe from "../../../packages/adapters/dist/native-version-probe.js";
 import {CodexExecutionRuntime} from "../src/codex-runtime.js";
 const roots:string[]=[];afterEach(()=>{for(const root of roots.splice(0))rmSync(root,{recursive:true,force:true});vi.useRealTimers();});
 function fixture(authority?:CodexNativeAuthority){
@@ -125,4 +126,28 @@ it.each(["closed","scope","binding","removed","sibling","no-sink"])("refuses a n
  const f=fixture(),sink=vi.fn();if(drift!=="no-sink")f.runtime.setNativeRequestSink(sink);await f.runtime.start(f.input()).ready!();await f.runtime.start(f.input("b",f.b)).ready!();let event=requestEvent(f);const forward=vi.mocked(f.ports[0]!.port.setNativeRequestSink).mock.calls[0]![0];
  if(drift==="closed")f.runtime.beginShutdown();else if(drift==="scope")event.scopeFingerprint="other";else if(drift==="binding")event.binding={...event.binding,nativeStoreRef:"other"};else if(drift==="removed")f.persisted.delete(event.binding.nativeSessionId);else if(drift==="sibling")event=requestEvent(f,"b");
  expect(()=>forward(event)).toThrow(expect.objectContaining({code:"CODEX_BINDING_SCOPE_CHANGED"}));expect(sink).not.toHaveBeenCalled();await f.runtime.disconnectLocal();
+});
+
+function ownedSpawnFixture(){
+ const f=fixture(),executable=join(f.root,"native.cjs"),marker=join(f.root,"app-server-started");
+ writeFileSync(executable,"#!"+process.execPath+"\nrequire('node:fs').writeFileSync("+JSON.stringify(marker)+",'started');\n");chmodSync(executable,0o700);
+ const runtime=new CodexExecutionRuntime({profile:{id:"p",alias:"P",codexHome:f.home,executable},runnerId:"local",assertInput:f.assertInput,bindingFor:f.bindingFor});
+ return {...f,executable,marker,owned:runtime,input:()=>({...f.input(),executable})};
+}
+it.each(["owner","write","closed","current"] as const)("rechecks %s admission after the actual default owned version probe before service spawn",async mode=>{
+ const f=ownedSpawnFixture(),entered=Promise.withResolvers<void>(),release=Promise.withResolvers<void>();let returned=false,afterProbe=0,current=true;
+ f.assertInput.mockImplementation(()=>{if(returned)afterProbe++;if(mode==="owner"&&!current)throw Error("owner revoked");});const input=f.input(),binding=vi.fn(input.onBinding),event=vi.fn();input.onBinding=binding;input.onNativeEvent=event;input.beforePrompt=()=>{if(mode==="write"&&!current)throw Error("write revoked");};
+ const probe=vi.spyOn(versionProbe,"readOwnedNativeVersion").mockImplementation(async()=>{entered.resolve();await release.promise;returned=true;return `codex-cli ${codexAppServerProtocolVersion}`;});
+ const turn=f.owned.start(input);
+ try{await entered.promise;current=false;if(mode==="closed")f.owned.beginShutdown();release.resolve();await expect(turn.ready!()).rejects.toThrow();await expect(turn.result()).resolves.toMatchObject({state:"failed"});expect(existsSync(f.marker)).toBe(mode==="current");if(mode==="current")expect(afterProbe).toBeGreaterThan(0);expect(binding.mock.calls.length).toBe(0);expect(event.mock.calls.map(([fact])=>({state:fact.state,nativeSessionId:fact.nativeSessionId}))).toEqual([{state:"failed",nativeSessionId:undefined}]);expect(f.persisted.size).toBe(0);expect(probe.mock.calls.length).toBe(1);}
+ finally{release.resolve();await f.owned.disconnectLocal();probe.mockRestore();}
+});
+it("checks the original write admission before the default owned version probe",async()=>{
+ const f=ownedSpawnFixture(),probe=vi.spyOn(versionProbe,"readOwnedNativeVersion").mockResolvedValue(`codex-cli ${codexAppServerProtocolVersion}`),input=f.input();input.beforePrompt=()=>{throw Error("write already revoked");};const turn=f.owned.start(input);
+ try{await expect(turn.ready!()).rejects.toThrow();await expect(turn.result()).resolves.toMatchObject({state:"failed"});expect(probe.mock.calls.length).toBe(0);expect(existsSync(f.marker)).toBe(false);}finally{await f.owned.disconnectLocal();probe.mockRestore();}
+});
+it("retains a forbidden asynchronous canonical owner until actual settlement after rejected admission",async()=>{
+ const f=fixture(),gate=Promise.withResolvers<void>();f.assertInput.mockImplementation(()=>gate.promise);
+ try{expect(()=>f.runtime.start(f.input())).toThrowError(expect.objectContaining({creationOutcome:"not-created"}));expect(f.factory).not.toHaveBeenCalled();expect(f.runtime.hasActiveOperations()).toBe(true);expect(await f.runtime.disconnectLocal()).toEqual([]);expect(f.runtime.hasActiveOperations()).toBe(true);}
+ finally{gate.resolve();await vi.waitFor(()=>expect(f.runtime.hasActiveOperations()).toBe(false));await f.runtime.disconnectLocal();}
 });

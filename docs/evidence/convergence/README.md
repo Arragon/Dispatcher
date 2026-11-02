@@ -7,6 +7,17 @@ branch `codex/dispatcher-convergence`, based on v3 `19db456`.
 
 ## Delivery checkpoints
 
+Current integration work runs in the owned
+`/Users/wangdongxin/.codex/worktrees/dispatcher-plan-completion/dispatcher` on
+`codex/dispatcher-plan-completion`; the worktree above records the original ledger
+baseline. The2026-11-02 RHIZA ingress adoption preserves fixed source8d247177 and
+later D native/snapshot owners. Its focused slice and corrected Context consumers
+are verified locally; milestone review and affected Devin-fix re-review have no
+remaining Critical/Important findings. The final default full gate passed264files/
+5875tests and all non-test checks; pinned exporter check passed. See
+`docs/convergence-remaining-issues.md` for the current limits. This does not close
+the original A/B checkpoints or qualify real external submission.
+
 - [ ] A: per-user launchd + browser + one real Codex, local task, registered
   repository, required verification, REVIEW/acceptance, recovery and actual
   macOS directory-picker evidence.

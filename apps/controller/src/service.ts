@@ -13,14 +13,23 @@ import {NativeHistoryService,NativeHistoryError} from "./native-history.js";
 import {nativeSessionView} from "./native-session-view.js";
 import {isGuardedControllerStart,isReadableManagedCodexRun,isReadableManagedOpenCodeRun,isReadableManagedPiRun,isReadableManagedDevinRun,isReadableManagedCopilotRun} from "./start-recovery.js";
 import {parseNativeModelDefaultReview,qualifyNativeModelDefault,readNativeModelDefaultEvidence} from "./model-defaults.js";
-import {isExecutionContextRef,nativeBindingKey,normalizeNativeBinding,type NativeDriftPolicy,type NativeBinding,type InteractionCapabilities,type NativeResponse,type RunGitDelivery,type ScmDeliverySelection,type MutationFence,type ExecutionContextRef,type NativeControlView,type NativeObservation,type Session} from "@dispatcher/domain";
+import {isExecutionContextRef,nativeBindingKey,normalizeNativeBinding,type NativeDriftPolicy,type NativeBinding,type InteractionCapabilities,type NativeResponse,type RunGitDelivery,type ScmDeliverySelection,type MutationFence,type ExecutionContextRef,type NativeControlView,type NativeObservation,type Session,type NativeModelInvocation,type NativeTurnCompletion} from "@dispatcher/domain";
 import {NativeInteractions,InteractionGuardError,type ControllerInteractionOperation,type InteractionPrincipal} from "./native-interactions.js";
 import {AdapterAdmissionError,readInteractionCapabilities,assertAdapterWriteAdmission,type AdapterStartOutcome} from "@dispatcher/adapters";
 import { resolveProfileExecutionContext } from "./execution-context.js";
 import { ProfileProbeService } from "./profile-probes.js";
 import { CredentialContext } from "./credential-context.js";
+import { RhizaServiceAuth, RhizaIngressError } from "./rhiza-auth.js";
+import { RhizaTargets, rhizaAdapterBuildVersion, rhizaRepositoryIdentity, type RhizaTargetFacts } from "./rhiza-targets.js";
+import { rhizaDigest } from "./rhiza-semantics.js";
+import { RhizaOperations } from "./rhiza-operations.js";
+import { RhizaJobs } from "./rhiza-jobs.js";
+import {RhizaViews} from "./rhiza-views.js";
+import {RhizaCancellations} from "./rhiza-cancellations.js";
+import {RhizaInputs} from "./rhiza-inputs.js";
+import { RHIZA_API_PREFIX, rhizaV1Schema, type RhizaHandshakeRequestV1, type RhizaWorkOrderV1, type RhizaSubmitRequestV1, type RhizaCancellationRequestV1, type RhizaInputRequestV1 } from "@dispatcher/protocol";
 import {DirectorySelections,type DirectoryPicker} from "./local-directories.js";
-import {RunInputReceipts,InputReceiptError,type RunInputIdentity} from "./run-inputs.js";
+import {RunInputReceipts,InputReceiptError,type RunInputIdentity,type RunInputAuthority} from "./run-inputs.js";
 import {UsageObservations,UsageObservationError,type UsageContext} from "./usage-observations.js";
 import {AccountQuotas} from "@dispatcher/runner";
 import {buildDiagnostics,diagnosticChecks} from "./diagnostics.js";
@@ -44,7 +53,7 @@ import { arch, platform } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
-import fastify, { type FastifyBaseLogger, type FastifyInstance } from "fastify";
+import fastify, { type FastifyBaseLogger, type FastifyInstance, type FastifyRequest } from "fastify";
 import fastifyStatic from "@fastify/static";
 import {
   CodexAdapter,
@@ -171,7 +180,7 @@ import {
 } from "@dispatcher/integrations";
 import { LlmRuntime, LlmRuntimeError, type FetchLike, type LlmConfiguration, type LlmRole } from "@dispatcher/llm-runtime";
 import { createLogger, redactNativeText,redactValue, redactNativePayload } from "@dispatcher/observability";
-import { DispatcherDatabase, InteractionStore, RevisionConflictError, type JsonValue } from "@dispatcher/persistence";
+import { DispatcherDatabase, InteractionStore, RevisionConflictError, ModelInvocationStore, RhizaVerificationStore, type JsonValue } from "@dispatcher/persistence";
 import { EmbeddedRunner, EventBus, LeaseFenceError, LocalGitDelivery, LocalGitDeliveryError, ProcessManager, RemoteRunnerServer, RunnerEnrollmentAuthority, RunnerLeaseAuthority, RunnerRegistry, VerificationRegistry, reconcileRunnerState, type LocalSnapshotCommitInput, type RunnerEnrollmentRecord, type RunnerEvents, type RuntimeLocalDisconnectResult,type VerificationCommand,type VerificationResult,type NativeEventCheckpoint } from "@dispatcher/runner";
 import {
   SemanticPolicyError,
@@ -187,7 +196,7 @@ import {
 import { CanonicalScheduler, routeDeterministically, type DispatchCandidate } from "@dispatcher/scheduler";
 import { RepositoryRegistry, WorkspaceManager, WorkspacePolicyError,VerificationSnapshots,type DeliveryCandidate,type CandidateSource } from "@dispatcher/workspace";
 import { BackgroundLoop, backoffDelayMs, runBounded } from "./background.js";
-import { ControlPlaneAuth, OWNER_PASSWORD_REFERENCE, OWNER_PRINCIPAL_ID, OWNER_ROLES, OWNER_TOKEN_REFERENCE, type ControlPrincipal } from "./control-auth.js";
+import { ControlPlaneAuth, isRhizaIngressPath, OWNER_PASSWORD_REFERENCE, OWNER_PRINCIPAL_ID, OWNER_ROLES, OWNER_TOKEN_REFERENCE, type ControlPrincipal } from "./control-auth.js";
 import { hashOwnerPassword, validOwnerPassword } from "./owner-password.js";
 import { LifecycleManager, type ServiceModule } from "./lifecycle.js";
 import { MESSAGING_INBOX_KIND, MessagingInbox, type MessagingInboxRecord } from "./messaging-inbox.js";
@@ -291,6 +300,8 @@ interface NativeSnapshotProof {
 interface SessionAuthority {version:1;fingerprint:string;repositoryId?:string;stopState:NativeSessionConsoleView["stopState"];stopIntent?:SessionStopIntent}
 type BoundSession=AdapterSession&{authority?:SessionAuthority};
 class DatabaseSessionStore implements SessionStore {
+  recordModelInvocation(record:NativeModelInvocation):void {new ModelInvocationStore(this.database).append(record);}
+  recordTurnCompletion(record:NativeTurnCompletion):void {new ModelInvocationStore(this.database).appendCompletion(record);}
   constructor(private readonly database: DispatcherDatabase,private readonly beforeSpawn?:(session:AdapterSession)=>void,private readonly bind?:(session:AdapterSession)=>SessionAuthority|undefined) {}
   load(id: string): AdapterSession | undefined {
     const value = this.database.getEntity<JsonValue>("adapter-session", id);
@@ -588,7 +599,15 @@ export class ControllerService {
   private readonly secretTestStates = new Map<string, SecretTestState>();
   private readonly agentProcesses: ProcessManager;
   private readonly localGitDelivery:LocalGitDelivery;
+  private readonly verificationSources:VerificationSnapshots;
   private readonly controlAuth: ControlPlaneAuth;
+  private readonly rhizaAuth: RhizaServiceAuth;
+  private readonly rhizaTargets: RhizaTargets;
+  private readonly rhizaOperations: RhizaOperations;
+  private readonly rhizaJobs: RhizaJobs;
+  private readonly rhizaViews:RhizaViews;
+  private readonly rhizaCancellations:RhizaCancellations;
+  private readonly rhizaInputs:RhizaInputs;
   private readonly requestPrincipals = new WeakMap<object, ControlPrincipal>();
   private readonly messagingInbox: MessagingInbox;
   private readonly background: BackgroundLoop;
@@ -639,7 +658,8 @@ export class ControllerService {
     this.resourceProbes.restore(this.database.listEntities<JsonValue>("resource-probe-schedule") as unknown as ResourceProbeSchedule[]);
     this.workspaces = new WorkspaceManager(this.repositories, join(options.dataDirectory, "worktrees"),()=>this.localPrivatePaths);
     this.localGitDelivery=new LocalGitDelivery(this.database,this.agentProcesses,this.workspaces);
-    this.tasks = new CanonicalTaskService(this.database, () => this.now());
+    this.verificationSources=new VerificationSnapshots(this.workspaces,join(options.dataDirectory,"verification-snapshots"));
+    this.tasks = new CanonicalTaskService(this.database, () => this.now(),next=>{if(["REVIEW","DONE"].includes(next.state))this.rhizaJobs.assertTaskCandidate(next.id,next.currentRunId);});
     this.projections = new ProjectionWorker(this.database, this.connectors);
     this.secrets = options.secretStore ?? createDefaultSecretStore({ dataDirectory: options.dataDirectory });
     const worker = options.backgroundWorker ?? {};
@@ -651,6 +671,7 @@ export class ControllerService {
       ...(worker.inboxMaxDelayMs === undefined ? {} : { maxDelayMs: worker.inboxMaxDelayMs }),
     });
     this.controlAuth = new ControlPlaneAuth({
+      evaluateServiceBearer: (token, request) => this.rhizaAuth.authenticate(token, request),
       resolveOwnerToken: () => this.resolveOwnerToken(),
       resolveOwnerPasswordHash: async () => (await this.secrets.metadata(OWNER_PASSWORD_REFERENCE)).exists
         ? this.secrets.resolve(OWNER_PASSWORD_REFERENCE, { principal: "controller", purpose: "provider" })
@@ -661,6 +682,11 @@ export class ControllerService {
     this.secureLinks = new SecureDashboardLinkIssuer(`http://${options.host ?? "127.0.0.1"}:${options.port ?? 8347}`, randomUUID());
     this.llm = new LlmRuntime(this.database, (reference) => this.secrets.resolve(reference, { principal: "controller", purpose: "llm" }), options.llmFetch);
     this.configuration = new ConfigurationEngine(this.database, { apply: (config) => this.applyRuntimeConfiguration(config) });
+    this.rhizaAuth = new RhizaServiceAuth({ config: () => this.configuration.current().config, secrets: this.secrets,
+      credentials: this.credentialContext, now: () => this.now(), authorizationRevision: () => this.configuration.current().revision, capabilities: () => ["targets.read","jobs.read","jobs.cancel","jobs.input","events.read","artifacts.read"] });
+    this.rhizaTargets = new RhizaTargets(this.database, this.rhizaAuth, { config: () => this.configuration.current(), now: () => this.now(),
+      facts: (repositoryId, profileId) => this.rhizaTargetFacts(repositoryId, profileId), inspectScope: (repositoryId, scopePaths) => this.workspaces.inspectScope({ repositoryId, scopePaths }) });
+    this.rhizaOperations = new RhizaOperations(this.database, this.rhizaAuth);
     this.verificationSnapshots=new VerificationSnapshots(this.workspaces,join(options.dataDirectory,"verification-snapshots"));
     this.localResults=new CanonicalLocalResults(this.database,this.configuration,this.tasks,this.workspaces,this.verificationSnapshots,()=>this.now());
     this.applyRuntimeConfiguration(this.configuration.current().config);
@@ -770,6 +796,21 @@ export class ControllerService {
       dispatch: async (record,taskId) => (await this.dispatchTask(taskId,{profileId:record.selection!.profileId,repositoryId:record.repository!.id},`publication:${record.preview.publicationId}`,record)).run,
     });
     this.publications.reconcile();
+    this.rhizaJobs = new RhizaJobs(this.database, this.rhizaAuth, this.rhizaTargets, this.publications, { now: () => this.now() });
+    this.rhizaJobs.reconcile();
+    this.rhizaViews=new RhizaViews(this.database,this.rhizaAuth,this.rhizaJobs,()=>this.now(),run=>this.canCancelRhizaRun(run),run=>this.canInputRhizaRun(run));
+    this.rhizaCancellations=new RhizaCancellations(this.database,this.rhizaAuth,this.rhizaViews,{now:()=>this.now(),supports:run=>this.canCancelRhizaRun(run),cancelUnstarted:(taskId,commandId,guard)=>{guard();const task=this.database.getCanonicalTask<JsonValue>(taskId)!;this.tasks.execute({id:`rhiza-cancel:${commandId}`,taskId,baseRevision:task.revision,actor:"rhiza-cancellation",command:{type:"task.transition",state:"CANCELLED"}});},stop:async(run,principal,guard)=>{
+      guard();const stopped=await this.cancelRunExecution(run,{id:principal.id,roles:["operator"],profileId:run.profileId},guard),session=this.database.getEntity<JsonValue>("adapter-session",run.sessionId) as unknown as BoundSession|undefined,intent=session?.authority?.stopIntent;
+      if(stopped.state!=="CANCELLED"||stopped.id!==run.id||stopped.generation!==run.generation||stopped.sessionId!==run.sessionId||stopped.leaseId!==run.leaseId||!session||this.sessionStopState(session)!=="confirmed"||intent?.operation!=="cancel"||intent.fence.runId!==run.id||intent.fence.sessionId!==run.sessionId||intent.fence.generation!==run.generation||intent.fence.leaseId!==run.leaseId)throw new AdapterContractError("CANCELLATION_UNCONFIRMED","Original owned stop is not confirmed");
+      return {kind:"stopped",runId:run.id,runGeneration:run.generation,sessionId:run.sessionId,leaseId:run.leaseId};
+    }});
+    this.rhizaInputs=new RhizaInputs(this.database,this.rhizaAuth,this.rhizaViews,this.runInputs,{now:()=>this.now(),supports:(run,phase)=>this.canInputRhizaRun(run,phase==="admission"),prepare:(run,request,principal)=>{
+      const authority:RunInputAuthority={runId:run.id,generation:run.generation,leaseId:run.leaseId,taskRevision:request.taskRevision,...(run.lastActivityAt?{lastActivityAt:run.lastActivityAt}:{})},inputId=`rhiza-${rhizaDigest({clientId:principal.service!.clientId,scope:"jobs.input",requestId:request.requestId})}`,session=this.database.getEntity<JsonValue>("adapter-session",run.sessionId) as unknown as AdapterSession;
+      return {input:this.sessionInputIdentity(principal,{profileId:run.profileId,sessionId:run.sessionId},{message:request.input,inputId,authority},session).input!,authority};
+    },send:async(run,request,reservation,guard)=>{
+      const result=await this.sendSessionInput({id:reservation.input.actorId,roles:["operator"],profileId:run.profileId},{profileId:run.profileId,sessionId:run.sessionId},{message:request.input,inputId:reservation.input.inputId,authority:reservation.authority},{input:reservation.input,guard});
+      if(result.statusCode!==200)throw new InputReceiptError("INPUT_OUTCOME_UNKNOWN","Original native input did not acknowledge acceptance");
+    }});
     this.reconcileLocalStartJournals();
     this.registerRoutes();
   }
@@ -864,9 +905,15 @@ export class ControllerService {
   async stop(): Promise<void> {
     if (this.stopping) return this.stopping;
     this.stopping = (async () => {
+      this.rhizaJobs.closeAdmissions();
+      this.rhizaCancellations.closeAdmissions();
+      this.rhizaInputs.closeAdmissions();
       for(const {runtime} of this.allNativeRuntimes())runtime.beginShutdown();
       for(const pending of this.nativeStartSettlements.values())pending.reject(new InteractionGuardError("NATIVE_RUNTIME_DRAIN_REQUIRED"));this.nativeStartSettlements.clear();
       this.accountQuotas.beginShutdown();
+      const runtimeStopErrors:unknown[]=[];
+      // Disconnect public native waiters before dependent publication/ingress drains.
+      const nativeRuntimeStops=Promise.allSettled(this.allNativeRuntimes().map(async({profileId,backendId,runtime})=>({profileId,backendId,receipts:await this.disconnectNativeRuntime(profileId,runtime)})));
       this.usageReadClosed=true;
       this.usageShutdown.abort();
       for(const read of this.usageReads.values())try{
@@ -880,12 +927,11 @@ export class ControllerService {
       await this.lifecycle.stop();
       await Promise.allSettled([...this.remoteLifecycleJobs.values()]);
       await this.profileProbes.drain();
-      const runtimeStopErrors:unknown[]=[];
       try{await this.drainCatalogReads();}catch(error){runtimeStopErrors.push(error);}
       try{await this.accountQuotas.close();}catch(error){runtimeStopErrors.push(error);}
       // Drain every owned runtime before persisting receipts: one failed write must
       // not strand another profile's process or prevent HTTP shutdown.
-      const runtimeStops=await Promise.allSettled(this.allNativeRuntimes().map(async({profileId,backendId,runtime})=>({profileId,backendId,receipts:await this.disconnectNativeRuntime(profileId,runtime)})));
+      const runtimeStops=await nativeRuntimeStops;
       for(const result of runtimeStops){
         if(result.status==="rejected"){runtimeStopErrors.push(result.reason);continue;}
         const {profileId,backendId,receipts}=result.value;
@@ -893,6 +939,9 @@ export class ControllerService {
         catch(error){runtimeStopErrors.push(error);}
       }
       await Promise.allSettled([...this.nativeObservationReads.values()]);
+      await this.rhizaJobs.drain();
+      await this.rhizaCancellations.drain();
+      await this.rhizaInputs.drain();
       // Hijacked SSE responses otherwise keep Fastify close waiting for the browser.
       for (const close of this.dashboardStreamClosers) close();
       await this.app.close();
@@ -1033,6 +1082,7 @@ export class ControllerService {
   }
 
   private assertDeliveryAuthority(run: Run, operation: "verify" | "commit" | "branch" | "push" | "pull-request" | "complete", completedSnapshot=false, at?:string): void {
+    if(operation!=="verify")this.rhizaJobs.assertCandidate(run,at);
     const current = this.database.getEntity<JsonValue>("run", run.id) as unknown as Run | undefined;
     if(completedSnapshot){
       if(operation!=="complete")throw new ConnectorError("CONFLICT","Completed metadata cannot authorize a delivery send");
@@ -1507,7 +1557,10 @@ export class ControllerService {
         this.copilotRuntimes.set(profile.id,copilotRuntime);
       }
       if(profile.nativeInteraction?.backendId==="codex-app-server"){
-        codexRuntime=new CodexExecutionRuntime({profile:{id:profile.id,alias:profile.alias,executable:stringSetting(profile.settings?.executable)!,codexHome:stringSetting(profile.settings?.codexHome)!,...(stringSetting(profile.settings?.model)?{model:stringSetting(profile.settings?.model)!}:{})},runnerId:profile.runnerId,assertInput:input=>this.assertManagedCodexInput(profile.id,input),bindingFor:id=>this.persistedNativeBinding(profile.id,id),authorityFor:scope=>this.codexNativeAuthority(scope),...(this.options.codexAppServerFactory?{factory:this.options.codexAppServerFactory}:{})});this.codexRuntimes.set(profile.id,codexRuntime);
+        codexRuntime=new CodexExecutionRuntime({profile:{id:profile.id,alias:profile.alias,executable:stringSetting(profile.settings?.executable)!,codexHome:stringSetting(profile.settings?.codexHome)!,...(stringSetting(profile.settings?.model)?{model:stringSetting(profile.settings?.model)!}:{})},runnerId:profile.runnerId,assertInput:input=>{
+          if(!codexRuntime||this.codexRuntimes.get(profile.id)!==codexRuntime||this.nativeRuntimeAdapters.get(codexRuntime)!==this.agentAdapters.get(profile.id))throw new InteractionGuardError("EXECUTION_CONTEXT_DRIFT");
+          this.assertManagedCodexInput(profile.id,input);
+        },bindingFor:id=>this.persistedNativeBinding(profile.id,id),authorityFor:scope=>this.codexNativeAuthority(scope),...(this.options.codexAppServerFactory?{factory:this.options.codexAppServerFactory}:{})});this.codexRuntimes.set(profile.id,codexRuntime);
       }
       if(profile.nativeInteraction?.backendId==="opencode-server-v2"){
         opencodeRuntime=new OpenCodeExecutionRuntime({profile:{id:profile.id,alias:profile.alias,executable:stringSetting(profile.settings?.executable)!,...(stringSetting(profile.settings?.model)?{model:stringSetting(profile.settings?.model)!}:{}),approveTools:false},runnerId:profile.runnerId,assertInput:input=>{
@@ -1544,7 +1597,10 @@ export class ControllerService {
           if(this.stopping)throw new AdapterContractError("NATIVE_OBSERVER_CLOSED","Controller observation is closed");
           const result=this.nativeInteractions.applyNativeBindingEvent(event);
           if(!result.applied&&result.code!=="DUPLICATE_NATIVE_EVENT")throw new AdapterContractError(result.code??"NATIVE_EVENT_REJECTED","Native observation requires reconciliation");
-        },context=>{const current=this.nativeInteractions.registerNativeObserver(context);return ()=>!this.stopping&&current();});
+        },context=>{const current=this.nativeInteractions.registerNativeObserver(context);return ()=>{
+          const session=store.load(context.sessionId);
+          return !this.stopping&&this.agentAdapters.get(profile.id)===adapter&&Boolean(session&&this.sessionContextState(session)==="current")&&current();
+        };});
         this.agentAdapters.set(profile.id, adapter);
         this.profileAdapterConfigurations.set(profile.id, adapterConfiguration(profile));
       }
@@ -2102,7 +2158,9 @@ export class ControllerService {
     const state = run.state, taskRecord = this.database.getCanonicalTask<JsonValue>(run.taskId), binding = this.runConversation(run);
     const authority = { runId: run.id, generation: run.generation, leaseId: run.leaseId, lastActivityAt: run.lastActivityAt };
     const input: RunInputIdentity = { inputId: `resume-${contentHash(context.commandId)}`, actorId: context.actorId, runId: run.id, profileId: run.profileId, sessionId: run.sessionId, generation: run.generation, authorityHash: contentHash(authority), payloadHash: contentHash({ operation: "resume", authority, taskRevision: taskRecord?.revision }) };
+    let reserved = false, sent = false;
     const assertAuthority = (): void => {
+      this.runInputs.assertAvailable(input,reserved?input:undefined);
       this.nativeInteractions.assertInteraction({id:context.actorId,roles:["operator"],profileId:run.profileId},"resume",fence);
       const current = this.database.getEntity<JsonValue>("run", run.id) as unknown as Run | undefined;
       const task = this.database.getCanonicalTask<JsonValue>(run.taskId);
@@ -2120,7 +2178,6 @@ export class ControllerService {
     this.runInputs.assertAvailable(input);
     assertAuthority();
     this.pendingConsoleInputs.add(run.sessionId);
-    let reserved = false, sent = false;
     try {
       await this.validateRunSelection(run);
       assertAuthority();
@@ -2180,6 +2237,7 @@ export class ControllerService {
     const command=this.nativeInteractions.reserveNativeStart({run,actorId,resumable:adapter.manifest.capabilities.resume,backendId:run.executionSelection!.backendId,configRevision:run.executionSelection!.configRevision,semantics:{controllerStartVersion:1,runnerMode:"embedded",contractHash:contentHash(contract)}});
     const admit=this.nativeInteractions.nativeStartAdmission(command.id);
     return {fence:structuredClone(command.fence),adapter,beforeSend:()=>{
+      this.rhizaJobs.assertTask(run.taskId);
       if(this.cancelledRunIds.has(run.id))throw new InteractionGuardError("STALE_RUN_AUTHORITY");
       if(this.configuration.current().revision!==run.executionSelection!.configRevision||this.resolveProfileExecutionContext(run.profileId,repositoryId,"start").fingerprint!==fingerprint||this.agentAdapters.get(run.profileId)!==adapter)throw new InteractionGuardError("EXECUTION_CONTEXT_DRIFT");
       admit();
@@ -2688,6 +2746,7 @@ export class ControllerService {
 
 
   private saveAdvancedRun(run: Run, expectedState: Run["state"]): void {
+    if(run.state==="COMPLETE")this.rhizaJobs.assertCandidate(run);
     if(this.nativeInteractions.hasAuthorityContext(run.sessionId))this.assertRunInteraction(run,"advance");
     const current = this.database.getEntity<JsonValue>("run", run.id) as unknown as Run | undefined;
     if (this.cancelledRunIds.has(run.id) || !current || current.generation !== run.generation || current.leaseId !== run.leaseId || current.state !== expectedState) throw new ConnectorError("CONFLICT", "Run changed while advancement was awaiting work", { retryable: false });
@@ -2822,7 +2881,9 @@ export class ControllerService {
       if ((!repository && !frozen) || !run.worktree) throw new ConnectorError("PERMANENT", "Frozen verification or worktree is unavailable");
       const summaries: string[] = [];
       let blocked = false;
+      const verificationJob=this.rhizaJobs.executionJob(run);
       if (this.agentAdapters.get(run.profileId) instanceof RemoteNativeAdapter) {
+        if(verificationJob)throw new AdapterContractError("VERIFICATION_PROVENANCE_UNAVAILABLE","Remote source verification is not qualified for RHIZA artifacts");
         this.fenceDelivery(run,"verify");
         const results = await this.remoteRequest(run.runnerId,{type:"native.run_verify",runId:run.id},run,`native-verify:${run.id}:${run.generation}`);
         this.fenceDelivery(run,"verify");
@@ -2839,12 +2900,13 @@ export class ControllerService {
         for (const command of frozen ?? repository!.verificationCommands) verification.register(command);
         const controller = new AbortController();
         const settled = (async () => {
+          const source=verificationJob?await this.verificationSources.captureSource({repositoryId:repositoryId!,worktree:run.worktree!,branch:run.branch!,scopePaths:[...contract.scope],repositoryScopePaths:[...repository!.scopePaths]},()=>this.fenceDelivery(run,"verify")):undefined;
           for (const [index,commandId] of contract.verification.entries()) {
             this.fenceDelivery(run, "verify");
             const command=verification.list().find(command=>command.id===commandId);
             if(!command){summaries.push(`${commandId}:unregistered`);blocked=true;continue;}
             const id=contentHash(["automatic-verification",run.id,run.generation,index]);
-            const fence=this.nativeInteractions.fenceFor(run,`verify:${id}`),semanticsHash=contentHash({contract,command});
+            const fence=this.nativeInteractions.fenceFor(run,`verify:${id}`),semanticsHash=contentHash({contract,command,...(source?{sourceTree:source.tree,targetHash:verificationJob!.request.targetHash}:{})});
             const prior=this.database.getEntity<JsonValue>("run-verification-command",id) as unknown as AutomaticVerificationCommand|undefined;
             const receipt:AutomaticVerificationCommand=prior??{version:1,id,runId:run.id,generation:run.generation,commandId,fence,semanticsHash,state:"SENDING"};
             let result:Awaited<ReturnType<VerificationRegistry["run"]>>;
@@ -2873,6 +2935,10 @@ export class ControllerService {
             this.fenceDelivery(run,"verify");
             summaries.push(`${commandId}:${result.status}`);
             if (result.required && result.status !== "passed") blocked = true;
+          }
+          if(source&&!blocked){
+            await this.verificationSources.assertSource(source,()=>this.fenceDelivery(run,"verify"));
+            this.database.transaction(()=>{this.fenceDelivery(run,"verify");new RhizaVerificationStore(this.database).recordSource({version:1,jobId:verificationJob!.jobId,runId:run.id,runGeneration:run.generation,sessionId:run.sessionId,leaseId:run.leaseId,targetHash:verificationJob!.request.targetHash,tree:source.tree,commandIds:[...contract.verification],commandsDigest:contentHash(contract.verification.map(id=>verification.list().find(command=>command.id===id))),verifiedAt:this.now().toISOString()});});
           }
         })();
         this.localCommands.set(run.id, { controller, settled });
@@ -3032,15 +3098,21 @@ export class ControllerService {
     if(!selected||contract.delivery.scmConnectorId&&selected.scmConnectorId!==contract.delivery.scmConnectorId||selected.repository!==contract.delivery.repository?.toLowerCase()||selected.baseBranch!==(contract.delivery.baseBranch??"main"))throw new ConnectorError("CONFLICT","Run has no matching reviewed SCM delivery selection",{retryable:false,operation:"delivery"});
     this.fenceDelivery(run,"push");const remote=this.agentAdapters.get(run.profileId) instanceof RemoteNativeAdapter,workspace=remote?this.database.getEntity<JsonValue>("workspace-handle",run.id) as unknown as WorkspaceHandle|undefined:this.workspaces.get(run.worktree!);
     if(!workspace)throw new WorkspacePolicyError("WORKSPACE_UNAVAILABLE","Managed delivery workspace is unavailable");
+    const external=this.rhizaJobs.executionJob(run),verification=external?new RhizaVerificationStore(this.database).get(run.id,run.generation,"source"):undefined;
+    if(external){
+      const commands=this.database.getEntity<JsonValue>("run-verification-config",run.id) as unknown as RepositoryConfig["verificationCommands"]|undefined;
+      if(remote||!verification||verification.jobId!==external.jobId||verification.sessionId!==run.sessionId||verification.leaseId!==run.leaseId||verification.targetHash!==external.request.targetHash||!isDeepStrictEqual(verification.commandIds,contract.verification)||!commands||verification.commandsDigest!==contentHash(contract.verification.map(id=>commands.find(command=>command.id===id))))throw new AdapterContractError("VERIFICATION_PROVENANCE_UNAVAILABLE","PR delivery requires the frozen content-bound verification receipt");
+    }
     let git:RunGitDelivery;
     if(remote)git=remotePushResult(await this.remoteRequest(run.runnerId,{type:"native.run_push",runId:run.id},run,`native-push:${run.id}:${run.generation}`),{runId:run.id,generation:run.generation,branch:workspace.branch,target:selected.target});
     else{
-      const controller=new AbortController(),input={runId:run.id,generation:run.generation,leaseId:run.leaseId,workspace,message:commitMessage(contract.goal),signal:controller.signal,assertAuthority:()=>this.fenceDelivery(run,"push")};
+      const controller=new AbortController(),input={runId:run.id,generation:run.generation,leaseId:run.leaseId,workspace,message:commitMessage(contract.goal),...(verification?{verifiedTree:verification.tree}:{}),signal:controller.signal,assertAuthority:()=>this.fenceDelivery(run,"push")};
       const operation=(async()=>{const push=await this.localGitDelivery.push({...input,target:selected.target}),commit=await this.localGitDelivery.commit(input);return {version:1 as const,commit,push};})();
       const settled=operation.then(()=>undefined);void settled.catch(()=>undefined);this.localCommands.set(run.id,{controller,settled});
       try{git=await operation;}finally{if(this.localCommands.get(run.id)?.controller===controller)this.localCommands.delete(run.id);}
     }
     this.fenceDelivery(run,"push");assertPublicationScope(git.commit.files,workspace.scopePaths);
+    if(external)this.database.transaction(()=>{this.fenceDelivery(run,"push");new RhizaVerificationStore(this.database).bindCommit(run.id,run.generation,git.commit);});
     const previous=this.database.getEntity<JsonValue>("run-result",run.id) as {createdAt?:string}|undefined;
     const result={version:1,runId:run.id,taskId:run.taskId,runnerId:run.runnerId,generation:run.generation,deliveryType:"pull-request",deliveryState:"pushed",commit:git.commit,push:git.push,worktree:run.worktree,branch:run.branch,baseCommit:workspace.baseRevision,files:git.commit.files,verification:run.verification,summary:run.activitySummary??"",createdAt:previous?.createdAt??this.now().toISOString()};
     this.database.transaction(()=>{this.fenceDelivery(run,"push");this.database.saveEntity("run-result",run.id,json(result));});this.fleetEvents.publish("run.changed",run.id,{id:run.id,state:run.state});
@@ -3149,7 +3221,16 @@ export class ControllerService {
     const result=await this.remoteRequest(run.runnerId,{type:"native.run_finalize",runId:run.id},run,`native-finalize:${run.id}:${run.generation}`) as {runId?:unknown;settledAt?:unknown}|undefined;
     if(!result||result.runId!==run.id||typeof result.settledAt!=="string"||!Number.isFinite(Date.parse(result.settledAt)))throw new AdapterContractError("REMOTE_RESULT_INVALID","Owning Runner did not confirm execution finalization");
   }
-  private cancelRunExecution(run:Run,principal:InteractionPrincipal={id:"operator",roles:["operator"],profileId:run.profileId}):Promise<Run> {
+  private canCancelRhizaRun(run:Run):boolean {
+    const adapter=this.agentAdapters.get(run.profileId),session=this.database.getEntity<JsonValue>("adapter-session",run.sessionId) as unknown as AdapterSession|undefined;
+    return Boolean(adapter&&!(adapter instanceof RemoteNativeAdapter)&&!run.executionRef&&!session?.nativeBinding&&!this.database.handle.prepare("SELECT 1 FROM native_bindings WHERE session_id=?").get(run.sessionId)&&adapter.manifest.backends.find(backend=>backend.id===run.executionSelection?.backendId)?.capabilities.includes("cancel"));
+  }
+  private canInputRhizaRun(run:Run,admission=true):boolean {
+    const adapter=this.agentAdapters.get(run.profileId),session=this.database.getEntity<JsonValue>("adapter-session",run.sessionId) as unknown as AdapterSession|undefined,backend=adapter?.manifest.backends.find(backend=>backend.id===run.executionSelection?.backendId);
+    return Boolean(this.canCancelRhizaRun(run)&&adapter?.manifest.capabilities.resume&&backend?.capabilities.includes("send")&&backend.capabilities.includes("resume")&&session?.id===run.sessionId&&session.runId===run.id&&session.profileId===run.profileId&&session.backendId===run.executionSelection?.backendId&&(admission?session.state==="PAUSED":["PAUSED","STARTING","RUNNING","COMPLETED"].includes(session.state))&&session.providerSessionId&&session.providerSessionId===run.providerSessionId&&session.execution?.generation===run.generation&&session.execution.leaseId===run.leaseId);
+  }
+  private cancelRunExecution(run:Run,principal:InteractionPrincipal={id:"operator",roles:["operator"],profileId:run.profileId},externalGuard?:()=>void):Promise<Run> {
+    externalGuard?.();
     if (isTerminalRunState(run.state)) return Promise.resolve(run);
     const authority={principal:structuredClone(principal),fence:this.nativeInteractions.fenceFor(run,`cancel:${run.id}:${run.generation}`)};
     if(!run.sessionId.startsWith("unstarted:"))this.nativeInteractions.assertCancellation(authority.principal,authority.fence);
@@ -3157,11 +3238,12 @@ export class ControllerService {
     const pending = this.runCancellations.get(run.id);
     if (pending) return pending;
     this.cancelledRunIds.add(run.id);
-    const cancellation = Promise.resolve().then(() => this.stopRunExecution(run,"CANCELLED",authority)).finally(() => { this.runCancellations.delete(run.id); });
+    const cancellation = Promise.resolve().then(() => this.stopRunExecution(run,"CANCELLED",authority,externalGuard)).finally(() => { this.runCancellations.delete(run.id); });
     this.runCancellations.set(run.id, cancellation);
     return cancellation;
   }
-  private async stopRunExecution(run:Run, terminalState: "CANCELLED" | "SUPERSEDED" = "CANCELLED",authority?:{principal:InteractionPrincipal;fence:MutationFence}):Promise<Run> {
+  private async stopRunExecution(run:Run, terminalState: "CANCELLED" | "SUPERSEDED" = "CANCELLED",authority?:{principal:InteractionPrincipal;fence:MutationFence},externalGuard?:()=>void):Promise<Run> {
+    externalGuard?.();
     const latest = this.database.getEntity<JsonValue>("run", run.id) as unknown as Run | undefined;
     if(!latest||latest.generation!==run.generation||latest.leaseId!==run.leaseId)throw new InteractionGuardError("STALE_RUN_AUTHORITY");
     if (isTerminalRunState(latest.state)) return latest;
@@ -3179,7 +3261,7 @@ export class ControllerService {
     }
     const principal=authority?.principal??{id:"operator",roles:["operator"],profileId:run.profileId};
     const fence=authority?.fence??this.nativeInteractions.fenceFor(run,`cancel:${run.id}:${run.generation}`);
-    const assertAuthority=()=>this.nativeInteractions.assertCancellation(principal,fence);
+    const assertAuthority=()=>{externalGuard?.();this.nativeInteractions.assertCancellation(principal,fence);};
     assertAuthority();
     const session=this.database.getEntity<JsonValue>("adapter-session",run.sessionId) as unknown as AdapterSession|undefined;
     if(!remote&&(run.executionRef||session?.nativeBinding||this.database.handle.prepare("SELECT 1 FROM native_bindings WHERE session_id=?").get(run.sessionId)))throw new InteractionGuardError("NATIVE_CAPABILITY_UNVERIFIED");
@@ -3348,6 +3430,25 @@ export class ControllerService {
       limitations:["Native login and CLI evidence describe the last check; external account switches or upgrades require another check","A native catalog does not prove model access or cost"]};
   }
 
+  private rhizaTargetFacts(repositoryId: string, profileId: string): RhizaTargetFacts {
+    const snapshot = this.configuration.current(), profile = snapshot.config.agentProfiles.find(profile => profile.id === profileId)!;
+    const adapter = this.agentAdapters.get(profileId), repository = snapshot.config.repositories.find(repository => repository.id === repositoryId)!;
+    const initial: RhizaTargetFacts = { executorRef: `dispatcher:${snapshot.config.controller.id}`, runnerId: profile.runnerId, profileId, harnessId: profile.provider,
+      backendId: adapter?.manifest.backends[0]?.id ?? "unavailable", profileRevision: rhizaDigest(profile), adapterVersion: "unavailable", ready: false, evidenceCapabilities: [] };
+    try {
+      const context = this.resolveProfileExecutionContext(profileId, repositoryId, "catalog"), profileContext = this.resolveProfileExecutionContext(profileId, undefined, "catalog");
+      const adapterVersion = rhizaAdapterBuildVersion(), probe = this.profileProbes.current(context);
+      const stored = this.database.getEntity<JsonValue>("model-catalog", contentHash({ profileId, repositoryId })) as unknown as { format?: string; scopeRef?: string; catalog?: AccountModelCatalog; repositoryIdentity?: RhizaTargetFacts["repositoryIdentity"] } | undefined;
+      const scopeRef = contentHash({ profileId, repositoryId, configRevision: snapshot.revision, contextFingerprint: context.fingerprint, workspacePath: repository.root });
+      const repositoryIdentity = context.runner.mode === "embedded" ? rhizaRepositoryIdentity(repository.root) : undefined;
+      const catalog = stored?.format === "account-model-catalog-cache-v1" && stored.scopeRef === scopeRef && repositoryIdentity && rhizaDigest(stored.repositoryIdentity ?? null) === rhizaDigest(repositoryIdentity) ? stored.catalog : undefined;
+      const ready = context.runner.mode === "embedded" && this.embeddedRunner?.runner.id === profile.runnerId && profile.enabled !== false && adapter?.supportsExecutionSelection === true
+        && adapter.manifest.backends.some(backend => backend.id === catalog?.backendId) && !!probe?.nativeVersion && [probe.installation, probe.compatibility, probe.authentication].every(evidence => evidence.status === "ready");
+      return { ...initial, adapterVersion, profileRevision: rhizaDigest({ contextFingerprint: profileContext.fingerprint, adapterVersion }), ready,
+        ...(probe?.nativeVersion ? { cliVersion: probe.nativeVersion } : {}), ...(repositoryIdentity ? { repositoryIdentity } : {}), ...(catalog ? { catalog, backendId: catalog.backendId } : {}) };
+    } catch { return initial; }
+  }
+
   private async modelCatalog(profileId:string,repositoryId:string,reason:ModelCatalogContext["reason"]="open",workspacePath?:string):Promise<AccountModelCatalog> {
     if(this.stopping)throw new PublicationError("CATALOG_CLOSED",409,"Native catalog admission is closed");
     const snapshot=this.configuration.current();const profile=snapshot.config.agentProfiles.find(p=>p.id===profileId),repository=snapshot.config.repositories.find(r=>r.id===repositoryId);
@@ -3358,6 +3459,7 @@ export class ControllerService {
     if(repositoryRunnerId(snapshot.config,repository)!==profile.runnerId)return fallback("RUNNER_REPOSITORY_MISMATCH","Account and repository belong to different Runners");
     const remote=snapshot.config.runners.some(runner=>runner.id===profile.runnerId&&runner.mode==="remote");
     if(!remote&&profile.runnerId!==this.embeddedRunner?.runner.id)return fallback("REMOTE_EXECUTION_UNAVAILABLE","Owning local Runner is unavailable");
+    const repositoryIdentity = remote ? undefined : rhizaRepositoryIdentity(repository.root);
     const applied=this.resolveProfileExecutionContext(profileId,repositoryId,"catalog");
     if(!remote)context.executionContextRef=contentHash({repository:context.executionContextRef,context:applied.fingerprint});
     const adapter=this.agentAdapters.get(applied.profileId);
@@ -3388,7 +3490,10 @@ export class ControllerService {
     if(catalog.failure?.code==="NATIVE_CATALOG_UNAVAILABLE"&&previous?.format==="account-model-catalog-cache-v1"&&previous.scopeRef===scopeRef&&previous.catalog){
       catalog={...structuredClone(previous.catalog),freshness:"native-cache",selectionSupport:catalog.selectionSupport,failure:catalog.failure};
     }
-    if((reason==="open"||reason==="manual-refresh")&&catalog.freshness==="native-fresh"&&!catalog.failure)this.database.saveEntity("model-catalog",key,json({format:"account-model-catalog-cache-v1",scopeRef,catalog}));
+    if((reason==="open"||reason==="manual-refresh")&&catalog.freshness==="native-fresh"&&!catalog.failure){
+      const directoryStable = repositoryIdentity && rhizaDigest(repositoryIdentity) === rhizaDigest(rhizaRepositoryIdentity(repository.root) ?? null);
+      this.database.saveEntity("model-catalog",key,json({format:"account-model-catalog-cache-v1",scopeRef,catalog,...(directoryStable?{repositoryIdentity}:{})}));
+    }
     return catalog;
     })();
     this.catalogReads.set(readKey,operation);
@@ -3483,17 +3588,26 @@ export class ControllerService {
     const catalog=await this.modelCatalog(run.profileId,contract.workspace.repositoryId,"before-start",run.worktree);
     if(catalog.failure?.code==="NATIVE_AUTH_REQUIRED"||catalog.runnerId!==selection.runnerId||catalog.contextFingerprint!==selection.contextFingerprint)throw new PublicationError("SELECTION_CHANGED",409,"Native account or project context changed before continuation");
     if(selection.selectionType==="explicit-model"&&(catalog.freshness!=="native-fresh"||catalog.revision!==selection.catalogRevision))throw new PublicationError("SELECTION_CHANGED",409,"Native model catalog changed before continuation");
+    if(selection.pricingSnapshot){
+      const price=selection.requestedModel&&catalog.backendId===selection.backendId?admitCatalogPricing(catalog,selection.requestedModel,selection.nativeParameters,this.now().toISOString()):undefined;
+      if(price?.status!=="available"||!samePricingTerms(selection.pricingSnapshot,price.snapshot))throw new PublicationError("SELECTION_CHANGED",409,"Reviewed native price changed or is unavailable before continuation");
+    }
     const current=this.database.getEntity<JsonValue>("run",run.id) as unknown as Run|undefined;
     if(!current||current.state!==run.state||current.generation!==run.generation||current.leaseId!==run.leaseId||current.sessionId!==run.sessionId)throw new PublicationError("RUN_CHANGED",409,"Run authority changed before continuation");
   }
 
   private dispatchTask(taskId: string, body: TaskDispatchBody, idempotencyKey?: string, publication?: PublicationRecord): Promise<TaskDispatchResult> {
+    const external=this.database.getEntity<JsonValue>("task-rhiza-binding",taskId) as {jobId:string}|undefined;
+    if(external&&publication?.rhizaJobId!==external.jobId)return Promise.reject(new PublicationError("TARGET_AUTHORITY_CHANGED",409,"External jobs require a new RHIZA attempt and approval"));
     const dispatch = this.dispatchQueue.then(() => this.performDispatchTask(taskId, body, idempotencyKey, publication));
     this.dispatchQueue = dispatch.then(() => undefined, () => undefined);
     return dispatch;
   }
 
   private async performDispatchTask(taskId: string, body: TaskDispatchBody, idempotencyKey?: string, publication?: PublicationRecord): Promise<TaskDispatchResult> {
+    const external=this.database.getEntity<JsonValue>("task-rhiza-binding",taskId) as {jobId:string}|undefined;
+    if(external&&publication?.rhizaJobId!==external.jobId)throw new PublicationError("TARGET_AUTHORITY_CHANGED",409,"External jobs require a new RHIZA attempt and approval");
+    if(publication)this.rhizaJobs.assertPublication(publication);
     const existing = idempotencyKey ? this.database.getEntity<JsonValue>("task-dispatch", idempotencyKey) : undefined;
     if (existing) {
       const result = existing as unknown as TaskDispatchResult;
@@ -3581,6 +3695,7 @@ export class ControllerService {
         workspacePath: workspace.path,
         ...(publication?.selection ? {executionSelection:publication.selection}:{}),
         beforeStart:async()=>{
+          if(publication)this.rhizaJobs.assertPublication(publication);
           if(publication&&contentHash(this.database.getTaskContract(taskId))!==contentHash(publication.contract))throw new PublicationError("TASK_CHANGED",409,"Task contract changed before native startup");
           if(reviewedDelivery){const current=await this.prepareScmDelivery({delivery:{type:"pull-request",scmConnectorId:reviewedDelivery.scmConnectorId,targetRepository:reviewedDelivery.repository,baseBranch:reviewedDelivery.baseBranch}},repositoryConfig);if(contentHash({...current,reviewedAt:undefined})!==contentHash({...reviewedDelivery,reviewedAt:undefined}))throw new PublicationError("SELECTION_CHANGED",409,"SCM target or context changed before native start");}
           if(remote){
@@ -3599,6 +3714,7 @@ export class ControllerService {
             if(this.configuration.current().revision!==publication.configRevision)throw new PublicationError("SELECTION_CHANGED",409,"Configuration changed before native startup");
           }
           const selectionRun=this.database.getEntity<JsonValue>("run",runId) as unknown as Run|undefined;
+          if(publication)this.rhizaJobs.assertPublication(publication);
           if(selectionRun?.executionSelection?.mode==="legacy")await this.validateRunSelection(selectionRun);
           const reserved=this.database.getEntity<JsonValue>("run",runId) as unknown as Run|undefined;
           const currentTask=this.database.getCanonicalTask<JsonValue>(taskId)?.document as unknown as Task|undefined;
@@ -3686,6 +3802,7 @@ export class ControllerService {
 
   private rerouteRun(runId: string, profileId: string, context: { actorId: string; workflowId: string }): Promise<{ supersededRunId: string; run: Run }> {
     const run=this.database.getEntity<JsonValue>("run",runId) as unknown as Run|undefined;
+    if(run&&this.database.getEntity("task-rhiza-binding",run.taskId))return Promise.reject(new PublicationError("TARGET_AUTHORITY_CHANGED",409,"External jobs require a new RHIZA attempt and approval"));
     const authority=run?{principal:{id:context.actorId,roles:["operator"],profileId:run.profileId},fence:this.nativeInteractions.fenceFor(run,`reroute:${contentHash(context)}`)}:undefined;
     const result = this.dispatchQueue.then(() => this.performReroute(runId, profileId, context,authority));
     this.dispatchQueue = result.then(() => undefined, () => undefined);
@@ -3693,6 +3810,8 @@ export class ControllerService {
   }
 
   private async performReroute(runId: string, profileId: string, context: { actorId: string; workflowId: string },authority:{principal:InteractionPrincipal;fence:MutationFence}|undefined): Promise<{ supersededRunId: string; run: Run }> {
+    const originalRun=this.database.getEntity<JsonValue>("run",runId) as unknown as Run|undefined;
+    if(originalRun&&this.database.getEntity("task-rhiza-binding",originalRun.taskId))throw new PublicationError("TARGET_AUTHORITY_CHANGED",409,"External jobs require a new RHIZA attempt and approval");
     const receiptId = contentHash(context), receipt = this.database.getEntity<JsonValue>("run-reroute", receiptId) as { previousRunId: string; profileId: string; runId: string } | undefined;
     if (receipt) {
       if (receipt.previousRunId !== runId || receipt.profileId !== profileId) throw new SemanticPolicyError("INVALID_INPUT", "Reroute identity already belongs to another replacement");
@@ -4268,7 +4387,7 @@ export class ControllerService {
       if (!agent) throw new ConnectorError("PERMANENT", "The run profile is unavailable", { retryable: false, operation: "write" });
       const fence=this.nativeInteractions.fenceFor(run,`messaging:${resumeKey}`);
       return this.nativeInteractions.withMutationLane(run.sessionId,async()=>{
-      const assertAuthority=()=>{this.nativeInteractions.assertInteraction({id:principal.principalId,roles:principal.roles,profileId:run.profileId},"continue",fence);this.assertMessagingInputAuthority(run,binding,expectedRevision);};
+      const assertAuthority=()=>{this.runInputs.assertAvailable(input,reserved?input:undefined);this.nativeInteractions.assertInteraction({id:principal.principalId,roles:principal.roles,profileId:run.profileId},"continue",fence);this.assertMessagingInputAuthority(run,binding,expectedRevision);};
       const input:RunInputIdentity={inputId:`messaging-${contentHash(resumeKey)}`,actorId:principal.principalId,runId:run.id,profileId:run.profileId,sessionId:run.sessionId,generation:run.generation,authorityHash:contentHash({runId:run.id,generation:run.generation,leaseId:run.leaseId,lastActivityAt:run.lastActivityAt}),payloadHash:contentHash({message:message.text,bindingRevision:expectedRevision})};
       let reserved=false,sent=false;
       try{
@@ -4590,9 +4709,119 @@ export class ControllerService {
   private readonly modelRouting: ModelRoutingService;
   private readonly publications: PublicationService;
 
+  private sessionInputIdentity(principal:InteractionPrincipal,params:{profileId:string;sessionId:string},body:{message:string;inputId?:string;authority?:RunInputAuthority},storedSession:AdapterSession){
+    const message=body.message;
+    const expected=body.authority;
+    const episode={runId:storedSession.runId,sessionId:params.sessionId,generation:expected?.generation??0,authorityHash:contentHash(expected?{runId:expected.runId,generation:expected.generation,leaseId:expected.leaseId,lastActivityAt:expected.lastActivityAt}:null)};
+    const inputId=body.inputId??(expected?`legacy-${contentHash({actor:principal.id,sessionId:storedSession.id,message,authority:expected})}`:undefined);
+    const input:RunInputIdentity|undefined=inputId?{...episode,inputId,actorId:principal.id,profileId:params.profileId,payloadHash:contentHash({message,authority:expected??null})}:undefined;
+    return {episode,inputId,input};
+  }
+  private async sendSessionInput(principal:InteractionPrincipal,params:{profileId:string;sessionId:string},body:{message?:string;inputId?:string;authority?:RunInputAuthority},external?:{input:RunInputIdentity;guard():void}):Promise<{statusCode:number;body:unknown}>{
+    const respond=(statusCode:number,body:unknown)=>({statusCode,body});
+    external?.guard();
+      if (typeof body?.message!=="string"||!body.message.trim()) return respond(400,{ code: "MESSAGE_REQUIRED" });
+      const message=body.message;
+      if(body.inputId!==undefined&&(typeof body.inputId!=="string"||!/^[-a-zA-Z0-9_]{8,128}$/.test(body.inputId)))return respond(400,{code:"INVALID_INPUT_ID"});
+      const storedSession = this.database.getEntity<JsonValue>("adapter-session", params.sessionId) as unknown as AdapterSession | undefined;
+      if (storedSession?.profileId !== params.profileId) return respond(404,{ code: "SESSION_NOT_FOUND" });
+      const {episode,inputId,input}=this.sessionInputIdentity(principal,params,{...body,message},storedSession);
+      const existing=input?this.runInputs.read(input):undefined;
+      const owned=Boolean(external&&input&&existing?.state==="RESERVED"&&isDeepStrictEqual(external.input,input));
+      if(external&&!owned)throw new InputReceiptError("INPUT_OUTCOME_UNKNOWN","Original external reservation cannot be adopted");
+      if(existing&&!owned){
+        if(existing.state!=="ACCEPTED")return respond(409,{code:existing.state==="RESERVED"?"INPUT_PENDING":existing.state==="REJECTED"?"INPUT_REJECTED":"INPUT_OUTCOME_UNKNOWN",receipt:existing,message:"Inspect the original session before submitting another input"});
+        return respond(200,{receipt:existing,repeated:true,event:{type:"session.message",sessionId:existing.sessionId,occurredAt:existing.acceptedAt,data:{acceptedCharacters:message.length}}});
+      }
+      const adapter = this.agentAdapters.get(params.profileId);
+      if (!adapter) return respond(404,{ code: "PROFILE_NOT_FOUND" });
+      const run = this.canonicalSession(storedSession);
+      const binding = run ? this.runConversation(run) : undefined;
+      if(this.pendingSessionCancellations.has(storedSession.id))return respond(409,{code:"SESSION_CANCELLED"});
+      if(this.pendingConsoleInputs.has(storedSession.id))return respond(409,{code:"INPUT_PENDING"});
+      const fence=run?this.nativeInteractions.fenceFor(run,`console:${inputId??randomUUID()}`):undefined;
+      return this.nativeInteractions.withMutationLane(storedSession.id,async()=>{
+      let reserved=owned,sent=false;
+      const assertAuthority = (): void => {
+        external?.guard();
+        this.runInputs.assertAvailable(episode,reserved?input:undefined);
+        if(this.pendingSessionCancellations.has(storedSession.id))throw new AdapterContractError("SESSION_CANCELLED","Session cancellation forbids further input");
+        if(run)this.nativeInteractions.assertInteraction(principal,"continue",fence!);
+        else {const decision=this.nativeInteractions.authorizeStandaloneInput(principal,storedSession.id);if(!decision.allowed)throw new InteractionGuardError(decision.code);}
+        this.resolveProfileExecutionContext(params.profileId,undefined,"resume");
+        if (!run) {
+          this.assertSessionContext(storedSession);
+          if(this.sessionStopState(storedSession)!=="none")throw new AdapterContractError("SESSION_CANCELLED","A requested stop forbids further input");
+          return;
+        }
+        const expected = body.authority;
+        const current = this.database.getEntity<JsonValue>("run", run.id) as unknown as Run | undefined;
+        const task = this.database.getCanonicalTask<JsonValue>(run.taskId);
+        if (!expected || expected.runId !== run.id || expected.generation !== current?.generation || expected.leaseId !== current?.leaseId || expected.lastActivityAt !== current?.lastActivityAt || expected.taskRevision !== task?.revision || current?.state !== "WAITING_USER" || current.profileId !== params.profileId || current.sessionId !== params.sessionId || (task?.document as unknown as Task)?.currentRunId !== run.id) throw new ConnectorError("CONFLICT", "Run or intervention authority changed; refresh before replying", { retryable: false, operation: "write" });
+        if (binding) this.assertMessagingInputAuthority(run, binding, binding.revision);
+        else {
+          this.restoreLeaseAuthority(current);
+          try { this.leaseAuthority.fence(current.id, current.leaseId, current.generation, "user-input", this.now().toISOString()); }
+          catch (error) { if (error instanceof LeaseFenceError) throw new ConnectorError("CONFLICT", error.message, { retryable: false, operation: "write" }); throw error; }
+          finally { this.persistLatestLeaseAudit(current.id); }
+        }
+      };
+      if (this.pendingSessionCancellations.has(params.sessionId)) return respond(409,{ code: "SESSION_CANCELLED" });
+      if (this.pendingConsoleInputs.has(params.sessionId)) return respond(409,{ code: "INPUT_PENDING" });
+      this.runInputs.assertAvailable(episode,owned?input:undefined);
+      assertAuthority();
+      this.pendingConsoleInputs.add(params.sessionId);
+      try {
+        if(run)await this.validateRunSelection(run);
+        assertAuthority();
+        if(input&&!owned){this.runInputs.reserve(input);reserved=true;}
+        sent=true;
+        const event = await adapter.send(params.sessionId,message,assertAuthority);
+        try { assertAuthority(); }
+        catch (error) {
+          try { if(run)await this.cleanupStaleInput(run,fence!);else await adapter.cancel(params.sessionId); }
+          catch (cleanupError) { this.app.log.warn({ error: redactValue(cleanupError), runId: run?.id }, "stale console input cleanup failed"); }
+          throw error;
+        }
+        if (run) {
+          this.database.transaction(() => {
+            assertAuthority();
+            assertRunTransition(run.state, "ACTIVE");
+            run.state = "ACTIVE";
+            run.lastActivityAt = this.now().toISOString();
+            this.saveAdvancedRun(run, "WAITING_USER");
+            if (binding) this.conversations.resume(binding.id, { expectedRevision: binding.revision, generation: run.generation });
+            const current = this.database.getCanonicalTask<JsonValue>(run.taskId)!;
+            if ((current.document as unknown as Task).state === "WAITING_USER") this.tasks.execute({ id: `run:${run.id}:user-input:${current.revision}`, taskId: run.taskId, baseRevision: current.revision, actor: "user", command: { type: "task.transition", state: "RUNNING" } });
+            if(input)this.runInputs.finish(input,"ACCEPTED");
+          });
+          this.attentionNotifications.recover(run.taskId);
+          this.fleetEvents.publish("run.changed", run.id, { id: run.id, state: run.state, lastActivityAt: run.lastActivityAt });
+        }
+        if(!run&&input)this.runInputs.finish(input,"ACCEPTED");
+        this.nativeInteractions.acknowledgeSettledMutationOutcome(storedSession.id);
+        return respond(200,{ event,...(input?{receipt:this.runInputs.read(input)}:{}) });
+      }catch(error){
+        if(error instanceof AdapterAdmissionError)sent=false;
+        if(!sent)this.nativeInteractions.acknowledgeSettledMutationOutcome(storedSession.id);
+        if(input&&reserved){
+          let receipt;
+          try{receipt=this.runInputs.finish(input,sent?"OUTCOME_UNKNOWN":"REJECTED");}
+          catch(recordError){this.app.log.warn({error:redactValue(recordError)},"input receipt remains unconfirmed");}
+          if(sent&&receipt?.state!=="ACCEPTED"){
+            if(run)this.markRemoteUnavailable(run.id,"Native input outcome is unconfirmed; inspect the original session","NATIVE_OUTCOME_UNKNOWN",run);
+            throw new InputReceiptError("INPUT_OUTCOME_UNKNOWN","Native input outcome is unconfirmed; inspect the original session before continuing");
+          }
+        }
+        throw error;
+      } finally { if(input)this.runInputs.release(input);this.pendingConsoleInputs.delete(params.sessionId); }
+      });
+  }
+
   private registerRoutes(): void {
     this.app.addHook("onRequest", async (request, reply) => {
-      const decision = await this.controlAuth.evaluate({ method: request.method, url: request.url, headers: request.headers, ip: request.ip });
+      const decision = await this.controlAuth.evaluate({ method: request.method, url: request.url, headers: request.headers, ip: request.ip,
+        ...(request.routeOptions.url ? { routePath: request.routeOptions.url } : {}), protocol: request.protocol });
       if (decision.kind === "authenticated") this.requestPrincipals.set(request, decision.principal);
       if (decision.kind !== "rejected") return;
       if (decision.retryAfterSeconds) reply.header("retry-after", String(decision.retryAfterSeconds));
@@ -4604,7 +4833,7 @@ export class ControllerService {
       reply.header("referrer-policy", "no-referrer");
       reply.header("cross-origin-opener-policy", "same-origin");
       reply.header("content-security-policy", "frame-ancestors 'none'; base-uri 'self'; object-src 'none'");
-      if (request.url.startsWith("/api/") || request.url.startsWith("/auth/")) reply.header("cache-control", "no-store");
+      if (request.url.startsWith("/api/") || request.url.startsWith("/auth/") || isRhizaIngressPath(request.url)) reply.header("cache-control", "no-store");
       return payload;
     });
     this.app.addHook("preParsing", async (request, _reply, payload) => {
@@ -4616,6 +4845,25 @@ export class ControllerService {
       payload.pipe(copy);
       return copy;
     });
+
+    this.app.addSchema(rhizaV1Schema);
+    const rhizaQuery = { type: "object", additionalProperties: false, properties: {} };
+    this.app.post<{ Body: RhizaSubmitRequestV1 }>(`${RHIZA_API_PREFIX}/jobs`, { bodyLimit: 256 * 1024, schema: { querystring: rhizaQuery, body: { $ref: `${rhizaV1Schema.$id}#/$defs/submitRequest` }, response: { 202: { $ref: `${rhizaV1Schema.$id}#/$defs/receipt` } } } }, async (request, reply) => reply.code(202).send(await this.rhizaJobs.submit(this.requestPrincipals.get(request), request.body)));
+    this.app.get<{ Params: { requestId: string } }>(`${RHIZA_API_PREFIX}/operations/by-key/:requestId`, { schema: { querystring: rhizaQuery, params: { type: "object", additionalProperties: false, required: ["requestId"], properties: { requestId: { type: "string", minLength: 1, maxLength: 200, pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]*$" } } }, response: { 200: { $ref: `${rhizaV1Schema.$id}#/$defs/receipt` } } } }, request => this.rhizaOperations.lookup(this.requestPrincipals.get(request), request.params.requestId));
+    const rhizaReadSchemas={snapshot:{$ref:`${rhizaV1Schema.$id}#/$defs/snapshot`},eventPage:{$ref:`${rhizaV1Schema.$id}#/$defs/eventPage`},artifacts:{$ref:`${rhizaV1Schema.$id}#/$defs/artifacts`}};
+    // Fastify's serializer cannot merge these conditional schemas. Reuse its
+    // validator without weakening the wire contract or reflecting private facts.
+    const rhizaRead=(request:FastifyRequest,definition:keyof typeof rhizaReadSchemas,value:unknown)=>{if(!request.compileValidationSchema(rhizaReadSchemas[definition])(value)){this.app.log.error({definition},"RHIZA read projection violates its wire contract");throw new RhizaIngressError("INTERNAL_ERROR",500,"Read projection is unavailable");}return value;};
+    const rhizaJobParams={type:"object",additionalProperties:false,required:["jobId"],properties:{jobId:{type:"string",minLength:1,maxLength:200,pattern:"^[A-Za-z0-9][A-Za-z0-9._:-]*$"}}};
+    this.app.get<{Params:{jobId:string}}>(`${RHIZA_API_PREFIX}/jobs/:jobId`,{schema:{querystring:rhizaQuery,params:rhizaJobParams}},request=>rhizaRead(request,"snapshot",this.rhizaViews.snapshot(this.requestPrincipals.get(request),request.params.jobId)));
+    this.app.post<{Params:{jobId:string};Body:RhizaCancellationRequestV1}>(`${RHIZA_API_PREFIX}/jobs/:jobId/cancellations`,{bodyLimit:16*1024,schema:{querystring:rhizaQuery,params:rhizaJobParams,body:{$ref:`${rhizaV1Schema.$id}#/$defs/cancellationRequest`},response:{202:{$ref:`${rhizaV1Schema.$id}#/$defs/controlReceipt`}}}},(request,reply)=>reply.code(202).send(this.rhizaCancellations.accept(this.requestPrincipals.get(request),request.params.jobId,request.body)));
+    this.app.post<{Params:{jobId:string};Body:RhizaInputRequestV1}>(`${RHIZA_API_PREFIX}/jobs/:jobId/inputs`,{bodyLimit:64*1024,schema:{querystring:rhizaQuery,params:rhizaJobParams,body:{$ref:`${rhizaV1Schema.$id}#/$defs/inputRequest`},response:{202:{$ref:`${rhizaV1Schema.$id}#/$defs/controlReceipt`}}}},(request,reply)=>reply.code(202).send(this.rhizaInputs.accept(this.requestPrincipals.get(request),request.params.jobId,request.body)));
+    this.app.get<{Params:{jobId:string}}>(`${RHIZA_API_PREFIX}/jobs/:jobId/artifacts`,{schema:{querystring:rhizaQuery,params:rhizaJobParams}},request=>rhizaRead(request,"artifacts",this.rhizaViews.artifactList(this.requestPrincipals.get(request),request.params.jobId)));
+    this.app.get<{Querystring:{cursor?:string;jobId?:string}}>(`${RHIZA_API_PREFIX}/events`,{schema:{querystring:{type:"object",additionalProperties:false,anyOf:[{required:["cursor"]},{required:["jobId"]}],properties:{cursor:{type:"string",minLength:1,maxLength:200},jobId:rhizaJobParams.properties.jobId}}}},request=>rhizaRead(request,"eventPage",this.rhizaViews.events(this.requestPrincipals.get(request),request.query)));
+    this.app.get(`${RHIZA_API_PREFIX}/capabilities`, { schema: { querystring: rhizaQuery } }, request => this.rhizaAuth.capabilities(this.requestPrincipals.get(request)));
+    this.app.post<{ Body: RhizaHandshakeRequestV1 }>(`${RHIZA_API_PREFIX}/handshakes`, { bodyLimit: 16 * 1024, schema: { querystring: rhizaQuery, body: { $ref: `${rhizaV1Schema.$id}#/$defs/handshakeRequest` } } }, request => this.rhizaAuth.handshake(this.requestPrincipals.get(request), request.body));
+    this.app.get<{ Querystring: { repositoryId: string } }>(`${RHIZA_API_PREFIX}/targets`, { schema: { querystring: { type: "object", additionalProperties: false, required: ["repositoryId"], properties: { repositoryId: { type: "string", minLength: 1, maxLength: 200, pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]*$" } } } } }, request => this.rhizaTargets.catalog(this.requestPrincipals.get(request), request.query.repositoryId));
+    this.app.post<{ Body: { workOrder: RhizaWorkOrderV1 } }>(`${RHIZA_API_PREFIX}/jobs/preflights`, { bodyLimit: 256 * 1024, schema: { querystring: rhizaQuery, body: { $ref: `${rhizaV1Schema.$id}#/$defs/preflightRequest` } } }, request => this.rhizaTargets.preflight(this.requestPrincipals.get(request), request.body.workOrder));
 
     this.app.get("/health", async () => ({
       status: this.lifecycle.state === "READY" && (!this.configuration.current().config.internalLlm.configured || this.llm.snapshot().state.mode === "ACTIVE")
@@ -5055,101 +5303,8 @@ export class ControllerService {
       const receipt=this.runInputs.find(this.principalFor(request).id,request.params.inputId,request.params.runId);return receipt?{receipt}:reply.code(404).send({code:"INPUT_NOT_FOUND"});
     });
     this.app.post<{ Params: { profileId: string; sessionId: string }; Body: { message?: string; inputId?:string; authority?: { runId: string; generation: number; leaseId: string; taskRevision: number; lastActivityAt?: string } } }>("/api/agents/profiles/:profileId/sessions/:sessionId/input", async (request, reply) => {
-      if (typeof request.body?.message!=="string"||!request.body.message.trim()) return reply.code(400).send({ code: "MESSAGE_REQUIRED" });
-      const message=request.body.message;
-      if(request.body.inputId!==undefined&&(typeof request.body.inputId!=="string"||!/^[-a-zA-Z0-9_]{8,128}$/.test(request.body.inputId)))return reply.code(400).send({code:"INVALID_INPUT_ID"});
-      const storedSession = this.database.getEntity<JsonValue>("adapter-session", request.params.sessionId) as unknown as AdapterSession | undefined;
-      if (storedSession?.profileId !== request.params.profileId) return reply.code(404).send({ code: "SESSION_NOT_FOUND" });
-      const expected=request.body.authority;
-      const episode={runId:storedSession.runId,sessionId:request.params.sessionId,generation:expected?.generation??0,authorityHash:contentHash(expected?{runId:expected.runId,generation:expected.generation,leaseId:expected.leaseId,lastActivityAt:expected.lastActivityAt}:null)};
-      const inputId=request.body.inputId??(expected?`legacy-${contentHash({actor:this.principalFor(request).id,sessionId:storedSession.id,message,authority:expected})}`:undefined);
-      const input:RunInputIdentity|undefined=inputId?{...episode,inputId,actorId:this.principalFor(request).id,profileId:request.params.profileId,payloadHash:contentHash({message,authority:expected??null})}:undefined;
-      const existing=input?this.runInputs.read(input):undefined;
-      if(existing){
-        if(existing.state!=="ACCEPTED")return reply.code(409).send({code:existing.state==="RESERVED"?"INPUT_PENDING":existing.state==="REJECTED"?"INPUT_REJECTED":"INPUT_OUTCOME_UNKNOWN",receipt:existing,message:"Inspect the original session before submitting another input"});
-        return {receipt:existing,repeated:true,event:{type:"session.message",sessionId:existing.sessionId,occurredAt:existing.acceptedAt,data:{acceptedCharacters:message.length}}};
-      }
-      const adapter = this.agentAdapters.get(request.params.profileId);
-      if (!adapter) return reply.code(404).send({ code: "PROFILE_NOT_FOUND" });
-      const run = this.canonicalSession(storedSession);
-      const binding = run ? this.runConversation(run) : undefined;
-      if(this.pendingSessionCancellations.has(storedSession.id))return reply.code(409).send({code:"SESSION_CANCELLED"});
-      if(this.pendingConsoleInputs.has(storedSession.id))return reply.code(409).send({code:"INPUT_PENDING"});
-      const fence=run?this.nativeInteractions.fenceFor(run,`console:${inputId??randomUUID()}`):undefined;
-      return this.nativeInteractions.withMutationLane(storedSession.id,async()=>{
-      const assertAuthority = (): void => {
-        if(this.pendingSessionCancellations.has(storedSession.id))throw new AdapterContractError("SESSION_CANCELLED","Session cancellation forbids further input");
-        if(run)this.nativeInteractions.assertInteraction(this.principalFor(request),"continue",fence!);
-        else {const decision=this.nativeInteractions.authorizeStandaloneInput(this.principalFor(request),storedSession.id);if(!decision.allowed)throw new InteractionGuardError(decision.code);}
-        this.resolveProfileExecutionContext(request.params.profileId,undefined,"resume");
-        if (!run) {
-          this.assertSessionContext(storedSession);
-          if(this.sessionStopState(storedSession)!=="none")throw new AdapterContractError("SESSION_CANCELLED","A requested stop forbids further input");
-          return;
-        }
-        const expected = request.body.authority;
-        const current = this.database.getEntity<JsonValue>("run", run.id) as unknown as Run | undefined;
-        const task = this.database.getCanonicalTask<JsonValue>(run.taskId);
-        if (!expected || expected.runId !== run.id || expected.generation !== current?.generation || expected.leaseId !== current?.leaseId || expected.lastActivityAt !== current?.lastActivityAt || expected.taskRevision !== task?.revision || current?.state !== "WAITING_USER" || current.profileId !== request.params.profileId || current.sessionId !== request.params.sessionId || (task?.document as unknown as Task)?.currentRunId !== run.id) throw new ConnectorError("CONFLICT", "Run or intervention authority changed; refresh before replying", { retryable: false, operation: "write" });
-        if (binding) this.assertMessagingInputAuthority(run, binding, binding.revision);
-        else {
-          this.restoreLeaseAuthority(current);
-          try { this.leaseAuthority.fence(current.id, current.leaseId, current.generation, "user-input", this.now().toISOString()); }
-          catch (error) { if (error instanceof LeaseFenceError) throw new ConnectorError("CONFLICT", error.message, { retryable: false, operation: "write" }); throw error; }
-          finally { this.persistLatestLeaseAudit(current.id); }
-        }
-      };
-      if (this.pendingSessionCancellations.has(request.params.sessionId)) return reply.code(409).send({ code: "SESSION_CANCELLED" });
-      if (this.pendingConsoleInputs.has(request.params.sessionId)) return reply.code(409).send({ code: "INPUT_PENDING" });
-      this.runInputs.assertAvailable(episode);
-      assertAuthority();
-      this.pendingConsoleInputs.add(request.params.sessionId);
-      let reserved=false,sent=false;
-      try {
-        if(run)await this.validateRunSelection(run);
-        assertAuthority();
-        if(input){this.runInputs.reserve(input);reserved=true;}
-        sent=true;
-        const event = await adapter.send(request.params.sessionId,message,assertAuthority);
-        try { assertAuthority(); }
-        catch (error) {
-          try { if(run)await this.cleanupStaleInput(run,fence!);else await adapter.cancel(request.params.sessionId); }
-          catch (cleanupError) { this.app.log.warn({ error: redactValue(cleanupError), runId: run?.id }, "stale console input cleanup failed"); }
-          throw error;
-        }
-        if (run) {
-          this.database.transaction(() => {
-            assertAuthority();
-            assertRunTransition(run.state, "ACTIVE");
-            run.state = "ACTIVE";
-            run.lastActivityAt = this.now().toISOString();
-            this.saveAdvancedRun(run, "WAITING_USER");
-            if (binding) this.conversations.resume(binding.id, { expectedRevision: binding.revision, generation: run.generation });
-            const current = this.database.getCanonicalTask<JsonValue>(run.taskId)!;
-            if ((current.document as unknown as Task).state === "WAITING_USER") this.tasks.execute({ id: `run:${run.id}:user-input:${current.revision}`, taskId: run.taskId, baseRevision: current.revision, actor: "user", command: { type: "task.transition", state: "RUNNING" } });
-            if(input)this.runInputs.finish(input,"ACCEPTED");
-          });
-          this.attentionNotifications.recover(run.taskId);
-          this.fleetEvents.publish("run.changed", run.id, { id: run.id, state: run.state, lastActivityAt: run.lastActivityAt });
-        }
-        if(!run&&input)this.runInputs.finish(input,"ACCEPTED");
-        this.nativeInteractions.acknowledgeSettledMutationOutcome(storedSession.id);
-        return { event,...(input?{receipt:this.runInputs.read(input)}:{}) };
-      }catch(error){
-        if(error instanceof AdapterAdmissionError)sent=false;
-        if(!sent)this.nativeInteractions.acknowledgeSettledMutationOutcome(storedSession.id);
-        if(input&&reserved){
-          let receipt;
-          try{receipt=this.runInputs.finish(input,sent?"OUTCOME_UNKNOWN":"REJECTED");}
-          catch(recordError){this.app.log.warn({error:redactValue(recordError)},"input receipt remains unconfirmed");}
-          if(sent&&receipt?.state!=="ACCEPTED"){
-            if(run)this.markRemoteUnavailable(run.id,"Native input outcome is unconfirmed; inspect the original session","NATIVE_OUTCOME_UNKNOWN",run);
-            throw new InputReceiptError("INPUT_OUTCOME_UNKNOWN","Native input outcome is unconfirmed; inspect the original session before continuing");
-          }
-        }
-        throw error;
-      } finally { if(input)this.runInputs.release(input);this.pendingConsoleInputs.delete(request.params.sessionId); }
-      });
+      const result=await this.sendSessionInput(this.principalFor(request),request.params,request.body);
+      return reply.code(result.statusCode).send(result.body);
     });
 
     this.app.get("/api/connectors", async () => ({ connectors: this.connectors.list().map((adapter) => ({ definition: adapter.definition, instance: adapter.instance })) }));
@@ -5655,6 +5810,13 @@ export class ControllerService {
     });
 
     this.app.setErrorHandler((error, request, reply) => {
+      if (isRhizaIngressPath(request.url) || isRhizaIngressPath(request.routeOptions.url ?? "")) {
+        const invalid = error && typeof error === "object" && ("validation" in error || "statusCode" in error && [400, 413].includes(Number(error.statusCode)));
+        return reply.code(error instanceof RhizaIngressError ? error.statusCode : invalid ? 400 : 500).send({
+          code: error instanceof RhizaIngressError ? error.code : invalid ? "INVALID_REQUEST" : "INTERNAL_ERROR",
+          message: error instanceof RhizaIngressError ? error.message : invalid ? "The ingress request is invalid" : "Ingress operation failed",
+        });
+      }
       const secretStatus = error instanceof SecretStoreError
         ? error.code === "SECRET_ACCESS_DENIED"
           ? 403

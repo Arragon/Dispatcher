@@ -1,0 +1,607 @@
+{
+  "kind": "synthetic-wire-fixtures",
+  "examples": {
+    "catalogTarget": {
+      "repositoryId": "repo-a",
+      "executorRef": "dispatcher:test",
+      "runnerId": "runner-a",
+      "profileId": "profile-a",
+      "harnessId": "codex",
+      "backendId": "codex-exec-json",
+      "profileRevision": "profile:opaque/a",
+      "adapterVersion": "fixture-adapter",
+      "cliVersion": "fixture-cli",
+      "catalogRevision": "catalog:opaque/z",
+      "contextFingerprint": "context:opaque/b",
+      "status": "unverified",
+      "releaseQualified": false,
+      "evidenceCapabilities": [],
+      "models": [
+        {
+          "modelId": "fixture/model-a",
+          "selectable": false,
+          "access": "unconfirmed",
+          "modelOptions": {
+            "effort": [
+              "high"
+            ]
+          }
+        }
+      ]
+    },
+    "targetCatalog": {
+      "schemaVersion": 1,
+      "repositoryId": "repo-a",
+      "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "targets": []
+    },
+    "handshakeRequest": {
+      "protocolVersions": [
+        "1.1"
+      ],
+      "requiredCapabilities": [
+        "targets.read"
+      ],
+      "requiredScopes": [
+        "targets:read"
+      ]
+    },
+    "capabilities": {
+      "schemaVersion": 1,
+      "protocolVersions": [
+        "1.1"
+      ],
+      "eventSchemaVersion": "1",
+      "authorityId": "dispatcher:test",
+      "capabilities": [],
+      "scopes": [
+        "targets:read"
+      ]
+    },
+    "handshake": {
+      "schemaVersion": 1,
+      "protocolVersion": "1.1",
+      "eventSchemaVersion": "1",
+      "authorityId": "dispatcher:test",
+      "clientId": "client-a",
+      "capabilities": [],
+      "scopes": [
+        "targets:read"
+      ],
+      "expiresAt": "2026-12-01T00:00:00.000Z"
+    },
+    "reassignment": {
+      "jobId": "prior-job",
+      "expectedJobRevision": 3,
+      "runId": "prior-run",
+      "runGeneration": 1
+    },
+    "target": {
+      "executorRef": "dispatcher:test",
+      "runnerId": "runner-a",
+      "profileId": "profile-a",
+      "harnessId": "codex",
+      "backendId": "codex-exec-json",
+      "modelId": "fixture/model-a",
+      "modelOptions": {
+        "effort": "high"
+      },
+      "catalogRevision": "catalog:opaque/z",
+      "profileRevision": "profile:opaque/a",
+      "contextFingerprint": "context:opaque/b",
+      "adapterVersion": "fixture-adapter",
+      "cliVersion": "fixture-cli"
+    },
+    "workOrder": {
+      "origin": {
+        "authorityId": "rhiza-test",
+        "workspaceId": "workspace-a",
+        "executionRunId": "execution-a",
+        "dispatchId": "dispatch-a",
+        "generation": 1
+      },
+      "title": "Create a fixture",
+      "description": "Implement the explicitly scoped fixture change",
+      "repositoryId": "repo-a",
+      "scopePaths": [
+        "src/result.ts"
+      ],
+      "constraints": [
+        "Do not change public exports"
+      ],
+      "acceptanceCriteria": [
+        "The registered test passes"
+      ],
+      "verificationCommandIds": [
+        "test"
+      ],
+      "context": {
+        "packetId": "packet-a",
+        "formatVersion": "1",
+        "content": "Frozen fixture context",
+        "inputHash": "7cb2323024fef9d5a55ddf7151e5bf71a309bdc6cce4f7f28eae1da33e073288"
+      },
+      "target": {
+        "executorRef": "dispatcher:test",
+        "runnerId": "runner-a",
+        "profileId": "profile-a",
+        "harnessId": "codex",
+        "backendId": "codex-exec-json",
+        "modelId": "fixture/model-a",
+        "modelOptions": {
+          "effort": "high"
+        },
+        "catalogRevision": "catalog:opaque/z",
+        "profileRevision": "profile:opaque/a",
+        "contextFingerprint": "context:opaque/b",
+        "adapterVersion": "fixture-adapter",
+        "cliVersion": "fixture-cli"
+      },
+      "approval": {
+        "reference": "approval-a",
+        "digest": "6c982aacf89aee4845fc56bd02a1ac999cebba7821e268291d116f3e49371600",
+        "expiresAt": "2026-12-01T00:00:00.000Z"
+      },
+      "deadline": "2026-11-01T00:00:00.000Z",
+      "evidencePolicy": {
+        "minimum": "verified"
+      },
+      "delivery": {
+        "type": "pull-request",
+        "scmConnectorId": "github-a",
+        "targetRepository": "example/repo",
+        "baseBranch": "main"
+      }
+    },
+    "preflightRequest": {
+      "workOrder": {
+        "origin": {
+          "authorityId": "rhiza-test",
+          "workspaceId": "workspace-a",
+          "executionRunId": "execution-a",
+          "dispatchId": "dispatch-a",
+          "generation": 1
+        },
+        "title": "Create a fixture",
+        "description": "Implement the explicitly scoped fixture change",
+        "repositoryId": "repo-a",
+        "scopePaths": [
+          "src/result.ts"
+        ],
+        "constraints": [
+          "Do not change public exports"
+        ],
+        "acceptanceCriteria": [
+          "The registered test passes"
+        ],
+        "verificationCommandIds": [
+          "test"
+        ],
+        "context": {
+          "packetId": "packet-a",
+          "formatVersion": "1",
+          "content": "Frozen fixture context",
+          "inputHash": "7cb2323024fef9d5a55ddf7151e5bf71a309bdc6cce4f7f28eae1da33e073288"
+        },
+        "target": {
+          "executorRef": "dispatcher:test",
+          "runnerId": "runner-a",
+          "profileId": "profile-a",
+          "harnessId": "codex",
+          "backendId": "codex-exec-json",
+          "modelId": "fixture/model-a",
+          "modelOptions": {
+            "effort": "high"
+          },
+          "catalogRevision": "catalog:opaque/z",
+          "profileRevision": "profile:opaque/a",
+          "contextFingerprint": "context:opaque/b",
+          "adapterVersion": "fixture-adapter",
+          "cliVersion": "fixture-cli"
+        },
+        "approval": {
+          "reference": "approval-a",
+          "digest": "6c982aacf89aee4845fc56bd02a1ac999cebba7821e268291d116f3e49371600",
+          "expiresAt": "2026-12-01T00:00:00.000Z"
+        },
+        "deadline": "2026-11-01T00:00:00.000Z",
+        "evidencePolicy": {
+          "minimum": "verified"
+        },
+        "delivery": {
+          "type": "pull-request",
+          "scmConnectorId": "github-a",
+          "targetRepository": "example/repo",
+          "baseBranch": "main"
+        }
+      }
+    },
+    "preflight": {
+      "schemaVersion": 1,
+      "preflightId": "preflight-a",
+      "inputHash": "7cb2323024fef9d5a55ddf7151e5bf71a309bdc6cce4f7f28eae1da33e073288",
+      "workOrderHash": "044ad8f4663d176e4dd87a13ce65150f83ff17c35864b078df9639f737a647bf",
+      "target": {
+        "executorRef": "dispatcher:test",
+        "runnerId": "runner-a",
+        "profileId": "profile-a",
+        "harnessId": "codex",
+        "backendId": "codex-exec-json",
+        "modelId": "fixture/model-a",
+        "modelOptions": {
+          "effort": "high"
+        },
+        "catalogRevision": "catalog:opaque/z",
+        "profileRevision": "profile:opaque/a",
+        "contextFingerprint": "context:opaque/b",
+        "adapterVersion": "fixture-adapter",
+        "cliVersion": "fixture-cli",
+        "targetHash": "584d22390f8978bff941ed93261a5840e5b1f83e1668ffb2facc7ae0076fbaa5"
+      },
+      "expiresAt": "2026-11-01T00:00:00.000Z"
+    },
+    "submitRequest": {
+      "requestId": "request-a",
+      "preflightId": "preflight-a",
+      "targetHash": "584d22390f8978bff941ed93261a5840e5b1f83e1668ffb2facc7ae0076fbaa5",
+      "workOrder": {
+        "origin": {
+          "authorityId": "rhiza-test",
+          "workspaceId": "workspace-a",
+          "executionRunId": "execution-a",
+          "dispatchId": "dispatch-a",
+          "generation": 1
+        },
+        "title": "Create a fixture",
+        "description": "Implement the explicitly scoped fixture change",
+        "repositoryId": "repo-a",
+        "scopePaths": [
+          "src/result.ts"
+        ],
+        "constraints": [
+          "Do not change public exports"
+        ],
+        "acceptanceCriteria": [
+          "The registered test passes"
+        ],
+        "verificationCommandIds": [
+          "test"
+        ],
+        "context": {
+          "packetId": "packet-a",
+          "formatVersion": "1",
+          "content": "Frozen fixture context",
+          "inputHash": "7cb2323024fef9d5a55ddf7151e5bf71a309bdc6cce4f7f28eae1da33e073288"
+        },
+        "target": {
+          "executorRef": "dispatcher:test",
+          "runnerId": "runner-a",
+          "profileId": "profile-a",
+          "harnessId": "codex",
+          "backendId": "codex-exec-json",
+          "modelId": "fixture/model-a",
+          "modelOptions": {
+            "effort": "high"
+          },
+          "catalogRevision": "catalog:opaque/z",
+          "profileRevision": "profile:opaque/a",
+          "contextFingerprint": "context:opaque/b",
+          "adapterVersion": "fixture-adapter",
+          "cliVersion": "fixture-cli"
+        },
+        "approval": {
+          "reference": "approval-a",
+          "digest": "6c982aacf89aee4845fc56bd02a1ac999cebba7821e268291d116f3e49371600",
+          "expiresAt": "2026-12-01T00:00:00.000Z"
+        },
+        "deadline": "2026-11-01T00:00:00.000Z",
+        "evidencePolicy": {
+          "minimum": "verified"
+        },
+        "delivery": {
+          "type": "pull-request",
+          "scmConnectorId": "github-a",
+          "targetRepository": "example/repo",
+          "baseBranch": "main"
+        }
+      }
+    },
+    "receipt": {
+      "schemaVersion": 1,
+      "receiptId": "receipt-a",
+      "requestId": "request-a",
+      "clientId": "client-a",
+      "requestHash": "0a725cd89e5363ac476d92e8a7e312e05deffa310972d10c002474f58d0aff10",
+      "jobId": "job-a",
+      "taskId": "task-a",
+      "state": "accepted",
+      "acceptedAt": "2026-10-22T20:00:00.000Z",
+      "origin": {
+        "authorityId": "rhiza-test",
+        "workspaceId": "workspace-a",
+        "executionRunId": "execution-a",
+        "dispatchId": "dispatch-a",
+        "generation": 1
+      },
+      "targetHash": "584d22390f8978bff941ed93261a5840e5b1f83e1668ffb2facc7ae0076fbaa5",
+      "inputHash": "7cb2323024fef9d5a55ddf7151e5bf71a309bdc6cce4f7f28eae1da33e073288"
+    },
+    "modelEvidence": {
+      "status": "verified",
+      "source": "native-session-metadata",
+      "requested": {
+        "modelId": "fixture/model-a",
+        "modelOptions": {
+          "effort": "high"
+        }
+      },
+      "resolved": {
+        "modelId": "fixture/model-a",
+        "modelOptions": {
+          "effort": "high"
+        }
+      },
+      "reported": {
+        "modelId": "fixture/model-a"
+      },
+      "binding": {
+        "authorityId": "rhiza-test",
+        "workspaceId": "workspace-a",
+        "executionRunId": "execution-a",
+        "dispatchId": "dispatch-a",
+        "generation": 1,
+        "runId": "dispatcher-run",
+        "runGeneration": 1,
+        "sessionId": "native-session",
+        "targetHash": "584d22390f8978bff941ed93261a5840e5b1f83e1668ffb2facc7ae0076fbaa5"
+      },
+      "observedAt": "2026-10-22T20:00:00.000Z",
+      "adapterVersion": "fixture-adapter",
+      "cliVersion": "fixture-cli"
+    },
+    "artifact": {
+      "artifactId": "artifact-a",
+      "jobId": "job-a",
+      "runId": "dispatcher-run",
+      "generation": 1,
+      "targetHash": "584d22390f8978bff941ed93261a5840e5b1f83e1668ffb2facc7ae0076fbaa5",
+      "inputHash": "7cb2323024fef9d5a55ddf7151e5bf71a309bdc6cce4f7f28eae1da33e073288",
+      "repositoryId": "repo-a",
+      "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "prUrl": "https://github.example/example/repo/pull/1",
+      "digest": "5fa69bd45535a80d4951ab91747a7271985a0c599197edd018ec7d7c4a15279a",
+      "verification": {
+        "state": "passed",
+        "commandIds": [
+          "test"
+        ],
+        "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "modelEvidence": {
+        "status": "verified",
+        "source": "native-session-metadata",
+        "requested": {
+          "modelId": "fixture/model-a",
+          "modelOptions": {
+            "effort": "high"
+          }
+        },
+        "resolved": {
+          "modelId": "fixture/model-a",
+          "modelOptions": {
+            "effort": "high"
+          }
+        },
+        "reported": {
+          "modelId": "fixture/model-a"
+        },
+        "binding": {
+          "authorityId": "rhiza-test",
+          "workspaceId": "workspace-a",
+          "executionRunId": "execution-a",
+          "dispatchId": "dispatch-a",
+          "generation": 1,
+          "runId": "dispatcher-run",
+          "runGeneration": 1,
+          "sessionId": "native-session",
+          "targetHash": "584d22390f8978bff941ed93261a5840e5b1f83e1668ffb2facc7ae0076fbaa5"
+        },
+        "observedAt": "2026-10-22T20:00:00.000Z",
+        "adapterVersion": "fixture-adapter",
+        "cliVersion": "fixture-cli"
+      }
+    },
+    "controlReceipt": {
+      "schemaVersion": 1,
+      "commandId": "command-a",
+      "requestId": "cancel-a",
+      "jobId": "job-a",
+      "kind": "cancel",
+      "state": "accepted",
+      "acceptedAt": "2026-10-22T20:00:00.000Z"
+    },
+    "artifacts": {
+      "schemaVersion": 1,
+      "jobId": "job-a",
+      "artifacts": [
+        {
+          "artifactId": "artifact-a",
+          "jobId": "job-a",
+          "runId": "dispatcher-run",
+          "generation": 1,
+          "targetHash": "584d22390f8978bff941ed93261a5840e5b1f83e1668ffb2facc7ae0076fbaa5",
+          "inputHash": "7cb2323024fef9d5a55ddf7151e5bf71a309bdc6cce4f7f28eae1da33e073288",
+          "repositoryId": "repo-a",
+          "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "prUrl": "https://github.example/example/repo/pull/1",
+          "digest": "5fa69bd45535a80d4951ab91747a7271985a0c599197edd018ec7d7c4a15279a",
+          "verification": {
+            "state": "passed",
+            "commandIds": [
+              "test"
+            ],
+            "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "modelEvidence": {
+            "status": "verified",
+            "source": "native-session-metadata",
+            "requested": {
+              "modelId": "fixture/model-a",
+              "modelOptions": {
+                "effort": "high"
+              }
+            },
+            "resolved": {
+              "modelId": "fixture/model-a",
+              "modelOptions": {
+                "effort": "high"
+              }
+            },
+            "reported": {
+              "modelId": "fixture/model-a"
+            },
+            "binding": {
+              "authorityId": "rhiza-test",
+              "workspaceId": "workspace-a",
+              "executionRunId": "execution-a",
+              "dispatchId": "dispatch-a",
+              "generation": 1,
+              "runId": "dispatcher-run",
+              "runGeneration": 1,
+              "sessionId": "native-session",
+              "targetHash": "584d22390f8978bff941ed93261a5840e5b1f83e1668ffb2facc7ae0076fbaa5"
+            },
+            "observedAt": "2026-10-22T20:00:00.000Z",
+            "adapterVersion": "fixture-adapter",
+            "cliVersion": "fixture-cli"
+          }
+        }
+      ]
+    },
+    "eventPage": {
+      "schemaVersion": "1",
+      "events": [
+        {
+          "schemaVersion": "1",
+          "eventId": "event-a",
+          "jobId": "job-a",
+          "revision": 2,
+          "type": "job.changed",
+          "committedAt": "2026-10-22T20:00:00.000Z"
+        }
+      ],
+      "cursor": "opaque.cursor",
+      "hasMore": false
+    },
+    "snapshot": {
+      "schemaVersion": 1,
+      "jobId": "job-a",
+      "taskId": "task-a",
+      "revision": 1,
+      "state": "unknown",
+      "origin": {
+        "authorityId": "rhiza-test",
+        "workspaceId": "workspace-a",
+        "executionRunId": "execution-a",
+        "dispatchId": "dispatch-a",
+        "generation": 1
+      },
+      "target": {
+        "executorRef": "dispatcher:test",
+        "runnerId": "runner-a",
+        "profileId": "profile-a",
+        "harnessId": "codex",
+        "backendId": "codex-exec-json",
+        "modelId": "fixture/model-a",
+        "modelOptions": {
+          "effort": "high"
+        },
+        "catalogRevision": "catalog:opaque/z",
+        "profileRevision": "profile:opaque/a",
+        "contextFingerprint": "context:opaque/b",
+        "adapterVersion": "fixture-adapter",
+        "cliVersion": "fixture-cli",
+        "targetHash": "584d22390f8978bff941ed93261a5840e5b1f83e1668ffb2facc7ae0076fbaa5"
+      },
+      "inputHash": "7cb2323024fef9d5a55ddf7151e5bf71a309bdc6cce4f7f28eae1da33e073288",
+      "processObservation": "unknown",
+      "cancellationRequested": false,
+      "allowedOperations": [],
+      "cursor": "opaque.cursor",
+      "updatedAt": "2026-10-22T20:00:00.000Z"
+    },
+    "event": {
+      "schemaVersion": "1",
+      "eventId": "event-a",
+      "jobId": "job-a",
+      "revision": 2,
+      "type": "job.changed",
+      "committedAt": "2026-10-22T20:00:00.000Z"
+    },
+    "cancellationRequest": {
+      "requestId": "cancel-a",
+      "expectedJobRevision": 1,
+      "runId": "dispatcher-run",
+      "generation": 1,
+      "runGeneration": 1
+    },
+    "inputRequest": {
+      "requestId": "input-a",
+      "expectedJobRevision": 1,
+      "runId": "dispatcher-run",
+      "generation": 1,
+      "runGeneration": 1,
+      "interventionRevision": 1,
+      "sessionId": "native-session",
+      "leaseId": "lease-a",
+      "taskRevision": 2,
+      "input": "Continue the same target"
+    },
+    "error": {
+      "code": "LAUNCH_UNCERTAIN",
+      "message": "Reconcile the original operation"
+    }
+  },
+  "semanticVectors": [
+    {
+      "name": "key-order",
+      "value": {
+        "z": 1,
+        "a": "a"
+      },
+      "canonical": "{\"a\":\"a\",\"z\":1}",
+      "sha256": "6e9f6766bfd544f8e1231e02bd2608f4f47c7042dc94c01e71c93a5ffe7ea502"
+    },
+    {
+      "name": "utf16-order",
+      "value": {
+        "": 2,
+        "𐀀": 1
+      },
+      "canonical": "{\"𐀀\":1,\"\":2}",
+      "sha256": "4045c21a23c8ae8f8d9add81f54bd506bee65885099876fb4afb378b1f2c3516"
+    },
+    {
+      "name": "composed",
+      "value": "é",
+      "canonical": "\"é\"",
+      "sha256": "f2886017e9c7abacf804b54d64787dce2b611c9544ba21f3affdd126a6e50086"
+    },
+    {
+      "name": "decomposed",
+      "value": "é",
+      "canonical": "\"é\"",
+      "sha256": "3d68ce21f2899a475713cdbe7562ba9bdb6b1dfde8af1f221bdff4a0935b53b2"
+    },
+    {
+      "name": "array-order",
+      "value": [
+        false,
+        null,
+        0
+      ],
+      "canonical": "[false,null,0]",
+      "sha256": "4686c8c827ef521ade1fa39983c278bf288924ae7b0fe1f43297381194294315"
+    }
+  ]
+}

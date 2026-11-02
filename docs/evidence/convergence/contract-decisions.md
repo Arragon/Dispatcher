@@ -195,13 +195,22 @@ explicitly synthetic. Its current scope is code+PR. Unsupported external Agent
 task types are refused pending a versioned contract; existing local none/commit/PR
 support does not silently expand that scope.
 
-**Still deferred:** no committed compatibility delta is declared integrated by
-this metadata update. Before adoption, freeze both owners' cuts, compare per-path
-source and assertion purposes, preserve migrations1–11, explicitly resolve the
-12–18/writer8–14 catalog and rollback/refusal fixtures, and run the combined target
-and full gates with independent review. No next migration number is reserved here;
-no live database or credential is touched. D lock at the fixed cut is
-`223c9f52c496bb5d85b37b2daa151e9186dd14d1ae00dd5d26f3c82f0d6b28ea`.
+**2026-11-02 implementation adoption:** current D `3cdb5f7` now adapts the frozen
+`8d247177` delta against common `3c1a565`. Later native runtimes, canonical snapshot
+preparation/verification and strict commit owners remain current-D authorities.
+The combined code retains migrations1–11, adds12–18/writer8–14 and preserves the
+original private16 rejection/rollback fixtures. Source wire artifacts are byte
+identical, including the manifest digest above. The only lock delta adds the
+config-to-protocol workspace edge; all324 third-party resolutions remain fixed.
+The 38-file focused slice exposed one omitted Input Context compiler dependency;
+its correction and direct consumers passed a scoped3-file/70-test rerun without
+weakening the original assertion. Milestone review identified and resolved the three missing committed Devin
+phase/catalog/pipe deltas against their originala3a4 file base; affected-fix
+re-review has no remaining Critical/Important findings. The final default combined
+`pnpm check` passed264files/5875tests and build/typecheck/lint/boundaries; exporter
+`--check` passed the original manifest digest. This locally accepts the source
+adaptation. No live database, provider or credential was
+touched by this integration unit; no bilateral/native Gate is discharged.
 
 P01 completion registers isolated ownership/resources only. RHIZA A/B/C worktrees
 and heavy-test windows remain independently owned. Basic M24 single-order real

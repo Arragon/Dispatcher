@@ -177,22 +177,26 @@ export class WorkspaceManager {
     const target={version:1,...push,remoteFingerprint:createHash("sha256").update(JSON.stringify(urls)).digest("hex")};if(!isGitDeliveryTarget(target))return invalid();return {target,url:urls[1]!};
   }
 
-  async inspect(plan: Pick<WorkspacePlan, "repositoryId" | "baseRef" | "scopePaths"> & { targetBranch?: string }): Promise<{ baseCommit: string; root: string }> {
+  /** Filesystem boundary only: no Git process, worktree or native execution. */
+  async inspectScope(plan: Pick<WorkspacePlan, "repositoryId" | "scopePaths">): Promise<{ root: string; rootIdentity: { device: number; inode: number } }> {
     const repository = this.registry.get(plan.repositoryId);
     await this.assertPublicScope(repository,plan.scopePaths);
     const root = await realpath(repository.root);
+    const identity = await stat(root);
+    if (!identity.isDirectory()) throw new WorkspacePolicyError("INVALID_REPOSITORY_ROOT", "Registered root must be a directory");
+    for (const scope of plan.scopePaths) {
+      if (!scope || isAbsolute(scope) || scope.split(/[\\/]/).includes("..") || scope.split(/[\\/]/).includes(".git")) throw new WorkspacePolicyError("INVALID_SCOPE", "Scope must stay inside the repository");
+      if (!within(root, await this.physicalCandidate(resolve(root, scope)))) throw new WorkspacePolicyError("SYMLINK_ESCAPE", "Scope resolves outside repository");
+    }
+    return { root, rootIdentity: { device: identity.dev, inode: identity.ino } };
+  }
+
+  async inspect(plan: Pick<WorkspacePlan, "repositoryId" | "baseRef" | "scopePaths"> & { targetBranch?: string }): Promise<{ baseCommit: string; root: string }> {
+    const { root } = await this.inspectScope(plan);
     const top = (await execute("git", ["-C", root, "rev-parse", "--show-toplevel"])).stdout.trim();
     if (await realpath(top) !== root) throw new WorkspacePolicyError("INVALID_REPOSITORY_ROOT", "Registered root must be the physical Git root");
     if (!plan.baseRef || plan.baseRef.startsWith("-") || Array.from(plan.baseRef).some(c=>c.codePointAt(0)!<=32)) throw new WorkspacePolicyError("INVALID_BASE_REF", "Invalid base reference");
     const baseCommit = (await execute("git", ["-C", root, "rev-parse", "--verify", "--end-of-options", `${plan.baseRef}^{commit}`])).stdout.trim();
-    for (const scope of plan.scopePaths) {
-      if (!scope || isAbsolute(scope) || scope.split(/[\\/]/).includes("..") || scope.split(/[\\/]/).includes(".git")) throw new WorkspacePolicyError("INVALID_SCOPE", "Scope must stay inside the repository");
-      let candidate = resolve(root, scope);
-      while (candidate !== root) {
-        try { if (!within(root, await realpath(candidate))) throw new WorkspacePolicyError("SYMLINK_ESCAPE", "Scope resolves outside repository"); break; }
-        catch (error) { if (error instanceof WorkspacePolicyError) throw error; candidate = dirname(candidate); }
-      }
-    }
     if (plan.targetBranch) {
       try { await execute("git", ["check-ref-format", "--branch", plan.targetBranch]); }
       catch { throw new WorkspacePolicyError("INVALID_TARGET_BRANCH", "Invalid target branch"); }

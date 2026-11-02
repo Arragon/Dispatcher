@@ -24,7 +24,7 @@ export function contentHash(value: unknown): string {
 export class PublicationError extends Error {
   constructor(readonly code: string, readonly statusCode: number, message: string,readonly routingDecision?:ModelRoutingDecision,readonly fieldErrors?:PublicationFieldError[]) { super(message); }
 }
-const draftFields=["title","description","projectId","repositoryId","baseRef","targetBranch","scopePaths","acceptanceCriteria","referenceLinks","verificationCommandIds","execution/profileId","execution/nativeModelId","execution/nativeParameters","execution/catalogRevision","execution/contextFingerprint","execution/selectionMode","delivery/type","delivery/scmConnectorId","delivery/targetRepository","delivery/baseBranch"].map(field=>`/${field}`);
+const draftFields=["title","description","projectId","repositoryId","baseRef","targetBranch","scopePaths","acceptanceCriteria","constraints","inputContext","referenceLinks","verificationCommandIds","execution/profileId","execution/nativeModelId","execution/nativeParameters","execution/catalogRevision","execution/contextFingerprint","execution/selectionMode","delivery/type","delivery/scmConnectorId","delivery/targetRepository","delivery/baseBranch"].map(field=>`/${field}`);
 export function publicationValidationFields(input:unknown):PublicationFieldError[]{
   if(!Array.isArray(input))return [];
   const fields=new Map<string,PublicationFieldError>();
@@ -45,6 +45,11 @@ export interface PublicationRecord {
   deliverySelection?:ScmDeliverySelection;
   selection?: ExecutionSelection; contract?: TaskContract; baseCommit?: string; repository?: RepositoryConfig; receipt?: PublicationReceipt;
   taskBinding?:{taskId:string;taskRevision:number;contractHash:string;specification?:boolean};
+  rhizaJobId?:string;
+}
+export interface PublicationAdmissionHook {
+  validate(record: PublicationRecord): void;
+  commit(record: PublicationRecord, receipt: PublicationReceipt): void;
 }
 export function assertPublicationScope(scopes:string[],allowed:string[]):void {
   if(allowed.length && scopes.some(scope=>!allowed.some(parent=>{const rel=posix.relative(parent,scope);return rel===""||(!rel.startsWith("../")&&rel!==".."&&!posix.isAbsolute(rel));})))throw inputError("INVALID_SCOPE","Requested scope exceeds registered scope","/scopePaths");
@@ -124,10 +129,12 @@ export class PublicationService {
       return this.preview(owner,draft,{taskBinding});
     }
     if(!contract?.workspace)throw new PublicationError("TASK_REVIEW_UNAVAILABLE",409,"Task has no frozen workspace contract");
-    const draft:PublishDraftV1={schemaVersion:1,clientDraftId:`task:${taskId}:${expectedRevision}`,title:task.title,description:contract.instructions??task.description??"",projectId:task.projectId,repositoryId:contract.workspace.repositoryId,baseRef:contract.workspace.baseRef,...(contract.workspace.targetBranch?{targetBranch:contract.workspace.targetBranch}:{}),scopePaths:contract.scope,acceptanceCriteria:contract.acceptanceCriteria,referenceLinks:contract.referenceLinks??[],verificationCommandIds:contract.verification,startMode:"dispatch",execution:structuredClone(execution),delivery:{type:contract.delivery.type,...(contract.delivery.scmConnectorId?{scmConnectorId:contract.delivery.scmConnectorId}:{}),...(contract.delivery.repository?{targetRepository:contract.delivery.repository}:{}),...(contract.delivery.baseBranch?{baseBranch:contract.delivery.baseBranch}:{})}};
+    const draft:PublishDraftV1={schemaVersion:1,clientDraftId:`task:${taskId}:${expectedRevision}`,title:task.title,description:contract.instructions??task.description??"",projectId:task.projectId,repositoryId:contract.workspace.repositoryId,baseRef:contract.workspace.baseRef,...(contract.workspace.targetBranch?{targetBranch:contract.workspace.targetBranch}:{}),scopePaths:contract.scope,constraints:[...contract.constraints],...(contract.inputContext?{inputContext:structuredClone(contract.inputContext)}:{}),acceptanceCriteria:contract.acceptanceCriteria,referenceLinks:contract.referenceLinks??[],verificationCommandIds:contract.verification,startMode:"dispatch",execution:structuredClone(execution),delivery:{type:contract.delivery.type,...(contract.delivery.scmConnectorId?{scmConnectorId:contract.delivery.scmConnectorId}:{}),...(contract.delivery.repository?{targetRepository:contract.delivery.repository}:{}),...(contract.delivery.baseBranch?{baseBranch:contract.delivery.baseBranch}:{})}};
     return this.preview(owner,draft,{taskBinding,contract});
   }
-  async preview(owner: string, draft: PublishDraftV1,existing?:{taskBinding:NonNullable<PublicationRecord["taskBinding"]>;contract?:TaskContract}): Promise<PublicationPreview> {
+  async preview(owner: string, draft: PublishDraftV1,existing?:{taskBinding:NonNullable<PublicationRecord["taskBinding"]>;contract?:TaskContract},reviewedSelection?:ExecutionSelection): Promise<PublicationPreview> {
+    const reviewed=reviewedSelection?structuredClone(reviewedSelection):undefined;
+    if(draft.inputContext&&(Buffer.byteLength(draft.inputContext.content,"utf8")>65536||Array.from(draft.inputContext.content).some(character=>{const code=character.codePointAt(0)!;return code>=0xd800&&code<=0xdfff;})||createHash("sha256").update(draft.inputContext.content,"utf8").digest("hex")!==draft.inputContext.inputHash))throw inputError("INVALID_DRAFT","Input Context must bind the exact bounded UTF-8 content","/inputContext");
     if (!draft.description.trim()) throw inputError("INVALID_DRAFT","Task description must not be blank","/description","required");
     for (const [values,max,path] of [[draft.acceptanceCriteria,8000,"/acceptanceCriteria"],[draft.referenceLinks??[],2000,"/referenceLinks"],[draft.scopePaths??[],4000,"/scopePaths"]] as const) if (Array.from(values.join("\n")).length > max) throw inputError("INVALID_DRAFT","Draft field exceeds its length limit",path,"too-long");
     for (const link of draft.referenceLinks??[]) { let url: URL; try {url=new URL(link);} catch {throw inputError("INVALID_LINK","Invalid reference link","/referenceLinks");} if (!["http:","https:"].includes(url.protocol)||url.username||url.password) throw inputError("INVALID_LINK","References require http(s) without credentials","/referenceLinks"); }
@@ -155,7 +162,7 @@ export class PublicationService {
     }catch(error){deliveryCheck={id:"delivery",status:draft.startMode==="dispatch"?"blocked":"warning",code:error instanceof PublicationError?error.code:"SCM_PREFLIGHT_UNAVAILABLE",message:draft.startMode==="dispatch"?(error instanceof Error?error.message:"SCM preflight is unavailable"):"PR delivery is unverified; task creation is allowed and dispatch requires a fresh SCM/owning-origin review"};}
     const first=draft.description.split(/\r?\n/).find(line=>line.trim())?.trim()??"Task";
     const chars=Array.from(first); const title=draft.title?.trim() || chars.slice(0,80).join("")+(chars.length>80?"…":"");
-    const compiled=new TaskContractCompiler().compile({externalId:draft.clientDraftId,title,description:draft.description,labels:[],dependencies:[],...(repository?{repository:repository.id}:{}),scope:scopes,acceptanceCriteria:draft.acceptanceCriteria.filter(s=>s.trim()),verification,constraints:[],delivery:{type:draft.delivery.type},extensions:{}},1,repository?{delivery:{type:draft.delivery.type,...(draft.delivery.type==="pull-request"?{...(draft.delivery.targetRepository?{repository:draft.delivery.targetRepository.toLowerCase()}:{}),...(draft.delivery.baseBranch?{baseBranch:draft.delivery.baseBranch}:{}),...(draft.delivery.scmConnectorId?{scmConnectorId:draft.delivery.scmConnectorId}:{})}:{})},workspace:{repositoryId:repository.id,baseRef,...(baseCommit?{baseCommit}:{}),...(draft.targetBranch?{targetBranch:draft.targetBranch}:{})},...(draft.referenceLinks?{referenceLinks:draft.referenceLinks}:{})}:undefined);
+    const compiled=new TaskContractCompiler().compile({externalId:draft.clientDraftId,title,description:draft.description,labels:[],dependencies:[],...(repository?{repository:repository.id}:{}),scope:scopes,acceptanceCriteria:draft.acceptanceCriteria.filter(s=>s.trim()),verification,constraints:draft.constraints??[],delivery:{type:draft.delivery.type},extensions:{}},1,repository?{delivery:{type:draft.delivery.type,...(draft.delivery.type==="pull-request"?{...(draft.delivery.targetRepository?{repository:draft.delivery.targetRepository.toLowerCase()}:{}),...(draft.delivery.baseBranch?{baseBranch:draft.delivery.baseBranch}:{}),...(draft.delivery.scmConnectorId?{scmConnectorId:draft.delivery.scmConnectorId}:{})}:{})},...(draft.inputContext?{inputContext:structuredClone(draft.inputContext)}:{}),workspace:{repositoryId:repository.id,baseRef,...(baseCommit?{baseCommit}:{}),...(draft.targetBranch?{targetBranch:draft.targetBranch}:{})},...(draft.referenceLinks?{referenceLinks:draft.referenceLinks}:{})}:undefined);
     if(existing){this.assertTaskBinding(existing.taskBinding);if(existing.contract)compiled.contract=structuredClone(existing.contract);}
     const checks:PublicationPreview["checks"]=[workspaceCheck];
     if(deliveryCheck)checks.push(deliveryCheck);
@@ -164,7 +171,7 @@ export class PublicationService {
     let routingDecision:ModelRoutingDecision|undefined;
     if(draft.startMode==="dispatch") {
       if(compiled.state!=="READY"||!repository)checks.push({id:"contract",status:"blocked",code:"NEEDS_SPEC",message:"Complete the task contract before dispatch"});
-      else try {selection=await this.runtime.prepare(draft,repository,undefined,{owner});routingDecision=selection.routingDecision;checks.push({id:"dispatch",status:"passed",message:"Routing and native selection passed"});checks.push({id:"model-evidence",status:"warning",message:selection.selectionType==="native-default"?"Native configuration will choose the model; access, remaining quota and price are not confirmed":selection.pricingSnapshot?"Native catalog listing does not prove model access; account quota remains unconfirmed; the native price snapshot is shown separately":"Native catalog listing does not prove model access; remaining quota and price are not reported"});} catch(error){if(error instanceof PublicationError)routingDecision=error.routingDecision;checks.push({id:"dispatch",status:"blocked",code:error instanceof PublicationError?error.code:"DISPATCH_UNAVAILABLE",message:error instanceof Error?error.message:"Dispatch unavailable"});}
+      else try {selection=await this.runtime.prepare(draft,repository,undefined,{owner,...(reviewed?{reviewed}:{})});routingDecision=selection.routingDecision;checks.push({id:"dispatch",status:"passed",message:"Routing and native selection passed"});checks.push({id:"model-evidence",status:"warning",message:selection.selectionType==="native-default"?"Native configuration will choose the model; access, remaining quota and price are not confirmed":selection.pricingSnapshot?"Native catalog listing does not prove model access; account quota remains unconfirmed; the native price snapshot is shown separately":"Native catalog listing does not prove model access; remaining quota and price are not reported"});} catch(error){if(error instanceof PublicationError)routingDecision=error.routingDecision;checks.push({id:"dispatch",status:"blocked",code:error instanceof PublicationError?error.code:"DISPATCH_UNAVAILABLE",message:error instanceof Error?error.message:"Dispatch unavailable"});}
     }
     const publicationId=randomUUID(); const inputHash=contentHash(draft); const expiresAt=new Date(this.now().getTime()+600000).toISOString();
     if(existing)this.assertTaskBinding(existing.taskBinding);
@@ -183,15 +190,15 @@ export class PublicationService {
       this.db.saveEntity("publication-draft",draftIdentity,json({publicationId}));return preview;
     });
   }
-  async commit(owner: string,id: string,key: string|undefined,body: unknown): Promise<PublicationReceipt> {
+  async commit(owner: string,id: string,key: string|undefined,body: unknown,admission?:PublicationAdmissionHook): Promise<PublicationReceipt> {
     if(!key || key.length>200) throw new PublicationError("IDEMPOTENCY_KEY_REQUIRED",400,"Supply a stable Idempotency-Key");
     if(!body || typeof body!=="object") throw new PublicationError("INVALID_COMMIT",400,"Commit body is required");
     const input=body as {revision?:number;reviewHash?:string;confirmation?:{accepted?:boolean;routingAccepted?:boolean}};
     const receiptId=contentHash({owner,key});const requestHash=contentHash({id,body});
     const replay=()=>{const r=this.db.getEntity<JsonValue>("operation-receipt",receiptId) as unknown as {requestHash:string;publicationId:string}|undefined;if(r){if(r.requestHash!==requestHash)throw new PublicationError("IDEMPOTENCY_CONFLICT",409,"Key was used for a different commit");return this.record(owner,r.publicationId).receipt;}return undefined;};
     const existing=replay();if(existing)return existing;
-    const pending=this.pending.get(id);if(pending){await pending;return this.commit(owner,id,key,body);}
-    const operation=this.commitOnce(owner,id,input,receiptId,requestHash);this.pending.set(id,operation);
+    const pending=this.pending.get(id);if(pending){await pending;return this.commit(owner,id,key,body,admission);}
+    const operation=this.commitOnce(owner,id,input,receiptId,requestHash,admission);this.pending.set(id,operation);
     try{return await operation;}catch(error){
       if(error instanceof PublicationError&&!["CONFIRMATION_REQUIRED","ROUTING_CONFIRMATION_REQUIRED","STALE_REVIEW","IDEMPOTENCY_CONFLICT"].includes(error.code)){
         const record=this.record(owner,id);
@@ -200,7 +207,7 @@ export class PublicationService {
       throw error;
     }finally{this.pending.delete(id);}
   }
-  private async commitOnce(owner:string,id:string,input:{revision?:number;reviewHash?:string;confirmation?:{accepted?:boolean;routingAccepted?:boolean}},receiptId:string,requestHash:string):Promise<PublicationReceipt>{
+  private async commitOnce(owner:string,id:string,input:{revision?:number;reviewHash?:string;confirmation?:{accepted?:boolean;routingAccepted?:boolean}},receiptId:string,requestHash:string,admission?:PublicationAdmissionHook):Promise<PublicationReceipt>{
     let r=this.record(owner,id);
     if(input.confirmation?.accepted!==true)throw new PublicationError("CONFIRMATION_REQUIRED",400,"Review and confirm the publication");
     if(input.revision!==r.preview.revision||input.reviewHash!==r.preview.confirmation.reviewHash)throw new PublicationError("STALE_REVIEW",409,"Review revision changed");
@@ -223,6 +230,7 @@ export class PublicationService {
       if(r.taskBinding)this.assertTaskBinding(r.taskBinding);
       if(this.now().getTime()>=Date.parse(r.preview.expiresAt))throw new PublicationError("PREVIEW_EXPIRED",409,"Preview expired during preflight");
       if(this.config.current().revision!==r.configRevision)throw new PublicationError("SELECTION_CHANGED",409,"Configuration changed during preflight");
+      admission?.validate(r);
       if(r.selection?.routingDecision){
         const decision=r.selection.routingDecision;
         const use=this.db.getEntity<JsonValue>("model-routing-use",decision.id) as {publicationId:string}|undefined;
@@ -244,9 +252,18 @@ export class PublicationService {
         if(r.contract)this.db.saveTaskContract(taskId,json(r.contract));
       }
       this.db.saveEntity("task-execution-intent",taskId,json({publicationId:id,execution:r.draft.execution}));
-      r.receipt={publicationId:id,revision:r.preview.revision,state:"TASK_CREATED",taskId};this.db.saveEntity("task-publication",id,json(r));return r.receipt;
+      r.receipt={publicationId:id,revision:r.preview.revision,state:"TASK_CREATED",taskId};
+      admission?.commit(r,r.receipt);
+      this.db.saveEntity("task-publication",id,json(r));return r.receipt;
     });
-    if(r.draft.startMode!=="dispatch")return receipt;
+    if(r.draft.startMode!=="dispatch"||admission)return receipt;
+    return this.launchAccepted(owner,id);
+  }
+  /** Caller owns a durable dispatch claim; admission never runs inside this call. */
+  async launchAccepted(owner:string,id:string):Promise<PublicationReceipt>{
+    const r=this.record(owner,id),receipt=r.receipt;
+    if(!receipt)throw new PublicationError("PUBLICATION_CHANGED",409,"Publication has not been accepted");
+    if(r.draft.startMode!=="dispatch"||receipt.state!=="TASK_CREATED")return receipt;
     try {
       const run=await this.runtime.dispatch(r,receipt.taskId);
       const latest=this.record(owner,id);latest.receipt={...receipt,runId:run.id,...startupOutcome(this.db,run)};this.db.saveEntity("task-publication",id,json(latest));return latest.receipt;

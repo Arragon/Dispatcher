@@ -11,7 +11,11 @@ import type {PiExecutionRuntime} from "../src/pi-runtime.js";
 import type {CodexExecutionRuntime} from "../src/codex-runtime.js";
 import {ControllerService} from "../src/service.js";
 import {OpenCodeExecutionRuntime} from "../src/opencode-runtime.js";
+import {EncryptedLocalSecretStore} from "@dispatcher/config";
 import {normalizeOpenCodeCatalog} from "../../../packages/adapters/src/opencode-catalog.js";
+import {admitRhizaNative} from "./fixtures/rhiza-native-admission.js";
+import {assertRhizaUnknownRestart} from "./fixtures/rhiza-native-restart.js";
+import {clientHeaders} from "./fixtures/rhiza-service.js";
 import {editStored,replaceBindingCopies,type StoredEdit} from "./fixtures/managed-restart-storage.js";
 import {isGuardedControllerStart,isReadableManagedCodexRun,isReadableManagedOpenCodeRun} from "../src/start-recovery.js";
 vi.mock("node:fs/promises",async importOriginal=>{const actual=await importOriginal<typeof fsPromises>();return {...actual,access:vi.fn(actual.access)};});
@@ -22,7 +26,7 @@ afterEach(async()=>{for(const f of fixtures.splice(0)){if(!f.manualClose)await f
 const json=(value:unknown):JsonValue=>JSON.parse(JSON.stringify(value)) as JsonValue;
 function registry(service:ControllerService){return service["agentAdapters"];}
 type FixtureHost={ready:()=>Promise<OpenCodeV2InteractionPort>;disconnectLocal:()=>Promise<LocalRuntimeDisconnect>};
-async function fixture(options:{enabled?:boolean;executable?:"missing"|"directory"|"non-executable";cleanup?:Partial<LocalRuntimeDisconnect>;acquire?:(host:FixtureHost)=>FixtureHost|Promise<FixtureHost>}={}){
+async function fixture(options:{enabled?:boolean;executable?:"missing"|"directory"|"non-executable";cleanup?:Partial<LocalRuntimeDisconnect>;acquire?:(host:FixtureHost)=>FixtureHost|Promise<FixtureHost>;turnReadGate?:()=>Promise<void>;unconfirmedTurn?:boolean}={}){
  const root=realpathSync(mkdtempSync(join(tmpdir(),"dispatcher-opencode-compose-"))),repo=join(root,"repo"),executable=join(root,"native.cjs");mkdirSync(repo);writeFileSync(executable,"#!"+process.execPath+"\nthrow Error('stub must never execute');\n");chmodSync(executable,0o700);
  execFileSync("git",["init","--initial-branch=main",repo]);execFileSync("git",["-C",repo,"config","user.email","fixture@example.invalid"]);execFileSync("git",["-C",repo,"config","user.name","Fixture"]);writeFileSync(join(repo,"README.md"),"fixture\n");execFileSync("git",["-C",repo,"add","README.md"]);execFileSync("git",["-C",repo,"commit","-m","fixture"]);
  const ports:Array<{scope:OpenCodeV2OwnedScope;port:OpenCodeV2InteractionPort;backend:OpenCodeV2ExecutionBackend;posts:string[];requests:string[];disconnect:ReturnType<typeof vi.fn>;inputs:CliStartInput[];bodies:unknown[]}>=[];
@@ -35,13 +39,13 @@ async function fixture(options:{enabled?:boolean;executable?:"missing"|"director
    if(input.path==="/api/session"||input.path==="/api/session/"+native)return {data:{id:native,projectID:"project",model:{providerID:"provider",id:"model"},permissions:[],location:{directory:scope.workspacePath},time:{created:at,updated:at}}};
    if(input.path==="/api/session/active")return {data:{}};if(input.path.endsWith("/inbox")||input.path.endsWith("/permission"))return {data:[]};
    if(input.path.endsWith("/prompt")){prompt=(input.body as {text:string}).text;return {data:{id:"msg_receipt",sessionID:native,type:"user",payload:{text:prompt},delivery:"queue",time:{created:at}}};}
-   if(input.path.endsWith("/message"))return {data:[{id:"msg_receipt",type:"user",text:prompt,time:{created:at}},{id:"msg_done",type:"idle",outcome:"succeeded",time:{created:at}}],cursor:{previous:null,next:null}};throw Error(input.path);
+   if(input.path.endsWith("/message")){await options.turnReadGate?.();return {data:[{id:"msg_receipt",type:"user",text:prompt,time:{created:at}},...(options.unconfirmedTurn?[]:[{id:"msg_done",type:"idle",outcome:"succeeded",time:{created:at}}])],cursor:{previous:null,next:null}};}throw Error(input.path);
   }});
   const disconnect=vi.fn(async():Promise<LocalRuntimeDisconnect>=>{port.markDisconnected();return {version:1,connection:"closed",ownedRoot:"exited",callbacks:"drained",backgroundTools:"unknown",nativeSessionDeleted:false,...options.cleanup};});
   const backend=new OpenCodeV2ExecutionBackend({scope,executionRef:ref,hostFactory:()=>{const host={ready:async()=>port,disconnectLocal:disconnect};return options.acquire?options.acquire(host):host;}}),start=backend.start.bind(backend);
   vi.spyOn(backend,"start").mockImplementation(input=>{inputs.push(input);return start(input);});ports.push({scope,port,backend,posts,requests,disconnect,inputs,bodies});return backend;
  });
- const service=new ControllerService({dataDirectory:join(root,"data"),ownerToken:"fixture-owner",withRunner:true,opencodeExecutionFactory:factory,directoryPicker:async()=>repo});const holder={service,root,manualClose:false};fixtures.push(holder);await service.start({listen:false});
+ const service=new ControllerService({dataDirectory:join(root,"data"),ownerToken:"fixture-owner",secretStore:new EncryptedLocalSecretStore(join(root,"vault"),"synthetic-opencode-runtime-master"),withRunner:true,opencodeExecutionFactory:factory,directoryPicker:async()=>repo});const holder={service,root,manualClose:false};fixtures.push(holder);await service.start({listen:false});
  const config=structuredClone(service.configuration.current().config);if(options.executable==="non-executable")chmodSync(executable,0o600);
  config.agentProfiles=[{id:"p",alias:"P",provider:"opencode",runnerId:"local",...(options.enabled===false?{enabled:false}:{}),settings:{executable:options.executable==="missing"?join(root,"missing"):options.executable==="directory"?repo:executable},nativeInteraction:{mode:"compatible",backendId:"opencode-server-v2",executionLocation:"managed-worktree"}}];config.repositories=[{id:"repo",root:repo,defaultBaseRef:"main",scopePaths:[],verificationCommands:[]}];
  const apply=()=>service.configuration.applyPlan(service.configuration.buildPlan(config,"owner","fixture").id,{confirmed:true});
@@ -56,6 +60,60 @@ async function fixture(options:{enabled?:boolean;executable?:"missing"|"director
  const start=(run:Run)=>registry(service).get("p")!.start({runId:run.id,sessionId:run.sessionId,workspacePath:run.worktree,backendId:"opencode-server-v2",prompt:"fixture",executionSelection:run.executionSelection,beforeCreate:()=>{},beforeSend:()=>{},executionRef:run.executionRef,execution:{generation:1,attempt:1,leaseId:run.leaseId}});
  return {service,holder,root,executable,repo,ports,factory,create,start};
 }
+async function admitNative(f:Awaited<ReturnType<typeof fixture>>){
+ return admitRhizaNative(f.service,async context=>{
+  const catalog=normalizeOpenCodeCatalog([{providerID:"provider",id:"model",name:"Synthetic",enabled:true,capabilities:{input:["text"],output:["text"]}}],context,"synthetic-native-context","opencode-server-v2");
+  for(const entry of catalog.entries)entry.access="account-listed";return catalog;
+ });
+}
+it("observes the original RHIZA OpenCode turn after canonical ACK without consuming a second write admission",async()=>{
+ const held=Promise.withResolvers<void>(),entered=vi.fn(()=>held.promise),f=await fixture({turnReadGate:entered});
+ try{
+  const accepted=await admitNative(f);await f.service["rhizaJobs"].drain();await vi.waitFor(()=>expect(entered).toHaveBeenCalledOnce());const run=f.service.database.listEntities("run")[0] as unknown as Run,store=new InteractionStore(f.service.database),command=store.command(`native-start:${run.id}`),session=f.service.database.getEntity("adapter-session",run.sessionId) as {nativeInvocationId:string;nativeBinding:unknown};
+  expect(command?.state).toBe("ACKNOWLEDGED");expect(f.service.database.getEntity("rhiza-job",accepted.receipt.jobId)).toMatchObject({dispatch:{state:"observed",runId:run.id}});held.resolve();
+  await expect(registry(f.service).get("p")!.result(run.sessionId)).resolves.toMatchObject({state:"COMPLETED"});
+  expect(store.command(`native-start:${run.id}`)).toEqual(command);expect(f.service.database.getEntity("adapter-session",run.sessionId)).toMatchObject({state:"COMPLETED",nativeInvocationId:session.nativeInvocationId,nativeBinding:session.nativeBinding,turnObservation:{state:"completed"}});expect(f.factory).toHaveBeenCalledOnce();expect(f.ports[0]!.posts).toEqual(["/api/session",`/api/session/${(session.nativeBinding as {nativeSessionId:string}).nativeSessionId}/prompt`]);
+  expect(f.service["rhizaJobs"].modelEvidence(run)).toMatchObject({candidateAllowed:false,evidence:{status:"unverified",reported:null}});expect(f.service.database.handle.prepare("SELECT COUNT(*) AS n FROM native_model_invocations").get()?.n).toBe(0);expect(f.service.database.handle.prepare("SELECT COUNT(*) AS n FROM native_turn_completions").get()?.n).toBe(0);
+ }finally{held.resolve();}
+});
+it.each(["generation","lease","lease-expiry","control","adapter","runtime","selection","account-context"] as const)("fences post-ACK %s drift before a late read can continue or project",async drift=>{
+ const held=Promise.withResolvers<void>(),entered=vi.fn(()=>held.promise),f=await fixture({turnReadGate:entered});
+ const accepted=await admitNative(f);await f.service["rhizaJobs"].drain();await vi.waitFor(()=>expect(entered).toHaveBeenCalledOnce());const run=f.service.database.listEntities("run")[0] as unknown as Run,adapter=registry(f.service).get("p")!,runtime=f.service["opencodeRuntimes"].get("p")!,store=new InteractionStore(f.service.database),command=store.command(`native-start:${run.id}`),session=f.service.database.getEntity("adapter-session",run.sessionId) as {turnObservation:unknown};
+ expect(command?.state).toBe("ACKNOWLEDGED");const requests=f.ports[0]!.requests.length;
+ try{
+  if(drift==="generation")corrupt(f.service,"run",run.id,"generation",2);
+  if(drift==="lease")corrupt(f.service,"run",run.id,"leaseId","foreign");
+  if(drift==="lease-expiry")vi.spyOn(f.service,"now" as never).mockImplementation((()=>new Date("2101-01-01T00:00:00Z")) as never);
+  if(drift==="control")store.compareAndSwapControl({sessionId:run.sessionId,expectedRevision:store.control(run.sessionId)!.revision,expectedEpoch:store.control(run.sessionId)!.epoch,actorId:"owner",event:{type:"conflict",at:new Date().toISOString()}});
+  if(drift==="adapter")registry(f.service).set("p",{} as AgentAdapter);
+  if(drift==="runtime")f.service["opencodeRuntimes"].delete("p");
+  if(drift==="selection")corrupt(f.service,"run",run.id,"executionSelection.requestedModel","foreign/model");
+  if(drift==="account-context")corrupt(f.service,"adapter-session",run.sessionId,"authority.fingerprint","foreign-account");
+  held.resolve();await expect(adapter.result(run.sessionId)).rejects.toThrow();expect(f.ports[0]!.requests).toHaveLength(requests);expect(f.service.database.getEntity("adapter-session",run.sessionId)).toMatchObject({turnObservation:session.turnObservation});expect(store.command(`native-start:${run.id}`)).toEqual(command);expect(f.ports[0]!.posts).toHaveLength(2);expect(f.service.database.getEntity("rhiza-job",accepted.receipt.jobId)).toBeTruthy();expect(f.service.database.handle.prepare("SELECT COUNT(*) AS n FROM native_model_invocations").get()?.n).toBe(0);
+ }finally{held.resolve();registry(f.service).set("p",adapter);f.service["opencodeRuntimes"].set("p",runtime);}
+});
+it("retains admitted server facts while a revoked RHIZA client cannot read or control them",async()=>{
+ const held=Promise.withResolvers<void>(),entered=vi.fn(()=>held.promise),f=await fixture({turnReadGate:entered});
+ try{const accepted=await admitNative(f);await f.service["rhizaJobs"].drain();await vi.waitFor(()=>expect(entered).toHaveBeenCalledOnce());const run=f.service.database.listEntities("run")[0] as unknown as Run,config=structuredClone(f.service.configuration.current().config);config.rhizaIngress!.clients[0]!.enabled=false;f.service.configuration.applyPlan(f.service.configuration.buildPlan(config,"owner","revoke synthetic client during read").id,{confirmed:true});
+  const base=`/api/integrations/rhiza/v1/jobs/${accepted.receipt.jobId}`;for(const [method,url,payload] of [["GET",base,undefined],["POST",base+"/inputs",{}],["POST",base+"/cancellations",{}]] as const){const response=await f.service.app.inject({method,url,headers:clientHeaders,...(payload?{payload}:{})});expect(response.statusCode,response.body).toBe(401);}
+  held.resolve();await expect(registry(f.service).get("p")!.result(run.sessionId)).resolves.toMatchObject({state:"COMPLETED"});expect(f.ports[0]!.posts).toHaveLength(2);expect(f.service["rhizaJobs"].modelEvidence(run).candidateAllowed).toBe(false);
+ }finally{held.resolve();}
+});
+it("retains async OpenCode RHIZA binding without writing legacy model or process-completion evidence",async()=>{
+ const f=await fixture(),accepted=await admitNative(f);await f.service["rhizaJobs"].drain();
+ const run=f.service.database.listEntities("run")[0] as unknown as Run,session=f.service.database.getEntity("adapter-session",run.sessionId) as {nativeInvocationId:string;nativeBinding:unknown;modelInvocationId?:string};
+ expect(f.service.database.getEntity("rhiza-job",accepted.receipt.jobId)).toMatchObject({dispatch:{state:"observed",runId:run.id}});expect(session.nativeInvocationId).toBeTruthy();expect(session.nativeBinding).toEqual(new InteractionStore(f.service.database).binding(run.sessionId));expect(session.modelInvocationId).toBeUndefined();
+ expect(f.service.database.handle.prepare("SELECT COUNT(*) AS n FROM native_model_invocations").get()?.n).toBe(0);expect(f.service.database.handle.prepare("SELECT COUNT(*) AS n FROM native_turn_completions").get()?.n).toBe(0);
+});
+it("keeps a RHIZA OpenCode restart queryable without restoring a native writer or candidate",async()=>{
+ // Exercise an admitted bound execution with an unconfirmed turn; local disconnect is not success.
+ const f=await fixture({unconfirmedTurn:true}),accepted=await admitNative(f);await f.service["rhizaJobs"].drain();const current=f.service.database.listEntities("run")[0] as unknown as Run;
+ const run=f.service.database.getEntity("run",current.id) as unknown as Run,oldSession=f.service.database.getEntity("session",run.sessionId),oldAdapter=f.service.database.getEntity("adapter-session",run.sessionId),binding=new InteractionStore(f.service.database).binding(run.sessionId)!;
+ const before=(await f.service.app.inject({url:`/api/integrations/rhiza/v1/jobs/${accepted.receipt.jobId}`,headers:clientHeaders})).json();await f.service.stop();f.holder.manualClose=true;const requests=[...f.ports[0]!.requests];
+ const restored=new ControllerService({dataDirectory:join(f.root,"data"),ownerToken:"fixture-owner",secretStore:f.service.secrets,withRunner:true,opencodeExecutionFactory:f.factory});
+ try{await restored.start({listen:false});await assertRhizaUnknownRestart(restored,accepted,run,before);expect(restored.database.getEntity("session",run.sessionId)).toEqual(oldSession);expect(restored.database.getEntity("adapter-session",run.sessionId)).toEqual(oldAdapter);expect(new InteractionStore(restored.database).binding(run.sessionId)).toEqual(binding);expect(restored["nativePort"](binding)).toBeUndefined();expect(f.factory).toHaveBeenCalledOnce();expect(f.ports[0]!.requests).toEqual(requests);}
+ finally{await restored.stop();}
+});
 // S1: exact managed worktrees and native sessions, server selection and no standalone argv.
 it("composes two lazy exact server executions without an aggregate or standalone fallback",async()=>{
  const f=await fixture();expect(registry(f.service).get("p")).toBeInstanceOf(OpenCodeAdapter);expect(f.factory).not.toHaveBeenCalled();const a=await f.create("a"),b=await f.create("b"),[sa,sb]=await Promise.all([f.start(a),f.start(b)]);

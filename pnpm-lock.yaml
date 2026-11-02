@@ -179,6 +179,9 @@ importers:
       '@dispatcher/persistence':
         specifier: workspace:*
         version: link:../persistence
+      '@dispatcher/protocol':
+        specifier: workspace:*
+        version: link:../protocol
       ajv:
         specifier: 8.20.0
         version: 8.20.0

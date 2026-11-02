@@ -173,6 +173,20 @@ it("captures the original HTTP admission and body across headers preparation",as
  try{const address=server.address();if(!address||typeof address==='string')throw Error('missing test server');const transport=new OpenCodeV2HttpTransport(`http://127.0.0.1:${address.port}`,async()=>{entered.resolve();await release.promise;return {};});const input:OpenCodeV2Request={method:'POST',path:'/api/session',body:{text:'original'},beforeSend:()=>{if(!allowed)throw Error('authority revoked');}};const pending=transport.request(input);await entered.promise;allowed=false;input.beforeSend=()=>{};input.method='GET';input.body={text:'replacement'};release.resolve();await expect(pending).rejects.toMatchObject({code:'OPENCODE_WRITE_ADMISSION_REJECTED'});expect(seen).toEqual([]);
  }finally{release.resolve();await new Promise<void>((resolve,reject)=>server.close(error=>error?reject(error):resolve()));}
 });
+it.each(["throw","promise"])("reports observation admission when a %s guard rejects GET after held HTTP headers",async rejection=>{
+ const f=fixture(),reply=f.request.getMockImplementation()!,entered=Promise.withResolvers<void>(),release=Promise.withResolvers<void>(),seen:string[]=[];let hold=false,allowed=true;
+ const server=createServer(async(req,res)=>{let raw="";for await(const chunk of req)raw+=chunk;const path=new URL(req.url!,"http://localhost").pathname;seen.push(`${req.method} ${path}`);const value=await reply({method:req.method as "GET"|"POST",path,...(raw?{body:JSON.parse(raw)}:{})});res.setHeader("content-type","application/json");res.end(JSON.stringify(value));});
+ await new Promise<void>(resolve=>server.listen(0,"127.0.0.1",resolve));
+ try{
+  const address=server.address();if(!address||typeof address==="string")throw Error("missing test server");
+  const transport=new OpenCodeV2HttpTransport(`http://127.0.0.1:${address.port}`,async()=>{if(hold){entered.resolve();await release.promise;}return {};});
+  const port=new OpenCodeV2InteractionPort(f.scope,transport),created=await port.create(f.start);seen.length=0;hold=true;
+  const pending=port.readTurn(created.binding,f.start.commandId,{beforeSend:()=>{if(!allowed){if(rejection==="throw")throw Error("observer revoked");return Promise.resolve();}}});
+  await entered.promise;allowed=false;release.resolve();
+  await expect(pending).rejects.toMatchObject({code:"OPENCODE_OBSERVATION_ADMISSION_REJECTED",outcome:"unknown"});
+  expect(seen).toEqual([]);
+ }finally{release.resolve();await new Promise<void>((resolve,reject)=>server.close(error=>error?reject(error):resolve()));}
+});
 it("rechecks disconnection caused synchronously by the admission callback",async()=>{
  const f=fixture();f.start.beforePrompt=()=>f.port.markDisconnected();await expect(f.port.create(f.start)).rejects.toMatchObject({outcome:'not-created'});expect(f.request.mock.calls.filter(([input])=>input.method==='POST')).toHaveLength(0);
 });

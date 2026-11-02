@@ -3,7 +3,35 @@
 Local implementation/evidence backlog; none of these rows claims a passed
 Gate. Continue independent units without bypassing data/control safeguards.
 
-## Current checkpoint 2026-11-02: strict local snapshot delivery
+## 2026-11-02 current-candidate RHIZA ingress integration
+
+The committed ingress vertical slice is now adapted into the current Dispatcher
+candidate: authenticated service identity, canonical publication/receipt lookup,
+durable job/event/artifact views and fenced cancel/input/reassignment. Protocol1.1
+/artifact1.1.0 remains byte-identical to source8d247177; the schema advances through
+the original RHIZA12–18/writer8–14 catalog with upstream1–11 retained. Later native
+and strict snapshot boundaries remain in place. Input Context now reaches both
+the canonical contract and native prompt.
+
+The focused38-file/652-test run passed651 and identified that omitted Context
+compiler delta; the correction and its direct consumers passed3files/70tests.
+Copilot callback capture, final captured-time authority and verifiedTree receipt
+compatibility have direct regressions. The protocol exporter check passed.
+Milestone review found three omitted Devin source deltas (observation phase,
+catalog reason identity and pipe errors). Existing regressions reproduced six
+failures; the committed fixes preserve later raw-work lifecycle. Affected-file
+re-review has no remaining Critical/Important findings. Final default `pnpm check`
+passed264files/5875tests plus build/typecheck/lint/boundaries (473.44s test phase).
+The first gate attempt stopped at lint on retained draft extensions and an unused
+test import; drafts were renamed to text and the import removed, with no rule or
+assertion weakening. Production model-evidence capabilities, real external
+submission and bilateral RHIZA/native
+acceptance remain unqualified; disabled-by-default and qualification barriers
+remain enforced. No live database/provider/PR operation occurred in this unit.
+The pre-existing Copilot producer observation policy remains a CV-10 qualification
+follow-up; preserving the shared callback does not certify post-ACK native behavior.
+
+## Previous checkpoint 2026-11-02: strict local snapshot delivery
 
 Controller now completes qualified local native snapshot commits using the actual
 authored SHA, preserving proof-scoped command facts and unknown-outcome barriers.

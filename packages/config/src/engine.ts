@@ -61,7 +61,8 @@ function inferRisk(before: DispatcherConfig, after: DispatcherConfig): ConfigRis
   if (
     before.controller.adminStrategy!==after.controller.adminStrategy || before.controller.listen!==after.controller.listen || before.controller.port!==after.controller.port || before.controller.deploymentMode!==after.controller.deploymentMode ||
     JSON.stringify(before.runners.map(r=>({id:r.id,mode:r.mode,credentialRef:r.credentialRef})))!==JSON.stringify(after.runners.map(r=>({id:r.id,mode:r.mode,credentialRef:r.credentialRef}))) ||
-    JSON.stringify(before.policies) !== JSON.stringify(after.policies)
+    JSON.stringify(before.policies) !== JSON.stringify(after.policies) ||
+    JSON.stringify(before.rhizaIngress) !== JSON.stringify(after.rhizaIngress)
   ) {
     return "privileged";
   }

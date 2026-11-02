@@ -29,13 +29,13 @@ interface RuntimeOptions {
 function capture(original:CliStartInput):CliStartInput {
  try{
   // Spread reads each data/callback property once, including getter-backed properties.
-  const {beforePrompt,onBinding,onNativeEvent,normalizeLine,...data}={...original};
-  return {...structuredClone(data),...(beforePrompt?{beforePrompt:beforePrompt.bind(original)}:{}),...(onBinding?{onBinding:onBinding.bind(original)}:{}),...(onNativeEvent?{onNativeEvent:onNativeEvent.bind(original)}:{}),...(normalizeLine?{normalizeLine:normalizeLine.bind(original)}:{})};
+  const {beforePrompt,beforeObserve,onBinding,onNativeEvent,normalizeLine,...data}={...original};
+  return {...structuredClone(data),...(beforePrompt?{beforePrompt:beforePrompt.bind(original)}:{}),...(beforeObserve?{beforeObserve:beforeObserve.bind(original)}:{}),...(onBinding?{onBinding:onBinding.bind(original)}:{}),...(onNativeEvent?{onNativeEvent:onNativeEvent.bind(original)}:{}),...(normalizeLine?{normalizeLine:normalizeLine.bind(original)}:{})};
  }catch{return fail();}
 }
 function fresh(input:CliStartInput):CliStartInput {
- const {beforePrompt,onBinding,onNativeEvent,normalizeLine,...data}=input;
- return {...structuredClone(data),...(beforePrompt?{beforePrompt}:{}),...(onBinding?{onBinding}:{}),...(onNativeEvent?{onNativeEvent}:{}),...(normalizeLine?{normalizeLine}:{})};
+ const {beforePrompt,beforeObserve,onBinding,onNativeEvent,normalizeLine,...data}=input;
+ return {...structuredClone(data),...(beforePrompt?{beforePrompt}:{}),...(beforeObserve?{beforeObserve}:{}),...(onBinding?{onBinding}:{}),...(onNativeEvent?{onNativeEvent}:{}),...(normalizeLine?{normalizeLine}:{})};
 }
 class AcquiringTurn implements CliTurn {
  private turn?:CliTurn;private failed=false;private readonly admission:Promise<void>;
@@ -85,7 +85,7 @@ export class OpenCodeExecutionRuntime implements CliAgentBackend {
  private validate(input:CliStartInput,workspace:DirectoryIdentity):void {
   this.open();const ref=input.executionRef,native=input.nativeInput;
   try{
-   if(!isExecutionContextRef(ref)||ref.kind!=="managed-worktree"||ref.runnerId!==this.options.runnerId||input.executable!==this.executable.alias||!native||native.version!==1||native.profileId!==this.options.profile.id||native.backendId!==this.backendId||![native.runId,native.sessionId,native.commandId].every(identifier)||typeof native.prompt!=="string"||!native.prompt.length||native.prompt.length>262_144||native.approveTools!==false||typeof input.beforePrompt!=="function"||typeof input.onBinding!=="function"||typeof input.onNativeEvent!=="function"||input.environment&&Object.keys(input.environment).length)fail();
+   if(!isExecutionContextRef(ref)||ref.kind!=="managed-worktree"||ref.runnerId!==this.options.runnerId||input.executable!==this.executable.alias||!native||native.version!==1||native.profileId!==this.options.profile.id||native.backendId!==this.backendId||![native.runId,native.sessionId,native.commandId].every(identifier)||typeof native.prompt!=="string"||!native.prompt.length||native.prompt.length>262_144||native.approveTools!==false||typeof input.beforePrompt!=="function"||typeof input.beforeObserve!=="function"||typeof input.onBinding!=="function"||typeof input.onNativeEvent!=="function"||input.environment&&Object.keys(input.environment).length)fail();
    if(!native.newSession||Object.hasOwn(native,"providerSessionId"))fail("OPENCODE_CONTINUATION_REQUIRES_COMMAND_LANE");
    if(Object.hasOwn(native,"legacyModel")||Object.hasOwn(native,"modelSelection"))fail("MODEL_LEGACY_REVIEW_REQUIRED");
    const selection=freezeExecutionSelection(native.executionSelection,{profileId:this.options.profile.id,providerId:"opencode",backendId:this.backendId,selection:true,reasoning:false}),choice=selection?.requestedModel;
@@ -120,6 +120,7 @@ export class OpenCodeExecutionRuntime implements CliAgentBackend {
  }
  start(original:CliStartInput):CliTurn {
   const input=capture(original),workspace=directory(input.workspacePath);this.validate(input,workspace);
+  try{this.synchronous(input.beforeObserve!);this.validate(input,workspace);}catch(error){if(error instanceof AdapterStartError)throw error;fail();}
   const reference=input.executionRef as ExecutionHost["reference"],selection=input.nativeInput!.executionSelection!,token=Symbol("creation"),cancel=new AbortController();let entry:ExecutionHost|undefined,invoked=false;
   const guard=()=>{this.validate(input,workspace);if(cancel.signal.aborted)fail("OPENCODE_LOCAL_CONNECTION_CLOSED");if(entry){this.registered(entry);if(entry.creator!==token)fail("OPENCODE_SESSION_ALREADY_ADMITTED");if(entry.binding)this.persisted(entry,entry.binding);this.physical(input.workspacePath,workspace);this.registered(entry);}};
   const acquire=this.track((async()=>{
@@ -141,7 +142,7 @@ export class OpenCodeExecutionRuntime implements CliAgentBackend {
    const bridge=async(binding:NativeBinding|undefined,callback:()=>void|Promise<void>)=>{
     try{guard();if(binding)this.assertBinding(captured,binding);await callback();guard();if(binding)this.persisted(captured,binding);this.physical(input.workspacePath,workspace);this.registered(captured);}catch(error){captured.authorityFailed=true;throw error;}
    };
-   return captured.backend.start({...fresh(input),executable:this.executable.path,beforePrompt:()=>{guard();this.synchronous(input.beforePrompt!);guard();},onBinding:async originalBinding=>{
+   return captured.backend.start({...fresh(input),executable:this.executable.path,beforePrompt:()=>{guard();this.synchronous(input.beforePrompt!);guard();},beforeObserve:()=>{guard();this.synchronous(input.beforeObserve!);guard();},onBinding:async originalBinding=>{
     const binding=structuredClone(originalBinding);await bridge(binding,()=>input.onBinding!(structuredClone(binding)));captured.binding=structuredClone(binding);
    },onNativeEvent:async originalFact=>{
     const fact:NativeTurnFact=structuredClone(originalFact);if(!captured.binding||fact.nativeSessionId!==captured.binding.nativeSessionId)fail("OPENCODE_BINDING_SCOPE_CHANGED");await bridge(captured.binding,()=>input.onNativeEvent!(fact));

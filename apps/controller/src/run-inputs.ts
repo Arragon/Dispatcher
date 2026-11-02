@@ -1,6 +1,7 @@
 import {createHash} from "node:crypto";
 import type {DispatcherDatabase,JsonValue} from "@dispatcher/persistence";
 export interface RunInputIdentity {inputId:string;actorId:string;runId:string;profileId:string;sessionId:string;generation:number;authorityHash:string;payloadHash:string}
+export interface RunInputAuthority {runId:string;generation:number;leaseId:string;taskRevision:number;lastActivityAt?:string}
 export interface RunInputReceipt extends RunInputIdentity {state:"RESERVED"|"ACCEPTED"|"REJECTED"|"OUTCOME_UNKNOWN";acceptedAt:string;updatedAt:string}
 export class InputReceiptError extends Error {constructor(readonly code:string,message:string){super(message);this.name="InputReceiptError";}}
 /** A reservation survives a lost acknowledgement; only this process can confirm it. */
@@ -18,12 +19,13 @@ export class RunInputReceipts {
   const stored=this.db.getEntity<JsonValue>("run-input",this.key({actorId,inputId})) as unknown as RunInputReceipt|undefined;
   if(stored?.runId!==runId)return;return this.read(stored);
  }
- assertAvailable(input:Pick<RunInputIdentity,"runId"|"sessionId"|"generation"|"authorityHash">):void{
-  const uncertain=this.db.listEntities<JsonValue>("run-input").map(value=>value as unknown as RunInputReceipt).find(receipt=>receipt.runId===input.runId&&receipt.sessionId===input.sessionId&&receipt.generation===input.generation&&receipt.authorityHash===input.authorityHash&&["RESERVED","OUTCOME_UNKNOWN"].includes(receipt.state));
+ assertAvailable(input:Pick<RunInputIdentity,"runId"|"sessionId"|"generation"|"authorityHash">,owned?:RunInputIdentity):void{
+  if(owned){const reservation=this.read(owned);if(!this.owned.has(this.key(owned))||reservation?.state!=="RESERVED"||reservation.authorityHash!==owned.authorityHash||owned.runId!==input.runId||owned.sessionId!==input.sessionId||owned.generation!==input.generation||owned.authorityHash!==input.authorityHash)throw new InputReceiptError("INPUT_OUTCOME_UNKNOWN","Original reservation is not owned by this process");}
+  const uncertain=this.db.listEntities<JsonValue>("run-input").map(value=>value as unknown as RunInputReceipt).find(receipt=>receipt.runId===input.runId&&receipt.sessionId===input.sessionId&&receipt.generation===input.generation&&receipt.authorityHash===input.authorityHash&&["RESERVED","OUTCOME_UNKNOWN"].includes(receipt.state)&&!(owned&&receipt.state==="RESERVED"&&receipt.actorId===owned.actorId&&receipt.inputId===owned.inputId));
   if(uncertain)throw new InputReceiptError("INPUT_OUTCOME_UNKNOWN","A previous input for this waiting episode is unconfirmed; inspect the native session");
  }
  reserve(input:RunInputIdentity):RunInputReceipt{
-  return this.db.transaction(()=>{if(this.read(input))throw new InputReceiptError("INPUT_PENDING","This input was already reserved");const at=this.now().toISOString(),record:RunInputReceipt={...input,state:"RESERVED",acceptedAt:at,updatedAt:at};this.db.saveEntity("run-input",this.key(input),record as unknown as JsonValue,at);this.owned.add(this.key(input));return record;});
+  return this.db.transaction(()=>{if(this.read(input))throw new InputReceiptError("INPUT_PENDING","This input was already reserved");this.assertAvailable(input);const at=this.now().toISOString(),record:RunInputReceipt={...input,state:"RESERVED",acceptedAt:at,updatedAt:at};this.db.saveEntity("run-input",this.key(input),record as unknown as JsonValue,at);this.owned.add(this.key(input));return record;});
  }
  finish(input:RunInputIdentity,state:Exclude<RunInputReceipt["state"],"RESERVED">):RunInputReceipt{
   const key=this.key(input),stored=this.db.getEntity<JsonValue>("run-input",key) as unknown as RunInputReceipt|undefined;

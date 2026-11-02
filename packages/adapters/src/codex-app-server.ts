@@ -73,17 +73,20 @@ export class CodexStdioTransport implements CodexRpcTransport {
     child.stdin.on("error",()=>this.fail());child.on("error",()=>this.fail());
     this.rootExited=new Promise(resolve=>{child.once("exit",()=>{this.fail();resolve();});child.once("close",()=>{this.fail();resolve();});});
   }
-  static async open(scope:CodexAppServerScope):Promise<CodexStdioTransport> {
+  static async open(scope:CodexAppServerScope,beforeSpawn?:()=>void):Promise<CodexStdioTransport> {
     scope=structuredClone(scope);
     let home:DirectoryIdentity,workspace:DirectoryIdentity;
     try{home=directoryIdentity(scope.codexHome);workspace=directoryIdentity(scope.workspacePath);}
     catch{throw new AdapterStartError("not-created","CODEX_SCOPE_CHANGED","Codex native directory is unavailable or changed");}
+    const admit=()=>{try{if(beforeSpawn!==undefined)assertAdapterWriteAdmission(beforeSpawn);}catch{throw new AdapterStartError("not-created","CODEX_SPAWN_ADMISSION_REJECTED","Original native spawn authority changed");}};
+    admit();
     let version:string;
     try{version=await readOwnedNativeVersion({executable:scope.executable,workspacePath:scope.workspacePath,environment:{...process.env,CODEX_HOME:scope.codexHome},failure:code=>new AdapterContractError(code==="exit-unconfirmed"?"CODEX_PROBE_EXIT_UNCONFIRMED":"CODEX_RUNTIME_UNAVAILABLE","Codex version probe did not finish safely")});}
     catch(error){throw new AdapterStartError("not-created",error instanceof AdapterContractError&&error.code==="CODEX_PROBE_EXIT_UNCONFIRMED"?error.code:"CODEX_RUNTIME_UNAVAILABLE","Codex executable is unavailable");}
     if(version!==`codex-cli ${codexAppServerProtocolVersion}`)throw new AdapterStartError("not-created","CODEX_PROTOCOL_VERSION_UNQUALIFIED","Installed Codex version differs from the pinned protocol");
     try{assertDirectory(scope.codexHome,home);assertDirectory(scope.workspacePath,workspace);}
     catch{throw new AdapterStartError("not-created","CODEX_SCOPE_CHANGED","Codex native directory changed during the version probe");}
+    admit();
     return new CodexStdioTransport(spawn(scope.executable,["app-server","--listen","stdio://"],{cwd:scope.workspacePath,shell:false,stdio:["pipe","pipe","pipe"],env:childExecutionEnvironment(process.env,{PWD:scope.workspacePath,CODEX_HOME:scope.codexHome})}));
   }
   request(method:string,params:Record<string,unknown>,signal?:AbortSignal):Promise<unknown> {
@@ -240,10 +243,19 @@ export class CodexAppServerBackend implements CodexBackend,NativeInteractionPort
   private readonly metadataCallbacks=new Set<Promise<void>>();
   private readonly requestAdmissions=new Set<Promise<void>>();
   private readonly receivedRequests=new WeakMap<CodexRpcRequest,{request:CodexRpcRequest;at:number}>();
-  constructor(scope:CodexAppServerScope,private readonly connect:(scope:CodexAppServerScope)=>Promise<CodexRpcTransport>=CodexStdioTransport.open,authority?:CodexNativeAuthority) {
+  private readonly connect:(scope:CodexAppServerScope)=>Promise<CodexRpcTransport>;
+  constructor(scope:CodexAppServerScope,connect:((scope:CodexAppServerScope)=>Promise<CodexRpcTransport>)|undefined=undefined,authority?:CodexNativeAuthority,beforeSpawn?:()=>void) {
     if(![scope.profileId,scope.runnerId,scope.nativeStoreRef,scope.scopeFingerprint,scope.executionRefId,scope.executable].every(value=>validText(value))||!["on-request","untrusted"].includes(scope.approvalPolicy)||!["workspace-write","read-only"].includes(scope.sandbox))throw new AdapterStartError("not-created","CODEX_SCOPE_INVALID","Native scope is incomplete");
     this.homeIdentity=directoryIdentity(scope.codexHome);this.workspaceIdentity=directoryIdentity(scope.workspacePath);
     this.home=this.homeIdentity.path;this.workspace=this.workspaceIdentity.path;this.scope=structuredClone(scope);
+    // Explicit transports own their host boundary; the default retains original spawn admission.
+    this.connect=connect??(scope=>CodexStdioTransport.open(scope,()=>{
+      if(this.localClosed)throw new AdapterContractError("CODEX_NATIVE_RECONCILIATION_REQUIRED","Local connection is closed");this.assertScope();
+      if(beforeSpawn!==undefined)assertAdapterWriteAdmission(()=>{
+        const result:unknown=beforeSpawn();if(result!==undefined){const work=Promise.resolve(result).then(()=>undefined);this.metadataCallbacks.add(work);void work.finally(()=>this.metadataCallbacks.delete(work)).catch(()=>undefined);return work;}
+      });
+      this.assertScope();if(this.localClosed)throw new AdapterContractError("CODEX_NATIVE_RECONCILIATION_REQUIRED","Local connection is closed");
+    }));
     if(authority){if(!Number.isSafeInteger(authority.connectionEpoch)||authority.connectionEpoch<1||typeof authority.fenceFor!=="function"||typeof authority.assert!=="function"||authority.prepareIngress!==undefined&&typeof authority.prepareIngress!=="function")throw new AdapterStartError("not-created","CODEX_AUTHORITY_INVALID","Native authority is incomplete");this.authority=Object.freeze({connectionEpoch:authority.connectionEpoch,fenceFor:authority.fenceFor.bind(authority),assert:authority.assert.bind(authority),...(authority.prepareIngress?{prepareIngress:authority.prepareIngress.bind(authority)}:{})});}
   }
   setNativeRequestSink(sink:(event:NativeRequestEvent)=>void):void {this.requestSink=sink;}

@@ -21,6 +21,16 @@
   and immutable receipt. New business rework needs an explicit new attempt; native
   physical retry remains Dispatcher-owned. Accepted/ACK/terminal/idle and an empty
   queue cannot substitute for execution, physical-stop or quiescence evidence.
+- Shared native start inputs carry callable `beforeObserve` separately from data,
+  just like `beforePrompt`; every Runtime that clones these inputs must preserve
+  the callback and its original receiver. Never consume one-shot write admission
+  to authorize a later observation.
+- Final synchronous delivery authority checks reuse their captured timestamp for
+  RHIZA model projection; calling an injected clock afterward reopens a callback
+  window. Content-only verification sources do not replace strict snapshot Git
+  context/proof qualification. Legacy COMPLETE receipts may include the validated
+  SHA `tree` from explicit `verifiedTree` commits; malformed trees and incomplete
+  or unscopable history still block strict delivery.
 
 ## M0–M10 invariants
 

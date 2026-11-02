@@ -30,6 +30,11 @@ it("rejects a changed verification snapshot and retains failed/over-capacity art
 it("does not allocate a snapshot after authority is revoked",async()=>{
  const f=await fixture(),root=join(f.root,'verification'),snapshots=new VerificationSnapshots(f.manager,root);await expect(snapshots.createDeliveryCandidate(f.source,()=>{throw Error('STALE_AUTHORITY');})).rejects.toThrow('STALE_AUTHORITY');expect(existsSync(root)).toBe(false);
 });
+it("captures verification source content without changing its index and detects edits during commands",async()=>{
+ const f=await fixture();writeFileSync(join(f.workspace.path,"result.txt"),"verified\n");const index=execFileSync("git",["-C",f.workspace.path,"rev-parse","--path-format=absolute","--git-path","index"],{encoding:"utf8"}).trim(),before=hash(index),snapshots=new VerificationSnapshots(f.manager,join(f.root,"verification"));
+ const source=await snapshots.captureSource(f.source,()=>{});expect(hash(index)).toBe(before);await snapshots.assertSource(source,()=>{});
+ writeFileSync(join(f.workspace.path,"result.txt"),"changed during verification\n");await expect(snapshots.assertSource(source,()=>{})).rejects.toMatchObject({code:"CANDIDATE_CHANGED"});
+});
 
 it("inspects the actual worktree independently of inherited Git directory overrides",async()=>{
  const f=await fixture(),before=await f.manager.captureCandidate(f.source);vi.stubEnv('GIT_DIR',join(f.repo,'.git'));vi.stubEnv('GIT_WORK_TREE',f.repo);expect((await f.manager.captureCandidate(f.source)).id).toBe(before.id);

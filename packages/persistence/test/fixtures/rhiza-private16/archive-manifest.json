@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "databaseFile": "dispatcher.sqlite",
+  "capturedAt": "2026-10-24T13:13:20.337Z",
+  "schemaVersion": 16,
+  "sha256": "1f0b6978714b586b46f6ffa290c09ca8a638cec554057fa085f8031da4f9e0e2",
+  "bytes": 417792,
+  "inventory": {
+    "tasks": 1,
+    "runs": 0,
+    "sessions": 0,
+    "evidence": 0,
+    "pendingOutbox": 0,
+    "unresolvedCommands": 0
+  }
+}

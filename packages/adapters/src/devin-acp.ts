@@ -74,7 +74,10 @@ export class DevinLocalAcpClient {
   private constructor(private readonly scope: DevinLocalAcpScope, original: DevinLocalAcpScope, private readonly paths: Identity[], private readonly child: ChildProcessWithoutNullStreams) {
     this.original = original; this.originalPid = child.pid; this.cancellation = new OwnedProcessRoot(child);
     this.exited = new Promise(resolve => { child.once("exit", () => { resolve(); this.end("DEVIN_ACP_DISCONNECTED"); }); child.once("close", () => { resolve(); this.end("DEVIN_ACP_DISCONNECTED"); }); });
-    child.once("error", () => { this.notCreated = this.originalPid === undefined && child.pid === undefined; this.end("DEVIN_ACP_DISCONNECTED"); }); child.stderr.resume();
+    child.once("error", () => { this.notCreated = this.originalPid === undefined && child.pid === undefined; this.end("DEVIN_ACP_DISCONNECTED"); });
+    child.stdin.on("error", () => this.end("DEVIN_ACP_DISCONNECTED"));
+    child.stderr.on("error", () => this.end("DEVIN_ACP_DISCONNECTED"));
+    child.stderr.resume();
     const utf8 = new TextDecoder("utf-8", { fatal: true });
     const incoming = (Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>).pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
       transform: (bytes, controller) => {
@@ -448,7 +451,8 @@ export class DevinLocalAcpClient {
     try {
       check();
       const response = await this.request("session/prompt", { sessionId: active.binding.nativeSessionId, prompt: [{ type: "text", text: input.message }] }, { signal, timeoutMs: Math.max(1, Math.ceil(active.deadline - performance.now())), beforeSend: check }, () => { active.written = true; });
-      check();
+      // Write admission ends at send; the producer guards durable observations.
+      this.assertPrompt(active);
       return { stopReason: (response as { stopReason: DevinAcpStopReason }).stopReason, executionEvidence: active.proof, toolFailure: active.toolFailure, permissionDenied: active.permissionDenied, pendingTools: [...active.tools.values()].filter(status => status === "pending" || status === "in_progress").length };
     } catch (error) {
       const reason: unknown = this.disconnectSignal.reason;
