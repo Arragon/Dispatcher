@@ -1,3 +1,5 @@
+import {registerOrphanRoutes} from "./orphans.js";
+import {readRecoveryInventoryFromDatabase} from "@dispatcher/persistence";
 import {NativeWorkflowAuthority} from "./native-workflow-authority.js";
 import {selectRunConversation} from "./messaging-conversations.js";
 import {NativeControlNotices} from "./native-control-notices.js";
@@ -4869,6 +4871,7 @@ export class ControllerService {
     });
 
     this.app.addSchema(rhizaV1Schema);
+    registerOrphanRoutes(this.app,this.options.dataDirectory,this.workspaces,()=>readRecoveryInventoryFromDatabase(this.database),this.agentProcesses);
     const rhizaQuery = { type: "object", additionalProperties: false, properties: {} };
     this.app.post<{ Body: RhizaSubmitRequestV1 }>(`${RHIZA_API_PREFIX}/jobs`, { bodyLimit: 256 * 1024, schema: { querystring: rhizaQuery, body: { $ref: `${rhizaV1Schema.$id}#/$defs/submitRequest` }, response: { 202: { $ref: `${rhizaV1Schema.$id}#/$defs/receipt` } } } }, async (request, reply) => reply.code(202).send(await this.rhizaJobs.submit(this.requestPrincipals.get(request), request.body)));
     this.app.get<{ Params: { requestId: string } }>(`${RHIZA_API_PREFIX}/operations/by-key/:requestId`, { schema: { querystring: rhizaQuery, params: { type: "object", additionalProperties: false, required: ["requestId"], properties: { requestId: { type: "string", minLength: 1, maxLength: 200, pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]*$" } } }, response: { 200: { $ref: `${rhizaV1Schema.$id}#/$defs/receipt` } } } }, request => this.rhizaOperations.lookup(this.requestPrincipals.get(request), request.params.requestId));

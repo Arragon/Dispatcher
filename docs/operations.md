@@ -291,6 +291,28 @@ left intact. `applied: true` means a blocked copy was prepared; it cannot start
 Controller yet. Qualified reconciliation/activation, native/credential recovery
 and the real macOS recovery drill remain pending. Do not remove barriers manually.
 
+## Inspect orphan workspaces and processes
+
+Run the read-only report against an existing data directory:
+
+```bash
+pnpm dispatcher -- orphans --data-dir /absolute/data
+```
+
+The CLI inspects a stable private database copy and reports bounded ordinary and
+retained worktrees plus saved process claims. It cannot execute maintenance;
+saved PIDs remain unverified. A missing inventory root is left absent.
+
+An authenticated owner can use `GET /api/maintenance/orphans` for the current
+Controller inventory. `POST /api/maintenance/processes/:processId/stop` and
+`POST /api/maintenance/workspaces/:runId/cleanup` default to preview with `{}`.
+Execution requires `{"execute":true,"confirmed":true}`. The process id must name
+a current handle owned by that Controller, not a saved operating-system PID.
+Canonical/native references, unresolved mappings or tools, replaced directories
+and restore barriers prevent the operation. Unknown stop outcomes remain pending;
+retirement moves a qualified independent worktree intact into `.retained` and
+returns its retained path. These source trees have no automatic deletion policy.
+
 ## Native Remote Runner
 
 Build the Runner CLI, then inspect the platform-specific plan before applying

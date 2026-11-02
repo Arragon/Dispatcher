@@ -43,6 +43,17 @@ export function readRecoveryInventory(path:string):RecoveryInventory {
  try{
   db=new DatabaseSync(path,{readOnly:true,timeout:5000});const opened=fstatSync(fd),current=lstatSync(path);if(current.isSymbolicLink()||opened.dev!==current.dev||opened.ino!==current.ino)fail("BACKUP_FILE_CHANGED");
   db.exec("BEGIN");const state=inspect(db);if(!state.integrity)fail("BACKUP_INTEGRITY_FAILED");
+  return collectRecoveryInventory(db,state);
+ }finally{db?.close();closeSync(fd);}
+}
+export function readRecoveryInventoryFromDatabase(database:DispatcherDatabase):RecoveryInventory {
+ return database.transaction(()=>{
+  const db=database.handle;assertDatabaseSchema(db,migrations);
+  const state={schemaVersion:Number(db.prepare("SELECT COALESCE(MAX(version),0) AS version FROM schema_migrations").get()?.version),reconciliationRequired:restoreReconciliationRequired(db)};
+  return collectRecoveryInventory(db,state);
+ });
+}
+function collectRecoveryInventory(db:DatabaseSync,state:Pick<DatabaseInspection,"schemaVersion"|"reconciliationRequired">):RecoveryInventory {
   const records:Array<{kind:string;id:string;value:Record<string,unknown>}>=[];let bytes=0;
   for(const row of db.prepare("SELECT kind,id,CASE WHEN length(CAST(document_json AS BLOB))<=65536 THEN document_json ELSE NULL END AS document_json FROM entities WHERE kind IN ('run','session','adapter-session','native-runtime','runner-process') ORDER BY kind,id LIMIT 1001").iterate()){
    if(records.length>=1000||typeof row.document_json!=="string"||(bytes+=Buffer.byteLength(row.document_json))>4*1024*1024)fail("RECOVERY_INVENTORY_LIMIT");const value:unknown=JSON.parse(row.document_json);if(!value||typeof value!=="object"||Array.isArray(value)||typeof row.id!=="string"||row.id.length>512)fail("RECOVERY_INVENTORY_INVALID");records.push({kind:String(row.kind),id:row.id,value:value as Record<string,unknown>});
@@ -65,8 +76,8 @@ export function readRecoveryInventory(path:string):RecoveryInventory {
    for(const row of retention){const sessionId=String(row.session_id),p=workspacePaths.get(String(row.workspace_key))??result.references.find(ref=>ref.kind==="session"&&ref.id===sessionId)?.path;if(!p){result.unresolvedWorkspaceReferences++;continue;}if(!result.references.some(ref=>ref.kind==="session"&&ref.id===sessionId&&ref.path===resolve(p)))result.references.push({kind:"session",id:sessionId,path:resolve(p)});}
   }
   return result;
- }finally{db?.close();closeSync(fd);}
 }
+
 function newDirectory(path:string):string {
   const full=resolve(path),directory=join(realpathSync(dirname(full)),basename(full));mkdirSync(directory,{mode:0o700});return directory;
 }

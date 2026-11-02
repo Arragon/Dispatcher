@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+import {inspectOrphans} from "./orphans.js";
+import {copyStableDatabaseSnapshot} from "./database-snapshot.js";
+import {readRecoveryInventory} from "@dispatcher/persistence";
 import { accessSync, constants, readFileSync, realpathSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { homedir } from "node:os";
@@ -189,13 +192,18 @@ async function main(): Promise<void> {
     const bundle=flag(args,"--bundle"),target=flag(args,"--target-data-dir");if(!bundle||!target)throw Error("Use restore --bundle <directory> --target-data-dir <new-directory> [--execute --confirm]");
     console.log(JSON.stringify(restoreLocalDatabase(bundle,target,{execute:args.includes("--execute"),confirmed:args.includes("--confirm")}),null,2));
   }
+  else if(command==="orphans"){
+    if(args.includes("--execute"))throw Error("ORPHAN_LIVE_OWNER_REQUIRED");
+    const directory=dataDirectory(args),snapshot=copyStableDatabaseSnapshot(join(directory,"dispatcher.sqlite"),2*1024*1024*1024);
+    try{console.log(JSON.stringify(await inspectOrphans(directory,readRecoveryInventory(snapshot.path)),null,2));}finally{snapshot.close();}
+  }
   else if (command==="config"){
     const ownership=acquireInstanceLock(dataDirectory(args));
     try{await configCommand(args);}finally{ownership.release();}
   }
   else if (command === "auth") await authCommand(args);
   else if (["install", "start", "stop", "restart", "status", "logs", "uninstall", "prepare-upgrade", "apply-upgrade", "rollback-upgrade", "reconcile-upgrade"].includes(command)) await serviceCommand(command, args);
-  else throw new Error("Usage: dispatcher serve|config|auth|install|start|stop|restart|status|doctor|logs|backup|restore|prepare-upgrade|apply-upgrade|rollback-upgrade|reconcile-upgrade|runtime-contract|uninstall");
+  else throw new Error("Usage: dispatcher serve|config|auth|install|start|stop|restart|status|doctor|orphans|logs|backup|restore|prepare-upgrade|apply-upgrade|rollback-upgrade|reconcile-upgrade|runtime-contract|uninstall");
 }
 
 main().catch((error: unknown) => {

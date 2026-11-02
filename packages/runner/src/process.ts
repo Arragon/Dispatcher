@@ -1,7 +1,7 @@
 import { childExecutionEnvironment } from "@dispatcher/shared";
 import { spawn as spawnProcess } from "node:child_process";
 import { OwnedProcessGroup } from "@dispatcher/adapters";
-import { chmodSync,closeSync,constants,existsSync,fstatSync,lstatSync,mkdirSync,openSync,readdirSync,renameSync,rmSync,statSync,writeSync } from "node:fs";
+import { chmodSync,closeSync,constants,existsSync,fstatSync,lstatSync,mkdirSync,openSync,readdirSync,realpathSync,renameSync,rmSync,statSync,writeSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { arch, platform } from "node:os";
 import { randomUUID } from "node:crypto";
@@ -111,19 +111,52 @@ export function processTreeKillCommand(pid: number, targetPlatform: NodeJS.Platf
 }
 
 interface InternalProcess {
-  handle: ManagedProcessHandle;
+  id:string;pid:number;cancel:ManagedProcessHandle["cancel"];status:ManagedProcessHandle["status"];treeStatus:()=>ProcessTreeStatus;
+  runId:string;cwd:string;mode:"process"|"pty";
+  cwdIdentity?:{path:string;dev:number;ino:number};
 }
+export interface OwnedProcessSnapshot {id:string;runId:string;pid:number;cwd:string;cwdState:"verified"|"unknown";mode:"process"|"pty";state:"running"|"completed";ownership:"owned-live"|"unverified";tree:ProcessTreeStatus}
+export interface OwnedProcessStop {id:string;runId:string;parent:"running"|"completed";stopped:boolean;tree:ProcessTreeStatus}
+function captureDirectory(path:string):InternalProcess["cwdIdentity"] {try{const canonical=realpathSync(path),stat=lstatSync(canonical);if(stat.isDirectory()&&!stat.isSymbolicLink())return {path:canonical,dev:stat.dev,ino:stat.ino};}catch{/* spawning retains its original classified failure */}return undefined;}
+function directoryCurrent(identity:InternalProcess["cwdIdentity"]):boolean {const current=identity&&captureDirectory(identity.path);return Boolean(current&&identity&&current.path===identity.path&&current.dev===identity.dev&&current.ino===identity.ino);}
+function captureProcess(handle:ManagedProcessHandle,input:{runId:string;cwd:string},mode:InternalProcess["mode"],cwdIdentity:InternalProcess["cwdIdentity"]):InternalProcess {return {id:handle.id,pid:handle.pid,runId:input.runId,cwd:cwdIdentity?.path??input.cwd,...(cwdIdentity?{cwdIdentity}:{}),mode,cancel:handle.cancel.bind(handle),status:handle.status.bind(handle),treeStatus:handle.treeStatus?.bind(handle)??(()=>({state:"unknown",scope:"unverified"}))};}
+
 
 export interface ProcessStartInput {runId:string;file:string;args:string[];cwd:string;timeoutMs?:number;idleTimeoutMs?:number;mode?:"process"|"pty";env?:Readonly<Record<string,string|undefined>>}
 
 export class ProcessManager {
   private readonly active = new Map<string, InternalProcess>();
+  private readonly unresolved=new Map<string,InternalProcess>();
+  private readonly stopping=new Map<string,Promise<OwnedProcessStop>>();
   constructor(private readonly logRoot: string, private readonly budget: LogBudget = defaultBudget) {}
   get activeCount(): number { return this.active.size; }
 
+  inventory():OwnedProcessSnapshot[] {
+    for(const [id,process] of this.unresolved)if(process.treeStatus().state==="empty")this.unresolved.delete(id);
+    if(this.active.size+this.unresolved.size>1000)throw Error("ORPHAN_PROCESS_INVENTORY_LIMIT");
+    return [...this.active.values(),...this.unresolved.values()].map(process=>{const state=process.status().state;return {id:process.id,runId:process.runId,pid:process.pid,cwd:process.cwd,cwdState:directoryCurrent(process.cwdIdentity)?"verified":"unknown",mode:process.mode,state,ownership:state==="running"?"owned-live":"unverified",tree:{...process.treeStatus()}};});
+  }
+  async stopOwned(id:string,assertCurrent:()=>void):Promise<OwnedProcessStop> {
+    const captured=this.active.get(id);
+    if(!captured||captured.status().state!=="running")throw Error("ORPHAN_LIVE_OWNER_REQUIRED");
+    if(!directoryCurrent(captured.cwdIdentity))throw Error("ORPHAN_PROCESS_DIRECTORY_CHANGED");
+    assertCurrent();
+    if(this.active.get(id)!==captured||captured.status().state!=="running")throw Error("ORPHAN_LIVE_OWNER_REQUIRED");
+    if(!directoryCurrent(captured.cwdIdentity))throw Error("ORPHAN_PROCESS_DIRECTORY_CHANGED");
+    const prior=this.stopping.get(id);if(prior)return prior;
+    const outcome=():OwnedProcessStop=>{const tree=captured.treeStatus(),parent=captured.status().state;return {id,runId:captured.runId,parent,stopped:parent==="completed"&&tree.scope==="owned-process-group"&&tree.state==="empty",tree:{...tree}};};
+    let timer:ReturnType<typeof setTimeout>|undefined;
+    // A parent exit is not proof that its descendants or PTY are quiescent.
+    const cancellation=captured.cancel().then(outcome,()=>({...outcome(),stopped:false}));
+    const bounded=Promise.race([cancellation,new Promise<OwnedProcessStop>(resolve=>{timer=setTimeout(()=>resolve({...outcome(),stopped:false}),5000);})]).finally(()=>{if(timer)clearTimeout(timer);});
+    this.stopping.set(id,bounded);void cancellation.then(()=>{if(this.stopping.get(id)===bounded)this.stopping.delete(id);});return bounded;
+  }
+
+
   async start(request: ProcessStartInput): Promise<ManagedProcessHandle> {
     const input={...request,args:[...request.args],env:Object.freeze({...request.env??process.env})};
-    if (input.mode === "pty") return this.startPty(input);
+    const cwdIdentity=captureDirectory(input.cwd);
+    if (input.mode === "pty") return this.startPty(input,cwdIdentity);
     const id = randomUUID();
     const startedAt = Date.now();
     const stdout = new BoundedLogWriter(join(this.logRoot, input.runId), "stdout", this.budget);
@@ -167,7 +200,7 @@ export class ProcessManager {
         settled = true;
         if (timeout) clearTimeout(timeout);
         if (idleTimer) clearTimeout(idleTimer);
-        this.active.delete(id);
+        const captured=this.active.get(id);this.active.delete(id);if(captured&&captured.treeStatus().state!=="empty")this.unresolved.set(id,captured);
         const resolved = classification ?? (signal ? "signal" : code === 0 ? "success" : "nonzero");
         emit("lifecycle", resolved);
         resolve({ sessionId: id, exitCode: code, signal: signal as NodeJS.Signals | null, classification: resolved, stdoutTail: stdout.tail(), stderrTail: stderr.tail(), durationMs: Date.now() - startedAt });
@@ -185,11 +218,11 @@ export class ProcessManager {
       result: async () => await resultPromise,
       subscribe: (handler) => { listeners.add(handler); return () => listeners.delete(handler); },
     };
-    this.active.set(id, { handle });
+    this.active.set(id, captureProcess(handle,input,"process",cwdIdentity));
     return handle;
   }
 
-  private startPty(input: ProcessStartInput & {env:Readonly<Record<string,string|undefined>>}): ManagedProcessHandle {
+  private startPty(input: ProcessStartInput & {env:Readonly<Record<string,string|undefined>>},cwdIdentity:InternalProcess["cwdIdentity"]): ManagedProcessHandle {
     ensurePtySpawnHelper();
     const id = randomUUID();
     const startedAt = Date.now();
@@ -236,7 +269,7 @@ export class ProcessManager {
       settled = true;
       if (idleTimer) clearTimeout(idleTimer);
       if (timeout) clearTimeout(timeout);
-      this.active.delete(id);
+      const captured=this.active.get(id);this.active.delete(id);if(captured&&captured.treeStatus().state!=="empty")this.unresolved.set(id,captured);
       const resolved = classification ?? (signal ? "signal" : exitCode === 0 ? "success" : "nonzero");
       emit("lifecycle", resolved);
       resolveResult({ sessionId: id, exitCode, signal: null, classification: resolved, stdoutTail: output.tail(), stderrTail: "", durationMs: Date.now() - startedAt });
@@ -252,13 +285,13 @@ export class ProcessManager {
       send: async (data) => terminal.write(data),
       cancel: async () => { terminate("cancelled"); await resultPromise; },
       status: () => ({ state: settled ? "completed" : "running", pid: terminal.pid }),
-      treeStatus: () => ownership.treeStatus(),
+      treeStatus: () => ({state:"unknown",scope:"unverified"}),
       result: async () => await resultPromise,
       subscribe: (handler) => { listeners.add(handler); return () => listeners.delete(handler); },
     };
-    this.active.set(id, { handle });
+    this.active.set(id, captureProcess(handle,input,"pty",cwdIdentity));
     return handle;
   }
 
-  async shutdown(): Promise<void> { await Promise.all([...this.active.values()].map(({ handle }) => handle.cancel())); }
+  async shutdown(): Promise<void> { await Promise.all([...this.active.values()].map(process => process.cancel())); }
 }

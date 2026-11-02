@@ -3,6 +3,29 @@
 Local implementation/evidence backlog; none of these rows claims a passed
 Gate. Continue independent units without bypassing data/control safeguards.
 
+## 2026-11-02 orphan inspection and current-owner maintenance
+
+The original bounded orphan report and read-only CLI are restored. Authenticated
+preview/confirmed actions use the current ProcessManager handle, fresh recovery
+references and directory identity; saved PIDs cannot grant signal authority.
+Eligible worktrees move intact into .retained. Referenced, unknown and restore-
+blocked work remains protected, including after queue admission and inspection.
+
+The original bounded parser is unchanged. Live inventory reads through the owning
+SQLite handle/transaction; CLI inspection uses a stable private copy. A real
+competing-writer test confirms the outer SQLite lock remains held. Modern group
+drain/env/input capture is preserved. Actual ESRCH disproved one legacy fixture's
+same-group survival premise; that fixture now exercises PTY unknown membership,
+with original assertions/deadline unchanged. PTY evidence is explicitly unverified.
+Workspace source/tests are byte-identical. Necessary targets pass68+28+26 cases;
+unified review has no findings. Final default `pnpm check` passes270files/5937tests
+and all non-test gates (544.79s test phase), with11reviewed hashes unchanged.
+
+The first build's misplaced shebang and test run against unfinished build outputs
+remain recorded; corrected sequential build/checks pass. No user trees, old live
+data, credentials, provider or schema/writer/dependency changes occurred. This
+restoration does not qualify real native stop/control, restore activation or release.
+
 ## 2026-11-02 native workspace retention
 
 Current follow-up: the missing a499d84 native retention owner is now connected to

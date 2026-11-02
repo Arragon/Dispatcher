@@ -1413,6 +1413,19 @@ managed .retained directory, preserving its branch and complete contents rather
 than deleting ignored or late-written files. These retained source trees are not
 cache and have no automatic expiry or deletion policy.
 
+Protected maintenance routes expose bounded worktree and process inventories,
+distinguishing saved unverified PIDs from handles still owned by this ProcessManager.
+Preview is the default; confirmed stop/retirement rechecks current references,
+restore barriers and directory identity. Only the captured live handle can signal
+its process. Parent completion or PTY membership does not establish a drained
+owned process group; unresolved records continue to block retirement.
+
+Online recovery inventory shares the existing bounded parser through the owning
+DispatcherDatabase handle and transaction. It never reopens the live database
+pathname or performs a full integrity scan per request. The read-only `orphans`
+CLI uses the existing stable private database-copy boundary instead. Saved process
+claims and an inventory report never grant cleanup or signal authority.
+
 ## Internal Codex App Server contracts
 
 The preserved Codex stdio transport is internal to adapters and is pinned to

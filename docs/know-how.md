@@ -1092,6 +1092,13 @@
 - A shared Git mutation queue must resolve its common-directory key using the
   same Git-selector isolation as the actual command. Sanitized snapshot/retirement
   writes can otherwise lock a foreign repository selected by inherited GIT_DIR.
+- Live maintenance must read recovery references through the owning database
+  handle. Opening/closing another raw source descriptor in that process can
+  release its SQLite file locks. Offline CLI inspection uses the private stable
+  copy; both paths share the bounded parser, not a second live connection.
+- Real NodePTY objects can inherit EventEmitter.once. That property does not prove
+  qualified child-process group membership. ProcessManager's known PTY mode keeps
+  tree evidence unknown/unverified while retaining the existing physical drain.
 - A closed native runtime must remain registered until normalized local cleanup
   and its invalidating read barrier commit together. On persistence failure,
   retry the cached receipt without another physical disconnect. Local drain does

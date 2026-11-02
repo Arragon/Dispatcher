@@ -442,12 +442,13 @@ export class WorkspaceManager {
     return { workspace: structuredClone(workspace), safe: reasons.length === 0, reasons,changedFiles:[...new Set(changedFiles)].sort(),pins,action:"retain-worktree" };
   }
 
-  async cleanup(plan: CleanupPlan): Promise<WorkspaceCleanupResult> {
+  async cleanup(plan: CleanupPlan,assertCurrent?:()=>void): Promise<WorkspaceCleanupResult> {
     const requested=structuredClone(plan);
     if (!requested.safe) throw new WorkspacePolicyError("UNSAFE_CLEANUP", requested.reasons.join("; "));
     const repositoryRoot = requested.workspace.repositoryRoot ?? this.registry.get(requested.workspace.repositoryId).root;
     const environment=gitInspectionEnvironment();
     return mutateWorktrees(repositoryRoot,async()=>{
+    assertCurrent?.();
     const current=await this.cleanupPlan(requested.workspace);
     if(!current.safe)throw new WorkspacePolicyError("UNSAFE_CLEANUP",current.reasons.join("; "));
     try {
@@ -456,6 +457,7 @@ export class WorkspaceManager {
       if(!(await lstat(retainedRoot)).isDirectory()||await realpath(retainedRoot)!==retainedRoot)throw new WorkspacePolicyError("UNSAFE_CLEANUP","Retention directory identity changed");
       const retainedPath=resolve(retainedRoot,randomUUID());
       // Git remove can delete ignored files created after its clean check.
+      assertCurrent?.();
       await execute("git", ["-C", repositoryRoot, "worktree", "move", current.workspace.path,retainedPath],{timeout:10_000,maxBuffer:256*1024,env:environment});
       this.managed.delete(resolve(current.workspace.path));this.managedRoots.delete(resolve(current.workspace.path));
       return {state:"retained",retainedPath,workspace:structuredClone(current.workspace)};

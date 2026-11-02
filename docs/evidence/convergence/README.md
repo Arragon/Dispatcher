@@ -7,6 +7,13 @@ branch `codex/dispatcher-convergence`, based on v3 `19db456`.
 
 ## Delivery checkpoints
 
+Orphan inspection and current-owner maintenance now expose the original bounded
+report/read-only CLI plus explicit preview/confirmed stop and retained move. Live
+SQLite reads use the owning handle; saved PIDs stay unverified. Original source
+assertions are retained with one documented PTY fixture adaptation. Unified review
+has no findings; final270files/5937tests and non-test gates pass on11frozen hashes.
+Real native control/stop, restore activation and release remain separate Gates.
+
 Native workspace retention now protects durable session/control/unknown-effect
 references through Controller and retires eligible trees intact into .retained.
 Original18cases are preserved. The real foreign-Git queue regression was corrected
