@@ -2,7 +2,7 @@ import {GitContextError,readGitWorktreeContext,sameGitWorktreeContext,type GitWo
 import {constants} from "node:fs";
 import {childExecutionEnvironment} from "@dispatcher/shared";
 import {gitInspectionEnvironment,gitUrlRewriteConfigured,readWorkspaceStatus} from "./git-inspection.js";
-import {createHash} from "node:crypto";
+import {createHash,randomUUID} from "node:crypto";
 import {isGitDeliveryTarget,type GitDeliveryTarget} from "@dispatcher/domain";
 import { execFile, type ExecFileOptions } from "node:child_process";
 import { mkdir, realpath, stat, lstat, readlink, open } from "node:fs/promises";
@@ -14,8 +14,8 @@ const execute = (file:string,args:string[],options:ExecFileOptions={}) => execut
 // Git scans shared worktree administration while adding/removing entries. Keep
 // these mutations ordered across aliases/managers in this owning Runner process.
 const worktreeMutations=new Map<string,Promise<void>>();
-export async function mutateWorktrees<T>(repositoryRoot:string,operation:()=>Promise<T>):Promise<T>{
-  const reported=(await execute("git",["-C",repositoryRoot,"rev-parse","--git-common-dir"])).stdout.trim(),common=await realpath(resolve(repositoryRoot,reported));
+export async function mutateWorktrees<T>(repositoryRoot:string,operation:()=>Promise<T>,environment?:Readonly<Record<string,string|undefined>>):Promise<T>{
+  const reported=(await execute("git",["-C",repositoryRoot,"rev-parse","--git-common-dir"],environment?{env:environment}:{})).stdout.trim(),common=await realpath(resolve(repositoryRoot,reported));
   const previous=worktreeMutations.get(common)??Promise.resolve();let complete!:()=>void;const completion=new Promise<void>(resolve=>{complete=resolve;}),tail=previous.then(()=>completion);worktreeMutations.set(common,tail);
   await previous;
   try{return await operation();}finally{complete();if(worktreeMutations.get(common)===tail)worktreeMutations.delete(common);}
@@ -52,7 +52,13 @@ export interface CleanupPlan {
   workspace: WorkspaceHandle;
   safe: boolean;
   reasons: string[];
+  changedFiles?: string[];
+  pins?: WorkspacePin[];
+  action?: "retain-worktree";
 }
+export interface WorkspaceCleanupResult {state:"retained";retainedPath:string;workspace:WorkspaceHandle}
+export interface WorkspacePin {workspaceId:string;sessionId?:string;reason:string}
+export interface WorkspaceRetentionSource {getWorkspacePins(workspace:WorkspaceHandle):readonly WorkspacePin[]}
 
 export interface WorkspaceCandidate {
   version: 1;
@@ -103,11 +109,16 @@ export async function assertRepositoryIdentity(preview: {root:string;rootIdentit
 
 export class WorkspaceManager {
   private readonly managed = new Map<string, WorkspaceHandle>();
-  constructor(private readonly registry: RepositoryRegistry, private readonly worktreeRoot: string,private readonly owningPrivatePaths:()=>readonly string[]=()=>[]) {}
+  private readonly managedRoots=new Map<string,{device:number;inode:number}>();
+  constructor(private readonly registry: RepositoryRegistry, private readonly worktreeRoot: string,private readonly owningPrivatePaths:()=>readonly string[]=()=>[],private readonly retention?:WorkspaceRetentionSource) {}
 
   get(path: string): WorkspaceHandle | undefined {
     const workspace = this.managed.get(resolve(path));
     return workspace ? structuredClone(workspace) : undefined;
+  }
+  getForRun(runId:string):WorkspaceHandle|undefined {
+    const found=[...this.managed.values()].filter(workspace=>workspace.runId===runId);
+    return found.length===1?structuredClone(found[0]!):undefined;
   }
   private async physicalCandidate(path:string):Promise<string>{
     let ancestor=resolve(path);
@@ -296,6 +307,7 @@ export class WorkspaceManager {
     options.beforeCreate?.();
     try{await execute("git",["-C",handle.repositoryRoot!,"worktree","add","-b",handle.branch,handle.path,handle.baseRevision]);}
     catch(error){throw new WorkspacePolicyError("WORKTREE_CREATE_FAILED",error instanceof Error?error.message:"Worktree creation failed");}
+    const identity=await lstat(handle.path);this.managedRoots.set(handle.path,{device:identity.dev,inode:identity.ino});
     this.managed.set(handle.path,structuredClone(handle));return handle;
     });
   }
@@ -310,6 +322,7 @@ export class WorkspaceManager {
     const expected = await realpath(resolve(repositoryRoot, await git(repositoryRoot, ["rev-parse", "--git-common-dir"])));
     if (common !== expected || await git(path, ["symbolic-ref", "--short", "HEAD"]) !== handle.branch) throw new WorkspacePolicyError("WORKSPACE_IDENTITY_CHANGED", "Worktree identity changed");
     await git(path, ["merge-base", "--is-ancestor", handle.baseRevision, "HEAD"]);
+    const identity=await lstat(path);this.managedRoots.set(path,{device:identity.dev,inode:identity.ino});
     this.managed.set(path, structuredClone(handle));
   }
 
@@ -404,31 +417,50 @@ export class WorkspaceManager {
     return canonical;
   }
 
-  async cleanupPlan(workspace: WorkspaceHandle): Promise<CleanupPlan> {
+  async cleanupPlan(input: WorkspaceHandle): Promise<CleanupPlan> {
+    const workspace=structuredClone(input);
     const reasons: string[] = [];
+    const changedFiles:string[]=[],pins:WorkspacePin[]=[];
     const root = await realpath(this.worktreeRoot);
     const path = resolve(workspace.path);
-    if (!within(root, path)) reasons.push("workspace is outside managed root");
+    if (!within(root, path)||path===root) reasons.push("workspace is outside managed root");
     const registered = this.managed.get(path);
-    if (!registered || registered.runId !== workspace.runId || registered.branch !== workspace.branch || registered.baseRevision !== workspace.baseRevision) reasons.push("workspace is not registered by this manager");
+    if (!registered || !isDeepStrictEqual(registered,workspace)) reasons.push("workspace is not registered by this manager");
     try {
-      const info = await stat(path);
-      if (!info.isDirectory()) reasons.push("workspace is not a directory");
-      const status = (await execute("git", ["-C", path, "status", "--porcelain"])).stdout.trim();
-      if (status) reasons.push("workspace has uncommitted changes");
+      const info = await lstat(path),identity=this.managedRoots.get(path);
+      const canonical=await realpath(path),canonicalRoot=await realpath(root);
+      const repositoryRoot=workspace.repositoryRoot??this.registry.get(workspace.repositoryId).root;
+      const options={timeout:10_000,maxBuffer:256*1024,env:gitInspectionEnvironment()};
+      const git=async(directory:string,args:string[])=>(await execute("git",["-C",directory,"-c","core.fsmonitor=false","-c","core.hooksPath=/dev/null",...args],options)).stdout.replace(/\r?\n$/,"");
+      if(!info.isDirectory()||!identity||identity.device!==info.dev||identity.inode!==info.ino||!within(canonicalRoot,canonical)||canonical===canonicalRoot||await realpath(await git(path,["rev-parse","--show-toplevel"]))!==canonical||await realpath(await git(path,["rev-parse","--path-format=absolute","--git-common-dir"]))!==await realpath(await git(repositoryRoot,["rev-parse","--path-format=absolute","--git-common-dir"]))||await git(path,["branch","--show-current"])!==workspace.branch)reasons.push("workspace identity changed");
+      const status=(await readWorkspaceStatus(path)).split("\0").filter(Boolean);
+      for(let index=0;index<status.length;index++){const entry=status[index]!;changedFiles.push(entry.slice(3));if(/[RC]/.test(entry.slice(0,2)))changedFiles.push(status[++index]!);}
+      if (status.length) reasons.push("workspace has uncommitted changes");
     } catch { reasons.push("workspace cannot be inspected"); }
-    return { workspace: structuredClone(workspace), safe: reasons.length === 0, reasons };
+    try{if(this.retention)pins.push(...structuredClone(this.retention.getWorkspacePins(structuredClone(workspace))));}catch{reasons.push("workspace retention cannot be confirmed");}
+    for(const pin of pins)reasons.push(`workspace is pinned: ${pin.reason}`);
+    return { workspace: structuredClone(workspace), safe: reasons.length === 0, reasons,changedFiles:[...new Set(changedFiles)].sort(),pins,action:"retain-worktree" };
   }
 
-  async cleanup(plan: CleanupPlan): Promise<void> {
-    if (!plan.safe) throw new WorkspacePolicyError("UNSAFE_CLEANUP", plan.reasons.join("; "));
-    const repositoryRoot = plan.workspace.repositoryRoot ?? this.registry.get(plan.workspace.repositoryId).root;
+  async cleanup(plan: CleanupPlan): Promise<WorkspaceCleanupResult> {
+    const requested=structuredClone(plan);
+    if (!requested.safe) throw new WorkspacePolicyError("UNSAFE_CLEANUP", requested.reasons.join("; "));
+    const repositoryRoot = requested.workspace.repositoryRoot ?? this.registry.get(requested.workspace.repositoryId).root;
+    const environment=gitInspectionEnvironment();
     return mutateWorktrees(repositoryRoot,async()=>{
+    const current=await this.cleanupPlan(requested.workspace);
+    if(!current.safe)throw new WorkspacePolicyError("UNSAFE_CLEANUP",current.reasons.join("; "));
     try {
-      await execute("git", ["-C", repositoryRoot, "worktree", "remove", plan.workspace.path]);
-      this.managed.delete(resolve(plan.workspace.path));
+      const root=await realpath(this.worktreeRoot),retainedRoot=resolve(root,".retained");
+      await mkdir(retainedRoot,{recursive:true,mode:0o700});
+      if(!(await lstat(retainedRoot)).isDirectory()||await realpath(retainedRoot)!==retainedRoot)throw new WorkspacePolicyError("UNSAFE_CLEANUP","Retention directory identity changed");
+      const retainedPath=resolve(retainedRoot,randomUUID());
+      // Git remove can delete ignored files created after its clean check.
+      await execute("git", ["-C", repositoryRoot, "worktree", "move", current.workspace.path,retainedPath],{timeout:10_000,maxBuffer:256*1024,env:environment});
+      this.managed.delete(resolve(current.workspace.path));this.managedRoots.delete(resolve(current.workspace.path));
+      return {state:"retained",retainedPath,workspace:structuredClone(current.workspace)};
     }
-    catch (error) { throw new WorkspacePolicyError("WORKTREE_REMOVE_FAILED", error instanceof Error ? error.message : "Worktree removal failed"); }
-    });
+    catch (error) { if(error instanceof WorkspacePolicyError)throw error;throw new WorkspacePolicyError("WORKTREE_RETAIN_FAILED", error instanceof Error ? error.message : "Worktree retirement failed"); }
+    },environment);
   }
 }

@@ -1085,6 +1085,13 @@
   the individual thread; validate both for the root-only backend before saving a
   binding or reading history. cliVersion is creation metadata, so upgrading the
   exact executable pin does not qualify old-created threads or cold continuation.
+- Git worktree remove can delete ignored files written after a clean check.
+  Retire an eligible managed tree by moving it intact, after rechecking durable
+  native pins in the shared Git queue. A pruned Run does not release the retained
+  AdapterSession/native binding, and .retained worktrees are source data, not cache.
+- A shared Git mutation queue must resolve its common-directory key using the
+  same Git-selector isolation as the actual command. Sanitized snapshot/retirement
+  writes can otherwise lock a foreign repository selected by inherited GIT_DIR.
 - A closed native runtime must remain registered until normalized local cleanup
   and its invalidating read barrier commit together. On persistence failure,
   retry the cached receipt without another physical disconnect. Local drain does

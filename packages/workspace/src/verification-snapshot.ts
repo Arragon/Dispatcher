@@ -91,7 +91,7 @@ export class VerificationSnapshots {
     if((await this.git(source.worktree,["ls-tree","-r",tree])).split("\n").some(line=>line.startsWith("160000 ")))throw new WorkspacePolicyError("VERIFICATION_ENVIRONMENT_UNAVAILABLE","Submodule verification environment is not registered");
     const commit=await this.git(source.worktree,["commit-tree",tree,"-p",candidate.headRevision,"-m","Dispatcher verified candidate"]);assertAuthority();
     const id=randomUUID();const path=join(await realpath(this.root),id);
-    await mutateWorktrees(source.worktree,async()=>{assertAuthority();await this.git(source.worktree,["worktree","add","--detach",path,commit]);});
+    await mutateWorktrees(source.worktree,async()=>{assertAuthority();await this.git(source.worktree,["worktree","add","--detach",path,commit]);},gitInspectionEnvironment());
     const snapshotContext=await this.captureGitContext(path,"snapshot");assertAuthority();
     const info=await lstat(path),commonDirectory=sourceContext.commonDirectory.path,gitContext:DeliveryGitContext={version:1,source:sourceContext,snapshot:snapshotContext};
     const result:DeliveryCandidate={version:1,id,source,candidate,commit,tree,path,rootIdentity:{device:info.dev,inode:info.ino},commonDirectory,contentFingerprint:await this.content(path),gitContext,...remote};

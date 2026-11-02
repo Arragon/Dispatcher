@@ -11,6 +11,7 @@ import {CopilotExecutionRuntime,assertCopilotRuntimeSettings} from "./copilot-ru
 import {PiExecutionRuntime} from "./pi-runtime.js";
 import {NativeHistoryService,NativeHistoryError} from "./native-history.js";
 import {nativeSessionView} from "./native-session-view.js";
+import {NativeSessionRetention} from "./native-session-retention.js";
 import {isGuardedControllerStart,isReadableManagedCodexRun,isReadableManagedOpenCodeRun,isReadableManagedPiRun,isReadableManagedDevinRun,isReadableManagedCopilotRun} from "./start-recovery.js";
 import {parseNativeModelDefaultReview,qualifyNativeModelDefault,readNativeModelDefaultEvidence} from "./model-defaults.js";
 import {isExecutionContextRef,nativeBindingKey,normalizeNativeBinding,type NativeDriftPolicy,type NativeBinding,type InteractionCapabilities,type NativeResponse,type RunGitDelivery,type ScmDeliverySelection,type MutationFence,type ExecutionContextRef,type NativeControlView,type NativeObservation,type Session,type NativeModelInvocation,type NativeTurnCompletion} from "@dispatcher/domain";
@@ -656,7 +657,8 @@ export class ControllerService {
     }
     this.resourceRegistry.restore(this.database.listEntities<JsonValue>("resource-signal") as unknown as ResourceSnapshot[]);
     this.resourceProbes.restore(this.database.listEntities<JsonValue>("resource-probe-schedule") as unknown as ResourceProbeSchedule[]);
-    this.workspaces = new WorkspaceManager(this.repositories, join(options.dataDirectory, "worktrees"),()=>this.localPrivatePaths);
+    const nativeSessionRetention=new NativeSessionRetention(this.database);
+    this.workspaces = new WorkspaceManager(this.repositories, join(options.dataDirectory, "worktrees"),()=>this.localPrivatePaths,{getWorkspacePins:workspace=>nativeSessionRetention.getWorkspacePins(workspace.runId)});
     this.localGitDelivery=new LocalGitDelivery(this.database,this.agentProcesses,this.workspaces);
     this.verificationSources=new VerificationSnapshots(this.workspaces,join(options.dataDirectory,"verification-snapshots"));
     this.tasks = new CanonicalTaskService(this.database, () => this.now(),next=>{if(["REVIEW","DONE"].includes(next.state))this.rhizaJobs.assertTaskCandidate(next.id,next.currentRunId);});

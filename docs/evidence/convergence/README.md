@@ -7,6 +7,14 @@ branch `codex/dispatcher-convergence`, based on v3 `19db456`.
 
 ## Delivery checkpoints
 
+Native workspace retention now protects durable session/control/unknown-effect
+references through Controller and retires eligible trees intact into .retained.
+Original18cases are preserved. The real foreign-Git queue regression was corrected
+for both retirement and snapshot creation; affected review has no remaining
+findings. Final default gate passes267files/5908tests on seven frozen functional
+hashes. Retained source trees have no automatic deletion policy; real native
+control/stop/release Gates remain open.
+
 The installed Codex0.166.0-alpha.5.1 is now qualified through the existing exact
 App Server backend: real root binding, fixed-model/effort completion, native model
 observation and complete history. Unified review has no findings and the final

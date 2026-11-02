@@ -1401,6 +1401,18 @@ cannot establish the prompt terminal, background tool absence or writer release.
 This internal client has no public registration or Controller source and grants
 no native approval, history or continuation qualification.
 
+## Managed workspace retention
+
+Controller supplies the durable native retention source to WorkspaceManager.
+Active Runs, native session references, non-automated control, unknown commands,
+unconfirmed cancellation and deletion tombstones pin their execution workspace;
+elapsed time or a terminal Run alone cannot release those references. Cleanup
+clones its preview and rechecks physical identity, contents and pins inside the
+existing shared Git administration queue. An eligible workspace is moved to the
+managed .retained directory, preserving its branch and complete contents rather
+than deleting ignored or late-written files. These retained source trees are not
+cache and have no automatic expiry or deletion policy.
+
 ## Internal Codex App Server contracts
 
 The preserved Codex stdio transport is internal to adapters and is pinned to

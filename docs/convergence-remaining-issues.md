@@ -3,6 +3,27 @@
 Local implementation/evidence backlog; none of these rows claims a passed
 Gate. Continue independent units without bypassing data/control safeguards.
 
+## 2026-11-02 native workspace retention
+
+Current follow-up: the missing a499d84 native retention owner is now connected to
+Controller's existing WorkspaceManager. Native control/reference/unknown-effect
+facts prevent cleanup, including after Run pruning. Eligible independent trees
+move intact to .retained through the current shared Git queue; ignored/late data
+and branch identity remain available. All18 original retention cases (constructor
+adaptation only), Controller wiring and existing workspace/concurrency checks
+pass4files/30tests. The move-specific concurrency assertion verifies original-path
+departure and retained contents/branch; no deadline or safety assertion is weakened.
+Retained trees consume disk and are not cache/automatic deletion candidates.
+One milestone-review finding reproduced a foreign Git queue key for a local move;
+cleanup now uses the same captured environment for queue lookup and mutation.
+The same mismatch in the adjacent sanitized verification snapshot add is corrected
+through its existing queue argument. Actual A/B queue regressions cover both
+retirement and verification (first snapshot RED retained); affected3files/27tests
+pass; existing candidate regressions pass60cases. Affected re-review closes I1
+with no remainingCritical/Important/Minor. Final default `pnpm check` passed
+267files/5908tests and all non-test gates (485.44s test phase), with all seven
+reviewed functional hashes unchanged. No native/provider/release Gate is promoted.
+
 ## 2026-11-02 local native snapshot PR integration
 
 The local HUMAN-return path now connects a qualified verified snapshot to its
