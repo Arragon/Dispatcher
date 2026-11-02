@@ -18,6 +18,10 @@ afterEach(()=>{fault.active=false;fault.calls=0;for(const root of roots.splice(0
 function root(){const value=mkdtempSync(join(tmpdir(),"dispatcher-doctor-"));roots.push(value);return value;}
 function bytes(directory:string){return Object.fromEntries(readdirSync(directory).sort().map(name=>[name,createHash("sha256").update(readFileSync(join(directory,name))).digest("hex")]));}
 describe("read-only local doctor",()=>{
+  it.each([["24.21.0",false],["24.22.0",false],["24.22.1",true],["25.0.0",true]] as const)("reports Node %s support at the documented minimum",(version,supported)=>{
+    const directory=root(),db=new DispatcherDatabase(join(directory,"dispatcher.sqlite"));db.close();const before=bytes(directory);
+    expect(inspectLocalController(directory,version)).toMatchObject({node:version,nodeSupported:supported,state:"inspection-complete",requiresAttention:!supported});expect(bytes(directory)).toEqual(before);
+  });
   it("reports an uninitialized directory without creating it or a database",()=>{
     const directory=join(root(),"uninitialized");expect(inspectLocalController(directory)).toMatchObject({state:"not-initialized",databaseIntegrity:null,executionReadiness:"not-assessed"});expect(existsSync(directory)).toBe(false);
   });

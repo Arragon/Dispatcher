@@ -28,8 +28,11 @@ the owned acceptance helper, fixed without changing lint rules; it ran no tests.
 The1178f46 package predates this fix; its local-inbox observations do not qualify
 the repaired Runner or a subsequent source SHA.
 
-Review M1 is explicitly deferred: doctor still reports the former24.12 Node
-floor instead of24.22.1. It is a diagnostic mismatch, not an execution waiver.
+Review M1 was deferred at8f89. The diagnostic follow-up now compares the full
+Node minimum24.22.1:24.21.0/24.22.0 require attention, while24.22.1 and later
+major versions remain supported. Controller build,29 doctor cases and affected
+lint pass; M1 affected review closes the finding. Source bytes and existing
+restore/ownership checks are unchanged. This does not qualify the full suite.
 The integration review records its actual coverage and does not certify every
 line/provider codec or reconstruct historical NS-035 provenance. Exact remote
 CI, the final single review entrypoint, real native/GUI and complete restore

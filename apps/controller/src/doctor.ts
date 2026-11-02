@@ -16,8 +16,8 @@ function present(path:string):boolean {
 }
 /** Diagnostics never initialize/migrate a database or acquire execution/writer ownership. */
 export function inspectLocalController(directory:string,nodeVersion=process.versions.node):LocalControllerInspection {
-  const [major=0,minor=0]=nodeVersion.split(".").map(Number),dataDirectory=resolve(directory),path=join(dataDirectory,"dispatcher.sqlite");
-  const result:LocalControllerInspection={node:nodeVersion,nodeSupported:major>24||major===24&&minor>=12,dataDirectory,state:"not-initialized",databaseIntegrity:null,supportedSchemaVersion:migrations.at(-1)!.version,upgradeRequired:false,reconciliationRequired:false,requiresAttention:true,executionReadiness:"not-assessed"};
+  const [major=0,minor=0,patch=0]=nodeVersion.split(".").map(Number),dataDirectory=resolve(directory),path=join(dataDirectory,"dispatcher.sqlite");
+  const result:LocalControllerInspection={node:nodeVersion,nodeSupported:major>24||major===24&&(minor>22||minor===22&&patch>=1),dataDirectory,state:"not-initialized",databaseIntegrity:null,supportedSchemaVersion:migrations.at(-1)!.version,upgradeRequired:false,reconciliationRequired:false,requiresAttention:true,executionReadiness:"not-assessed"};
   try{
     if(present(`${path}.restore-pending`)){result.state="reconciliation-required";result.reconciliationRequired=true;return result;}
     if(present(join(dataDirectory,".dispatcher-archive"))){result.state="archive";return result;}
