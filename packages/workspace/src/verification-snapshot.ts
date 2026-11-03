@@ -52,7 +52,9 @@ export class VerificationSnapshots {
   }
   private async capture(source:CandidateSource):Promise<WorkspaceCandidate>{
     const candidate=await this.workspaces.captureCandidate(source);
-    if(source.repositoryScopePaths.length){const registered=await this.workspaces.captureCandidate({...source,scopePaths:source.repositoryScopePaths});if(registered.id!==candidate.id)throw new WorkspacePolicyError("CANDIDATE_CHANGED","Candidate changed during scope qualification");}
+    // The first capture already enforces an identical registered scope.
+    // Each later source/content checkpoint still performs its own fresh capture.
+    if(source.repositoryScopePaths.length&&(source.scopePaths.length!==source.repositoryScopePaths.length||source.scopePaths.some((scope,index)=>scope!==source.repositoryScopePaths[index]))){const registered=await this.workspaces.captureCandidate({...source,scopePaths:source.repositoryScopePaths});if(registered.id!==candidate.id)throw new WorkspacePolicyError("CANDIDATE_CHANGED","Candidate changed during scope qualification");}
     return candidate;
   }
   private async tree(source:CandidateSource):Promise<string>{

@@ -36,6 +36,22 @@ it("captures verification source content without changing its index and detects 
  writeFileSync(join(f.workspace.path,"result.txt"),"changed during verification\n");await expect(snapshots.assertSource(source,()=>{})).rejects.toMatchObject({code:"CANDIDATE_CHANGED"});
 });
 
+it("qualifies identical scopes once per fresh checkpoint and still rejects a late content edit",async()=>{
+ const f=await fixture(),snapshots=new VerificationSnapshots(f.manager,join(f.root,"verification")),source={...f.source,repositoryScopePaths:["."]};
+ writeFileSync(join(f.workspace.path,"result.txt"),"verified\n");
+ const original=f.manager.captureCandidate.bind(f.manager),capture=vi.spyOn(f.manager,"captureCandidate");
+ try{
+  const proof=await snapshots.captureSource(source,()=>{});expect(capture).toHaveBeenCalledTimes(2);
+  capture.mockImplementationOnce(async input=>{const candidate=await original(input);writeFileSync(join(f.workspace.path,"result.txt"),"changed after capture\n");return candidate;});
+  await expect(snapshots.assertSource(proof,()=>{})).rejects.toMatchObject({code:"CANDIDATE_CHANGED"});
+ }finally{capture.mockRestore();}
+});
+it("still enforces a distinct registered scope during source qualification",async()=>{
+ const f=await fixture(),snapshots=new VerificationSnapshots(f.manager,join(f.root,"verification"));
+ writeFileSync(join(f.workspace.path,"result.txt"),"outside registered scope\n");
+ await expect(snapshots.captureSource({...f.source,repositoryScopePaths:["README.md"]},()=>{})).rejects.toMatchObject({code:"PATH_OUT_OF_SCOPE"});
+});
+
 it("inspects the actual worktree independently of inherited Git directory overrides",async()=>{
  const f=await fixture(),before=await f.manager.captureCandidate(f.source);vi.stubEnv('GIT_DIR',join(f.repo,'.git'));vi.stubEnv('GIT_WORK_TREE',f.repo);expect((await f.manager.captureCandidate(f.source)).id).toBe(before.id);
 });
