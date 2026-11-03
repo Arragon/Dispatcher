@@ -47,7 +47,9 @@ function native(mode:string,root:string){
   return [user,assistant,idle,...(mode==="deleted-tail"?[{jsonrpc:"2.0",method:"session.lifecycle",params:{sessionId,type:"session.deleted"}}]:mode==="model-tail"?[event("session.model_change",{newModel:"different"})]:[])];
  };
  const respond=(m:{id:number;method:string;params:Record<string,unknown>})=>{
-  calls.push(m);fs.writeFileSync(path.join(root,"calls"),JSON.stringify(calls));
+  // The parent polls this log while native RPC responses are still arriving.
+  calls.push(m);const destination=path.join(root,"calls"),temporary=path.join(root,"calls.pending-"+process.pid);
+  fs.writeFileSync(temporary,JSON.stringify(calls));fs.renameSync(temporary,destination);
   let result:unknown={};
   if(m.method==="connect")result={protocolVersion:3};
   else if(m.method==="status.get")result={protocolVersion:3,version:"1.0.97"};
