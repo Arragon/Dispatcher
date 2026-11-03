@@ -168,8 +168,11 @@ it("renews matching remote leases through Runner acknowledgement before persisti
 it("revokes remote authority when canonical expiry passes while renewal acknowledgement is in flight",async()=>{
   const f=await setup(),p=await f.preview(),receipt=(await f.commit(p)).json(),before=f.service.database.getEntity("run",receipt.runId) as unknown as Run;
   f.control.expireAfterRenew=true;f.advanceClock(14*60_000);await f.client.sendEvent({type:"runner.heartbeat",runnerId:"remote",state:"ONLINE"});
-  await vi.waitFor(()=>expect(f.runtime.database.getEntity("native-execution",receipt.runId)).toMatchObject({lease:{revokedAt:expect.any(String)}}));
-  expect(f.service.database.getEntity("run",receipt.runId)).toMatchObject({leaseExpiresAt:before.leaseExpiresAt,state:"RUNNER_UNAVAILABLE"});expect(f.starts).toHaveLength(1);
+  await vi.waitFor(()=>{
+    expect(f.runtime.database.getEntity("native-execution",receipt.runId)).toMatchObject({lease:{revokedAt:expect.any(String)}});
+    expect(f.service.database.getEntity("run",receipt.runId)).toMatchObject({leaseExpiresAt:before.leaseExpiresAt,state:"RUNNER_UNAVAILABLE"});
+  });
+  expect(f.starts).toHaveLength(1);
 });
 
 it("does not mark a newly started Run missing from an older in-flight reconciliation snapshot",async()=>{

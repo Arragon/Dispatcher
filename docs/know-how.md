@@ -1463,12 +1463,6 @@
   absence only for ESRCH; propagate EPERM and other errors instead of recording
   successful drain.
 
-- Snapshot scope qualification can reuse its first candidate only when execution
-  and registered scope lists match exactly. This removes a duplicate coverage
-  read inside one checkpoint, not the independent fresh captures/tree checks in
-  captureSource, allocation or final authority validation. Never cache a candidate
-  across those checkpoints; late content changes must still be rejected.
-
 - Strict readonly Git diff requires diff.autoRefreshIndex=false: disabling optional
   locks alone does not prevent index stat refresh. Authored ancestry comes from
   the pinned raw commit body and its canonical Git object hash, including exact
