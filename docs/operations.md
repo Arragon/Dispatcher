@@ -408,6 +408,20 @@ open.
 Accepted milestone baselines are copied into `benchmarks/baselines/` so they
 remain reviewable after local runtime data is cleaned.
 
+Two additional controlled workloads use the same fixed release:
+
+```bash
+pnpm benchmark -- --scenario history --history-runs 10000 --duration 5 --release-dir /absolute/staged-release
+node benchmarks/native-interactions.mjs --release-dir /absolute/staged-release
+```
+
+History measures synthetic metadata pagination through the Controller API. The
+native component harness uses owned Node fixtures with the packaged transport
+and Runner to check host sharing, queued input, cancellation, retained output and
+bounded history reconstruction. It records its script hash and rechecks package
+integrity; failed runs retain temporary evidence. These workloads do not qualify
+browser rendering, real provider throughput, native writer release or a soak Gate.
+
 
 ## Check native capabilities before publication
 
