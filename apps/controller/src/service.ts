@@ -1952,7 +1952,7 @@ export class ControllerService {
         const usage=await adapter.usage!(run.sessionId);
         if(!current())return;
         this.recordProfileResource(run.profileId,run.sessionId,usage);
-        const complete=this.recordProfileUsage(run.profileId,run.sessionId,usage);
+        const complete=this.recordProfileUsage(run,usage);
         // Keep the specific admission failure; a generic partial result must not hide an event conflict.
         if(!complete&&(this.database.getEntity("usage-error",run.id) as {status?:string}|undefined)?.status!=="unknown")this.database.saveEntity("usage-error",run.id,{runId:run.id,profileId:run.profileId,status:"unknown",reasonCode:Array.isArray(usage.observations)&&usage.observations.length?"USAGE_PARTIAL":"USAGE_NOT_REPORTED",observedAt:this.now().toISOString()});
         this.database.saveEntity("usage-read-state",run.id,json({...record,state:complete?"complete":"unknown",completedAt:this.now().toISOString(),...(complete?{lastSuccessAt:this.now().toISOString(),lastSuccessfulScopeKey:scopeKey}:{}),nextAttemptAt:new Date(this.now().getTime()+backoffDelayMs(readAttempts,1_000,5*60_000)).toISOString()}));
@@ -1966,14 +1966,14 @@ export class ControllerService {
     this.usageReads.set(run.id,{runId:run.id,profileId:run.profileId,promise});void promise.catch(error=>{if(!this.usageReadClosed)this.app.log.warn({error:redactValue(error),runId:run.id},"Usage persistence failed");});
   }
 
-  private recordProfileUsage(profileId:string,sessionId:string,usage:Record<string,unknown>):boolean {
-    const usageRun=this.database.listEntities<JsonValue>("run").map(value=>value as unknown as Run).find(run=>run.profileId===profileId&&run.sessionId===sessionId);
-    const recorded=usageRun&&usage.observations!==undefined?this.saveUsageObservations(usage.observations,{profileId,runId:usageRun.id,sessionId,generation:usageRun.generation}):false;
+  private recordProfileUsage(run:Readonly<Run>,usage:Record<string,unknown>):boolean {
+    // Both callers recheck this exact Run after the read; keep that context without scanning history.
+    const {profileId,sessionId}=run;
+    const recorded=usage.observations!==undefined?this.saveUsageObservations(usage.observations,{profileId,runId:run.id,sessionId,generation:run.generation}):false;
     const reportedTokens = usage.tokens as { input?: unknown; output?: unknown; cachedInput?: unknown } | undefined;
     if (reportedTokens && Number.isSafeInteger(reportedTokens.input) && Number.isSafeInteger(reportedTokens.output) && Number(reportedTokens.input) >= 0 && Number(reportedTokens.output) >= 0) {
       const tokens = { input: Number(reportedTokens.input), output: Number(reportedTokens.output), ...(Number.isSafeInteger(reportedTokens.cachedInput) && Number(reportedTokens.cachedInput) >= 0 && Number(reportedTokens.cachedInput) <= Number(reportedTokens.input) ? { cachedInput: Number(reportedTokens.cachedInput) } : {}) };
-      const run = this.database.listEntities<JsonValue>("run").map((value) => value as unknown as Run).find((value) => value.profileId === profileId && value.sessionId === sessionId);
-      if (run) this.database.saveEntity("run-telemetry", run.id, json({ tokens, tokenScope: "latest-turn", telemetryAt: this.now().toISOString() }));
+      this.database.saveEntity("run-telemetry", run.id, json({ tokens, tokenScope: "latest-turn", telemetryAt: this.now().toISOString() }));
     }
     const relevant=recorded&&Array.isArray(usage.observations)?usage.observations.filter(value=>value&&["turn","run","session"].includes(value.scope)):[];
     return Boolean(relevant.length&&relevant.every(value=>value.completeness==="complete"));
@@ -1989,7 +1989,7 @@ export class ControllerService {
     let usage:Record<string,unknown>;
     try{usage=await Promise.race([adapter.usage(sessionId),closed]);}finally{signal.removeEventListener("abort",cancel);}
     if(this.usageReadClosed||this.usageSourceScope(run,adapter)!==scope)return undefined;
-    this.recordProfileUsage(profileId,sessionId,usage);
+    this.recordProfileUsage(run,usage);
     return this.recordProfileResource(profileId,sessionId,usage);
   }
 

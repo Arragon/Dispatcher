@@ -112,6 +112,12 @@
   development state with the ordinary frozen offline install, not a permanent
   check bypass. Hash a detached artifact after native smoke can fix helper modes.
 
+- Isolated pnpm deploys can produce different virtual-store paths, generated
+  shims and deployment lock hashes even when application sources are unchanged.
+  Equal file counts or byte totals do not prove equal runtime inventories.
+  Bind measurements to the actual producer SHA and manifest; an evidence-only
+  commit does not create a newly measured artifact.
+
 - A new restore directory must win the same ownership primitive as Controller
   before copying records or writing its barrier. If another owner wins the
   mkdir-to-lock interval, leave its files intact. On macOS, canonicalize /var and
@@ -1068,6 +1074,11 @@
   availability. Preserve an event/identity conflict through generic partial reads
   and later read exceptions until admitted recovery; a transport error does not
   reconcile conflicting native facts. Keep accepted observations immutable.
+
+- Carry the admitted Run through usage recording after the post-read context
+  check. Re-enumerating all Runs by profile/session adds history-sized decoding
+  work to each read and discards the exact context already checked. Keep the
+  same Run ID/generation for normalized observations and legacy token telemetry.
 
 - Preserve owning-cache quota state across remote transport: source freshness,
   last success and account context are evidence, not a new Controller read time.

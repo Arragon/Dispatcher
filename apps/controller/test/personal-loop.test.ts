@@ -291,6 +291,21 @@ describe("personal Slack–Linear loop", () => {
       }
     }finally{ready.resolve({state:"UNKNOWN",source:"probe",confidence:"low"});await advancing;await cancellation;}
   });
+  it("records admitted Run usage without enumerating unrelated Run inventory",async()=>{
+    const f=await setup();await f.service.app.inject({headers:OWNER,method:"POST",url:`/api/tasks/${f.taskId}/dispatch`,payload:{profileId:"orion"}});
+    const internal=f.service as unknown as {agentAdapters:Map<string,AgentAdapter>;kickRunUsage(run:Run):void;usageReads:Map<string,{promise:Promise<void>}>};
+    await Promise.all([...internal.usageReads.values()].map(value=>value.promise));
+    const run=f.run(),adapter=internal.agentAdapters.get("orion")!,usage=vi.spyOn(adapter,"usage").mockResolvedValue({...usageFact(f,"bounded-read"),tokens:{input:12,output:0,cachedInput:0}});
+    f.control.now=new Date(f.control.now.getTime()+60_000);
+    const original=f.service.database.listEntities.bind(f.service.database);
+    const inventory=vi.spyOn(f.service.database,"listEntities").mockImplementation(<T>(kind:string):T[]=>{if(kind==="run")throw Error("Run inventory is unavailable to a per-Run usage read");return original<T>(kind);});
+    try{
+      internal.kickRunUsage(run);await Promise.all([...internal.usageReads.values()].map(value=>value.promise));
+      expect(usage).toHaveBeenCalledOnce();expect(f.service.database.getEntity("usage-read-state",run.id)).toMatchObject({state:"complete"});
+      expect(f.service.database.listEntities("usage-observation")).toHaveLength(1);
+      expect(f.service.database.getEntity("run-telemetry",run.id)).toMatchObject({tokens:{input:12,output:0,cachedInput:0},tokenScope:"latest-turn"});
+    }finally{inventory.mockRestore();}
+  });
   it("keeps telemetry read failure separate from a completed native execution",async()=>{
     const f=await setup();await f.service.app.inject({headers:OWNER,method:"POST",url:`/api/tasks/${f.taskId}/dispatch`,payload:{profileId:"orion"}});
     const adapter=(f.service as unknown as {agentAdapters:Map<string,AgentAdapter>}).agentAdapters.get("orion")!;vi.spyOn(adapter,"usage").mockRejectedValue(Error("telemetry reader unavailable"));f.control.turn="completed";

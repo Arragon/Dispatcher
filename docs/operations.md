@@ -408,11 +408,12 @@ open.
 Accepted milestone baselines are copied into `benchmarks/baselines/` so they
 remain reviewable after local runtime data is cleaned.
 
-Two additional controlled workloads use the same fixed release:
+Additional controlled workloads use the same fixed release:
 
 ```bash
 pnpm benchmark -- --scenario history --history-runs 10000 --duration 5 --release-dir /absolute/staged-release
 node benchmarks/native-interactions.mjs --release-dir /absolute/staged-release
+node benchmarks/metering.mjs --release-dir /absolute/staged-release
 ```
 
 History measures synthetic metadata pagination through the Controller API. The
@@ -421,6 +422,14 @@ and Runner to check host sharing, queued input, cancellation, retained output an
 bounded history reconstruction. It records its script hash and rechecks package
 integrity; failed runs retain temporary evidence. These workloads do not qualify
 browser rendering, real provider throughput, native writer release or a soak Gate.
+
+The metering harness seeds 1k active and 10k historical synthetic Runs, then
+collects all 11k through the Controller's guarded usage reader. Fleet must respond
+while four normalized fixture reads are held. Fifteen active-cache passes and
+ledger replays must add no reads, events or quantities; exact token totals are
+checked separately. Metadata setup, initial collection and Fleet timings are
+reported independently. Its process memory includes the driver and synthetic
+data; these samples do not qualify real owning-Runner/native load or billing.
 
 
 ## Check native capabilities before publication
