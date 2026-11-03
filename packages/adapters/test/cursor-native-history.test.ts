@@ -207,19 +207,20 @@ it("does not let codec cancellation hide inherited-pipe cleanup uncertainty",asy
 });
 it.each(["stdout","stderr"] as const)("does not return fresh inventory after a %s source pipe error during cleanup",async pipe=>{
  const f=fixture("late-pipe-error"),childProcess=createRequire(import.meta.url)("node:child_process") as typeof childProcessModule,originalSpawn=childProcess.spawn;
+ let inventorySeen=false,injected=false;
  const spy=vi.spyOn(childProcess,"spawn").mockImplementation(((file:string,args?:readonly string[],options?:childProcessModule.SpawnOptions)=>{
   const child=originalSpawn(file,args??[],options??{});
   if(file===f.scope.executable&&args?.[0]==="acp"){
    // The isolated pre-fix stderr probe needs a fixture handler to avoid
    // terminating the test host; production must record the same failure.
    child[pipe]?.once("error",()=>{});
-   let injected=false;child.stdout?.on("data",(chunk:Buffer)=>{
-    if(!injected&&chunk.toString().includes('"sessionId":"native-exact"')){injected=true;setTimeout(()=>child[pipe]?.destroy(new Error("private-pipe-error-do-not-export")),5);}
-   });
+   child.stdout?.on("data",(chunk:Buffer)=>{if(chunk.toString().includes('"sessionId":"native-exact"'))inventorySeen=true;});
+   const kill=child.kill.bind(child);
+   child.kill=signal=>{const source=child[pipe];if(signal==="SIGTERM"&&inventorySeen&&!injected&&source){injected=true;source.destroy(new Error("private-pipe-error-do-not-export"));}return kill(signal);};
   }return child;
  }) as typeof childProcess.spawn);
  syncBuiltinESMExports();
- try{await expect(api.readCursorLocalSessions({scope:f.scope})).rejects.toMatchObject({code:"CURSOR_LOCAL_CLEANUP_UNKNOWN"});}
+ try{await expect(api.readCursorLocalSessions({scope:f.scope})).rejects.toMatchObject({code:"CURSOR_LOCAL_CLEANUP_UNKNOWN"});expect(inventorySeen).toBe(true);expect(injected).toBe(true);}
  finally{spy.mockRestore();syncBuiltinESMExports();}
 });
 it("locates an exact native ID across bounded native pagination without loading it",async()=>{
