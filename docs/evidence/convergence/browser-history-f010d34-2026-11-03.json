@@ -1,0 +1,68 @@
+{
+  "version": 1,
+  "scenario": "browser-history-functional",
+  "recordedAt": "2026-11-03T02:29:01.672885+00:00",
+  "browser": {
+    "kind": "in-app-browser",
+    "route": "/tasks?task=benchmark-history",
+    "authenticatedVia": "existing one-time dashboard login code flow"
+  },
+  "fixture": {
+    "synthetic": true,
+    "taskId": "benchmark-history",
+    "taskCount": 1,
+    "runCount": 1000,
+    "nativeWorkloadConfigured": false
+  },
+  "environment": {
+    "runtimeKind": "qualified-release",
+    "sourceSha": "f010d34228d6ebe1a9f35100ebfe44edc22372c1",
+    "sourceDirty": false,
+    "harnessSourceSha": "37b6b5b44457a77fc5caf190cbdd8b01ebe024d8",
+    "harnessSourceDirty": false,
+    "harnessScriptSha256": "71a50f6beca88cc4b3169fd60dd59cdb5c05b8e883615a12f2fcaa459bc036d4",
+    "measurementScriptSha256": "ddbf325b2f5747a2d59f3eb822a2a85ecffa67aa30ea629b33c7d7e384bf1c67",
+    "runtimeSelectorSha256": "3c578e840ececd62e8a6ebb353808bdb07385473217317bbf52cb7c56ea9d2e5",
+    "historyWorkloadSha256": "38ac8ccbb4ea6e85cd2aeea70cc3178a3f2623d4c4adda6db2217a0b3bb143b5",
+    "controllerEntrypointSha256": "5e57257e4205b6f9f83c4e948d8253cb30f344a147067a22e33111f21b8c46e6",
+    "releaseDirectory": "/Users/wangdongxin/.local/share/dispatcher/releases/f010d34228d6ebe1a9f35100ebfe44edc22372c1-macos-a7",
+    "releaseManifestSha256": "b1d4a97d46d37121fafde921eaf017bfcef70859ca1af19efccc33a69a74102c",
+    "smokeScope": "isolated-package-fixture"
+  },
+  "driverSha256": "4e401122d18a22d59bac43f2bae65f020e2b0158e50c3220314980fa78e07b56",
+  "observations": {
+    "pages": 50,
+    "uniqueRuns": 1000,
+    "missingExpectedIds": 0,
+    "maxRunChoices": 21,
+    "olderEnabled": false,
+    "newerEnabled": true,
+    "selectedHistoricalRun": "history-998",
+    "visibleLastPage": true,
+    "firstPage": {
+      "page": 1,
+      "runChoices": 21,
+      "first": "history-999",
+      "last": "history-115"
+    },
+    "lastPage": {
+      "page": 50,
+      "runChoices": 20,
+      "first": "history-999",
+      "last": "history-998"
+    }
+  },
+  "method": "Actual next-page clicks, fresh full accessibility state at each page, union of accessible native select option Run identities, then selecting the observed last-page historical Run. No page or React state was injected.",
+  "cleanup": {
+    "controllerStopped": true,
+    "runtimeIntegrity": {
+      "qualified": true,
+      "state": "verified"
+    },
+    "forbiddenCodexStarts": 0
+  },
+  "limitations": [
+    "Synthetic terminal Run metadata; no native/provider, identity, writer or real-account evidence.",
+    "Functional pagination and historical selection only. Browser CPU/RSS, event-loop lag, target-host performance and soak Gates remain unqualified."
+  ]
+}
