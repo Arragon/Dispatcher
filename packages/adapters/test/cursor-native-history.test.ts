@@ -94,18 +94,19 @@ function fixture(mode="normal"){
   "if(mode==='final-home-drift'){fs.renameSync(process.env.HOME,process.env.HOME+'-old');fs.mkdirSync(process.env.HOME);}",
   "if(mode==='final-workspace-drift'){fs.renameSync(process.cwd(),process.cwd()+'-old');fs.mkdirSync(process.env.PWD);}",
   "if(mode==='rpc-error'){emit({jsonrpc:'2.0',id:m.id,error:{code:401,message:'private-token-do-not-export'}});continue;}",
-  "if(mode==='inherited'||mode==='inherited-invalid'){const c=require('node:child_process').spawn(process.execPath,['-e','setTimeout(()=>{},2000)'],{stdio:['ignore',process.stdout,process.stderr]});c.once('spawn',()=>{fs.writeFileSync(path.join(root,'descendant-pid'),String(c.pid));emit({jsonrpc:'2.0',id:mode==='inherited-invalid'?999:m.id,result});c.unref();process.exit(0);});continue;}emit({jsonrpc:'2.0',id:mode==='wrong-id'?999:m.id,result});",
-  "if(mode==='late-duplicate'){process.on('SIGTERM',()=>setTimeout(()=>process.exit(0),150));setTimeout(()=>emit({jsonrpc:'2.0',id:m.id,result}),30);}",
+  "if(mode==='inherited'||mode==='inherited-invalid'){const c=require('node:child_process').spawn(process.execPath,['-e','setTimeout(()=>{},2000)'],{stdio:['ignore',process.stdout,process.stderr]});c.once('spawn',()=>{fs.writeFileSync(path.join(root,'descendant-pid'),String(c.pid));emit({jsonrpc:'2.0',id:mode==='inherited-invalid'?999:m.id,result});c.unref();process.exit(0);});continue;}",
+  "if(mode==='late-duplicate'){process.once('SIGTERM',()=>{fs.writeFileSync(path.join(root,'late-duplicate-during-cleanup'),String(m.id));emit({jsonrpc:'2.0',id:m.id,result});setTimeout(()=>process.exit(0),150);});}",
+  "emit({jsonrpc:'2.0',id:mode==='wrong-id'?999:m.id,result});",
   "if(mode==='late-pipe-error'){process.on('SIGTERM',()=>setTimeout(()=>process.exit(0),150));}",
   "}});setInterval(()=>{},1000);"
  ].join("\n"),{mode:0o755});
- // Retain actual root identities without changing the original fake protocol array.
+ // Retain actual root identities without changing the protocol fixture above.
  {
   const bytes=readFileSync(executable,"utf8"),at=bytes.indexOf("\n");
   const observation="require('node:fs').writeFileSync(require('node:path').join("+JSON.stringify(root)+",process.argv.includes('--version')?'version-root':'acp-root'),JSON.stringify({pid:process.pid,args:process.argv.slice(2),cwd:process.cwd(),pwd:process.env.PWD,home:process.env.HOME}));\n";
   writeFileSync(executable,bytes.slice(0,at+1)+observation+bytes.slice(at+1),{mode:0o755});
  }
- // Additional actual-child controls stay outside the byte-exact historical array.
+ // Additional actual-child controls stay outside the protocol fixture above.
  if(mode==="environment-isolation"){
   const bytes=readFileSync(executable,"utf8"),at=bytes.indexOf("\n");
   const check="if(Object.keys(process.env).some(k=>['DISPATCHER_OWNER_TOKEN','DISPATCHER_SECRET_STORE_KEY'].includes(k.toUpperCase())))process.exit(71);if(process.env.CURSOR_API_KEY!=='fixture-cursor-auth'||process.env.PROVIDER_FIXTURE_CONTEXT!=='retained'||!process.env.PATH||process.env.PWD!==process.cwd())process.exit(72);\n";
@@ -121,7 +122,7 @@ function fixture(mode="normal"){
   ].join("\n")+"\n";
   writeFileSync(executable,bytes.slice(0,at+1)+control+bytes.slice(at+1),{mode:0o755});
  }
- captureFixture(root,"generated-executable",{mode,scope:{executable,workspacePath,homePath},calls:[],originalProtocolArray:"retained verbatim"});
+ captureFixture(root,"generated-executable",{mode,scope:{executable,workspacePath,homePath},calls:[],protocolFixture:mode==="late-duplicate"?"duplicate-on-cleanup-signal":"native-read-fixture"});
  return {root,scope:{executable,workspacePath,homePath},calls:()=>existsSync(join(root,"calls"))?JSON.parse(readFileSync(join(root,"calls"),"utf8")) as Array<{method:string;params:Record<string,unknown>;id:unknown}>:[]};
 }
 function observeRoot(pid:number):{state:"present"|"absent"|"unknown";code?:string}{
@@ -200,6 +201,7 @@ it("rejects a queued response before its corresponding request was sent",async()
 });
 it("retains protocol failure arriving during original local cleanup",async()=>{
  const f=fixture("late-duplicate");await expect(api.readCursorLocalSessions({scope:f.scope})).rejects.toMatchObject({code:"CURSOR_LOCAL_PROTOCOL_INVALID"});
+ expect(readFileSync(join(f.root,"late-duplicate-during-cleanup"),"utf8")).toBe("2");
 });
 it("does not let codec cancellation hide inherited-pipe cleanup uncertainty",async()=>{
  const f=fixture("inherited-invalid");await expect(api.readCursorLocalSessions({scope:f.scope})).rejects.toMatchObject({code:"CURSOR_LOCAL_CLEANUP_UNKNOWN"});
