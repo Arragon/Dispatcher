@@ -1,0 +1,92 @@
+# OpenCode owned host and canonical execution producer
+
+> Required workflow: superpowers:subagent-driven-development. One implementer and independent task review. Execute only after the bounded server plan's review is clean. Parent CV-09 and all real native Gates remain open.
+
+**Spec:** convergence plan CV-09/CV-10 boundaries, contract-decisions, root AGENTS.md and current durable observer/owned process architecture.
+
+**Dependency/base:** server5698afa (183 files/2280 tests, default gate88.19s); any review fixes are additional dependencies. Read the final server source before editing consumers. The read-only design inventory is `/tmp/dispatcher-opencode-adapter-host-design-20261023.md`; it is supporting source analysis, not implementation authority.
+
+**Architecture/reuse:** Reuse a499d84's owned private server and execution wrapper, original20+20 cases. Adapt them to current NativeBindingEvents, one canonical selection, shared child environment, owned process/version helpers. No SDK/dependency/schema addition or account/config activation. Controller/config/catalog follow separately.
+
+## Global Constraints
+
+- Keep domain/protocol free from Web, persistence, transport and provider SDK imports. No persisted-format or public configuration-contract change in this task.
+- Configuration changes go through ConfigPlan; secrets remain opaque secret references. Never access installed provider accounts, alter user configuration or kill an external/recovered service.
+- Preserve every original assertion group and sticky unknown outcome. Replace obsolete modelSelection/legacyModel transport fixtures with canonical ExecutionSelection; no replacement Session or native-default-to-concrete inference.
+- Capture original values, callbacks and physical execution identity before awaits; validate original selection/ref/identity and synchronous authority before creation/prompt and after waits. Persist binding before prompt and terminal event before success.
+- Local connection/root/group/callback cleanup does not prove native background tools stopped or writer release. Retain admitted callback/acquisition work through shutdown races and cached unknown receipts.
+- Fixture/default-suite success is separate from actual protocol/account, GUI, writer, service/release and parent acceptance. Preserve R-020/all failed logs; no timeout/assertion/worker weakening, skips, probe caches or unchanged-code retries to green.
+
+## Task 1: Integrate the owned server and canonical OpenCode producer
+
+**Files:** Add `packages/adapters/src/opencode-owned-server.ts`, `opencode-execution.ts` and their original test files from a499d84. Modify only directly affected `native-binding-events.ts`, `ecosystem-cli.ts`, `native-cli.ts`, adapter index and focused tests, plus concise architecture/know-how/this plan notes. Do not modify Controller, Runner implementation, schema, native-profile registration or model catalogs. No shared helper redesign. Server methods belong to the reviewed preceding slice; raise a concrete consumer-contract defect if one requires a directly justified fix.
+
+**Owned host:** Preserve private `serve --stdio --hostname 127.0.0.1 --port 0`, canonical cwd/PWD, captured physical workspace/tmp, accepted2.0.22/2.0.26 exact CLI/API version agreement, child PID, bounded split-frame readiness, captured request/guard/body and coalesced cloned local receipts. Use existing `readOwnedNativeVersion` with startup AbortSignal (16KiB/3s and exit-unconfirmed), `OwnedProcessGroup` for the newly detached server, and `childExecutionEnvironment` for both spawns. Do not restore obsolete ProcessCancellation or raw inherited Controller authority. Private password stays inaccessible; fresh server removes OPENCODE_SERVER_PASSWORD/OPENCODE_PTY_HANDOFF. Native credential/PATH context stays preserved.
+
+Track fresh probe pending/settled/exit-unconfirmed explicitly. No service child does not prove an unconfirmed probe is gone. Keep probe cleanup uncertainty as unknown root/callback barrier. Recheck closed/physical scope after probe before server spawn. Root exit closes admission/aborts reads independently of inherited pipe closure; group absence and stream/callback drain are separate facts. Cleanup sends stdin EOF then escalates only the captured group; preserve original resistance bounds/assertions, never API-reported/recovered PID ownership. Retain late opening work and pending requests/callbacks; first cached unknown remains unknown after late settlement. Safe cleanup failure cannot fabricate exited/drained.
+
+**Canonical producer:** Preserve one admitted new execution, no provider ID/cold continuation, exact explicit provider/model from frozen nativeInput.executionSelection only, no arbitrary environment override or approveTools true. Require original beforePrompt/onBinding/onNativeEvent and validate run/session/invocation/profile/backend/ref/executable/physical workspace before factory. Validate using freezeExecutionSelection(owner opencode/server, selection true/reasoning false) and current validateExecutionBinding with captured original repository/base. Reject injected obsolete transport fields explicitly. Clone selection/ref/callbacks before async readiness and pass the full original managed ref to port.create. Validate returned binding's entire product/global/profile/backend/Runner/store/execution/id/no-thread/no-parent tuple before durable projection; source(binding) rechecks live physical scope and exact binding.
+
+Convert startup errors to AdapterStartError.creationOutcome with sanitized code/message: proven before-create is not-created; possible create POST, observed binding, lost receipt or persistence failure remains unknown, including after final guard failure. Preserve OpenCodeV2Error.outcome at conversion and once-only admission. Add hasActiveOperations if needed for the later host, reflecting raw acquisition/callback/poll work rather than only public result state.
+
+**Allocated observer:** Extend startOptions with narrowly qualified `opencode-session`, legal only for opencode/opencode-server-v2/global with no nativeThreadId or parent. Default Pi reserved and Codex codex-thread semantics remain unchanged. Initial allocation requires the original unbound STARTING invocation; save allocated providerSessionId and binding together before durable waiting, then enforce immutable repeats and sticky save/sink failure. Preserve original pre/post synchronous guards, observer invocation/canProject, selection/ref/generation/attempt/lease and cancellation/state checks. Historical provider IDs, late non-STARTING allocation or use by another provider/backend reject before save/sink.
+
+**Adapter integration:** Exact explicitly injected server backend selects a server-only manifest/definition, supportsExecutionSelection and managed executionRef, requires the existing owning observer, uses typed native input and `startArgs:()=>[]`, and never preallocates provider ID. Generic send/resume/pause/cancel remain unqualified; advertise only code/git/start/status/result/structured-events/artifacts and resume false. The backend's turn.cancel is explicit local cleanup only, not an advertised native stop capability. Keep standalone constructor/read injection/argv and every existing Pi/Codex assertion unchanged. Choose opencode-session in the existing StructuredCliAdapter start lane only for this exact backend. Preserve readiness-before-RUNNING and all admission checks; backend-specific safe errors may be used without renaming existing Pi codes.
+
+**Durability/lifetime:** Use one serialized fact pipeline returning its Promise, with raw admitted binding/event callbacks tracked independently of abort/timeout races. Wait for waiting/received durability before readiness; terminal persistence precedes completed result. A sync/async rejected sink fences input and cannot produce success. Use the existing500ms bounded terminal callback policy where a finite wait is needed: expiry produces failed/reconciliation, while raw callback stays owned and cleanup unknown. Shutdown immediately closes new admission/aborts polling and releases public readiness/result waiters through a lifetime race, without deleting already entered callback/acquisition work. Suppress newly queued callbacks/late prompts after closure; cached cleanup never upgrades unknown to drained. A late acquired host must still be cleaned; malformed/throwing disconnect returns unknown facts and preserves resources. Port binding waiting and observer waiting can be idempotent duplicates; received is only an accepted input fact, not native-start ACK, and the domain's monotonic observation merge must not change.
+
+**Original assertions / fixtures:** Preserve all20 owned-host and20 producer cases, plus all current shared tests. Use current Node for newly created process fixtures, no installed native executable. Producer fixture now has a fully valid explicit-model ExecutionSelection. The Adapter integration case supplies MemorySessionStore, reserved Dispatcher session/execution tuple, beforeCreate/beforeSend and durable sink/onBegin. Revise the old fire-and-forget async-event test to block a terminal sink (or received with readiness still pending), assert no premature completed/readiness, then cached unknown cleanup and late underlying callback settlement. Do not delete its ownership/no-late-input assertions. Keep exact post-native-send unknown outcome, lost-receipt no retry, sibling isolation, physical replacement and original under5s resistant cleanup assertions.
+
+**New regressions:** OpenCode observer save-before-sink, exact repeat/foreign ID/thread/parent/store/ref/backend/product/region, historical/late allocation, final guard/authority mutation/Promise return and sticky save/sink failure; producer missing callback/selection, model/native-parameter/legacy-field drift, foreign returned binding, captured caller mutations, async initial/terminal sink delay/rejection, bounded unresolved terminal, shutdown-ready/result race/raw callback retention, late host acquisition/cleanup, malformed/throwing cleanup and exact source physical drift; fake environment canaries for probe/service without revealing secrets, inherited pipes/group/probe uncertainty as feasible through owned fixtures.
+
+- [x] Restore the40 original cases, observe missing-module RED, then implement incrementally with focused new RED/GREEN cases. Retain logs and every intentional fixture/expectation adaptation.
+- [x] Run targeted owned/execution/observer/native-cli plus directly affected Pi/Codex lifecycle/selection regressions selected from the actual diff. Run default `mise exec -- pnpm check` once on final code before commit and `git diff --check`; diagnose any real failure rather than retry unchanged.
+- [x] Self-review, commit scoped code/plan, and report commands, exits, counts/logs, original assertion map, adaptations and limitations at assigned SDD report path. Root owns independent review, source disposition/evidence and Linear readback. No parent completion or actual capability promotion.
+
+Task 1 local implementation (2026-10-23): restored original20+20 before missing-export
+RED, then adapted canonical selection, allocated observer and durable event/lifetime
+ownership. Existing Pi/Codex assertions remain. Initial full gate passed185/2410;
+staged self-review then identified pending-create shutdown returning not-created
+before binding receipt. An exact blocked-create RED reproduced it; conservative
+lifetime bookkeeping now preserves unknown without losing a later proven
+OpenCode not-created outcome. New producer suite69 passes. The initial full log
+and source are retained; a fresh final gate follows this real code fix rather
+than an unchanged-code retry. Detailed original-case map, logs and source receipts
+remain in the ignored SDD task report. Real provider/account, GUI, native writer,
+service/release and parent acceptance remain open.
+
+Final Task 1 evidence: pending-create fix producer69 tests passed; fresh final-code
+`mise exec -- pnpm check` exit0,185 files/2411 tests, Vitest87.21s/wall99.146s.
+Build/typecheck/lint/boundaries passed. Final full log and immutable source/result
+payload: `/tmp/dispatcher-opencode-task1-logs/full-check-after-pending-create.log`
+and `full-check-after-pending-create-result.json` in the same directory. Initial
+successful185/2410 log/source remains separate. No unchanged-code retry occurred.
+Original20+20 groups remain, with owned-host23/producer69/shared-observer66 totals;
+27 prior shared Pi/Codex cases unchanged. `git diff --check` passed. Only this plan
+and the ignored private report receive completion receipts after final source hash
+capture. Independent review, runtime/profile registration and real native Gates
+remain separate; no parent CV-09 acceptance is implied.
+
+Review fix round1/5 (base105ef8b): independent review found unintended prompt,
+executable-string and factory-receiver compatibility narrowing. Restore the current
+port/historical262144 UTF-16-unit prompt bound, owned-host4096-character safe
+executable bound separate from512-character IDs, and captured factory.bind(options).
+Five accepted prompt boundaries, three true oversized prompts, executable513/4096
+and4097/control-character checks, and original method receiver/callback capture
+add13 regressions. RED:8 failed/74 passed. Focused GREEN:4 files/247 passed.
+Native admission/lifetime/observer semantics are unchanged. One final changed-code
+default gate follows self-review; private report retains full commands/source/logs.
+
+Round1 gate diagnosis: first default gate stopped at test lint (`no-this-alias`),
+exit1/9.664s, before suite execution. Keep that source/log/result. Receiver test
+now records `this` in an array and asserts one call plus exact options identity;
+no suppression or assertion weakening. Rechecked4 files/247 tests (9.14s) and
+scoped ESLint exit0. A fresh changed-test gate follows; production fix is unchanged.
+
+Round1 final changed-test gate: `mise exec -- pnpm check` exit0,185 files/2424 tests,
+Vitest87.92s/wall98.485s. Source hashes all12 matched afterward; prior69-case producer
+prefix byte-preserved with13 appended cases (82 total). Final log/source/result:
+`/tmp/dispatcher-opencode-task1-fix1-logs/full-check-after-receiver-style.log`
+and sibling `-source.json`/`-result.json`; failed lint gate retained separately.
+Only this plan/private report receive post-gate receipts. Root scoped re-review
+and all actual native/parent Gates remain separate.

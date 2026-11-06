@@ -1,6 +1,13 @@
-import { randomUUID } from "node:crypto";
+import {freezeExecutionSelection} from "./execution-selection.js";
+import {turnExecutionResource} from "./execution-resource.js";
 import {
   AdapterContractError,
+  AdapterAdmissionError,
+  assertAdapterStartAdmission,
+  assertAdapterWriteAdmission,
+  captureAdapterStartInput,
+  AdapterStartError,
+  type AdapterStartInput,
   validateManifest,
   type AdapterEvent,
   type AdapterManifest,
@@ -9,7 +16,7 @@ import {
   type AgentAdapter,
 } from "./contracts.js";
 import type { CredentialResolver } from "./ecosystem-cli.js";
-import { MemorySessionStore, type SessionStore } from "./generic.js";
+import { MemorySessionStore, startSessionId, type SessionStore } from "./generic.js";
 
 export interface LocalServiceProfileConfig {
   id: string;
@@ -70,6 +77,8 @@ export const localServiceManifest: AdapterManifest = {
 export class LocalServiceAdapter implements AgentAdapter {
   readonly manifest = validateManifest(localServiceManifest);
   private readonly snapshots = new Map<string, LocalServiceSnapshot>();
+  private readonly cancelledSessions = new Set<string>();
+  private readonly pendingInputs = new Map<string, Promise<AdapterEvent>>();
 
   constructor(
     readonly profile: LocalServiceProfileConfig,
@@ -80,48 +89,68 @@ export class LocalServiceAdapter implements AgentAdapter {
     for (const path of [profile.statusPath, profile.inputPath, profile.cancelPath]) validateSessionPath(path);
   }
 
-  async start(input: { runId: string; workspacePath: string; backendId?: string; prompt?: string }): Promise<AdapterSession> {
-    const snapshot = await this.requestSnapshot(this.profile.startPath, {
-      method: "POST",
-      body: JSON.stringify({ runId: input.runId, workspacePath: input.workspacePath, prompt: input.prompt ?? "Inspect the task and report readiness." }),
-    });
+  async start(input: AdapterStartInput): Promise<AdapterSession> {
+    input=captureAdapterStartInput(input);
+    const selection=freezeExecutionSelection(input.executionSelection,{profileId:this.profile.id,providerId:this.profile.provider,backendId:"local-service-http",selection:false,reasoning:false});
     const now = new Date().toISOString();
     const session: AdapterSession = {
-      id: randomUUID(),
+      id: startSessionId(this.store,input.sessionId),
       runId: input.runId,
+      ...(input.execution?{execution:input.execution}:{}),
       backendId: input.backendId ?? "local-service-http",
       workspacePath: input.workspacePath,
-      state: mapState(snapshot.state),
+      state: "STARTING",
       profileId: this.profile.id,
-      providerSessionId: snapshot.sessionId,
+      ...(selection?{executionSelection:selection}:{}),
       createdAt: now,
       updatedAt: now,
     };
+    this.store.save(session);
+    const snapshot = await this.requestSnapshot(this.profile.startPath, {
+      method: "POST",
+      body: JSON.stringify({ runId: input.runId, workspacePath: input.workspacePath, prompt: input.prompt ?? "Inspect the task and report readiness." }),
+    },true,input.beforeSend);
+    session.state=mapState(snapshot.state);session.providerSessionId=snapshot.sessionId;session.updatedAt=new Date().toISOString();
     this.snapshots.set(session.id, snapshot);
     this.store.save(session);
     return structuredClone(session);
   }
-  async send(sessionId: string, message: string): Promise<AdapterEvent> {
+  async send(sessionId: string, message: string,beforeSend?:()=>void): Promise<AdapterEvent> {
     const session = this.require(sessionId);
-    const providerSessionId = requireProviderSession(session);
-    const snapshot = await this.requestSnapshot(renderSessionPath(this.profile.inputPath, providerSessionId), { method: "POST", body: JSON.stringify({ message }) });
+    if (this.cancelledSessions.has(sessionId) || session.state === "CANCELLED") throw new AdapterContractError("SESSION_CANCELLED", "HTTP session cancellation forbids more input");
+    if (this.pendingInputs.has(sessionId)) throw new AdapterContractError("INPUT_PENDING", "An HTTP input is already pending");
+    const send = this.sendInput(session, message,beforeSend).finally(() => { this.pendingInputs.delete(sessionId); });
+    this.pendingInputs.set(sessionId, send);
+    return send;
+  }
+  private async sendInput(session: AdapterSession, message: string,beforeSend?:()=>void): Promise<AdapterEvent> {
+    const sessionId = session.id, providerSessionId = requireProviderSession(session);
+    const snapshot = await this.requestSnapshot(renderSessionPath(this.profile.inputPath, providerSessionId), { method: "POST", body: JSON.stringify({ message }) },false,beforeSend);
     this.snapshots.set(sessionId, snapshot);
     this.update(sessionId, { state: mapState(snapshot.state) });
     return { type: "session.message", sessionId, occurredAt: new Date().toISOString(), data: { acceptedCharacters: message.length, providerSessionId } };
   }
   async pause(): Promise<AdapterSession> { throw new AdapterContractError("UNSUPPORTED_CAPABILITY", "The local-service contract does not declare pause"); }
   async resume(): Promise<AdapterSession> { throw new AdapterContractError("UNSUPPORTED_CAPABILITY", "The local-service contract does not declare same-session resume"); }
-  async cancel(sessionId: string): Promise<AdapterSession> {
+  async cancel(sessionId: string, beforeSend?:()=>void): Promise<AdapterSession> {
     const session = this.require(sessionId);
-    const snapshot = await this.requestSnapshot(renderSessionPath(this.profile.cancelPath, requireProviderSession(session)), { method: "POST" });
+    assertAdapterWriteAdmission(beforeSend);
+    const previouslyCancelled=this.cancelledSessions.has(sessionId);
+    this.cancelledSessions.add(sessionId);
+    try {
+    await this.pendingInputs.get(sessionId)?.catch(() => undefined);
+    const snapshot = await this.requestSnapshot(renderSessionPath(this.profile.cancelPath, requireProviderSession(session)), { method: "POST" },false,beforeSend);
+    const state = mapState(snapshot.state);
+    if (!["CANCELLED", "COMPLETED", "FAILED"].includes(state)) throw new AdapterContractError("CANCELLATION_UNCONFIRMED", "Local service did not confirm a terminal session state");
     this.snapshots.set(sessionId, snapshot);
-    return this.update(sessionId, { state: snapshot.state ? mapState(snapshot.state) : "CANCELLED" });
+    return this.update(sessionId, { state });
+    } catch(error) { if(error instanceof AdapterAdmissionError&&!previouslyCancelled)this.cancelledSessions.delete(sessionId);throw error; }
   }
   async status(sessionId: string): Promise<AdapterSession> {
     const session = this.require(sessionId);
     const snapshot = await this.requestSnapshot(renderSessionPath(this.profile.statusPath, requireProviderSession(session)));
     this.snapshots.set(sessionId, snapshot);
-    return this.update(sessionId, { state: mapState(snapshot.state) });
+    return this.update(sessionId, { state: mapState(snapshot.state),executionResource:turnExecutionResource(snapshot.resource?[{...snapshot.resource,type:"resource"}]:[],snapshot.state,new Date().toISOString()) });
   }
   async result(sessionId: string): Promise<AdapterResult> {
     const current = this.require(sessionId);
@@ -144,8 +173,8 @@ export class LocalServiceAdapter implements AgentAdapter {
     return { sessionId, provider: this.profile.provider, health: health.ok ? "HEALTHY" : "DEGRADED", statusCode: health.status, endpointContract: "configured-v1" };
   }
 
-  private async requestSnapshot(path: string, init: RequestInit = {}): Promise<LocalServiceSnapshot> {
-    const response = await this.request(path, init);
+  private async requestSnapshot(path: string, init: RequestInit = {},creation=false,beforeSend?:()=>void): Promise<LocalServiceSnapshot> {
+    const response = await this.request(path, init,creation,beforeSend);
     const body = await response.json().catch(() => ({})) as Record<string, unknown>;
     if (!response.ok) throw new AdapterContractError(response.status === 401 || response.status === 403 ? "AUTH_ERROR" : "PROVIDER_ERROR", String(body.message ?? `Local service returned ${response.status}`).slice(0, 500));
     const sessionId = stringValue(body.sessionId) ?? stringValue(body.session_id) ?? stringValue(body.id);
@@ -164,17 +193,19 @@ export class LocalServiceAdapter implements AgentAdapter {
       ...(body.resource && typeof body.resource === "object" && !Array.isArray(body.resource) ? { resource: body.resource as Record<string, unknown> } : {}),
     };
   }
-  private async request(path: string, init: RequestInit = {}): Promise<Response> {
+  private async request(path: string, init: RequestInit = {},creation=false,beforeSend?:()=>void): Promise<Response> {
     const headers: Record<string, string> = { "content-type": "application/json" };
     if (this.profile.credentialRef) {
       if (!this.resolveCredential) throw new AdapterContractError("SECRET_RESOLVER_UNAVAILABLE", "Credential references require a SecretStore resolver");
-      headers.authorization = `Bearer ${await this.resolveCredential(this.profile.credentialRef)}`;
+      try{headers.authorization = `Bearer ${await this.resolveCredential(this.profile.credentialRef)}`;}catch(error){if(creation)throw new AdapterStartError("not-created","START_PREPARATION_FAILED","Local service credential is unavailable before creation");throw error;}
     }
+    if(creation)assertAdapterStartAdmission(beforeSend);else assertAdapterWriteAdmission(beforeSend);
     return this.fetchImpl(`${this.profile.baseUrl.replace(/\/$/, "")}${path}`, { ...init, headers: { ...headers, ...(init.headers ?? {}) }, signal: AbortSignal.timeout(10_000) });
   }
   private require(id: string): AdapterSession {
     const session = this.store.load(id);
     if (!session) throw new AdapterContractError("SESSION_NOT_FOUND", `Unknown session ${id}`);
+    if(session.profileId!==this.profile.id)throw new AdapterContractError("SESSION_PROFILE_MISMATCH","Session belongs to another configured account");
     return session;
   }
   private update(id: string, changes: Partial<AdapterSession>): AdapterSession {

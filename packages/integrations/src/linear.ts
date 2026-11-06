@@ -95,7 +95,7 @@ export class LinearTaskConnector implements TaskPlatformAdapter {
   async getTask(externalId: string): Promise<TaskDraft> {
     const data = await this.graphql(`query Task($id: String!) {
       issue(id: $id) { id identifier title description priority updatedAt state { name type } assignee { id name }
-        labels { nodes { name } } projectMilestone { id name } project { id name } }
+        labels { nodes { name } } projectMilestone { id name } project { id name url } }
     }`, { id: externalId });
     return linearIssueToDraft(object(data.issue), this.options.repository);
   }
@@ -104,7 +104,7 @@ export class LinearTaskConnector implements TaskPlatformAdapter {
     const data = await this.graphql(`query Changes($after: String) {
       issues(first: 50, after: $after, orderBy: updatedAt) { pageInfo { endCursor hasNextPage } nodes {
         id identifier title description priority updatedAt state { name type } assignee { id name }
-        labels { nodes { name } } projectMilestone { id name } project { id name } }
+        labels { nodes { name } } projectMilestone { id name } project { id name url } }
       }
     }`, { after: cursor ?? null });
     const issues = object(data.issues);
@@ -265,6 +265,8 @@ function linearIssueToDraft(issue: Record<string, unknown>, repository?: string)
       linear: {
         ...(typeof issue.identifier === "string" ? { identifier: issue.identifier } : {}),
         ...(typeof project.id === "string" ? { projectId: project.id } : {}),
+        ...(typeof project.name === "string" ? { projectName: project.name } : {}),
+        ...(typeof project.url === "string" ? { projectUrl: project.url } : {}),
         ...(typeof milestone.id === "string" ? { milestoneId: milestone.id } : {}),
       },
     },

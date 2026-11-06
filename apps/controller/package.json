@@ -6,13 +6,14 @@
   "bin": { "dispatcher": "./dist/cli.js" },
   "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node ../../scripts/copy-native-capability-evidence.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run test",
     "dev": "tsx src/cli.ts",
     "dispatcher": "node dist/cli.js"
   },
   "dependencies": {
+    "@dispatcher/shared": "workspace:*",
     "@dispatcher/adapters": "workspace:*",
     "@dispatcher/config": "workspace:*",
     "@dispatcher/domain": "workspace:*",
@@ -21,12 +22,13 @@
     "@dispatcher/llm-runtime": "workspace:*",
     "@dispatcher/observability": "workspace:*",
     "@dispatcher/persistence": "workspace:*",
+    "@dispatcher/protocol": "workspace:*",
     "@dispatcher/runner": "workspace:*",
     "@dispatcher/scheduler": "workspace:*",
     "@dispatcher/semantic": "workspace:*",
     "@dispatcher/workspace": "workspace:*",
     "@dispatcher/web": "workspace:*",
     "@fastify/static": "10.1.3",
-    "fastify": "5.12.4"
+    "fastify": "5.12.6"
   }
 }

@@ -1,8 +1,23 @@
+import {isCursorLocalSessionId} from "./cursor-native-history.js";
+import {randomUUID} from "node:crypto";
+import {recordModelInvocation} from "./model-invocation.js";
+import { childExecutionEnvironment } from "@dispatcher/shared";
+import {assertSessionModelBinding,freezeExecutionSelection,sessionModel} from "./execution-selection.js";
+import {turnExecutionResource} from "./execution-resource.js";
+import { OwnedProcessGroup } from "./owned-process.js";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
-import { randomUUID } from "node:crypto";
 import { promisify } from "node:util";
 import {
   AdapterContractError,
+  AdapterStartError,
+  type NativeEventSink,
+  type NativeObserverBegin,
+  assertAdapterStartAdmission,
+  assertAdapterWriteAdmission,
+  captureAdapterStartInput,
+  localStartFailure,
+  startPreparationFailure,
+  type AdapterStartInput,
   validateManifest,
   type AdapterEvent,
   type AdapterManifest,
@@ -10,7 +25,11 @@ import {
   type AdapterSession,
   type AgentAdapter,
 } from "./contracts.js";
-import { MemorySessionStore, type SessionStore } from "./generic.js";
+import { MemorySessionStore, startSessionId, type SessionStore } from "./generic.js";
+import {isExecutionContextRef,validateExecutionBinding,type AccountModelCatalog,type ModelCatalogContext,type ExecutionContextRef,type ExecutionSelection,type NativeBinding,type NativeTurnFact} from "@dispatcher/domain";
+import {NativeBindingEvents,type NativeTurnObserver} from "./native-binding-events.js";
+import { readNativeCliCatalog, cursorLoginIdentity, type CatalogCliProvider } from "./cli-catalog.js";
+import { readOpenCodeCatalog } from "./opencode-catalog.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -20,20 +39,25 @@ export interface CliAgentProfile {
   executable?: string;
   credentialRef?: string;
   model?: string;
+  approveTools?: boolean;
+  configDir?: string;
+  trustWorkspace?: boolean;
 }
 
 export interface CliDiscoveryResult {
   executable: string;
   installed: boolean;
   authenticated: boolean;
+  authentication?:"ready"|"missing"|"unknown";
+  compatible?:boolean;
   version?: string;
   diagnostic?: string;
 }
 
 export type NormalizedCliEvent =
-  | { type: "activity"; summary: string; providerSessionId?: string }
+  | { type: "activity"; summary: string; providerSessionId?: string; executionEvidence?: true }
   | { type: "waiting"; reason: string }
-  | { type: "resource"; state: "RATE_LIMITED" | "QUOTA_EXHAUSTED" | "AUTH_ERROR" | "PROVIDER_DOWN" | "UNKNOWN"; reason: string; remaining?: number; resetsAt?: string; source: "event" | "error"; confidence: "high" | "medium" | "low" }
+  | { type: "resource";observedAt?:string; state: "RATE_LIMITED" | "QUOTA_EXHAUSTED" | "AUTH_ERROR" | "PROVIDER_DOWN" | "UNKNOWN"; reason: string; remaining?: number; resetsAt?: string; source: "event" | "error"; confidence: "high" | "medium" | "low" }
   | { type: "failure"; reason: string };
 type CliErrorEvent = Extract<NormalizedCliEvent, { type: "resource" | "failure" }>;
 
@@ -45,90 +69,145 @@ export interface CliTurnResult {
 }
 
 export interface CliTurn {
+  ready?():Promise<void>;
+  readonly processId?: number | undefined;
   cancel(): Promise<void>;
   status(): "running" | "completed";
   result(): Promise<CliTurnResult>;
+  events?(): NormalizedCliEvent[];
+}
+
+export interface CliStartInput {
+  executionRef?:ExecutionContextRef;
+  nativeInput?:{version:1;profileId:string;backendId:string;runId:string;sessionId:string;commandId:string;newSession:boolean;prompt:string;approveTools:boolean;providerSessionId?:string;executionSelection?:ExecutionSelection};
+  beforePrompt?:()=>void;
+  beforeObserve?:()=>void;
+  onBinding?:(binding:NativeBinding)=>void|Promise<void>;
+  onNativeEvent?:(fact:NativeTurnFact)=>void|Promise<void>;
+  executable: string;
+  args: string[];
+  workspacePath: string;
+  environment?: Record<string, string>;
+  normalizeLine?: (line: string) => NormalizedCliEvent | undefined;
+  requireExecutionEvidence?: boolean;
 }
 
 export interface CliAgentBackend {
-  start(input: { executable: string; args: string[]; workspacePath: string; environment?: Record<string, string> }): CliTurn;
+  readonly backendId?:string;
+  start(input: CliStartInput): CliTurn;
 }
 
 export type CredentialResolver = (reference: string) => Promise<string>;
 
 export class SpawnCliAgentBackend implements CliAgentBackend {
-  start(input: { executable: string; args: string[]; workspacePath: string; environment?: Record<string, string> }): CliTurn {
+  start(input: CliStartInput): CliTurn {
     return new SpawnedCliTurn(spawn(input.executable, input.args, {
       cwd: input.workspacePath,
       shell: false,
       stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, ...input.environment },
-    }));
+      env: childExecutionEnvironment(process.env, { ...input.environment, PWD: input.workspacePath }),
+      detached: process.platform !== "win32",
+    }), input.normalizeLine ?? normalizeCliLine, input.requireExecutionEvidence === true);
   }
 }
 
 class SpawnedCliTurn implements CliTurn {
+  get processId(): number | undefined { return this.child.pid; }
   private completed = false;
   private cancelled = false;
+  private cancellation: Promise<void> | undefined;
   private readonly outcome: Promise<CliTurnResult>;
+  private readonly ownership:OwnedProcessGroup;
+  private readonly retainedEvents: NormalizedCliEvent[] = [];
+  private resourceEvent: Extract<NormalizedCliEvent, { type: "resource" }> | undefined;
 
-  constructor(private readonly child: ChildProcess) {
+  constructor(private readonly child: ChildProcess, normalizeLine: (line: string) => NormalizedCliEvent | undefined, requireExecutionEvidence: boolean) {
+    this.ownership=new OwnedProcessGroup(child);
     let stdout = "";
     let stderr = "";
-    const events: NormalizedCliEvent[] = [];
-    this.child.stdout?.on("data", (chunk: Buffer) => {
-      stdout = (stdout + chunk.toString("utf8")).slice(-262_144);
+    let droppingLine = false;
+    let failure: Extract<NormalizedCliEvent, { type: "failure" | "resource" }> | undefined;
+    let activity: Extract<NormalizedCliEvent, { type: "activity" }> | undefined;
+    let waiting: Extract<NormalizedCliEvent, { type: "waiting" }> | undefined;
+    let providerSessionId: string | undefined;
+    let executionEvidence = false;
+    const record = (event: NormalizedCliEvent | undefined): void => {
+      if (!event) return;
+      if(event.type==="resource"&&!event.observedAt)event={...event,observedAt:new Date().toISOString()};
+      this.retainedEvents.push(event);
+      if (this.retainedEvents.length > 256) this.retainedEvents.shift();
+      if (event.type === "failure" || (event.type === "resource" && event.state !== "UNKNOWN")) failure = event;
+      if (event.type === "activity") { activity = event; providerSessionId = event.providerSessionId ?? providerSessionId; executionEvidence ||= event.executionEvidence === true; }
+      if (event.type === "waiting") waiting = event;
+      if (event.type === "resource") this.resourceEvent = event;
+    };
+    this.child.stdout?.setEncoding("utf8");
+    this.child.stdout?.on("data", (chunk: string) => {
+      stdout += chunk;
       const lines = stdout.split("\n");
       stdout = lines.pop() ?? "";
       for (const line of lines) {
-        const event = normalizeCliLine(line);
-        if (event) events.push(event);
+        if (!droppingLine && line.length <= 1_048_576) record(normalizeLine(line));
+        else if (!droppingLine) record({ type: "failure", reason: "CLI output record exceeds 1 MiB" });
+        droppingLine = false;
       }
+      if (stdout.length > 1_048_576) { stdout = ""; droppingLine = true; record({ type: "failure", reason: "CLI output record exceeds 1 MiB" }); }
     });
     this.child.stderr?.on("data", (chunk: Buffer) => { stderr = (stderr + chunk.toString("utf8")).slice(-32_768); });
-    this.outcome = new Promise((resolve) => {
+    this.outcome = new Promise((resolve,reject) => {
       child.on("error", (error) => { stderr = error.message; });
-      child.on("close", (code) => {
+      child.on("close", (code) => {void (async()=>{
+        await this.ownership.stop();
         this.completed = true;
-        if (stdout.trim()) {
-          const event = normalizeCliLine(stdout);
-          if (event) events.push(event);
-        }
+        if (!droppingLine && stdout.trim()) record(normalizeLine(stdout));
         const error = normalizeCliError(stderr);
-        if (error) events.push(error);
-        const waiting = events.findLast((event) => event.type === "waiting");
-        const activity = events.findLast((event) => event.type === "activity");
-        const sessionEvent = events.findLast((event): event is Extract<NormalizedCliEvent, { type: "activity" }> => event.type === "activity" && Boolean(event.providerSessionId));
-        const providerSessionId = sessionEvent?.providerSessionId;
+        if (error && code !== 0) record(error);
+        if (code === 0 && requireExecutionEvidence && !executionEvidence && !failure && !waiting && !this.cancelled) record({ type: "failure", reason: "CLI exited without valid native execution evidence" });
         resolve({
-          state: this.cancelled ? "cancelled" : waiting ? "waiting" : code === 0 ? "completed" : "failed",
-          summary: activity?.summary ?? waiting?.reason ?? error?.reason ?? (code === 0 ? "Agent completed" : `Agent exited with code ${code ?? "unknown"}`),
-          events,
+          state: this.cancelled ? "cancelled" : failure ? "failed" : waiting ? "waiting" : code === 0 ? "completed" : "failed",
+          summary: failure?.reason ?? waiting?.reason ?? activity?.summary ?? error?.reason ?? (code === 0 ? "Agent completed" : `Agent exited with code ${code ?? "unknown"}`),
+          events: this.events(),
           ...(providerSessionId ? { providerSessionId } : {}),
         });
-      });
+      })().catch(reject);});
     });
+    void this.outcome.catch(()=>undefined);
   }
 
-  async cancel(): Promise<void> {
-    if (!this.completed) {
-      this.cancelled = true;
-      this.child.kill("SIGTERM");
-    }
+  cancel(): Promise<void> {
+    return this.cancellation ??= this.cancelGroup();
+  }
+  private async cancelGroup(): Promise<void> {
+    if (!this.completed) this.cancelled = true;
+    await this.ownership.stop();
     await this.outcome;
+  }
+  events(): NormalizedCliEvent[] {
+    const events = [...this.retainedEvents];
+    if (this.resourceEvent && !events.includes(this.resourceEvent)) { events.push(this.resourceEvent); if (events.length > 256) events.shift(); }
+    return structuredClone(events);
   }
   status(): "running" | "completed" { return this.completed ? "completed" : "running"; }
   result(): Promise<CliTurnResult> { return this.outcome; }
 }
 
-interface CliProviderDefinition {
+export interface CliProviderDefinition {
+  requiresNativeBinding?:boolean;
+  supportsExecutionSelection?:boolean;
+  catalogProvider?: CatalogCliProvider | "opencode";
   manifest: AdapterManifest;
   defaultExecutable: string;
   versionArgs: string[];
   authArgs: string[];
   environmentKey?: string;
   supportsResume: boolean;
-  startArgs(input: { prompt: string; model?: string; providerSessionId?: string }): string[];
+  assertResumeId?: (value: string) => void;
+  strictLifecycle?: boolean;
+  requireExecutionEvidence?: boolean;
+  newSessionId?: () => string;
+  resolveExecutable?: (profile: CliAgentProfile) => Promise<string>;
+  normalizeLine?: (line: string) => NormalizedCliEvent | undefined;
+  startArgs(input: { prompt: string; model?: string; providerSessionId?: string; newSession?: boolean; configDir?: string; trustWorkspace?: boolean; approveTools?: boolean }): string[];
 }
 
 export const cursorManifest: AdapterManifest = {
@@ -169,17 +248,19 @@ export const kiroManifest: AdapterManifest = {
 };
 
 const cursorDefinition: CliProviderDefinition = {
+  catalogProvider: "cursor",
+  assertResumeId: value => { if(!isCursorLocalSessionId(value))throw new AdapterContractError("CURSOR_LOCAL_SESSION_ID_INVALID","CURSOR_LOCAL_SESSION_ID_INVALID"); },
   manifest: cursorManifest,
   defaultExecutable: "cursor-agent",
   versionArgs: ["--version"],
   authArgs: ["status"],
   environmentKey: "CURSOR_API_KEY",
-  supportsResume: true,
-  startArgs: ({ prompt, model, providerSessionId }) => [
-    "--print", "--force", "--output-format", "stream-json",
+  supportsResume: true, strictLifecycle: true, requireExecutionEvidence: true, normalizeLine: normalizeCursorLine,
+  startArgs: ({ prompt, model, providerSessionId, approveTools, trustWorkspace }) => [
+    "--print", ...(trustWorkspace ? ["--trust"] : []), ...(approveTools ? ["--force"] : []), "--output-format", "stream-json",
     ...(providerSessionId ? ["--resume", providerSessionId] : []),
     ...(model ? ["--model", model] : []),
-    prompt,
+    "--", prompt,
   ],
 };
 
@@ -198,11 +279,20 @@ const kiroDefinition: CliProviderDefinition = {
   ],
 };
 
-class StructuredCliAdapter implements AgentAdapter {
+export class StructuredCliAdapter implements AgentAdapter {
   readonly manifest: AdapterManifest;
+  get supportsExecutionSelection(): boolean { return this.definition.supportsExecutionSelection===true||this.definition.catalogProvider !== undefined; }
+  get supportsExecutionRef(): boolean { return this.definition.requiresNativeBinding===true&&["pi-rpc","opencode-server-v2","devin-local-acp","copilot-rpc"].includes(this.backendId); }
   private readonly turns = new Map<string, CliTurn>();
   private readonly backend: CliAgentBackend;
+  private readonly backendId:string;
+  private readonly nativeEvents:NativeBindingEvents;
+  private readonly turnObservers=new WeakMap<CliTurn,NativeTurnObserver>();
   private readonly store: SessionStore;
+  private readonly sending = new Set<string>();
+  private starting = 0;
+  private cancelling = 0;
+  private readonly cancelled=new Set<string>();
 
   constructor(
     private readonly definition: CliProviderDefinition,
@@ -213,55 +303,151 @@ class StructuredCliAdapter implements AgentAdapter {
   ) {
     this.manifest = validateManifest(definition.manifest);
     this.backend = backend;
+    this.backendId=backend.backendId??this.manifest.backends[0]!.id;
     this.store = store;
+    this.nativeEvents=new NativeBindingEvents(store);
   }
 
-  async start(input: { runId: string; workspacePath: string; backendId?: string; prompt?: string }): Promise<AdapterSession> {
-    const now = new Date().toISOString();
-    const session: AdapterSession = {
-      id: randomUUID(),
-      runId: input.runId,
-      backendId: input.backendId ?? this.manifest.backends[0]!.id,
-      workspacePath: input.workspacePath,
-      state: "RUNNING",
-      profileId: this.profile.id,
-      createdAt: now,
-      updatedAt: now,
-    };
+  async modelCatalog(context: ModelCatalogContext & { workspacePath: string;signal?:AbortSignal }): Promise<AccountModelCatalog> {
+    if (!this.definition.catalogProvider) return { profileId: context.profileId, runnerId: context.runnerId, providerId: this.manifest.id, backendId: this.manifest.backends[0]!.id, contextFingerprint: "unsupported", revision: "unsupported", fetchedAt: new Date().toISOString(), freshness: "unverified", source: "cli-query", selectionSupport: "unsupported", entries: [], failure: { code: "MODEL_CATALOG_UNSUPPORTED", message: "This native CLI does not expose a qualified model catalog and per-run selection" } };
+    if (this.definition.catalogProvider === "opencode") {
+      const profile = structuredClone(this.profile), captured = { ...context }, backendId = this.backendId;
+      const resolver = this.definition.resolveExecutable?.bind(this.definition, profile), fallback = profile.executable ?? this.definition.defaultExecutable;
+      return readOpenCodeCatalog({ profile, executable: resolver ?? (() => Promise.resolve(fallback)), backendId, context: captured, workspacePath: captured.workspacePath, ...(captured.signal ? { signal: captured.signal } : {}) });
+    }
     const environment = await this.environment();
-    this.turns.set(session.id, this.backend.start({
-      executable: this.profile.executable ?? this.definition.defaultExecutable,
-      args: this.definition.startArgs({ prompt: input.prompt ?? "Inspect the task and report readiness.", ...(this.profile.model ? { model: this.profile.model } : {}) }),
-      workspacePath: input.workspacePath,
-      ...(environment ? { environment } : {}),
-    }));
-    this.store.save(session);
-    return structuredClone(session);
+    return readNativeCliCatalog({ provider: this.definition.catalogProvider, profile: this.profile, executable: await this.executable(), context, workspacePath: context.workspacePath, ...(environment ? { environment } : {}),...(context.signal?{signal:context.signal}:{}) });
   }
 
-  async send(sessionId: string, message: string): Promise<AdapterEvent> {
+  setNativeEventSink(sink:NativeEventSink,onBegin:NativeObserverBegin):void {this.nativeEvents.setSink(sink,onBegin);}
+
+  legacyInvocationDefaults():{backendId:string;model?:string}{return {backendId:this.backendId,...(this.profile.model?{model:this.profile.model}:{})};}
+
+  async start(input: AdapterStartInput): Promise<AdapterSession> {
+    input=captureAdapterStartInput(input);
+    this.starting++;
+    try {
+      const backendId=this.backendId;
+      let selection:ExecutionSelection|undefined;
+      try{
+        if(input.backendId!==undefined&&input.backendId!==backendId||!this.manifest.backends.some(value=>value.id===backendId))throw new AdapterContractError("BACKEND_MISMATCH","Requested backend differs from the owning CLI adapter");
+        selection=freezeExecutionSelection(input.executionSelection,{profileId:this.profile.id,providerId:this.manifest.id,backendId,selection:this.supportsExecutionSelection,reasoning:false,legacyModel:true});
+        if(this.definition.requiresNativeBinding){
+          this.nativeEvents.assertAvailable();
+          if(!input.sessionId||!input.execution||!isExecutionContextRef(input.executionRef)||input.executionRef.kind!=="managed-worktree"||!selection||typeof input.beforeCreate!=="function"||typeof input.beforeSend!=="function")throw new AdapterContractError(backendId==="opencode-server-v2"?"OPENCODE_START_INVALID":backendId==="devin-local-acp"?"DEVIN_ACP_START_INVALID":backendId==="copilot-rpc"?"COPILOT_RPC_START_INVALID":"PI_RPC_START_INVALID","RPC startup requires reserved execution and synchronous admission");
+          if(Object.hasOwn(input,"modelSelection")||Object.hasOwn(input,"legacyModel"))throw new AdapterContractError("MODEL_LEGACY_REVIEW_REQUIRED","RPC startup requires one canonical execution selection");
+          const checked=validateExecutionBinding({profileId:this.profile.id,providerId:this.manifest.id,backendId,runnerId:input.executionRef.runnerId,executionRef:input.executionRef},selection,{repositoryId:input.executionRef.repositoryId,baseRevision:input.executionRef.baseRevision});
+          if(!checked.valid)throw new AdapterContractError(checked.code,"RPC startup context changed");
+          assertAdapterStartAdmission(input.beforeCreate);assertAdapterStartAdmission(input.beforeSend);
+        }
+      }catch(error){throw startPreparationFailure(error);}
+      const now = new Date().toISOString();
+      const session: AdapterSession = {
+        id: startSessionId(this.store,input.sessionId),
+        runId: input.runId,
+      ...(input.execution?{execution:input.execution}:{}),
+        backendId,
+        workspacePath: input.workspacePath,
+        state: "STARTING",
+        profileId: this.profile.id,
+        ...(input.executionRef?{executionRef:input.executionRef}:{}),
+        ...(selection?{executionSelection:selection}:{legacyModel:{...(this.profile.model?{id:this.profile.model}:{})}}),
+        ...(this.definition.newSessionId ? { providerSessionId: this.definition.newSessionId() } : {}),
+        turnId:randomUUID(),turnStartedAt:now,
+        createdAt: now,
+        updatedAt: now,
+      };
+      this.store.save(session);
+      let environment:Record<string,string>|undefined,executable:string;
+      try{environment=await this.environment();executable=await this.executable();}catch(error){throw startPreparationFailure(error);}
+      assertSessionModelBinding(this.store.load(session.id),session);
+      let observer:NativeTurnObserver|undefined;
+      try{observer=this.definition.requiresNativeBinding?this.nativeEvents.begin(session.id):undefined;}catch(error){throw startPreparationFailure(error);}
+      const nativeOptions=observer?this.nativeEvents.startOptions(session,observer,this.manifest.id,()=>{assertAdapterStartAdmission(input.beforeCreate);assertAdapterStartAdmission(input.beforeSend);},backendId==="opencode-server-v2"?"opencode-session":backendId==="devin-local-acp"?"devin-local-session":backendId==="copilot-rpc"?"copilot-session":"reserved"):undefined;
+      const nativeInput:CliStartInput={
+        executable,
+        args: this.definition.startArgs({ prompt: input.prompt ?? "Inspect the task and report readiness.", newSession: true, approveTools: this.profile.approveTools === true, trustWorkspace: this.profile.trustWorkspace === true, ...(this.profile.configDir ? { configDir: this.profile.configDir } : {}), ...(session.providerSessionId ? { providerSessionId: session.providerSessionId } : {}), ...this.selectionArgs(session) }),
+        workspacePath: input.workspacePath,
+        ...(nativeOptions&&observer?{...nativeOptions,onNativeEvent:observer,executionRef:session.executionRef!,nativeInput:{version:1 as const,profileId:this.profile.id,backendId,runId:session.runId,sessionId:session.id,commandId:this.require(session.id).nativeInvocationId!,newSession:true,prompt:input.prompt??"Inspect the task and report readiness.",approveTools:this.profile.approveTools===true,...(session.providerSessionId?{providerSessionId:session.providerSessionId}:{}),...(selection?{executionSelection:selection}:{})}}:{}),
+        ...(this.definition.normalizeLine ? { normalizeLine: this.definition.normalizeLine } : {}),
+        ...(this.definition.requireExecutionEvidence ? { requireExecutionEvidence: true } : {}),
+        ...(environment ? { environment } : {}),
+      };
+      assertAdapterStartAdmission(input.beforeSend);
+      let turn:CliTurn;
+      try{turn=this.backend.start(nativeInput);}catch(error){throw localStartFailure(error);}
+      this.turns.set(session.id, turn);
+      if(observer){
+        this.turnObservers.set(turn,observer);
+        if(!turn.ready)throw new AdapterStartError("unknown","NATIVE_READINESS_UNAVAILABLE","RPC readiness requires reconciliation");
+        await turn.ready();nativeOptions!.beforePrompt();
+        const current=this.require(session.id);this.store.save({...current,state:"RUNNING",updatedAt:new Date().toISOString()});return structuredClone(this.require(session.id));
+      }
+      session.state = "RUNNING";
+      if (turn.processId !== undefined) session.processId = turn.processId;
+      try { const index=nativeInput.args.indexOf("--model");recordModelInvocation(this.store,session,"start",{id:index<0?null:nativeInput.args[index+1]??null,options:{}});this.store.save(session); } catch (error) { await turn.cancel(); throw error; }
+      return structuredClone(session);
+    } finally { this.starting--; }
+  }
+
+  hasActiveOperations(): boolean {
+    return this.starting > 0 || this.cancelling > 0 || this.sending.size > 0 || [...this.turns.values()].some((turn) => turn.status() === "running");
+  }
+
+  async send(sessionId: string, message: string, beforeSend?:()=>void): Promise<AdapterEvent> {
     if (!this.definition.supportsResume) throw new AdapterContractError("UNSUPPORTED_CAPABILITY", `${this.manifest.displayName} headless runs do not accept mid-session input`);
-    const session = await this.finish(sessionId);
-    if (!session.providerSessionId) throw new AdapterContractError("SESSION_NOT_RESUMABLE", `${this.manifest.displayName} did not emit a provider session id`);
-    const environment = await this.environment();
-    this.turns.set(sessionId, this.backend.start({
-      executable: this.profile.executable ?? this.definition.defaultExecutable,
-      args: this.definition.startArgs({ prompt: message, providerSessionId: session.providerSessionId, ...(this.profile.model ? { model: this.profile.model } : {}) }),
-      workspacePath: session.workspacePath,
-      ...(environment ? { environment } : {}),
-    }));
-    this.store.save({ ...session, state: "RUNNING", updatedAt: new Date().toISOString() });
-    return { type: "session.message", sessionId, occurredAt: new Date().toISOString(), data: { acceptedCharacters: message.length, providerSessionId: session.providerSessionId } };
+    if (this.cancelled.has(sessionId)||this.require(sessionId).state === "CANCELLED") throw new AdapterContractError("SESSION_CANCELLED", "Cancelled sessions cannot accept input");
+    if (this.definition.strictLifecycle && !this.turns.has(sessionId) && !["COMPLETED", "PAUSED"].includes(this.require(sessionId).state)) throw new AdapterContractError("SESSION_DETACHED", "Active or failed process handles cannot be recovered; use controlled operator recovery");
+    if (this.definition.strictLifecycle && (this.turns.get(sessionId)?.status() === "running" || this.sending.has(sessionId))) throw new AdapterContractError("SESSION_BUSY", "Wait for the current CLI turn before sending another message");
+    this.sending.add(sessionId);
+    try {
+      const expected=structuredClone(this.require(sessionId));
+      const session = await this.finish(sessionId);
+      assertSessionModelBinding(this.store.load(sessionId),expected);
+      freezeExecutionSelection(session.executionSelection,{profileId:this.profile.id,providerId:this.manifest.id,backendId:this.manifest.backends[0]!.id,selection:this.supportsExecutionSelection,reasoning:false,legacyModel:true});
+      if (!session.providerSessionId) throw new AdapterContractError("SESSION_NOT_RESUMABLE", `${this.manifest.displayName} did not emit a provider session id`);
+      this.definition.assertResumeId?.(session.providerSessionId);
+      const environment = await this.environment();
+      const executable = await this.executable();
+      if (this.cancelled.has(sessionId)||this.require(sessionId).state === "CANCELLED") throw new AdapterContractError("SESSION_CANCELLED", "Session was cancelled before the next turn started");
+      assertSessionModelBinding(this.store.load(sessionId),session);
+      session.turnId=randomUUID();session.turnStartedAt=new Date().toISOString();
+      this.store.save({ ...session, state: "STARTING", updatedAt: session.turnStartedAt });
+      const nativeInput:CliStartInput={
+        executable,
+        args: this.definition.startArgs({ prompt: message, providerSessionId: session.providerSessionId, approveTools: this.profile.approveTools === true, trustWorkspace: this.profile.trustWorkspace === true, ...(this.profile.configDir ? { configDir: this.profile.configDir } : {}), ...this.selectionArgs(session) }),
+        workspacePath: session.workspacePath,
+        ...(this.definition.normalizeLine ? { normalizeLine: this.definition.normalizeLine } : {}),
+        ...(this.definition.requireExecutionEvidence ? { requireExecutionEvidence: true } : {}),
+        ...(environment ? { environment } : {}),
+      };
+      assertAdapterWriteAdmission(beforeSend);
+      const turn=this.backend.start(nativeInput);
+      this.turns.set(sessionId, turn);
+      const persisted = { ...session }; delete persisted.processId;
+      try { const index=nativeInput.args.indexOf("--model");recordModelInvocation(this.store,persisted,"input",{id:index<0?null:nativeInput.args[index+1]??null,options:{}});this.store.save({ ...persisted, state: "RUNNING", ...(turn.processId !== undefined ? { processId: turn.processId } : {}), updatedAt: new Date().toISOString() }); }
+      catch (error) { await turn.cancel(); throw error; }
+      return { type: "session.message", sessionId, occurredAt: new Date().toISOString(), data: { acceptedCharacters: message.length, providerSessionId: session.providerSessionId } };
+    } finally { this.sending.delete(sessionId); }
   }
   async pause(): Promise<AdapterSession> { throw new AdapterContractError("UNSUPPORTED_CAPABILITY", `${this.manifest.displayName} cannot pause a headless turn`); }
-  async resume(sessionId: string): Promise<AdapterSession> {
+  async resume(sessionId: string, beforeSend?:()=>void): Promise<AdapterSession> {
     if (!this.definition.supportsResume) throw new AdapterContractError("UNSUPPORTED_CAPABILITY", `${this.manifest.displayName} session recovery is not declared for this backend`);
-    await this.send(sessionId, "Continue from the existing task context.");
+    await this.send(sessionId, "Continue from the existing task context.",beforeSend);
     return this.status(sessionId);
   }
-  async cancel(sessionId: string): Promise<AdapterSession> {
-    await this.turns.get(sessionId)?.cancel();
-    return this.update(sessionId, { state: "CANCELLED" });
+  async cancel(sessionId: string, beforeSend?:()=>void): Promise<AdapterSession> {
+    if(this.definition.requiresNativeBinding)throw new AdapterContractError(this.backendId==="opencode-server-v2"?"OPENCODE_STOP_UNQUALIFIED":this.backendId==="devin-local-acp"?"DEVIN_ACP_STOP_UNQUALIFIED":this.backendId==="copilot-rpc"?"COPILOT_RPC_STOP_UNQUALIFIED":"PI_RPC_STOP_UNQUALIFIED","Closing the local RPC connection cannot prove native tools or writer release");
+    this.cancelling++;
+    try {
+      const session=this.require(sessionId);
+      if(!this.turns.has(sessionId)&&["STARTING","RUNNING"].includes(session.state))throw new AdapterContractError("SESSION_DETACHED","Native termination cannot be confirmed without owned process handles");
+      assertAdapterWriteAdmission(beforeSend);
+      this.cancelled.add(sessionId);
+      // A failed persistence write must not prevent stopping the owned process.
+      await this.turns.get(sessionId)?.cancel();
+      return this.update(sessionId, { state: "CANCELLED" });
+    } finally { this.cancelling--; }
   }
   async status(sessionId: string): Promise<AdapterSession> {
     const session = this.require(sessionId);
@@ -274,8 +460,11 @@ class StructuredCliAdapter implements AgentAdapter {
     return { sessionId, state: session.state, summary: result?.summary ?? `${this.manifest.displayName} session ${session.state.toLowerCase()}`, artifacts: extractArtifacts(result?.summary ?? "") };
   }
   async usage(sessionId: string): Promise<Record<string, unknown>> {
-    const result = await this.turns.get(sessionId)?.result();
-    return result?.events.filter((event) => event.type === "resource").at(-1) ?? { state: "UNKNOWN", reason: "Provider did not emit a resource signal", source: "probe", confidence: "low" };
+    this.require(sessionId);
+    const turn = this.turns.get(sessionId);
+    const events = turn?.events ? turn.events() : turn?.status() === "completed" ? (await turn.result()).events : [];
+    const completed = turn?.status() === "completed" && (await turn.result()).state === "completed";
+    return events.filter((event) => event.type === "resource").at(-1) ?? (completed ? { state: "AVAILABLE", reason: "Native turn completed; remaining quota was not reported", source: "event", confidence: "medium" } : { state: "UNKNOWN", reason: "Provider did not emit a resource signal", source: "probe", confidence: "low" });
   }
   async diagnostics(sessionId: string): Promise<Record<string, unknown>> {
     const session = this.require(sessionId);
@@ -287,20 +476,34 @@ class StructuredCliAdapter implements AgentAdapter {
     if (!this.definition.environmentKey || !this.resolveCredential) throw new AdapterContractError("SECRET_RESOLVER_UNAVAILABLE", "Credential references require a SecretStore resolver");
     return { [this.definition.environmentKey]: await this.resolveCredential(this.profile.credentialRef) };
   }
+  private selectionArgs(session: AdapterSession): { model?: string } {
+    if (session.executionSelection && Object.keys(session.executionSelection.nativeParameters).length) throw new AdapterContractError("UNSUPPORTED_NATIVE_PARAMETERS", "This native catalog does not expose qualified per-model parameters");
+    const model=sessionModel(session);return model?{model}:{};
+  }
+  private executable(): Promise<string> {
+    return this.definition.resolveExecutable?.(this.profile) ?? Promise.resolve(this.profile.executable ?? this.definition.defaultExecutable);
+  }
   private async finish(sessionId: string): Promise<AdapterSession> {
     const session = this.require(sessionId);
     if (session.state === "CANCELLED") return structuredClone(session);
     const turn = this.turns.get(sessionId);
-    if (!turn) return structuredClone(session);
+    if (!turn) {
+      if(this.definition.strictLifecycle&&["STARTING","RUNNING"].includes(session.state))throw new AdapterContractError("SESSION_DETACHED","Native execution outcome is unknown without owned process handles");
+      return structuredClone(session);
+    }
     const result = await turn.result();
+    const observer=this.turnObservers.get(turn);if(observer&&!observer.canProject())throw new AdapterContractError("STALE_NATIVE_OBSERVER","Native observer authority changed before result projection");
+    assertSessionModelBinding(this.store.load(sessionId),session,result.providerSessionId);
+    if (this.cancelled.has(sessionId)||this.require(sessionId).state === "CANCELLED") return structuredClone(this.require(sessionId));
     return this.update(sessionId, {
       state: result.state === "completed" ? "COMPLETED" : result.state === "cancelled" ? "CANCELLED" : result.state === "waiting" ? "PAUSED" : "FAILED",
+      executionResource:turnExecutionResource(result.events,result.state,new Date().toISOString()),
       ...(result.providerSessionId ? { providerSessionId: result.providerSessionId } : {}),
     });
   }
   private require(id: string): AdapterSession {
     const session = this.store.load(id);
-    if (!session) throw new AdapterContractError("SESSION_NOT_FOUND", `Unknown session ${id}`);
+    if (!session || session.profileId !== this.profile.id) throw new AdapterContractError("SESSION_NOT_FOUND", `Unknown session ${id}`);
     return session;
   }
   private update(id: string, changes: Partial<AdapterSession>): AdapterSession {
@@ -322,32 +525,29 @@ export class KiroAdapter extends StructuredCliAdapter {
   }
 }
 
-export async function probeCursorProfile(profile: CliAgentProfile, resolveCredential?: CredentialResolver): Promise<CliDiscoveryResult> {
-  return probeCliProfile(cursorDefinition, profile, resolveCredential);
+export interface NativeProbeContext {workspacePath?:string}
+export async function probeCursorProfile(profile: CliAgentProfile, resolveCredential?: CredentialResolver,context:NativeProbeContext={}): Promise<CliDiscoveryResult> {
+  return probeCliProfile(cursorDefinition, profile, resolveCredential,context);
 }
-
-export async function probeKiroProfile(profile: CliAgentProfile, resolveCredential?: CredentialResolver): Promise<CliDiscoveryResult> {
-  return probeCliProfile(kiroDefinition, profile, resolveCredential);
+export async function probeKiroProfile(profile: CliAgentProfile, resolveCredential?: CredentialResolver,context:NativeProbeContext={}): Promise<CliDiscoveryResult> {
+  return probeCliProfile(kiroDefinition, profile, resolveCredential,context);
 }
-
-async function probeCliProfile(definition: CliProviderDefinition, profile: CliAgentProfile, resolveCredential?: CredentialResolver): Promise<CliDiscoveryResult> {
-  const executable = profile.executable ?? definition.defaultExecutable;
+async function probeCliProfile(definition: CliProviderDefinition, profile: CliAgentProfile, resolveCredential:CredentialResolver|undefined,context:NativeProbeContext): Promise<CliDiscoveryResult> {
+  const executable = profile.executable ?? definition.defaultExecutable,environment:NodeJS.ProcessEnv=childExecutionEnvironment(process.env,context.workspacePath?{PWD:context.workspacePath}:{}),cwd=context.workspacePath;
   let version: string;
-  try { version = (await execFileAsync(executable, definition.versionArgs, { timeout: 3_000 })).stdout.trim(); }
-  catch (error) { return { executable, installed: false, authenticated: false, diagnostic: error instanceof Error ? error.message.slice(0, 240) : "Executable not found" }; }
-  const environment = { ...process.env };
+  try { version = (await execFileAsync(executable, definition.versionArgs, { timeout: 3_000,maxBuffer:32768,env:environment,...(cwd?{cwd}:{}) })).stdout.trim(); }
+  catch { return { executable, installed: false, authenticated: false, authentication:"unknown",diagnostic:"Native executable version check failed" }; }
+  let compatible:boolean|undefined;
+  try{const result=await execFileAsync(executable,definition.catalogProvider==="cursor"?["--help"]:["chat","--help"],{timeout:3000,maxBuffer:65536,env:environment,...(cwd?{cwd}:{})});const output=result.stdout+result.stderr;compatible=definition.catalogProvider==="cursor"?/--print/.test(output)&&/--output-format/.test(output)&&/--resume/.test(output):/--no-interactive/.test(output)&&/--agent-engine/.test(output)&&/--output-format/.test(output);}catch{compatible=undefined;}
   if (profile.credentialRef) {
-    if (!definition.environmentKey || !resolveCredential) return { executable, installed: true, authenticated: false, version, diagnostic: "Credential reference cannot be resolved in this runtime" };
+    if (!definition.environmentKey || !resolveCredential) return { executable, installed: true, authenticated: false, authentication:"unknown",...(compatible===undefined?{}:{compatible}),version, diagnostic: "Credential reference cannot be resolved in this runtime" };
     environment[definition.environmentKey] = await resolveCredential(profile.credentialRef);
   }
   try {
-    const result = await execFileAsync(executable, definition.authArgs, { timeout: 8_000, maxBuffer: 256 * 1024, env: environment });
-    const output = `${result.stdout}\n${result.stderr}`;
-    const diagnostic = /not authenticated|not logged in|login required|unauthorized|forbidden/i.test(output) ? output.trim().slice(0, 240) : undefined;
-    return { executable, installed: true, authenticated: !diagnostic, version, ...(diagnostic ? { diagnostic } : {}) };
-  } catch (error) {
-    return { executable, installed: true, authenticated: false, version, diagnostic: error instanceof Error ? error.message.slice(0, 240) : "Authentication probe failed" };
-  }
+    const result = await execFileAsync(executable, definition.authArgs, { timeout: 8_000, maxBuffer: 256 * 1024, env: environment,...(cwd?{cwd}:{}) });
+    const output=result.stdout+result.stderr,login=definition.catalogProvider==="cursor"?cursorLoginIdentity(result.stdout,result.stderr):{status:/not authenticated|not logged in|login required|unauthorized|forbidden/i.test(output)?"missing" as const:"unknown" as const};
+    return {executable,installed:true,...(compatible===undefined?{}:{compatible}),version,authenticated:login.status==="ready",authentication:login.status,...(login.status!=="ready"?{diagnostic:login.status==="missing"?"Native authentication is required":"Native account identity remains unverified"}:{})};
+  } catch { return {executable,installed:true,...(compatible===undefined?{}:{compatible}),version,authenticated:false,authentication:"unknown",diagnostic:"Native authentication check failed"}; }
 }
 
 export function normalizeCliLine(line: string): NormalizedCliEvent | undefined {
@@ -379,9 +579,10 @@ export function normalizeCliError(message: string): CliErrorEvent | undefined {
   if (!message.trim()) return undefined;
   const reason = message.slice(0, 1_000);
   const lower = reason.toLowerCase();
-  if (/quota|credit.*exhaust|insufficient credit/.test(lower)) return { type: "resource", state: "QUOTA_EXHAUSTED", reason, source: "error", confidence: "high" };
+  if (/model unavailable|model not found|unknown model/.test(lower)) return { type: "failure", reason };
+  if (/quota|credit.*exhaust|insufficient credit|requires more credits|can only afford/.test(lower)) return { type: "resource", state: "QUOTA_EXHAUSTED", reason, source: "error", confidence: "high" };
   if (/rate.?limit|too many requests/.test(lower)) return { type: "resource", state: "RATE_LIMITED", reason, source: "error", confidence: "high" };
-  if (/unauth|not logged in|login required|forbidden/.test(lower)) return { type: "resource", state: "AUTH_ERROR", reason, source: "error", confidence: "high" };
+  if (/unauth|authentication required|not authenticated|not logged in|login required|forbidden|no api key|invalid api.?key/.test(lower)) return { type: "resource", state: "AUTH_ERROR", reason, source: "error", confidence: "high" };
   if (/unavailable|econn|network|timeout/.test(lower)) return { type: "resource", state: "PROVIDER_DOWN", reason, source: "error", confidence: "medium" };
   return { type: "failure", reason };
 }
@@ -394,6 +595,7 @@ function profileSchema(defaultExecutable: string, includeCredential: boolean): R
     properties: {
       id: { type: "string", minLength: 1, pattern: "^[a-z0-9][a-z0-9._-]*$" },
       alias: { type: "string", minLength: 1 },
+      ...(defaultExecutable === "cursor-agent" ? { trustWorkspace: { type: "boolean", default: false, title: "Trust Dispatcher worktrees", description: "Trust this profile's managed repository worktrees without a native prompt; tool approval remains separate." }, approveTools: { type: "boolean", default: false, title: "Approve native tools unattended" } } : {}),
       runnerId: { type: "string", minLength: 1, default: "local" },
       executable: { type: "string", minLength: 1, default: defaultExecutable },
       model: { type: "string", minLength: 1 },
@@ -406,4 +608,21 @@ function stringValue(value: unknown): string | undefined { return typeof value =
 function numberValue(value: unknown): number | undefined { return typeof value === "number" && Number.isFinite(value) ? value : undefined; }
 function extractArtifacts(summary: string): Array<{ path: string; kind: string }> {
   return [...new Set(summary.match(/https?:\/\/[^\s)]+\/pull\/\d+/g) ?? [])].map((path) => ({ path, kind: "pull-request" }));
+}
+
+
+export function normalizeCursorLine(line: string): NormalizedCliEvent | undefined {
+  let value: Record<string, unknown>;
+  try { const parsed: unknown = JSON.parse(line); if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined; value = parsed as Record<string, unknown>; } catch { return undefined; }
+  if (value.type === "result" && value.is_error === true) return normalizeCliError(typeof value.result === "string" ? value.result : Array.isArray(value.errors) ? value.errors.map(String).join("; ") : "Cursor failed");
+  if (value.type === "error") return normalizeCliError(typeof value.message === "string" ? value.message : "Cursor failed");
+  const providerSessionId = stringValue(value.session_id) ?? stringValue(value.chat_id);
+  if (value.type === "system" && value.subtype === "init") return { type: "activity", summary: "Cursor turn started", ...(providerSessionId ? { providerSessionId } : {}) };
+  let summary = stringValue(value.result);
+  if (value.type === "assistant") {
+    const message = value.message && typeof value.message === "object" ? value.message as Record<string, unknown> : undefined;
+    if (Array.isArray(message?.content)) summary = message.content.filter((part) => part?.type === "text" && typeof part.text === "string").map((part) => part.text as string).join("\n");
+  }
+  if ((value.type === "assistant" && summary) || (value.type === "result" && (summary || value.subtype === "success" || value.is_error === false))) return { type: "activity", summary: (summary ?? "Cursor turn completed").slice(0, 2_000), executionEvidence: true, ...(providerSessionId ? { providerSessionId } : {}) };
+  return undefined;
 }

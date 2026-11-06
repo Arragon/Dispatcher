@@ -20,14 +20,29 @@ export interface DeliveryRequest {
   title: string;
   body: string;
   verification: VerificationEvidence;
+  expectedHeadCommit?:string;creationAllowed?:boolean;signal?:AbortSignal;
+  /** Must run after credential resolution, immediately before the first provider create. */
+  beforeCreate?:()=>void;
   assertAuthority?: (operation: "branch" | "push" | "pull-request" | "complete") => void;
 }
 
+export interface PullRequestStatus {
+  id: string;
+  url: string;
+  state: "OPEN" | "MERGED" | "CLOSED";
+  number?: number;
+  headCommit?: string;
+}
+
+export interface ScmRepositoryInspection {host:string;repository:string;baseBranch:string}
+
 export interface ScmAdapter extends ConnectorAdapter {
+  inspectDeliveryRepository?(repository:RepositoryRef,baseBranch:string):Promise<ScmRepositoryInspection>;
   ensureBranch(repository: RepositoryRef, branch: string, baseBranch: string, idempotencyKey: string): Promise<void>;
   push(repository: RepositoryRef, branch: string, idempotencyKey: string): Promise<{ commit: string }>;
-  createOrGetPullRequest(request: DeliveryRequest): Promise<{ id: string; url: string; state: "OPEN" | "MERGED" | "CLOSED" }>;
-  getCiStatus(repository: RepositoryRef, ref: string): Promise<{ state: "PENDING" | "PASSED" | "FAILED"; url?: string }>;
+  createOrGetPullRequest(request: DeliveryRequest): Promise<PullRequestStatus>;
+  getPullRequest?(repository: RepositoryRef, number: number): Promise<PullRequestStatus>;
+  getCiStatus(repository: RepositoryRef, ref: string,signal?:AbortSignal): Promise<{ state: "PENDING" | "PASSED" | "FAILED"; url?: string }>;
 }
 
 export const fakeScmDefinition = createConnectorDefinition({
@@ -43,6 +58,7 @@ export const fakeScmDefinition = createConnectorDefinition({
 });
 
 export function assertDeliveryGate(request: DeliveryRequest): void {
+  if(request.signal?.aborted)throw new ConnectorError("CONFLICT","Delivery was cancelled before mutation",{retryable:false,operation:"delivery"});
   if (request.verification.state !== "PASSED") {
     throw new ConnectorError("PERMANENT", "Required verification has not passed", { retryable: false, operation: "delivery" });
   }
@@ -88,6 +104,8 @@ export class FakeScmConnector implements ScmAdapter {
     assertDeliveryGate(request);
     const existing = this.pullRequests.get(request.idempotencyKey);
     if (existing) return structuredClone(existing);
+    if(request.creationAllowed===false)throw new ConnectorError("CONFLICT","Prior PR creation is unconfirmed; reconcile before creating another",{retryable:false,operation:"delivery"});
+    request.beforeCreate?.();
     const created = { id: `pr-${this.pullRequests.size + 1}`, url: `https://fake.invalid/${request.repository.owner}/${request.repository.name}/pull/${this.pullRequests.size + 1}`, state: "OPEN" as const };
     this.pullRequests.set(request.idempotencyKey, created);
     return structuredClone(created);

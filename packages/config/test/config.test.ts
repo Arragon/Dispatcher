@@ -22,6 +22,28 @@ function configured(overrides: Partial<DispatcherConfig["controller"]> = {}): Di
 }
 
 describe("configuration schema", () => {
+  it("binds repositories to known Runners while preserving legacy local registrations and foreign native path syntax", () => {
+    const input = structuredClone(defaultDispatcherConfig);
+    input.runners.push({ id: "windows", displayName: "Windows", mode: "remote", capacity: 1, tags: [], credentialRef: "secret://runner/fixture/windows" });
+    const repository = { id: "repo", root: "C:\\code\\repo", runnerId: "windows", defaultBaseRef: "main", scopePaths: ["."], verificationCommands: [] };
+    expect(validateConfig({ ...input, repositories: [repository] }).repositories[0]).toEqual(repository);
+    expect(() => validateConfig({ ...input, repositories: [{ ...repository, runnerId: "missing" }] })).toThrow(/unknown runner/);
+    expect(() => validateConfig({ ...input, repositories: [{ ...repository, root: "relative/repo" }] })).toThrow(/absolute/);
+    const legacy = { id: "legacy", root: "/local/repo", defaultBaseRef: "main", scopePaths: ["."], verificationCommands: [] };
+    expect(validateConfig({ ...input, repositories: [legacy] }).repositories[0]).toEqual(legacy);
+  });
+  it("validates explicit native tool approval and native credential ownership", () => {
+    const input = structuredClone(defaultDispatcherConfig);
+    input.agentProfiles = [{ id: "grok", provider: "grok", alias: "Grok", runnerId: "local", settings: { approveTools: "true" } }];
+    expect(() => validateConfig(input)).toThrowError(/approveTools/);
+    input.agentProfiles[0]!.settings = { approveTools: true };
+    expect(() => validateConfig(input)).not.toThrow();
+    input.agentProfiles[0]!.provider = "pi";
+    expect(() => validateConfig(input)).toThrowError(/approveTools/);
+    input.agentProfiles[0]!.settings = {};
+    input.agentProfiles[0]!.credentialRef = "secret://pi/test";
+    expect(() => validateConfig(input)).toThrowError(/native login/);
+  });
   it("normalizes equivalent inputs deterministically", () => {
     const input = structuredClone(defaultDispatcherConfig);
     input.runners[0]!.tags = ["z", "a"];
@@ -104,10 +126,17 @@ describe("ConfigurationEngine", () => {
     const plan = engine.buildPlan(configured({ id: "controller-two" }), "tester", "cli");
     expect(plan.risk).toBe("safe");
     const applied = engine.applyPlan(plan.id);
+    expect(engine.getPlan(plan.id)?.state).toBe("APPLIED");
     expect(applied.config.controller.id).toBe("controller-two");
     expect(database.listAudit().map((entry) => entry.action)).toContain("apply");
     expect(runtime.apply).toHaveBeenCalled();
     database.close();
+  });
+
+  it("requires privileged confirmation for controller connection or Runner credential changes",()=>{
+    const database=new DispatcherDatabase(":memory:"),engine=new ConfigurationEngine(database);
+    for(const next of [configured({port:8348}),configured({listen:"127.0.0.2"})]){const plan=engine.buildPlan(next,"test","web");expect(plan.risk).toBe("privileged");expect(()=>engine.applyPlan(plan.id)).toThrow(expect.objectContaining({code:"CONFIG_CONFIRMATION_REQUIRED"}));}
+    const next=configured();next.runners.push({id:"remote",displayName:"Remote",mode:"remote",capacity:1,tags:[],credentialRef:"secret://runner/fixture/remote"});expect(engine.buildPlan(next,"test","web").risk).toBe("privileged");database.close();
   });
 
   it("requires confirmation for sensitive plans", () => {
@@ -134,6 +163,7 @@ describe("ConfigurationEngine", () => {
     );
     expect(engine.current()).toEqual(before);
     expect(runtime.apply).toHaveBeenLastCalledWith(before.config);
+    expect(engine.getPlan(plan.id)?.state).toBe("FAILED");
     database.close();
   });
 
@@ -174,6 +204,7 @@ describe("ConfigurationEngine", () => {
     const plan = engine.buildPlan(configured({ id: "temporary" }), "tester", "cli");
     const applied = engine.applyPlan(plan.id);
     const rolledBack = engine.rollbackPlan(plan.id);
+    expect(engine.getPlan(plan.id)?.state).toBe("ROLLED_BACK");
     expect(rolledBack.revision).toBe(applied.revision + 1);
     expect(rolledBack.config).toEqual(original.config);
     expect(database.listAudit().find((entry) => entry.action === "rollback" && entry.status === "committed")).toBeDefined();

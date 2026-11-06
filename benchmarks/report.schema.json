@@ -5,12 +5,13 @@
   "required": ["schemaVersion", "scenario", "startedAt", "durationSeconds", "environment", "measurements", "targets", "assessment"],
   "properties": {
     "schemaVersion": { "const": 1 },
-    "scenario": { "enum": ["smoke", "idle", "dashboard-open", "one-run", "three-runs", "log-growth", "db-growth"] },
+    "scenario": { "enum": ["smoke", "idle", "dashboard-open", "one-run", "three-runs", "log-growth", "db-growth", "history"] },
     "startedAt": { "type": "string", "format": "date-time" },
     "durationSeconds": { "type": "number", "minimum": 0 },
     "environment": { "type": "object" },
     "measurements": { "type": "object" },
     "targets": { "type": "object" },
+    "cleanup": { "type": "object" },
     "assessment": { "enum": ["pass", "fail", "informational", "not-runnable"] },
     "limitations": { "type": "array", "items": { "type": "string" } }
   },

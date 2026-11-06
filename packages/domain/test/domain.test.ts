@@ -10,6 +10,11 @@ import {
 } from "../src/index.js";
 
 describe("domain state contracts", () => {
+  it.each(["WAITING_USER","RESOURCE_BLOCKED","SUSPECTED_STALL","VERIFYING","DELIVERING"] as const)("can retain and restore %s around Runner unavailability",state=>{
+    expect(()=>assertRunTransition(state,"RUNNER_UNAVAILABLE")).not.toThrow();
+    expect(()=>assertRunTransition("RUNNER_UNAVAILABLE",state)).not.toThrow();
+    expect(()=>assertRunTransition("RUNNER_UNAVAILABLE","STARTING")).toThrow(InvalidStateTransitionError);
+  });
   it.each([
     ["READY", "QUEUED"],
     ["RUNNING", "WAITING_RESOURCE"],
@@ -72,4 +77,15 @@ describe("domain state contracts", () => {
     expect(task.revision).toBe(1);
     expect(task.bindings).toEqual([expect.objectContaining({ externalId: "INH-1", canonicalEntityId: "task-1" })]);
   });
+});
+
+// A pure phase edge does not grant native verification authority.
+it("allows delivery to return to verification",()=>{
+  expect(()=>assertRunTransition("DELIVERING","VERIFYING")).not.toThrow();
+});
+it.each(["COMPLETE","FAILED","CANCELLED","SUPERSEDED"] as const)("keeps %s terminal during re-verification",state=>{
+  expect(()=>assertRunTransition(state,"VERIFYING")).toThrow(InvalidStateTransitionError);
+});
+it("does not reopen delivery as active execution",()=>{
+  expect(()=>assertRunTransition("DELIVERING","ACTIVE")).toThrow(InvalidStateTransitionError);
 });

@@ -8,14 +8,14 @@ export interface CompileResult {
 }
 
 export class TaskContractCompiler {
-  compile(draft: TaskDraft, revision = 1): CompileResult {
+  compile(draft: TaskDraft, revision = 1, context?: { workspace: NonNullable<TaskContract["workspace"]>; referenceLinks?: string[];delivery?:TaskContract["delivery"];inputContext?:TaskContract["inputContext"] }): CompileResult {
     const missing: CompileResult["missing"] = [];
     if (!draft.repository?.trim()) missing.push("repository");
     if (draft.scope.length === 0) missing.push("scope");
     if (draft.acceptanceCriteria.length === 0) missing.push("acceptanceCriteria");
     if (draft.verification.length === 0) missing.push("verification");
     if (missing.length) return { state: "NEEDS_SPEC", missing };
-    const delivery = draft.delivery ?? { type: "pull-request" as const, baseBranch: "main" };
+    const delivery = context?.delivery??draft.delivery ?? { type: "pull-request" as const, baseBranch: "main" };
     return {
       state: "READY",
       missing,
@@ -23,13 +23,16 @@ export class TaskContractCompiler {
         version: 1,
         revision,
         goal: draft.title.trim(),
+        ...(draft.description !== undefined ? { instructions: draft.description } : {}),
+        ...(context?.inputContext ? { inputContext: { ...context.inputContext } } : {}),
+        ...(context ? { workspace: context.workspace, referenceLinks: context.referenceLinks ?? [] } : {}),
         scope: [...draft.scope],
         acceptanceCriteria: [...draft.acceptanceCriteria],
         verification: [...draft.verification],
         constraints: [...draft.constraints],
         delivery: {
           ...delivery,
-          repository: draft.repository!,
+          ...(!context ? { repository: draft.repository! } : {}),
         },
       },
     };
@@ -220,6 +223,8 @@ export class SemanticWorkflowEngine {
     const normalizedIntent: TypedIntentV2 = resolvedTarget && "target" in input.intent.arguments
       ? { ...structuredClone(input.intent), arguments: { ...structuredClone(input.intent.arguments), target: resolvedTarget } }
       : structuredClone(input.intent);
+    const resolvedProfile = resolutions.find((resolution) => resolution.reference.kind === "profile" && resolution.status === "RESOLVED")?.matches[0]?.id;
+    if (input.intent.action === "task.dispatch" && resolvedProfile && "profileId" in normalizedIntent.arguments) normalizedIntent.arguments.profileId = resolvedProfile;
     const state: SemanticWorkflowState = input.intent.confidence < 0.7 || ambiguous.length
       ? "NEEDS_CLARIFICATION"
       : tool.risk === "privileged"
@@ -286,6 +291,31 @@ export class SemanticWorkflowEngine {
 
 export function parseFixedCommand(text: string): TypedIntentV2 | undefined {
   const normalized = text.trim();
+  const native = /^(?:\/)?run\s+(takeover|return|history)(?:\s+([\s\S]*))?$/i.exec(normalized);
+  if (native) {
+    const operation = native[1]!.toLowerCase();
+    const values = native[2]?.trim().split(/\s+/) ?? [];
+    if (!values[0] || values.length > (operation === "takeover" ? 2 : 1) || values[1] !== undefined && !["wait", "interrupt"].includes(values[1])) {
+      throw new SemanticPolicyError("INVALID_INPUT", "Use run takeover <run> [wait|interrupt], run return <run>, or run history <run>");
+    }
+    return {
+      version: 2, action: `run.${operation}`,
+      entities: [{ kind: "run", value: values[0] }],
+      arguments: { target: values[0], ...(operation === "takeover" ? { settlePolicy: values[1] ?? "wait" } : {}) },
+      confidence: 1, source: "fixed-command",
+    };
+  }
+  const dispatch = /^(?:\/)?task\s+dispatch(?:\s+(.*))?$/i.exec(normalized);
+  if (dispatch) {
+    const values = dispatch[1]?.trim().split(/\s+/) ?? [];
+    if (!values[0] || values.length > 2) throw new SemanticPolicyError("INVALID_INPUT", "Use task dispatch <task> [profile]");
+    return {
+      version: 2, action: "task.dispatch",
+      entities: [{ kind: "task", value: values[0] }, ...(values[1] ? [{ kind: "profile" as const, value: values[1] }] : [])],
+      arguments: { target: values[0], ...(values[1] ? { profileId: values[1] } : {}) },
+      confidence: 1, source: "fixed-command",
+    };
+  }
   const match = /^(?:\/)?(task|run|fleet|profile)\s+(status|list|cancel|pause|resume|reroute)(?:\s+(.+))?$/i.exec(normalized);
   if (!match) return undefined;
   const [, kind, operation, value] = match;

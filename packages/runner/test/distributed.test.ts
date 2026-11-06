@@ -11,8 +11,24 @@ import {
   RunnerRegistry,
   reconcileRunnerState,
 } from "../src/index.js";
+import {remoteCommandHash} from "../src/remote.js";
 
 const tempDirectories: string[] = [];
+it("binds raw command content independently of object key order and renewable expiry",()=>{
+  const a={payload:{type:"run.send_input" as const,runId:"run",input:"Task Ａ"},leaseId:"lease",generation:1,leaseExpiresAt:"before"};
+  const b={payload:{input:"Task Ａ",runId:"run",type:"run.send_input" as const},generation:1,leaseId:"lease",leaseExpiresAt:"renewed"};
+  expect(remoteCommandHash(a)).toBe(remoteCommandHash(b));expect(remoteCommandHash({...a,payload:{...a.payload,input:"Task A"}})).not.toBe(remoteCommandHash(a));
+});
+
+it("cannot renew an expired lease or revive revoked or old generation authority", () => {
+  const authority = new RunnerLeaseAuthority();
+  authority.issue({ runId: "renew", runnerId: "local", leaseId: "lease-1", generation: 1, expiresAt: "2026-10-01T00:15:00Z" }, "2026-10-01T00:00:00Z");
+  expect(() => authority.renew("renew", "lease-1", 1, "2026-10-01T00:30:00Z", "2026-10-01T00:16:00Z")).toThrow(/expired/);
+  authority.issue({ runId: "renew", runnerId: "local", leaseId: "lease-2", generation: 2, expiresAt: "2026-10-01T00:30:00Z" }, "2026-10-01T00:16:00Z");
+  expect(() => authority.renew("renew", "lease-1", 1, "2026-10-01T00:40:00Z", "2026-10-01T00:17:00Z")).toThrow(/not current/);
+  authority.revoke("renew", "lease-2", 2, "cancelled", "2026-10-01T00:17:00Z");
+  expect(() => authority.renew("renew", "lease-2", 2, "2026-10-01T00:40:00Z", "2026-10-01T00:18:00Z")).toThrow(/revoked/);
+});
 
 afterEach(() => {
   for (const directory of tempDirectories.splice(0)) rmSync(directory, { recursive: true, force: true });
@@ -32,6 +48,59 @@ function runner(id = "remote-mac") {
 }
 
 describe("remote runner control plane", () => {
+  it.each([true,false])("replays before immediate reconnect RPC and flushes late old-socket replies (journal=%s)",async(durable)=>{
+    const directory=mkdtempSync(join(tmpdir(),"runner-reconnect-order-"));tempDirectories.push(directory);
+    const journal=durable?new RunnerJournal(join(directory,"journal.sqlite")):undefined;
+    const first=new RemoteRunnerServer({registry:new RunnerRegistry(),port:0,authenticate:()=>true,rpcTimeoutMs:1000});await first.ready();const port=first.address()!.port;
+    const client=new RemoteRunnerClient({url:`ws://127.0.0.1:${port}`,bearerToken:"fixture",runner:runner(),...(journal?{journal}:{}),reconnectBackoffMs:250});
+    const entered=Promise.withResolvers<void>(),release=Promise.withResolvers<void>();client.register("runner.health",()=>({ok:true}));client.register("runner.reconcile",async()=>{entered.resolve();await release.promise;return {runs:[]};});
+    let second:RemoteRunnerServer|undefined;
+    try{
+      await client.start();await first.sendCommand("remote-mac",{type:"runner.health"});
+      const old=first.sendCommand("remote-mac",{type:"runner.reconcile"}).catch(()=>undefined);await entered.promise;await first.close();await old;
+      const immediate=Promise.withResolvers<unknown>();
+      second=new RemoteRunnerServer({registry:new RunnerRegistry(),port,authenticate:()=>true,rpcTimeoutMs:1000,onRunnerChanged:runner=>{if(runner.state==="ONLINE")void second!.sendCommand(runner.id,{type:"runner.health"}).then(immediate.resolve,immediate.resolve);}});await second.ready();
+      expect(await immediate.promise).toMatchObject({payload:{type:"rpc.result",result:{ok:true}}});release.resolve();
+      await vi.waitFor(()=>expect(journal?.replay(0).some(entry=>entry.envelope.kind==="response"&&entry.envelope.payload.type==="rpc.result"&&JSON.stringify(entry.envelope.payload.result)==='{"runs":[]}')??true).toBe(true));
+      expect((await second.sendCommand("remote-mac",{type:"runner.health"})).payload).toMatchObject({type:"rpc.result",result:{ok:true}});
+    }finally{release.resolve();await client.stop();await second?.close();if(!second)await first.close();journal?.close();}
+  });
+  it("requires matching native start/session identity and owned handles or durable completion during reconciliation",()=>{
+    const expected={runId:"run",runnerId:"remote",generation:1,leaseId:"lease",workspace:"/work",sessionId:"session",startCommandHash:"start",requiresNativeOwnership:true};
+    const actual={runId:"run",generation:1,leaseId:"lease",workspace:"/work",sessionId:"session",startCommandHash:"start",attached:true,nativeState:"RUNNING",resultAvailable:false};
+    expect(reconcileRunnerState("remote",[expected],[actual])[0]?.action).toBe("KEEP");
+    for(const patch of [{startCommandHash:"other"},{sessionId:"other"},{attached:false},{attached:false,nativeState:"OUTCOME_UNKNOWN"}])expect(reconcileRunnerState("remote",[expected],[{...actual,...patch}])[0]?.action).toBe("ATTENTION");
+    expect(reconcileRunnerState("remote",[expected],[{...actual,attached:false,nativeState:"COMPLETE",resultAvailable:true}])[0]?.action).toBe("KEEP");
+  });
+  it("stops reconnecting and reports authorization loss when the Controller revokes its connection", async () => {
+    const authenticate = vi.fn(() => true), revoked = vi.fn();
+    const server = new RemoteRunnerServer({ registry: new RunnerRegistry(), port: 0, authenticate }); await server.ready();
+    const client = new RemoteRunnerClient({ url: `ws://127.0.0.1:${server.address()!.port}`, bearerToken: "fixture", runner: runner(), reconnectBackoffMs: 250, onAuthorizationLost: revoked });
+    try { await client.start(); server.disconnect("remote-mac", "credential revoked"); await vi.waitFor(() => expect(revoked).toHaveBeenCalledOnce()); await new Promise(resolve => setTimeout(resolve, 300)); expect(authenticate).toHaveBeenCalledOnce(); }
+    finally { await client.stop(); await server.close(); }
+  });
+  it("merges concurrent retries and rejects a changed payload on a used command ID",async()=>{
+    const server=new RemoteRunnerServer({registry:new RunnerRegistry(),port:0,authenticate:()=>true,rpcTimeoutMs:1000});await server.ready();
+    const client=new RemoteRunnerClient({url:`ws://127.0.0.1:${server.address()!.port}`,bearerToken:"fixture",runner:runner()});const entered=Promise.withResolvers<void>(),release=Promise.withResolvers<void>();const handler=vi.fn(async()=>{entered.resolve();await release.promise;return {started:true};});client.register("run.start",handler);await client.start();
+    try{
+      const first=server.sendCommand("remote-mac",{type:"run.start",runId:"run"},{messageId:"shared"}).catch(error=>error);await entered.promise;
+      const second=server.sendCommand("remote-mac",{type:"run.start",runId:"run"},{messageId:"shared"}).catch(error=>error);
+      await expect(server.sendCommand("remote-mac",{type:"run.start",runId:"different"},{messageId:"shared"})).rejects.toThrow(/different payload/);release.resolve();
+      const results=await Promise.all([first,second]);for(const result of results)expect(result).toMatchObject({payload:{type:"rpc.result",result:{started:true}}});expect(handler).toHaveBeenCalledOnce();
+      expect((await server.sendCommand("remote-mac",{type:"run.start",runId:"different"},{messageId:"shared"})).payload).toMatchObject({type:"rpc.error",code:"COMMAND_IDEMPOTENCY_CONFLICT"});expect(handler).toHaveBeenCalledOnce();
+      expect((await server.sendCommand("remote-mac",{type:"run.start",runId:"run"},{messageId:"shared"})).payload).toMatchObject({type:"rpc.result",result:{started:true}});expect(handler).toHaveBeenCalledOnce();
+    }finally{release.resolve();await client.stop();await server.close();}
+  });
+  it("does not send native commands to a health-only Runner",async()=>{
+    const server=new RemoteRunnerServer({registry:new RunnerRegistry(),port:0,authenticate:()=>true});await server.ready();const client=new RemoteRunnerClient({url:`ws://127.0.0.1:${server.address()!.port}`,bearerToken:"fixture",runner:runner()});await client.start();
+    try{await expect(server.sendCommand("remote-mac",{type:"native.model_catalog",profileId:"account",repositoryId:"repo",reason:"open"})).rejects.toThrow(/native execution capability/i);}finally{await client.stop();await server.close();}
+  });
+  it("keeps the outgoing sequence above fully compacted acknowledged journal entries",async()=>{
+    const directory=mkdtempSync(join(tmpdir(),"dispatcher-remote-compacted-"));tempDirectories.push(directory);const journal=new RunnerJournal(join(directory,"journal.sqlite"));
+    journal.append({protocolVersion:"1.2",messageId:"old",traceId:"old",runnerId:"remote-mac",sequence:7,sentAt:new Date().toISOString(),kind:"event",payload:{type:"runner.heartbeat",runnerId:"remote-mac",state:"ONLINE"}});journal.acknowledge(7);journal.compact(0);
+    const server=new RemoteRunnerServer({registry:new RunnerRegistry(),port:0,authenticate:()=>true,rpcTimeoutMs:1000});await server.ready();const client=new RemoteRunnerClient({url:`ws://127.0.0.1:${server.address()!.port}`,bearerToken:"fixture",runner:runner(),journal});client.register("runner.health",()=>({ok:true}));await client.start();
+    try{expect((await server.sendCommand("remote-mac",{type:"runner.health"})).payload).toMatchObject({type:"rpc.result",result:{ok:true}});}finally{await client.stop();journal.close();await server.close();}
+  });
   it("authenticates registration and executes RPC over the versioned websocket channel", async () => {
     const registry = new RunnerRegistry();
     const server = new RemoteRunnerServer({ registry, port: 0, authenticate: ({ bearerToken }) => bearerToken === "test-token" });
@@ -66,6 +135,48 @@ describe("remote runner control plane", () => {
     await server.close();
   });
 
+  it("settles a registration closed before acknowledgement without leaking authentication errors",async()=>{
+    const server=new RemoteRunnerServer({registry:new RunnerRegistry(),port:0,authenticate:()=>{throw new Error("private credential-store failure");}});await server.ready();
+    const client=new RemoteRunnerClient({url:`ws://127.0.0.1:${server.address()!.port}`,bearerToken:"wrong",runner:runner()});
+    try{await expect(Promise.race([client.start().then(()=>"accepted",error=>String(error)),new Promise(resolve=>setTimeout(()=>resolve("hung"),300))])).resolves.toBe("Error: Remote runner registration closed");}
+    finally{await client.stop();await server.close();}
+  });
+
+  it("drains an in-flight command on shutdown and replays its durable response after restart", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "dispatcher-remote-shutdown-"));
+    tempDirectories.push(directory);
+    const journalPath = join(directory, "runner.sqlite");
+    const server = new RemoteRunnerServer({ registry: new RunnerRegistry(), port: 0, authenticate: () => true });
+    await server.ready();
+    const url = `ws://127.0.0.1:${server.address()!.port}`;
+    const journal = new RunnerJournal(journalPath);
+    const client = new RemoteRunnerClient({ url, bearerToken: "token", runner: runner(), journal });
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    client.register("run.start", async () => { entered.resolve(); await release.promise; return { started: true }; });
+    await client.start();
+    const pending = server.sendCommand("remote-mac", { type: "run.start", runId: "run-1" }, { messageId: "start-during-shutdown" }).catch(() => undefined);
+    await entered.promise;
+    const stopped = client.stop();
+    // Let the socket close before the handler finishes; journal closure must wait for it.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    release.resolve();
+    await stopped;
+    await pending;
+    expect(journal.replay(0)).toContainEqual(expect.objectContaining({ envelope: expect.objectContaining({ payload: { type: "rpc.result", correlationId: "start-during-shutdown", result: { started: true } } }) }));
+    journal.close();
+    const restoredJournal = new RunnerJournal(journalPath);
+    const restored = new RemoteRunnerClient({ url, bearerToken: "token", runner: runner(), journal: restoredJournal });
+    const duplicateHandler = vi.fn();
+    restored.register("run.start", duplicateHandler);
+    await restored.start();
+    expect((await server.sendCommand("remote-mac", { type: "run.start", runId: "run-1" }, { messageId: "start-during-shutdown" })).payload).toMatchObject({ type: "rpc.result", result: { started: true } });
+    expect(duplicateHandler).not.toHaveBeenCalled();
+    await restored.stop();
+    restoredJournal.close();
+    await server.close();
+  });
+
   it("rejects an unsafe runner version before authentication", async () => {
     const registry = new RunnerRegistry();
     const server = new RemoteRunnerServer({ registry, port: 0, authenticate: () => true });
@@ -97,6 +208,7 @@ describe("remote runner control plane", () => {
     await first.start();
     const initial = await server.sendCommand("remote-mac", { type: "run.start", runId: "run-1" }, { messageId: "start-run-1" });
     expect(initial.payload).toMatchObject({ type: "rpc.result", result: { started: true } });
+    expect((await server.sendCommand("remote-mac",{type:"run.start",runId:"changed"},{messageId:"start-run-1"})).payload).toMatchObject({type:"rpc.error",code:"COMMAND_IDEMPOTENCY_CONFLICT"});
     await first.stop();
     firstJournal.close();
 

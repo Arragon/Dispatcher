@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { GenericMockAdapter } from "@dispatcher/adapters";
+import { GenericMockAdapter, AdapterContractError } from "@dispatcher/adapters";
 import { CanonicalScheduler, routeDeterministically, type DispatchCandidate } from "../src/index.js";
 
 function candidate(overrides: Partial<DispatchCandidate> = {}): DispatchCandidate {
@@ -11,6 +11,15 @@ function candidate(overrides: Partial<DispatchCandidate> = {}): DispatchCandidat
 }
 
 describe("canonical deterministic scheduler", () => {
+  it("retains uncertain native start authority instead of treating a lost response as a known failure", async () => {
+    for (const unknown of [true, false]) {
+      const adapter = new GenericMockAdapter(); adapter.start = async () => { throw unknown ? new AdapterContractError("COMMAND_OUTCOME_UNKNOWN", "response lost") : new Error("known start failure"); };
+      const scheduler = new CanonicalScheduler(() => [candidate({ adapter })]);
+      const { run } = await scheduler.dispatch({ task: { id: "task", projectId: "project", title: "Task", state: "READY", createdAt: "2026-10-16T00:00:00Z", updatedAt: "2026-10-16T00:00:00Z" }, taskRevision: 1, contract: { version: 1, revision: 1, goal: "Do it", scope: ["."], acceptanceCriteria: ["works"], verification: ["check"], constraints: [], delivery: { type: "none" } }, requirements: { capabilities: ["code"] }, workspacePath: "/owned/worktree" });
+      expect(run.state).toBe(unknown ? "RUNNER_UNAVAILABLE" : "FAILED");
+      if (unknown) { expect(run).toMatchObject({ recoveryReason: "NATIVE_OUTCOME_UNKNOWN", resumePolicy: "manual" }); expect(run.endedAt).toBeUndefined(); }
+    }
+  });
   it("filters capacity, resource, capability and picks a stable identity", () => {
     const decision = routeDeterministically({ capabilities: ["code"], runnerTags: ["personal"] }, [
       candidate(),

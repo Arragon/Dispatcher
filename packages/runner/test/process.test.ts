@@ -1,7 +1,7 @@
-import { mkdtempSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync,readdirSync, realpathSync, rmSync, statSync,symlinkSync,writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { BoundedLogWriter, ProcessManager, VerificationRegistry } from "../src/index.js";
 
 const directories: string[] = [];
@@ -9,6 +9,17 @@ function directory(): string { const value = mkdtempSync(join(tmpdir(), "dispatc
 afterEach(() => { for (const value of directories.splice(0)) rmSync(value, { recursive: true, force: true }); });
 
 describe("bounded raw logs", () => {
+  it("preserves a substituted log target instead of appending through its symlink",()=>{
+    const root=directory(),target=join(root,"preserved.txt");writeFileSync(target,"keep me");symlinkSync(target,join(root,"raw.log"));const writer=new BoundedLogWriter(root,"raw");expect(()=>writer.write("new log")).toThrow("LOG_PATH_UNSAFE");expect(readFileSync(target,"utf8")).toBe("keep me");
+  });
+  it("honors a total smaller than one file and a single retained file",()=>{
+    const root=directory(),writer=new BoundedLogWriter(root,"raw",{maxFileBytes:128,maxTotalBytes:32,retentionFiles:1,tailBytes:32});writer.write("a".repeat(100));writer.write("b".repeat(100));expect(writer.files()).toHaveLength(1);expect(readdirSync(root)).toEqual(["raw.log"]);expect(statSync(writer.files()[0]!).size).toBeLessThanOrEqual(32);
+  });
+  it("never reclaims an unrelated log when enforcing its owned stream budget",()=>{
+    const root=directory(),foreign=join(root,"user-notes.log");writeFileSync(foreign,"preserve local diagnostic notes".repeat(100));
+    const writer=new BoundedLogWriter(root,"controller",{maxFileBytes:32,maxTotalBytes:64,retentionFiles:2,tailBytes:32});for(let n=0;n<5;n++)writer.write("owned controller output\n");
+    expect(readFileSync(foreign,"utf8")).toBe("preserve local diagnostic notes".repeat(100));expect(writer.files().reduce((sum,file)=>sum+statSync(file).size,0)).toBeLessThanOrEqual(64);
+  });
   it("rotates, enforces a total budget, strips ANSI from tails, and redacts credentials", () => {
     const writer = new BoundedLogWriter(directory(), "raw", { maxFileBytes: 48, maxTotalBytes: 96, retentionFiles: 4, tailBytes: 80 });
     for (let index = 0; index < 8; index += 1) writer.write(`\u001b[31mline-${index} sk-secret-canary-1234567890\u001b[0m\n`);
@@ -31,6 +42,12 @@ describe("bounded raw logs", () => {
 });
 
 describe("ProcessManager", () => {
+  it("rejects a missing executable with its spawn cause and no unhandled error", async () => {
+    const manager = new ProcessManager(directory());
+    await expect(manager.start({ runId: "missing", file: join(directory(), "missing-executable"), args: [], cwd: process.cwd() })).rejects.toThrow(/ENOENT/);
+    expect(manager.activeCount).toBe(0);
+    await manager.shutdown();
+  });
   it("lazily spawns a real child, streams bounded activity, and classifies success", async () => {
     const manager = new ProcessManager(directory(), { maxFileBytes: 1_024, maxTotalBytes: 2_048, retentionFiles: 2, tailBytes: 256 });
     expect(manager.activeCount).toBe(0);
@@ -52,6 +69,15 @@ describe("ProcessManager", () => {
 });
 
 describe("VerificationRegistry", () => {
+  it("awaits termination of signal-ignoring verification descendants after abort",async()=>{
+    const root=directory(),ready=join(root,"child.pid"),abort=new AbortController(),registry=new VerificationRegistry();let pid:number|undefined;
+    const alive=()=>{try{process.kill(pid!,0);return true;}catch{return false;}};
+    const descendant=`process.on('SIGTERM',()=>{});require('node:fs').writeFileSync(${JSON.stringify(ready)},String(process.pid));setInterval(()=>{},1000)`;
+    const parent=`require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(descendant)}],{stdio:'ignore'});process.on('SIGTERM',()=>{});setInterval(()=>{},1000)`;
+    registry.register({id:"tree",file:process.execPath,args:["-e",parent],required:true,timeoutMs:5000,outputLimitBytes:1000});const verifying=registry.run("tree",root,abort.signal);
+    try{await vi.waitFor(()=>expect(existsSync(ready)).toBe(true));pid=Number(readFileSync(ready,"utf8"));abort.abort();expect(await verifying).toMatchObject({status:"failed"});expect(alive()).toBe(false);}
+    finally{if(pid&&alive())process.kill(pid,"SIGKILL");abort.abort();}
+  });
   it("runs only registered commands, limits output, and blocks delivery only on required failure", async () => {
     const registry = new VerificationRegistry();
     registry.register({ id: "pass", file: process.execPath, args: ["-e", "console.log('ok')"], required: true, timeoutMs: 5_000, outputLimitBytes: 64 });
@@ -62,4 +88,46 @@ describe("VerificationRegistry", () => {
     expect(registry.blocksDelivery([optional])).toBe(false);
     await expect(registry.run("raw command", process.cwd())).rejects.toThrow(/not registered/);
   });
+});
+
+it.each(["process", "pty"] as const)("binds Generic CLI PWD to its managed cwd in %s mode", async mode => {
+  const root = directory(), manager = new ProcessManager(join(root, "logs"));
+  try {
+    const handle = await manager.start({ runId: "pwd", file: process.execPath, args: ["-e", "console.log(JSON.stringify({pwd:process.env.PWD,cwd:process.cwd()}))"], cwd: root, mode });
+    const result = await handle.result();
+    expect(result.classification).toBe("success");
+    expect(JSON.parse(result.stdoutTail.trim())).toEqual({ pwd: root, cwd: realpathSync(root) });
+  } finally { await manager.shutdown(); }
+});
+it.each([
+  ["process", "cancel"], ["pty", "cancel"], ["process", "complete"], ["pty", "complete"],
+] as const)("waits for owned descendants in %s mode before %s acknowledgement", async (mode, action) => {
+  const root = directory(), ready = join(root, "descendant.pid"), manager = new ProcessManager(join(root, "logs"));
+  const descendant = `process.on('SIGTERM',()=>{});process.on('SIGHUP',()=>{});require('node:fs').writeFileSync(${JSON.stringify(ready)},String(process.pid));setInterval(()=>{},1000)`;
+  const body = `require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(descendant)}],{stdio:'ignore'}).unref();${action === "complete" ? `const t=setInterval(()=>{if(require('node:fs').existsSync(${JSON.stringify(ready)})){clearInterval(t);process.exit(0)}},10)` : "setInterval(()=>{},1000)"}`;
+  const handle = await manager.start({ runId: "owned", file: process.execPath, args: ["-e", body], cwd: root, mode });
+  const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+  let pid: number | undefined, timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await vi.waitFor(() => expect(existsSync(ready)).toBe(true)); pid = Number(readFileSync(ready, "utf8"));
+    if (action === "cancel") expect(await Promise.race([handle.cancel().then(() => true), new Promise<boolean>(resolve => { timer = setTimeout(() => resolve(false), 3000); })])).toBe(true);
+    const result = await handle.result();
+    expect(result.classification).toBe(action === "cancel" ? "cancelled" : "success");
+    expect(alive(pid)).toBe(false);
+  } finally {
+    if (timer) clearTimeout(timer);
+    for (const owned of [pid, handle.pid]) if (owned && alive(owned)) process.kill(owned, "SIGKILL");
+    await manager.shutdown();
+  }
+});
+
+it.each(["process","pty"] as const)("frozen explicit environment in %s mode",async mode=>{
+ const root=directory(),environment={PATH:process.env.PATH,PWD:"wrong",CONTROLLED_SENTINEL:"frozen",DISPATCHER_OWNER_TOKEN:"controlled-owner",DISPATCHER_SECRET_STORE_KEY:"controlled-secret"},before={...environment},errors:unknown[]=[];
+ const manager=new ProcessManager(join(root,"logs"),{get maxFileBytes(){environment.CONTROLLED_SENTINEL="changed";vi.stubEnv("CONTROLLED_SENTINEL","ambient");return 1024;},maxTotalBytes:2048,retentionFiles:2,tailBytes:1024});
+ try{
+  const handle=await manager.start({runId:"explicit",file:process.execPath,args:["-e","console.log(JSON.stringify({value:process.env.CONTROLLED_SENTINEL,pwd:process.env.PWD,owner:process.env.DISPATCHER_OWNER_TOKEN??null,secret:process.env.DISPATCHER_SECRET_STORE_KEY??null}))"],cwd:root,mode,env:environment}),result=await handle.result();
+  let absent=false;try{process.kill(handle.pid,0);}catch(error){if((error as NodeJS.ErrnoException).code!=="ESRCH")throw error;absent=true;}
+  const evidence=process.env.DISPATCHER_STRICT_COMMIT_EVIDENCE;if(evidence){const {mkdirSync,cpSync}=await import("node:fs"),target=join(evidence,`process-explicit-${mode}-${handle.id}`);mkdirSync(target,{recursive:true});writeFileSync(join(target,"checkpoint.json"),JSON.stringify({mode,id:handle.id,pid:handle.pid,active:manager.activeCount,result,absence:{absent,errno:absent?"ESRCH":null}},null,2));cpSync(join(root,"logs"),join(target,"logs"),{recursive:true});}
+  expect(result.classification).toBe("success");expect(JSON.parse(result.stdoutTail.trim())).toEqual({value:"frozen",pwd:root,owner:null,secret:null});expect(environment).toEqual({...before,CONTROLLED_SENTINEL:"changed"});expect(absent).toBe(true);
+ }catch(error){errors.push(error);}try{await manager.shutdown();}catch(error){errors.push(error);}vi.unstubAllEnvs();if(errors.length===1)throw errors[0];if(errors.length)throw new AggregateError(errors,"Process fixture and cleanup errors");
 });

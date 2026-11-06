@@ -1,0 +1,143 @@
+# Delivery HUMAN-return re-verification Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development. Execute the single task below with a fresh implementer and fresh combined reviewer; no helpers.
+
+**Goal:** A genuine DELIVERING Run returned from HUMAN with explicit verify must enter fresh prepared snapshot verification without reusing its earlier passing proof.
+
+**Architecture:** Add the missing pure Run transition in domain; keep its admission in ControllerService.advanceRun under the existing exclusive native mutation lane. Atomically change DELIVERING/PASSED to VERIFYING/PENDING and validate/consume the existing real verify reclaim action through NativeInteractions and the full current nativeSnapshotContext. Reuse verifyNativeSnapshot unchanged in lifecycle ownership. No new coordinator, provider native API, protocol or dependency.
+
+**Tech Stack:** Existing TypeScript, SQLite transactions, Vitest and actual owned Node/Git children.
+
+**Spec:** CV12 INH-1929; authenticated original49 map in /Users/wangdongxin/.codex/dispatcher-evidence/01a16430-9b3c-7eb2-876c-a3779ba39939/2026-10-28-retention-delivery-source-audit/current-mapping-v1.json and original a499d84 apps/controller/test/native-delivery-fence.test.ts D12/D13/D14. Current accepted functional native proof45011f4+f319253 and metadata168f5bc66340f23360e759f8a3a9d9819e495323. Owner notes in sibling 2026-10-28-delivery-reverification-backedge-preparation are pinned to older7a8e1b0 and are preparation only; current source wins. D13 eventual physical PR remains partial until its separate verified Git task.
+
+## Global Constraints
+
+- Work only /Users/wangdongxin/.codex/worktrees/dispatcher-plan-completion/dispatcher on codex/dispatcher-plan-completion. Preserve primary19db456149593c1feadd7ff0faef35f0dc1452dd, original3dirty hashes/status, all other worktrees, lock/schema11/writer7,503 rows/seven immutable columns/owners. Root owns docs/CSV/Linear; sole implementer owns functional changes, no subagents/reviewers. User explicitly authorizes continuous execution and record/bypass of historical blockers; no new plan approval pause. No quota reset.
+- Exactly six allowed paths (scope ruling below adds the sixth): packages/domain/src/index.ts; packages/domain/test/domain.test.ts; apps/controller/src/service.ts; apps/controller/test/native-snapshot-verification.test.ts; apps/controller/test/fixtures/native-snapshot.ts; apps/controller/src/native-interactions.ts. No new path except external task tools/evidence and own SDD report. Do not edit generic native guard/queue/start/release/reclaim; NativeInteractions has only the narrow assertion authorized below. Do not edit Workspace/Registry/process, configuration/DTO/protocol/schema/dependencies/Web/Runner or other tests. Read actual affected owners and relevant architecture/know-how first. Existing owners suffice; no third-party code. All existing66 native tests remain whole-byte prefix; append meaningful new tests. Existing domain tests remain unchanged; append one edge test and terminal/illegal controls. Fixture existing default API/behavior preserved, optional additions only for the new cycle.
+- domain adds only DELIVERING→VERIFYING. Admission is conditional in Service after existing advance authority, before the existing VERIFYING branch: only local embedded native HUMAN invalidation with a real matching explicit verify return; never automatically reverify every DELIVERING Run. Non-invalidated/ordinary/terminal paths retain behavior. Actual unsupported exclusionnone/unknown remains unavailable. isGuardedControllerStart remains unbound-only. No physical delivery, manual bound approval, remote snapshot, retention or provider capability expansion.
+- Reentry must require exactly one current authorized version1 native-reclaim-action for this Run/session/controlEpoch with action verify, tied to the actual committed native-reclaim record/control, current binding and invalidation.observationRef. Reuse the existing freshSnapshotReturn matching logic where appropriate; do not treat mere absence of a continue action as explicit verify authorization. Current invalidation version1/run/session/epoch/code NATIVE_REVERIFICATION_REQUIRED/observationRef must qualify. Missing, duplicate, wrong-scope, malformed or consumed-without-this-transaction action refuses. Prior receipts must pass existing snapshotReceiptsSettled; old SENDING/UNKNOWN/malformed sends across proof IDs remain barriers. Native lane uncertainty remains independently fenced.
+- In one synchronous database.transaction, verify current DELIVERING Run/Task identity, set Run.state VERIFYING and verification {state:"PENDING",commands:[...contract.verification]} with old success summary removed, save via saveAdvancedRun(run,"DELIVERING"), then run existing nativeSnapshotContext(run,"VERIFYING") (which invokes the real verify fence/consumes the authorized action under the owned lane). Validate the explicit action/committed return before consumption. Full physical/doc control/binding/checkpoint, Task/config/policy/lease/generation/frozen profile checks must occur before commit. If any check/write/action consumption fails, rollback phase/verification/action/pointer/invalidation together and send no child/native/Git work. No async gap or filesystem snapshot creation inside this transaction. Exact implementation may use one narrow Service private helper, not a generic validator/coordinator. No weaker copied guard. The reentry preflight/transaction is a no-send boundary: on rejection/rollback, acknowledge only its own lane if snapshotReceiptsSettled is true, as in current G2b. Retain every prior uncertain receipt/native mutation; this does not settle foreign uncertainty. This narrow catch must not wrap later child execution or arbitrary delivery paths.
+- Remote invalidated DELIVERING refuses VERIFICATION_ENVIRONMENT_UNAVAILABLE before snapshot/filesystem or remote verification and without changing phase/action. Do not invent remote HUMAN proof. Existing VERIFYING remote behavior remains unchanged.
+- After committed reentry, existing verifyNativeSnapshot owns new candidate/preparation/checks. An earlier VERIFIED proof/checks/receipts remain historical unchanged; new HUMAN epoch needs a new proof/current pointer and actual new ordered preparation/checks. Keep invalidation until existing atomic proof acceptance. A source edit during actual HUMAN must be present in new snapshot and proof. NONE can finish COMPLETE/Task REVIEW only. commit/PR preserve new VERIFIED proof/DELIVERING/Task VERIFYING then refuse VERIFIED_DELIVERY_UNAVAILABLE with zero commit/push/PR; physical Git is later work. Failed new checks may retain VERIFYING/PENDING/FAILED proof, but cannot reuse old PASSED authority. Current receipts survive later refusal as existing G2b specifies.
+- Fixture extension is narrow: returnHuman currently takes no args and always verify. It may accept optional {action?:"continue"|"verify",duringHuman?:()=>void|Promise<void>} (default unchanged); callback runs after actual releaseHandoff reaches HUMAN and before requestReclaim, action goes to actual commitReclaim. All later reads/fences remain real current owners. Do not forge Run phases/Task/binding/control or fake drain to establish success. Actual reviewed bound start/none-capability refusal occurs first, existing cooperative fixture precondition stays explicitly fake-source only. Initial DELIVERING is genuinely reached: commit/PR via existing physical-delivery refusal; none via a narrowly injected run-result completion INSERT fault after initial actual proof, then remove fault. G2b fixed lane settlement makes the second real handoff possible. Use unchanged owned source HEAD/raw index plus actual tracked result.txt edit during HUMAN; capture both cycles and all source/snapshot identities.
+- Evidence root NEW /Users/wangdongxin/.codex/dispatcher-evidence/01a16430-9b3c-7eb2-876c-a3779ba39939/2026-10-28-delivery-reverification-backedge. Own input-policy/maps/tools. Reuse/adapt existing native-snapshot-proof/tools/run-phase.py read-only as reference, never write old E/other plan SDD. All five baseline files present; raw before/after of all16 tsconfig.tsbuildinfo and actual source/static/dist/cache/dependency references/Git/runtime identities for every owned functional command, including FIRST RED. Actual runtime mise Node24.22.1/pnpm11.19. Capture fixtures before first behavioral run using existing pass-through Registry/native/HTTP/child/full closed-tree/SQL instrumentation; inventory errors must preserve original root/copy and diagnostics, never silently discard initial operations/inventory. Existing fixture default capture must work on first new phase. Child SyntaxError before its self logger is a missing observed self PID/cwd, not license to infer it. Record actual launch/program/output/exit separately. Binary runtimes identified, not copied. Originals/failed attempts append-only. No source/report/static input edits during an owned command. Root runs no heavy audit/test concurrently.
+- Keep original49 exact purpose map and describe D12 now covered, D13/D14 bounded new cycles, eventual PR and other purposes still open. Root primary supplied baseline available native-snapshot-proof/supplied-primary-baseline.json; source manifest only3 original dirty entries, not full primary tree. Do not claim complete preservation from that3-entry manifest alone. Protect own unchanged tracked files and actual primary HEAD/fulltree/3dirty/status,503 columns/lock. Shared refs/worktrees observational changes must be attributed narrowly, never reverted.
+- Before ONE changed-code mise exec -- pnpm check, freeze complete report, maps and tested six hashes. Command output/start/end/wall/exit plus before/after raw all inputs retained. No unchanged default retry or edits after its start. Final covering and default/current/index/commit must agree exactly. All old test assertions/deadlines/workers/concurrency remain; no skips/suppressions/cache/timeout changes to pass a test. Document failures and distinguish fixture vs product. Root may rule on genuine blockers, never manufacture observations.
+- G2B-HISTORY-01 and NS035-EVIDENCE-01 remain OPEN strict historical-provenance gaps; this unit does not repair those earlier captures. Deferred G2a teardown Minor and G2B-M1/M2 remain visible; no incidental broad cleanup. Real provider/account/Slack/credentials/user DB/nativeGUI/native writer/physical-stop/network endpoint/service/browser/benchmark/heap/package/release/RHIZA Gates stay open. No push/PR/merge or actual external endpoint writes; controlled owned bare/loopback fixtures only. No all49/CV12/whole-branch/goal complete claim.
+
+## Review Focus
+
+- Ordinary DELIVERING must not enter verification without an actual matching explicit HUMAN verify return; continue/missing/duplicate/stale action refuses without consuming it.
+- Full physical and document authority must hold when phase/action commit; transactional write/check failures preserve old state and zero sends.
+- New epoch must execute new snapshot commands for actual HUMAN edits, preserving earlier proof and occurred results; old unknown sends cannot be bypassed.
+- A failed new preparation/check must not retain an operative old PASSED result or clear invalidation; fresh successful none reaches REVIEW only.
+- Native commit/PR and remote unsupported boundaries remain unavailable without any physical native/Git/remote effect or new native start.
+
+---
+
+### Task 1: Admit explicit delivery HUMAN re-verification through current owners
+
+**Files:** exactly six functional paths including the owner assertion below. **Interfaces:** pure assertRunTransition newly admits DELIVERING→VERIFYING. Existing Service advance path remains sole owner, using nativeSnapshotContext/verifyNativeSnapshot/saveAdvancedRun/snapshotReceiptsSettled. Optional returnHuman fixture argument above preserves no-argument behavior. No public DTO/persisted proof format change.
+
+- [x] **Step1: Establish current baseline and first-capture protection.** Read current source and relevant docs, authenticate D12/D13/D14 against original a499d84 and49map. Create new task evidence tooling/input policy; retain five source baselines, all16compiler and immutable protected old66/domain tests/other files. Validate fixture capture setup before running behavior; report every actual setup failure with original roots/operations/DBs rather than filling gaps later.
+- [x] **Step2: Write and run real RED.** Append domain edge test and still-illegal COMPLETE/FAILED/CANCELLED/SUPERSEDED→VERIFYING and DELIVERING→ACTIVE controls. Append native second-cycle tests for none/commit/pull-request: first reach genuine DELIVERING as above, capture old VERIFIED proof/2children, return through actual APIs with tracked result.txt edit while HUMAN and explicit verify, then advance. Require new proof ID/epoch/snapshot/source content and exactly2additional actual snapshot children, oldproof exact, one native initialize/thread/start/turn/start, invalidation gone only after new acceptance; none COMPLETE/REVIEW, commit/PR unavailable/DELIVERING and unchanged HEAD/index/bare refs/zero Git delivery. Run mise exec -- pnpm vitest run packages/domain/test/domain.test.ts apps/controller/test/native-snapshot-verification.test.ts before production edits, retain actual product RED (distinct fixture mistakes).
+- [x] **Step3: Implement narrow transition and GREEN.** Add pure domain edge and Service transaction gate described above. Add optional fixture action/HUMAN callback preserving defaults. Build mise exec -- pnpm build then run same Step2 tests to GREEN. Preserve source/authority checks and all old66test prefix; never forge a qualifying startup or native capability.
+- [x] **Step4: Exercise admission/rollback/refusal boundaries.** Append genuine-DELIVERING cases: action continue; missing/duplicate/consumed/wrong session or epoch action; malformed/wrong session/epoch/observation invalidation; Task physical/doc identity, control physical/doc, observation checkpoint, frozen configuration/policy and lease expiry/revocation drift before reentry. Capture before Run/action/invalidation/pointer/proof and assert exact rollback/no new child/proof/current pointer/Native/Git effect. Seed explicitly labelled old SENDING/UNKNOWN/malformed command and native unknown barriers only after actual second return, assert no replay. Inject real SQLite BEFORE INSERT triggers for Run VERIFYING save and action consumed write; require phase/PASSED/action authorized/invalidation/oldproof unchanged and zero second children. Assert no new unknown native mutation when all prior receipts were settled; preserve seeded old uncertainty. Remove trigger and prove same real authorization can retry successfully once (4total children, no duplicate). Cover failing new preparation/check after actual HUMAN edit: Run no longer PASSED, oldproof unchanged, matching invalidation retained/no physical delivery. Add any needed actual RED before correction. Unsupported actual remote retained invalidation stays zero send; don't invent remote DELIVERING by forging it merely for this test, existing remote tests plus code-scoped guard verify its unavailable path unless a genuine fixture can reach that phase.
+- [x] **Step5: Run bounded covering checks and freeze report.** mise exec -- pnpm build; mise exec -- pnpm exec eslint packages/domain/src/index.ts packages/domain/test/domain.test.ts apps/controller/src/service.ts apps/controller/test/native-snapshot-verification.test.ts apps/controller/test/fixtures/native-snapshot.ts apps/controller/src/native-interactions.ts. Cover command: mise exec -- pnpm vitest run packages/domain/test/domain.test.ts packages/domain/test/interaction-contract.test.ts apps/controller/test/native-snapshot-verification.test.ts apps/controller/test/local-result-preparation.test.ts apps/controller/test/local-result-snapshot.test.ts apps/controller/test/local-results.test.ts apps/controller/test/automatic-verification-receipt.test.ts apps/controller/test/native-reclaim.test.ts apps/controller/test/native-command-receipt.test.ts apps/controller/test/codex-runtime-service.test.ts apps/controller/test/remote-execution.test.ts packages/workspace/test/candidate.test.ts packages/workspace/test/worktree-concurrency.test.ts. All named paths were verified from actual repository files; use the exact command. Retain complete outputs, every owned fixture/full table inventory and actual semantic maps. Freeze report/map before default, not a short placeholder.
+- [x] **Step6: Sole default, exact6commit and safe handoff.** ONE changed-code mise exec -- pnpm check with full raw capture and no concurrent root I/O. Compare default/cover/current/index/commit six source hashes; old66 whole-file prefix, old domain test purpose bodies, other tracked files, primary fulltree+3dirty/status,503/lock immutable. Commit only six functional files, no root docs/CSV/Linear. Append default result without rewriting predefault report prefix. Report actual failures/limitations and all current unverified claims. Return only status, commit, one-line tests, concerns and report path; full evidence lives in your SDD report. Root then dispatches fresh combined review and independent raw audit.
+
+Self-review: One coherent task owns pure edge plus its guarded consumer. Domain permits a transition without admitting native authority; Service supplies that guard using actual current owners. Existing snapshot proof/execution/persistence owners are reused. Explicit action validation closes the generic guard's allowed-when-no-choice behavior. All five review focus classes have real tests, except a remote DELIVERING fixture must not be forged; unsupported guard can be code-scoped with existing actual remote VERIFYING coverage. D13 eventual physical PR remains partial and its task is next. No human review pause under explicit continuous-execution authorization.
+
+## Root scope ruling after observed boundary RED
+
+The actor confirmed no command/capture in flight. Phase05 retained2fixture trigger
+mistakes (AFTER INSERT did not observe UPSERT UPDATE) and2product failures.
+Phase06 corrected fixture triggers passed and retained4product failures:
+post-return frozen policy change plus foreign unknown/active/malformed mutation
+admission. No SQL-count workaround was implemented.
+
+Exactly SIX functional paths now include apps/controller/src/native-interactions.ts
+as the sixth. Authorize only one synchronous internal owner assertion
+assertPriorMutationOutcomesSettled(sessionId:string):void and its sole caller in
+the new Service reentry transaction. It uses actual laneContext ownsLane/session/
+mutationRecordId and activeMutations to identify the current own active marker;
+it must verify that physical row and document still agree. It can exclude only
+that exact live owned ID. Other same-session active, unknown, missing/unknown
+state or malformed row/document identities refuse NATIVE_COMMAND_OUTCOME_UNKNOWN;
+missing valid own lane refuses MUTATION_LANE_REQUIRED. Do not infer own identity
+from a count of active rows or expose its ID. Do not edit generic native guards,
+start, reclaim, handoff, pending-drain semantics, provider API, schema or writer.
+Read-only assertion never settles earlier records. SQL NULL state must not omit
+malformed relevant rows. Existing native test file covers this owner through the
+actual advancement entry, including own marker loss/tamper and unchanged foreign
+rows. Service's known no-send catch still acknowledges only its own lane with
+settled snapshot receipts; uncertainty facts remain barriers.
+
+Service also compares the real committed reclaim record.driftPolicy exactly to
+current frozen.policy; missing/mismatching policy on this selected native return
+refuses before phase/action commit. This binds authority to the actual return,
+not a new policy adopted during reentry. Add these actual RED/GREEN controls to
+current scopes/maps/report and full covering/default. Scoped lint now includes
+the sixth source path. All original five baselines and first-capture history stay
+unchanged; sixth was already retained as tracked raw source in every first-phase
+capture and the root's original ten-owner baseline. Add explicit sixth baseline
+and target presence from this ruling before its first edit; do not rewrite old
+phase input lists or pretend six explicit targets existed initially.
+
+All other constraints stay binding. Root plan/brief/input-policy revisions occur
+only in this declared safe metadata handoff and are preserved against their
+original versions. Recorded original BASE1a1349d remains the review range base;
+root plan-only ruling commit is identified separately from exact6 functional
+commit(s). No default has run; no default retry/new formal Gate is authorized.
+
+## Current implementation acceptance
+
+Functional commit4a465210b98e448b55f1033c94a1bc3769084e16 changes exactly
+six authorized paths, separate from root plan rulingsd3576e9/53468da.
+Current cover17 passed13files405tests; sole default18 passed222files5067tests,
+including build/typecheck/full lint/boundaries. Fresh combined review is spec
+compliant/quality Approved,0Critical0Important3Minor. Readability, original
+cover15 timing failures and output/auto-committer warnings remain deferred.
+
+Root independently verified21 sealed phases/672 raw compiler images, six
+cover/default/current/index/commit hashes, both old test prefixes,870 frozen
+maps/two original tools and the22021-byte report prefix. All503 source rows
+and eight columns, lock, primary280 HEAD blobs/modes plus original3dirty
+hashes/status and all42 recorded primary-tree observations remain unchanged.
+The final28533-byte report hash is
+81700c3158340fcf5d51fbd837334740a40ac35b660597889a02d2a2d29aac76.
+
+Raw acceptance covers802 complete main-inventory fixtures:827 original
+inventory databases/18926 tables, plus3 sealed crash-backup databases/69 tables
+inspected CURRENTLY and explicitly labelled as such. Existing automatic receipt
+restart tests created those backups; the original main-only tables.json did
+not contain a separate backup inventory. Original raw database bytes and
+operations were retained. These current inspections do not create a historical
+extra inventory/API trace. All88160 regular files across these and7 separately
+classified Pi input/Runner captures stayed byte-exact. Five known post-close
+teardown aggregate events were checked individually. Parser v1/v2 failures and
+partial outputs remain; the postdefault v3 parser is metadata only and leaves
+original inputs unchanged. Root's initial extra-DB assumption failure is also
+retained in its v1 audit; corrected v2 does not rewrite captured evidence.
+
+Root semantic readback in cover17/default18 confirms6 real positive second
+cycles/24 actual snapshot children, old proof retained, fresh epochs5→9, real
+handoff/release/reclaim records and consumed verify actions. None finishes
+COMPLETE/REVIEW; commit/PR remain DELIVERING/VERIFYING with physical delivery
+unavailable. This is owned conditional fake-source composition after actual
+reviewed startup and unsupported-none refusal, not production native capability.
+
+Original cover15 remains FAILED,3 marker waits/402passes; source/task/control
+drift actions did not run there. Focused16, confirmation17 and default18 passing
+do not establish its scheduling cause or repair its history. Old
+G2B-HISTORY-01 and NS035-EVIDENCE-01 strict historical gaps remain OPEN;
+this task does not waive or repair them. D12 and the current none D14 purpose
+are locally covered; D13 eventual physical PR, physical verified Git, bound
+canonical acceptance, retention and real-provider/formal Gates remain separate.
+No all49/CV12/whole-branch/goal completion is asserted.
+
+Root audit files reside in
+/Users/wangdongxin/.codex/dispatcher-evidence/01a16430-9b3c-7eb2-876c-a3779ba39939/2026-10-28-root-audits;
+phases/payload/fixture-v2/semantic-v1 acceptance files use prefix
+delivery-backedge. Functional window released in Linear; subsequent functional
+work requires fresh resource readback/registration.

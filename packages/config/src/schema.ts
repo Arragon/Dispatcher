@@ -1,7 +1,10 @@
+import type {InteractionMode,InteractionRequirement,NativeSurface,ExecutionContextRef} from "@dispatcher/domain";
+import {taskModelRoutingSchema,type TaskModelRoutingConfig} from "@dispatcher/domain";
+import { RHIZA_SCOPES, type RhizaScope } from "@dispatcher/protocol";
 import type { ErrorObject } from "ajv";
 import Ajv2020Module, { type Ajv2020 as Ajv2020Instance, type Options } from "ajv/dist/2020.js";
 import type { JsonValue } from "@dispatcher/persistence";
-import { isAbsolute } from "node:path";
+import { isAbsolute, posix, win32 } from "node:path";
 
 export interface RunnerConfig {
   id: string;
@@ -17,6 +20,12 @@ export interface IntegrationConfig {
   credentialRef?: string;
 }
 
+export interface RhizaClientGrant {
+  id: string; authorityId: string; enabled: boolean; credentialRef: string; expiresAt: string;
+  scopes: RhizaScope[]; repositoryIds: string[]; profileIds: string[];
+}
+export interface RhizaIngressConfig { enabled: boolean; clients: RhizaClientGrant[] }
+
 export interface ConnectorInstanceConfig {
   id: string;
   definitionId: string;
@@ -28,20 +37,24 @@ export interface ConnectorInstanceConfig {
 }
 
 export interface AgentProfileConfig {
+  enabled?: boolean;
   id: string;
   provider: string;
   alias: string;
   runnerId: string;
   credentialRef?: string;
   settings?: Record<string, JsonValue>;
+  nativeInteraction?:{mode:InteractionMode;backendId:"pi-rpc"|"codex-app-server"|"opencode-server-v2"|"devin-local-acp"|"copilot-rpc";executionLocation:"managed-worktree";surface?:NativeSurface};
 }
 
 export interface RepositoryConfig {
   id: string;
+  runnerId?: string;
   root: string;
   remote?: string;
   defaultBaseRef: string;
   scopePaths: string[];
+  snapshotVerification?: {version:1;id:string;preparationCommandIds:string[]};
   verificationCommands: Array<{
     id: string;
     file: string;
@@ -74,7 +87,7 @@ export interface LlmPoolConfig {
   profileIds: string[];
 }
 
-export type LlmRoleConfig = "command_parser" | "config_assistant" | "runtime_summarizer" | "error_classifier";
+export type LlmRoleConfig = "command_parser" | "config_assistant" | "runtime_summarizer" | "error_classifier" | "task_classifier";
 
 export interface LlmRoleBindingConfig {
   role: LlmRoleConfig;
@@ -83,6 +96,8 @@ export interface LlmRoleBindingConfig {
 
 export interface DispatcherConfig {
   schemaVersion: 1;
+  rhizaIngress?: RhizaIngressConfig;
+  nativeInteraction?:{enabled:boolean};
   controller: {
     id: string;
     listen: string;
@@ -110,6 +125,7 @@ export interface DispatcherConfig {
   policies: {
     highRiskRequiresConfirmation: boolean;
     rawShellDefault: "deny";
+    modelRouting?: TaskModelRoutingConfig;
   };
 }
 
@@ -123,6 +139,21 @@ const integrationSchema = {
   },
 } as const;
 
+const rhizaId = { type: "string", minLength: 1, maxLength: 200, pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]*$" };
+const rhizaIds = { type: "array", minItems: 1, maxItems: 200, uniqueItems: true, items: rhizaId };
+const rhizaIngressSchema = {
+  type: "object", additionalProperties: false, required: ["enabled", "clients"],
+  properties: { enabled: { type: "boolean" }, clients: { type: "array", maxItems: 100, items: {
+    type: "object", additionalProperties: false, required: ["id", "authorityId", "enabled", "credentialRef", "expiresAt", "scopes", "repositoryIds", "profileIds"],
+    properties: { id: rhizaId, authorityId: rhizaId, enabled: { type: "boolean" },
+      credentialRef: { type: "string", maxLength: 512, pattern: "^secret://rhiza/[a-z0-9][a-z0-9._/-]*$" },
+      expiresAt: { type: "string", maxLength: 30, pattern: "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{3})?Z$" },
+      scopes: { type: "array", minItems: 1, maxItems: RHIZA_SCOPES.length, uniqueItems: true, items: { enum: RHIZA_SCOPES } },
+      repositoryIds: rhizaIds, profileIds: rhizaIds,
+    },
+  } } },
+} as const;
+
 export const dispatcherConfigSchema = {
   $schema: "https://json-schema.org/draft/2020-12/schema",
   $id: "https://dispatcher.local/schemas/config-v1.json",
@@ -131,7 +162,9 @@ export const dispatcherConfigSchema = {
   additionalProperties: false,
   required: ["schemaVersion", "controller", "runners", "integrations", "connectors", "repositories", "internalLlm", "agentProfiles", "policies"],
   properties: {
+    nativeInteraction:{type:"object",additionalProperties:false,required:["enabled"],properties:{enabled:{type:"boolean"}}},
     schemaVersion: { const: 1 },
+    rhizaIngress: rhizaIngressSchema,
     controller: {
       type: "object",
       title: "Controller",
@@ -197,9 +230,11 @@ export const dispatcherConfigSchema = {
         properties: {
           id: { type: "string", minLength: 1, pattern: "^[a-z0-9][a-z0-9._/-]*$" },
           root: { type: "string", minLength: 1 },
+          runnerId: { type: "string", minLength: 1 },
           remote: { type: "string", minLength: 1 },
           defaultBaseRef: { type: "string", minLength: 1 },
           scopePaths: { type: "array", uniqueItems: true, items: { type: "string", minLength: 1 } },
+          snapshotVerification: {type:"object",additionalProperties:false,required:["version","id","preparationCommandIds"],properties:{version:{const:1},id:{type:"string",minLength:1,maxLength:100},preparationCommandIds:{type:"array",uniqueItems:true,items:{type:"string",minLength:1}}}},
           verificationCommands: {
             type: "array",
             items: {
@@ -277,7 +312,7 @@ export const dispatcherConfigSchema = {
             additionalProperties: false,
             required: ["role", "poolId"],
             properties: {
-              role: { enum: ["command_parser", "config_assistant", "runtime_summarizer", "error_classifier"] },
+              role: { enum: ["command_parser", "config_assistant", "runtime_summarizer", "error_classifier", "task_classifier"] },
               poolId: { type: "string", minLength: 1 },
             },
           },
@@ -296,6 +331,11 @@ export const dispatcherConfigSchema = {
           provider: { type: "string", minLength: 1 },
           alias: { type: "string", minLength: 1 },
           runnerId: { type: "string", minLength: 1 },
+          enabled: { type: "boolean" },
+          nativeInteraction: {
+            type: "object", additionalProperties: false, required: ["mode", "backendId", "executionLocation"],
+            properties: { mode: { enum: ["compatible","native-session","native-gui"] }, surface:{enum:["desktop","ide","web","mobile","tui"]}, backendId: { enum: ["pi-rpc","codex-app-server","opencode-server-v2","devin-local-acp","copilot-rpc"] }, executionLocation: { const: "managed-worktree" } },
+          },
           credentialRef: integrationSchema.properties.credentialRef,
           settings: { type: "object", additionalProperties: true },
         },
@@ -309,6 +349,7 @@ export const dispatcherConfigSchema = {
       properties: {
         highRiskRequiresConfirmation: { type: "boolean" },
         rawShellDefault: { const: "deny" },
+        modelRouting: taskModelRoutingSchema,
       },
     },
   },
@@ -329,8 +370,13 @@ export const dispatcherConfigUiSchema = {
   agentProfiles: { items: { credentialRef: { "ui:widget": "hidden" } } },
 } as const;
 
+export function repositoryRunnerId(config: Pick<DispatcherConfig, "runners">, repository: Pick<RepositoryConfig, "runnerId">): string {
+  return repository.runnerId ?? config.runners.find(runner => runner.mode === "embedded")?.id ?? "local";
+}
+
 export const defaultDispatcherConfig: DispatcherConfig = {
   schemaVersion: 1,
+  rhizaIngress: { enabled: false, clients: [] },
   controller: {
     id: "home-controller",
     listen: "127.0.0.1",
@@ -375,6 +421,7 @@ function issueText(error: ErrorObject): string {
 
 export function normalizeConfig(input: DispatcherConfig): DispatcherConfig {
   const normalized = structuredClone(input);
+  normalized.rhizaIngress ??= { enabled: false, clients: [] };
   normalized.runners.sort((left, right) => left.id.localeCompare(right.id));
   normalized.runners = normalized.runners.map((runner) => ({ ...runner, tags: [...runner.tags].sort() }));
   normalized.agentProfiles.sort((left, right) => left.id.localeCompare(right.id));
@@ -428,9 +475,59 @@ export function validateConfig(input: unknown): DispatcherConfig {
     if (!runnerIds.has(profile.runnerId)) {
       throw new ConfigValidationError([`/agentProfiles/${profile.id} references unknown runner ${profile.runnerId}`]);
     }
+    if (profile.provider === "devin-local" && !profile.nativeInteraction) throw new ConfigValidationError([`/agentProfiles/${profile.id}/nativeInteraction is required for Devin Local ACP`]);
+    if (profile.provider === "copilot" && !profile.nativeInteraction) throw new ConfigValidationError([`/agentProfiles/${profile.id}/nativeInteraction is required for Copilot RPC`]);
+    if (profile.nativeInteraction) {
+      if(profile.nativeInteraction.mode!=="compatible"&&!config.nativeInteraction)throw new ConfigValidationError([`/agentProfiles/${profile.id}/nativeInteraction requires an explicit native feature policy`]);
+      if(profile.nativeInteraction.mode==="compatible"&&profile.nativeInteraction.surface!==undefined)throw new ConfigValidationError([`/agentProfiles/${profile.id}/nativeInteraction/surface requires a native policy`]);
+      if(profile.nativeInteraction.mode==="native-gui"&&!profile.nativeInteraction.surface)throw new ConfigValidationError([`/agentProfiles/${profile.id}/nativeInteraction/surface is required for native GUI`]);
+      const backendId = profile.nativeInteraction.backendId;
+      let provider: string, label: string, pathKeys: string[];
+      switch (backendId) {
+        case "pi-rpc": provider = "pi"; label = "Pi RPC"; pathKeys = ["executable", "agentDirectory", "sessionDirectory"]; break;
+        case "codex-app-server": provider = "codex"; label = "Codex App Server"; pathKeys = ["executable", "codexHome"]; break;
+        case "opencode-server-v2": provider = "opencode"; label = "OpenCode Server"; pathKeys = ["executable"]; break;
+        case "devin-local-acp": provider = "devin-local"; label = "Devin Local ACP"; pathKeys = ["executable", "dataHome", "configHome"]; break;
+        case "copilot-rpc": provider = "copilot"; label = "Copilot RPC"; pathKeys = ["executable", "copilotHome"]; break;
+      }
+      if (profile.provider !== provider || config.runners.find(runner => runner.id === profile.runnerId)?.mode !== "embedded") throw new ConfigValidationError([`/agentProfiles/${profile.id}/nativeInteraction requires ${label} on an embedded Runner`]);
+      for (const key of pathKeys) {
+        const path = profile.settings?.[key];
+        if (typeof path !== "string" || !isAbsolute(path) || path.length > 4096 || Array.from(path).some(character => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127)) throw new ConfigValidationError([`/agentProfiles/${profile.id}/settings/${key} must be an explicit absolute ${label} path`]);
+      }
+      if (backendId === "devin-local-acp" || backendId === "copilot-rpc") {
+        for (const key of Object.keys(profile.settings ?? {})) {
+          if (!pathKeys.includes(key)) throw new ConfigValidationError([`/agentProfiles/${profile.id}/settings/${key} is not supported by ${label}`]);
+        }
+      }
+      const model = profile.settings?.model;
+      if (backendId === "pi-rpc"&&(typeof model !== "string" || model.length > 240 || !/^[^\s/]+\/\S+$/u.test(model) || Array.from(model).some(character => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127))) throw new ConfigValidationError([`/agentProfiles/${profile.id}/settings/model must be an explicit Pi RPC provider/model`]);
+      if (backendId === "opencode-server-v2") {
+        for (const key of Object.keys(profile.settings ?? {})) {
+          if (!["executable", "model", "approveTools"].includes(key)) throw new ConfigValidationError([`/agentProfiles/${profile.id}/settings/${key} is not supported by OpenCode Server`]);
+        }
+        if (model !== undefined && (typeof model !== "string" || model.length > 240 || model.indexOf("/") < 1 || model.indexOf("/") === model.length - 1 || model.includes("#") || Array.from(model).some(character => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127))) throw new ConfigValidationError([`/agentProfiles/${profile.id}/settings/model must be an exact OpenCode provider/model`]);
+        if (profile.settings?.approveTools !== undefined && profile.settings.approveTools !== false) throw new ConfigValidationError([`/agentProfiles/${profile.id}/settings/approveTools must be false for OpenCode Server`]);
+      }
+    }
     if (profile.provider === "codex" && (typeof profile.settings?.codexHome !== "string" || !profile.settings.codexHome)) {
       throw new ConfigValidationError([`/agentProfiles/${profile.id}/settings/codexHome is required for Codex`]);
     }
+    if (profile.provider === "devin") {
+      const owner = profile.settings?.createAsUserId;
+      if (owner !== undefined && (typeof owner !== "string" || !owner.trim() || owner.length > 512 || /[\0\r\n]/.test(owner))) throw new ConfigValidationError(["Devin createAsUserId must be an explicit nonempty user ID"]);
+      const cap = profile.settings?.maxSessionAcu;
+      if (cap !== undefined && (typeof cap !== "number" || !Number.isSafeInteger(cap) || cap <= 0)) throw new ConfigValidationError(["Devin maxSessionAcu must be a positive native integer"]);
+    }
+    if (profile.settings?.trustWorkspace !== undefined && (profile.provider !== "cursor" || typeof profile.settings.trustWorkspace !== "boolean")) throw new ConfigValidationError([`/agentProfiles/${profile.id}/settings/trustWorkspace must be a Cursor boolean`]);
+    if (["cursor", "opencode", "grok", "pi", "antigravity", "zcode", "workbuddy-cli", "qoder-cn"].includes(profile.provider) && profile.settings?.approveTools !== undefined
+      && (!["cursor", "opencode", "grok", "antigravity"].includes(profile.provider) || typeof profile.settings.approveTools !== "boolean")) {
+      throw new ConfigValidationError([`/agentProfiles/${profile.id}/settings/approveTools must be boolean and is supported only by Cursor, OpenCode, Grok or Antigravity`]);
+    }
+    if ((["opencode", "pi", "antigravity", "zcode", "workbuddy-cli", "qoder-cn", "devin-local", "copilot"].includes(profile.provider)||profile.nativeInteraction?.backendId==="codex-app-server") && profile.credentialRef) {
+      throw new ConfigValidationError([`/agentProfiles/${profile.id} uses native login; credentialRef is not supported`]);
+    }
+    if (profile.provider === "zcode" && profile.settings?.model !== undefined) throw new ConfigValidationError([`/agentProfiles/${profile.id} selects its model in the native ZCode client`]);
     if (profile.credentialRef && !profile.credentialRef.startsWith(`secret://${profile.provider}/`)) {
       throw new ConfigValidationError([`/agentProfiles/${profile.id}/credentialRef must use the ${profile.provider} secret namespace`]);
     }
@@ -476,12 +573,36 @@ export function validateConfig(input: unknown): DispatcherConfig {
   for (const repository of config.repositories) {
     if (repositoryIds.has(repository.id)) throw new ConfigValidationError(["/repositories contains duplicate id"]);
     repositoryIds.add(repository.id);
-    if (!isAbsolute(repository.root)) throw new ConfigValidationError([`/repositories/${repository.id}/root must be absolute`]);
+    const ownerId = repositoryRunnerId(config, repository);
+    if (repository.runnerId && !runnerIds.has(ownerId)) throw new ConfigValidationError([`/repositories/${repository.id} references unknown runner ${ownerId}`]);
+    const remote = config.runners.some(runner => runner.id === ownerId && runner.mode === "remote");
+    if (!(remote ? posix.isAbsolute(repository.root) || win32.isAbsolute(repository.root) && /^(?:[a-z]:[\\/]|[\\/]{2}[^\\/]+[\\/][^\\/]+)/i.test(repository.root) : isAbsolute(repository.root))) throw new ConfigValidationError([`/repositories/${repository.id}/root must be absolute`]);
     if (repository.scopePaths.some((path) => isAbsolute(path) || path.split(/[\\/]/).includes(".."))) {
       throw new ConfigValidationError([`/repositories/${repository.id}/scopePaths must stay relative to the worktree`]);
     }
     const commandIds = new Set(repository.verificationCommands.map((command) => command.id));
     if (commandIds.size !== repository.verificationCommands.length) throw new ConfigValidationError([`/repositories/${repository.id}/verificationCommands contains duplicate id`]);
+    if (repository.snapshotVerification?.preparationCommandIds.some(id => !commandIds.has(id))) throw new ConfigValidationError([`/repositories/${repository.id}/snapshotVerification references an unregistered command`]);
+  }
+  const rhizaClients = new Set<string>(), rhizaCredentials = new Set<string>();
+  for (const client of config.rhizaIngress?.clients ?? []) {
+    if (rhizaClients.has(client.id) || rhizaCredentials.has(client.credentialRef)) throw new ConfigValidationError(["/rhizaIngress/clients has duplicate identity or credential reference"]);
+    rhizaClients.add(client.id); rhizaCredentials.add(client.credentialRef);
+    const expiresAt = Date.parse(client.expiresAt);
+    if (!Number.isFinite(expiresAt) || ![new Date(expiresAt).toISOString(), new Date(expiresAt).toISOString().replace(".000Z", "Z")].includes(client.expiresAt)) throw new ConfigValidationError(["/rhizaIngress/clients has invalid expiry"]);
+    if (client.repositoryIds.some(id => !repositoryIds.has(id)) || client.profileIds.some(id => !profileIds.has(id))) throw new ConfigValidationError(["/rhizaIngress/clients references unknown repository or Profile"]);
+  }
+  if(config.policies.modelRouting){
+    const routing=config.policies.modelRouting;
+    const typeIds=new Set(routing.taskTypes.map(type=>type.id)),ruleIds=new Set(routing.rules.map(rule=>rule.id));
+    if(typeIds.size!==routing.taskTypes.length)throw new ConfigValidationError(["/policies/modelRouting/taskTypes contains duplicate id"]);
+    if(ruleIds.size!==routing.rules.length)throw new ConfigValidationError(["/policies/modelRouting/rules contains duplicate id"]);
+    if(routing.taskTypes.reduce((count,type)=>count+type.keywordGroups.length,0)>100)throw new ConfigValidationError(["/policies/modelRouting allows at most 100 keyword groups"]);
+    for(const rule of routing.rules){
+      if(!typeIds.has(rule.taskTypeId))throw new ConfigValidationError([`/policies/modelRouting/rules/${rule.id} references unknown task type`]);
+      if(!profileIds.has(rule.profileId))throw new ConfigValidationError([`/policies/modelRouting/rules/${rule.id} references unknown profile`]);
+      if(rule.repositoryId&&!repositoryIds.has(rule.repositoryId))throw new ConfigValidationError([`/policies/modelRouting/rules/${rule.id} references unknown repository`]);
+    }
   }
   const endpointIds = new Set<string>();
   for (const endpoint of config.internalLlm.endpoints) {
@@ -526,6 +647,7 @@ export function requiredSecretReferences(config: DispatcherConfig): string[] {
   const references = Object.values(config.integrations)
     .filter((integration) => integration.enabled)
     .flatMap((integration) => integration.credentialRef ? [integration.credentialRef] : []);
+  if (config.rhizaIngress?.enabled) for (const client of config.rhizaIngress.clients) if (client.enabled) references.push(client.credentialRef);
   for (const profile of config.agentProfiles) {
     if (profile.credentialRef) references.push(profile.credentialRef);
   }
@@ -563,4 +685,15 @@ export function resolveEffectiveConfig(input: {
   const mergedBootstrap = mergeObjects(defaultDispatcherConfig as unknown as Record<string, unknown>, input.bootstrap as Record<string, unknown> ?? {});
   const canonical = input.canonical ?? validateConfig(mergedBootstrap);
   return validateConfig(mergeObjects(canonical as unknown as Record<string, unknown>, input.runtime as Record<string, unknown> ?? {}));
+}
+
+export class InteractionRequirementError extends Error {constructor(readonly code:string){super(code);this.name="InteractionRequirementError";}}
+export function resolveInteractionRequirement(config:DispatcherConfig,request:{profileId:string;mode?:InteractionMode;backendId?:string;surface?:NativeSurface;executionLocation?:ExecutionContextRef["kind"]}):InteractionRequirement {
+ const profile=config.agentProfiles.find(p=>p.id===request.profileId);if(!profile||profile.enabled===false)throw new InteractionRequirementError("PROFILE_UNAVAILABLE");
+ const policy=profile.nativeInteraction,mode=request.mode??policy?.mode??"compatible",rank={compatible:0,"native-session":1,"native-gui":2};
+ if(policy&&(rank[mode]<rank[policy.mode]||policy.mode==="native-gui"&&request.surface!==undefined&&request.surface!==policy.surface))throw new InteractionRequirementError("NATIVE_REQUIREMENT_WEAKENED");
+ if(mode!=="compatible"&&!config.nativeInteraction?.enabled)throw new InteractionRequirementError("NATIVE_INTERACTION_DISABLED");
+ if(policy&&(request.backendId!==undefined&&request.backendId!==policy.backendId||request.executionLocation!==undefined&&request.executionLocation!==policy.executionLocation))throw new InteractionRequirementError("EXECUTION_CONTEXT_DRIFT");
+ const backendId=request.backendId??policy?.backendId,surface=request.surface??policy?.surface;if(mode!=="compatible"&&!backendId)throw new InteractionRequirementError("NATIVE_BACKEND_REQUIRED");if(mode==="native-gui"&&!surface)throw new InteractionRequirementError("NATIVE_SURFACE_REQUIRED");
+ return {version:1,profileId:profile.id,mode,executionLocation:request.executionLocation??policy?.executionLocation??"managed-worktree",...(backendId?{backendId}:{}),...(surface?{surface}:{})};
 }

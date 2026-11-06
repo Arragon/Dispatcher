@@ -99,7 +99,7 @@ abstract class HttpAdapter implements LlmProtocolAdapter {
       throw new LlmRuntimeError("MALFORMED_RESPONSE", "LLM response body is not JSON", false, true);
     });
     if (!response.ok) throw classifyHttpError(response.status, body, retryAfter(response));
-    return this.response(asObject(body), request, response);
+    try{return this.response(asObject(body), request, response);}catch(error){if(error instanceof LlmRuntimeError){error.usage=openAiUsage(asObject(body));Object.assign(error,requestId(response));}throw error;}
   }
 }
 

@@ -20,6 +20,17 @@ describe("TaskContractCompiler", () => {
     });
   });
 
+  it("preserves full instructions independently of the short goal", () => {
+    const description = "\n第一段 😀\r\n完整正文\n";
+    expect(new TaskContractCompiler().compile(draft({ description }), 1, { workspace: { repositoryId: "local-repo", baseRef: "main" }, referenceLinks: ["https://example.invalid/spec"] }).contract).toMatchObject({ goal: "Implement the task", instructions: description, workspace: { repositoryId: "local-repo" }, referenceLinks: ["https://example.invalid/spec"] });
+  });
+
+  it("keeps local workspace identity separate from explicit SCM targets",()=>{
+    const compiler=new TaskContractCompiler(),workspace={repositoryId:"local-repo",baseRef:"main"};
+    for(const type of ["none","commit"] as const)expect(compiler.compile(draft({repository:"local-repo",delivery:{type}}),1,{workspace}).contract?.delivery).toEqual({type});
+    expect(compiler.compile(draft({repository:"local-repo",delivery:{type:"pull-request"}}),1,{workspace,delivery:{type:"pull-request",repository:"acme/remote",baseBranch:"release",scmConnectorId:"chosen"}}).contract?.delivery).toEqual({type:"pull-request",repository:"acme/remote",baseBranch:"release",scmConnectorId:"chosen"});
+  });
+
   it("routes incomplete drafts to NEEDS_SPEC instead of execution", () => {
     expect(new TaskContractCompiler().compile(draft({ repository: undefined, scope: [], acceptanceCriteria: [], verification: [] }))).toEqual({
       state: "NEEDS_SPEC",
@@ -66,5 +77,57 @@ describe("semantic controller v2", () => {
     expect(resolution).toMatchObject({ status: "RESOLVED", matches: [{ id: "profile-1" }] });
     expect(parseFixedCommand("/task status INH-42")).toMatchObject({ action: "task.status", confidence: 1, source: "fixed-command" });
     expect(parseFixedCommand("/run reroute run-1 qoder-main")).toMatchObject({ action: "run.reroute", arguments: { target: "run-1", profileId: "qoder-main" } });
+  });
+
+  it("resolves both dispatch task and profile aliases and refuses ambiguous task identifiers", () => {
+    const intent = parseFixedCommand("task dispatch INH-42 Orion")!;
+    expect(intent).toMatchObject({ action: "task.dispatch", entities: [{ kind: "task", value: "INH-42" }, { kind: "profile", value: "Orion" }], arguments: { target: "INH-42", profileId: "Orion" } });
+    const tools = new SemanticToolRegistry();
+    tools.register({ name: "task.dispatch", description: "Dispatch", risk: "privileged", requiredRoles: ["operator"], input: { required: ["target"], properties: { target: "string", profileId: "string" }, additionalProperties: false }, execute: async () => ({}) });
+    const engine = new SemanticWorkflowEngine(tools, new MemorySemanticWorkflowStore());
+    const candidates = [{ id: "task-1", kind: "task" as const, label: "Task", aliases: ["INH-42"] }, { id: "orion", kind: "profile" as const, label: "Orion" }];
+    const planned = engine.plan({ id: "dispatch", intent, principal: { ...principal, roles: ["operator"] }, candidates });
+    expect(planned).toMatchObject({ state: "NEEDS_APPROVAL", intent: { arguments: { target: "task-1", profileId: "orion" } } });
+    const ambiguous = engine.plan({ id: "ambiguous", intent, principal: { ...principal, roles: ["operator"] }, candidates: [...candidates, { id: "task-2", kind: "task", label: "Other", aliases: ["INH-42"] }] });
+    expect(ambiguous.state).toBe("NEEDS_CLARIFICATION");
+  });
+});
+
+it("parses only exact native fixed commands and rejects extra arguments",()=>{expect(parseFixedCommand("/run takeover run interrupt")).toMatchObject({action:"run.takeover",arguments:{target:"run",settlePolicy:"interrupt"}});expect(parseFixedCommand("run return run")).toMatchObject({action:"run.return"});expect(parseFixedCommand("run history run")).toMatchObject({action:"run.history"});expect(()=>parseFixedCommand("run return run continue")).toThrow();});
+
+
+describe("native fixed command grammar", () => {
+  it.each([
+    ["/run takeover run interrupt", "run.takeover", "run", "interrupt"],
+    ["run takeover run", "run.takeover", "run", "wait"],
+    ["run takeover run wait", "run.takeover", "run", "wait"],
+    ["run return run", "run.return", "run", undefined],
+    ["run history run", "run.history", "run", undefined],
+    ["  /RuN\tTaKeOvEr  Native:opaque/SESSION#A  wait \n", "run.takeover", "Native:opaque/SESSION#A", "wait"],
+    ["/RUN RETURN Native:opaque/SESSION#A", "run.return", "Native:opaque/SESSION#A", undefined],
+    [" \tRUN HISTORY\tNative:opaque/SESSION#A\n", "run.history", "Native:opaque/SESSION#A", undefined],
+  ])("preserves the complete intent for %s", (text, action, target, settlePolicy) => {
+    expect(parseFixedCommand(text!)).toEqual({
+      version: 2,
+      action,
+      entities: [{ kind: "run", value: target }],
+      arguments: { target, ...(settlePolicy ? { settlePolicy } : {}) },
+      confidence: 1,
+      source: "fixed-command",
+    });
+  });
+
+  it.each([
+    "run takeover", "/RUN TAKEOVER \t", "run return", "/run history\n",
+    "run takeover run unknown", "run takeover run WAIT", "run takeover run INTERRUPT",
+    "run takeover run wait extra", "run takeover run interrupt extra",
+    "run return run continue", "run return run wait", "run history run extra",
+    "run return run\nextra", "run takeover run\nwait extra",
+  ])("rejects malformed native grammar: %s", (text) => {
+    expect(() => parseFixedCommand(text)).toThrowError(expect.objectContaining({ name: "SemanticPolicyError", code: "INVALID_INPUT" }));
+  });
+
+  it.each(["", "please run takeover run", "run takeoverish run", "task takeover run", "ordinary free text"]) ("leaves unrelated text unrecognized: %s", (text) => {
+    expect(parseFixedCommand(text)).toBeUndefined();
   });
 });

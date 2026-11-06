@@ -1,0 +1,135 @@
+// @vitest-environment jsdom
+import {afterEach,beforeEach,expect,it,vi} from "vitest";
+import {act,cleanup,render,screen,waitFor,within} from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import {MemoryRouter} from "react-router-dom";
+import {QueryClient,QueryClientProvider} from "@tanstack/react-query";
+import PublishPage from "../src/PublishPage.js";
+import {TaskDetail} from "../src/TaskDetail.js";
+beforeEach(()=>{localStorage.clear();HTMLDialogElement.prototype.showModal=function(){this.setAttribute("open","");};HTMLDialogElement.prototype.close=function(){this.removeAttribute("open");};vi.stubGlobal("EventSource",class{addEventListener(){}close(){}});});
+afterEach(()=>{cleanup();vi.restoreAllMocks();vi.unstubAllGlobals();});
+function mount(ui:React.ReactNode,route="/publish"){return render(<QueryClientProvider client={new QueryClient({defaultOptions:{queries:{retry:false}}})}><MemoryRouter initialEntries={[route]}>{ui}</MemoryRouter></QueryClientProvider>);}
+const config={revision:1,config:{repositories:[{id:"repo",root:"/workspace/repo",defaultBaseRef:"main",scopePaths:["."],verificationCommands:[]}],agentProfiles:[],connectors:[{id:"other",kind:"scm",definitionId:"scm.github",displayName:"Other GitHub",enabled:true},{id:"chosen",kind:"scm",definitionId:"scm.github",displayName:"Work GitHub",enabled:true}]}};
+const target={version:1,host:"github.example",repository:"acme/repo",remoteFingerprint:"a".repeat(64)};
+it("requires explicit SCM fields and reviews the server's remote target without issuing a publication early",async()=>{
+ const posts:Array<{path:string;body:Record<string,unknown>}>=[];
+ vi.spyOn(globalThis,"fetch").mockImplementation(async(input,init)=>{if(init?.method==="POST"){posts.push({path:String(input),body:JSON.parse(String(init.body))});return new Response(JSON.stringify({publicationId:"pr-review",revision:1,canCommit:true,effectiveTask:{title:"PR task",description:"Complete body",contractState:"READY",missing:[]},effectiveDelivery:{version:1,scmConnectorId:"chosen",repository:"acme/repo",baseBranch:"main",target,contextFingerprint:"private-review-fingerprint",configRevision:1,reviewedAt:"2026-10-16T12:00:00Z"},checks:[],confirmation:{required:true,reviewHash:"pr-hash",reasons:[]}}));}return new Response(JSON.stringify(config));});
+ mount(<PublishPage/>);await screen.findByRole("option",{name:/repo/});await userEvent.selectOptions(screen.getByLabelText("项目仓库"),"repo");await userEvent.selectOptions(screen.getByLabelText("交付方式"),"pull-request");expect((await screen.findByLabelText("SCM 连接器") as HTMLSelectElement).value).toBe("");await userEvent.selectOptions(screen.getByLabelText("SCM 连接器"),"chosen");await userEvent.type(screen.getByLabelText("远端仓库"),"Acme/Repo");await userEvent.type(screen.getByLabelText("PR 基准分支"),"main");await userEvent.type(screen.getByLabelText("任务说明"),"Complete body");expect(posts).toHaveLength(0);
+ await userEvent.click(screen.getByRole("button",{name:"检查并审阅"}));const review=await screen.findByRole("dialog",{name:"审阅任务草稿"});expect(within(review).getByText("github.example/acme/repo")).toBeTruthy();expect(review.textContent).not.toContain("private-review-fingerprint");expect(posts).toHaveLength(1);expect(posts[0]?.body.delivery).toEqual({type:"pull-request",scmConnectorId:"chosen",targetRepository:"Acme/Repo",baseBranch:"main"});expect(JSON.parse(localStorage.getItem("dispatcher.publication-draft.v1")??"{}")).toMatchObject({deliveryType:"pull-request",scmConnectorId:"chosen",targetRepository:"Acme/Repo",baseBranch:"main"});
+});
+it("imports and restores explicit PR fields without retaining credential fields or issuing writes",async()=>{
+ const fetch=vi.spyOn(globalThis,"fetch").mockResolvedValue(new Response(JSON.stringify(config)));mount(<PublishPage/>);await screen.findByRole("option",{name:/repo/});await userEvent.upload(screen.getByLabelText("导入任务草稿"),new File([JSON.stringify({schemaVersion:1,title:"Restored",description:"Body",repositoryId:"repo",deliveryType:"pull-request",scmConnectorId:"chosen",targetRepository:"acme/repo",baseBranch:"release",token:"private-import-canary"})],"draft.json",{type:"application/json"}));
+ expect((await screen.findByLabelText("远端仓库") as HTMLInputElement).value).toBe("acme/repo");expect((screen.getByLabelText("PR 基准分支") as HTMLInputElement).value).toBe("release");expect(localStorage.getItem("dispatcher.publication-draft.v1")).not.toContain("private-import-canary");expect(fetch.mock.calls.every(([,init])=>!init?.method||init.method==="GET")).toBe(true);
+});
+function detailFixture(hasPr:boolean){
+ const run={id:"run",taskId:"task",profileId:"p",providerId:"codex",runnerId:"remote",sessionId:"session",generation:1,leaseId:"lease",state:"DELIVERING",verification:{state:"PASSED",commands:["check"]}},document={id:"task",title:"Delivery task",projectId:"local:repo",state:"VERIFYING",currentRunId:"run"};
+ const commit={version:1,runId:"run",generation:1,commit:"a".repeat(40),branch:"dispatcher/task/run",files:["result.txt"],created:true,completedAt:"2026-10-16T12:00:00Z"},push={version:1,runId:"run",generation:1,commit:commit.commit,branch:commit.branch,target,pushedAt:"2026-10-16T12:01:00Z"};
+ vi.spyOn(globalThis,"fetch").mockImplementation(async input=>new Response(JSON.stringify(String(input).endsWith("/result")?{result:{deliveryType:"pull-request",deliveryState:"pushed",generation:1,worktree:"/runner/worktree",branch:commit.branch,files:["result.txt"],verification:run.verification,commit,push}}:String(input)==="/api/runs/run"?{run}:{revision:1,document,runs:[run],deliveries:hasPr?[{id:"pr",runId:"run",kind:"pull-request",state:"READY",url:"https://github.example/acme/repo/pull/1"}]:[]})));
+ mount(<TaskDetail id="task" profiles={[]} onClose={()=>undefined} refresh={async()=>undefined}/>);
+}
+it("reads confirmed push evidence while delivery is still running and does not claim the commit was unpushed",async()=>{
+ detailFixture(false);expect(await screen.findByText("已确认推送")).toBeTruthy();expect(screen.getByText("github.example/acme/repo")).toBeTruthy();expect(screen.queryByText(/未自动推送/)).toBeNull();expect(screen.queryByText("PR 已创建")).toBeNull();
+});
+it("shows a confirmed PR separately from pending CI instead of treating it as missing",async()=>{
+ detailFixture(true);expect(await screen.findByText("已确认推送")).toBeTruthy();expect(screen.getByText("PR 已创建")).toBeTruthy();expect(screen.queryByText("PR 回执未确认")).toBeNull();expect(screen.getByRole("link",{name:/已确认 PR/}).getAttribute("href")).toBe("https://github.example/acme/repo/pull/1");
+});
+
+it("requires a server delivery snapshot before allowing PR dispatch",async()=>{
+ localStorage.setItem("dispatcher.publication-draft.v1",JSON.stringify({description:"Body",repositoryId:"repo",startMode:"dispatch",profileId:"p",acceptance:"works",deliveryType:"pull-request",scmConnectorId:"chosen",targetRepository:"acme/repo",baseBranch:"main"}));const posts:string[]=[];
+ vi.spyOn(globalThis,"fetch").mockImplementation(async(input,init)=>{if(init?.method==="POST"){posts.push(String(input));return new Response(JSON.stringify({publicationId:"old-preview",revision:1,canCommit:true,effectiveTask:{title:"Task",description:"Body",contractState:"READY",missing:[]},checks:[],confirmation:{required:true,reviewHash:"old",reasons:[]}}));}return new Response(JSON.stringify(String(input).includes("/models")?{entries:[],selectionSupport:"native-default-only"}:{...config,config:{...config.config,agentProfiles:[{id:"p",alias:"P",provider:"codex",runnerId:"local",enabled:true}]}}));});mount(<PublishPage/>);await screen.findByRole("option",{name:/repo/});await userEvent.click(screen.getByRole("button",{name:"检查并审阅"}));const review=await screen.findByRole("dialog",{name:"审阅任务草稿"});expect(within(review).getByText(/尚未提供可审阅的 PR 目标/)).toBeTruthy();const confirm=within(review).getByRole("button",{name:"确认启动并交付 PR"});expect((confirm as HTMLButtonElement).disabled).toBe(true);await userEvent.click(confirm);expect(posts).toHaveLength(1);
+});
+it("keeps existing-task SCM choices read-only and sends only execution review fields",async()=>{
+ const posts:Record<string,unknown>[]=[],task={revision:5,document:{id:"existing",projectId:"local:repo",title:"Existing",description:"Frozen body",state:"READY"},contract:{revision:2,instructions:"Frozen body",acceptanceCriteria:["works"],referenceLinks:[],workspace:{repositoryId:"repo",baseRef:"main"},scope:["."],verification:[],delivery:{type:"pull-request",scmConnectorId:"chosen",repository:"acme/repo",baseBranch:"release"}},executionIntent:{execution:{selectionMode:"manual",selectionType:"native-default",profileId:"codex"}}};
+ vi.spyOn(globalThis,"fetch").mockImplementation(async(input,init)=>{if(init?.method==="POST"){posts.push(JSON.parse(String(init.body)));return new Response(JSON.stringify({publicationId:"existing-review",revision:1,canCommit:false,effectiveTask:{title:"Existing",description:"Frozen body",contractState:"READY",missing:[]},checks:[],confirmation:{required:true,reviewHash:"hash",reasons:[]}}));}const path=String(input);return new Response(JSON.stringify(path==="/api/tasks/existing"?task:path.includes("/models")?{entries:[],selectionSupport:"native-default-only"}:{...config,config:{...config.config,agentProfiles:[{id:"codex",provider:"codex",alias:"Account",runnerId:"local",enabled:true}]}}));});
+ mount(<PublishPage/>,"/publish?task=existing");await screen.findByRole("heading",{name:"审阅现有任务"});expect((screen.getByLabelText("SCM 连接器") as HTMLSelectElement).disabled).toBe(true);expect((screen.getByLabelText("远端仓库") as HTMLInputElement).readOnly).toBe(true);expect((screen.getByLabelText("PR 基准分支") as HTMLInputElement).value).toBe("release");await userEvent.click(screen.getByRole("button",{name:"检查并审阅"}));await screen.findByRole("dialog",{name:"审阅任务草稿"});expect(posts[0]).toMatchObject({expectedRevision:5,execution:{profileId:"codex"}});expect(posts[0]).not.toHaveProperty("delivery");
+});
+
+it("keeps the selected repository visible when console projection omits its private root",async()=>{
+ const repository={id:"repo",defaultBaseRef:"main",scopePaths:["."],verificationCommands:[]};
+ vi.spyOn(globalThis,"fetch").mockResolvedValue(new Response(JSON.stringify({...config,config:{...config.config,repositories:[repository]}})));
+ mount(<PublishPage/>);await screen.findByRole("option",{name:"repo"});await userEvent.selectOptions(screen.getByLabelText("项目仓库"),"repo");
+ expect(screen.queryByText("尚未选择项目")).toBeNull();expect(screen.getAllByText("repo").length).toBeGreaterThan(0);
+});
+
+it("allows create-only PR tasks with an explicit warning when delivery is unverified",async()=>{
+ localStorage.setItem("dispatcher.publication-draft.v1",JSON.stringify({description:"Body",repositoryId:"repo",deliveryType:"pull-request",scmConnectorId:"chosen",targetRepository:"acme/repo",baseBranch:"main"}));const posts:string[]=[];
+ vi.spyOn(globalThis,"fetch").mockImplementation(async(input,init)=>{if(init?.method==="POST"){posts.push(String(input));return new Response(JSON.stringify(String(input).endsWith("/commit")?{publicationId:"offline-review",state:"TASK_CREATED",taskId:"saved"}:{publicationId:"offline-review",revision:1,canCommit:true,effectiveTask:{title:"Task",description:"Body",contractState:"READY",missing:[]},checks:[{id:"delivery",status:"warning",message:"SCM unverified"}],confirmation:{required:true,reviewHash:"offline",reasons:[]}}));}return new Response(JSON.stringify(config));});mount(<PublishPage/>);await screen.findByRole("option",{name:/repo/});await userEvent.click(screen.getByRole("button",{name:"检查并审阅"}));const review=await screen.findByRole("dialog",{name:"审阅任务草稿"});expect(within(review).getByText(/仅创建任务.*派发前/)).toBeTruthy();const confirm=within(review).getByRole("button",{name:"确认并创建任务"});expect((confirm as HTMLButtonElement).disabled).toBe(false);await userEvent.click(confirm);expect(await screen.findByText("任务已创建")).toBeTruthy();expect(posts).toHaveLength(2);
+});
+it("focuses local validation errors and opens the affected collapsed field without a server write",async()=>{
+ const fetch=vi.spyOn(globalThis,"fetch").mockResolvedValue(new Response(JSON.stringify(config)));mount(<PublishPage/>);await screen.findByRole("option",{name:/repo/});await userEvent.click(screen.getByRole("button",{name:"检查并审阅"}));const description=screen.getByLabelText("任务说明");expect(description.getAttribute("aria-invalid")).toBe("true");expect(document.activeElement).toBe(description);await userEvent.type(description,"Body");await userEvent.click(screen.getByText("验收与参考",{exact:true}));const reference=screen.getByLabelText("参考链接（每行一条）");await userEvent.type(reference,"javascript:bad");await userEvent.click(screen.getByText("验收与参考",{exact:true}));expect(reference.closest("details")?.open).toBe(false);await userEvent.click(screen.getByRole("button",{name:"检查并审阅"}));expect(reference.getAttribute("aria-invalid")).toBe("true");expect(reference.closest("details")?.open).toBe(true);expect(document.activeElement).toBe(reference);expect(fetch.mock.calls.every(([,init])=>!init?.method)).toBe(true);
+});
+it("locates server field errors while preserving the draft",async()=>{
+ vi.spyOn(globalThis,"fetch").mockImplementation(async(_input,init)=>new Response(JSON.stringify(init?.method==="POST"?{code:"INVALID_DRAFT",message:"Task draft invalid",fieldErrors:[{path:"/targetBranch",code:"invalid",message:"Invalid target branch"}]}:config),{status:init?.method==="POST"?400:200}));mount(<PublishPage/>);await screen.findByRole("option",{name:/repo/});await userEvent.type(screen.getByLabelText("任务说明"),"Preserved body");await userEvent.click(screen.getByRole("button",{name:"检查并审阅"}));const branch=screen.getByLabelText("目标分支（可选）");expect(branch.getAttribute("aria-invalid")).toBe("true");expect(branch.closest("details")?.open).toBe(true);expect(document.getElementById(branch.getAttribute("aria-describedby")!)?.closest("details")).toBe(branch.closest("details"));expect(document.activeElement).toBe(branch);expect((screen.getByLabelText("任务说明")as HTMLTextAreaElement).value).toBe("Preserved body");
+});
+
+it("edits an incomplete task, retains a failed preflight draft and confirms dispatch under the original task ID",async()=>{
+ const posts:Array<{path:string;body:Record<string,unknown>}>=[];
+ const task={revision:2,document:{id:"incomplete",projectId:"local:inbox",title:"Incomplete",description:"Original body",state:"NEEDS_SPEC"},publicationDraft:{schemaVersion:1,clientDraftId:"original",repositoryId:"",referenceLinks:["https://example.invalid/spec"],acceptanceCriteria:[],delivery:{type:"none"},execution:{selectionMode:"manual"}},executionIntent:{execution:{selectionMode:"manual"}}};
+ vi.spyOn(globalThis,"fetch").mockImplementation(async(input,init)=>{
+  const path=String(input);if(init?.method==="POST"){
+   const body=JSON.parse(String(init.body));posts.push({path,body});
+   if(posts.length===1)return new Response(JSON.stringify({code:"INVALID_DRAFT",message:"Review scope",fieldErrors:[{path:"/description",code:"invalid"}]}),{status:400});
+   return new Response(JSON.stringify(path.endsWith("/commit")?{publicationId:"completed-review",state:"STARTED",taskId:"incomplete"}:{publicationId:"completed-review",revision:1,canCommit:true,taskBinding:{taskId:"incomplete",taskRevision:2},effectiveTask:{title:"Incomplete",description:"Original body completed",contractState:"READY",missing:[]},checks:[],confirmation:{required:true,reviewHash:"completed",reasons:[]}}));
+  }
+  return new Response(JSON.stringify(path==="/api/tasks/incomplete"?task:path.includes("/models")?{entries:[],selectionSupport:"native-default-only"}:{...config,config:{...config.config,agentProfiles:[{id:"codex",provider:"codex",alias:"Account",runnerId:"local",enabled:true}]}}));
+ });
+ mount(<PublishPage/>,"/publish?task=incomplete");await screen.findByRole("heading",{name:"完善现有任务"});
+ expect((screen.getByLabelText("任务说明") as HTMLTextAreaElement).value).toBe("Original body");
+ await userEvent.type(screen.getByLabelText("任务说明")," completed");await userEvent.selectOptions(screen.getByLabelText("项目仓库"),"repo");
+ await userEvent.click(screen.getByText("验收与参考",{exact:true}));expect((screen.getByLabelText("参考链接（每行一条）") as HTMLTextAreaElement).value).toBe("https://example.invalid/spec");
+ await userEvent.type(screen.getByLabelText("验收条件（每行一条）"),"works");await userEvent.selectOptions(screen.getByLabelText("Harness 账号"),"codex");await userEvent.selectOptions(screen.getByLabelText("执行方式"),"dispatch");
+ await userEvent.click(screen.getByRole("button",{name:"检查并审阅"}));await screen.findByText("Review scope");expect((screen.getByLabelText("任务说明") as HTMLTextAreaElement).value).toBe("Original body completed");
+ await userEvent.click(screen.getByRole("button",{name:"检查并审阅"}));const review=await screen.findByRole("dialog",{name:"审阅任务草稿"});
+ expect(posts[1]).toMatchObject({path:"/api/tasks/incomplete/publications/preview",body:{expectedRevision:2,draft:{description:"Original body completed",repositoryId:"repo",acceptanceCriteria:["works"],startMode:"dispatch"}}});
+ await userEvent.click(within(review).getByRole("button",{name:"确认并启动执行"}));expect((await screen.findByRole("link",{name:"查看已创建任务"})).getAttribute("href")).toBe("/tasks?task=incomplete");expect(posts.map(p=>p.path)).not.toContain("/api/task-publications/preview");
+});
+it("restores a task-specific incomplete draft without replacing the new-task draft",async()=>{
+ localStorage.setItem("dispatcher.publication-draft.v1",JSON.stringify({description:"Unrelated new task"}));
+ localStorage.setItem("dispatcher.publication-draft.v1:incomplete",JSON.stringify({existingTaskId:"incomplete",existingTaskRevision:"2",title:"My edit",description:"Unsaved detail",acceptance:"Unsaved acceptance"}));
+ vi.spyOn(globalThis,"fetch").mockImplementation(async input=>new Response(JSON.stringify(String(input)==="/api/tasks/incomplete"?{revision:2,document:{id:"incomplete",state:"NEEDS_SPEC",title:"Old title",description:"Old body"},publicationDraft:{repositoryId:"",acceptanceCriteria:[],execution:{},delivery:{type:"none"}}}:config)));
+ mount(<PublishPage/>,"/publish?task=incomplete");await screen.findByRole("heading",{name:"完善现有任务"});expect((screen.getByLabelText("任务说明") as HTMLTextAreaElement).value).toBe("Unsaved detail");expect(JSON.parse(localStorage.getItem("dispatcher.publication-draft.v1")!).description).toBe("Unrelated new task");
+});
+it("reloads a conflicting original task only after preserving the draft until explicit discard",async()=>{
+ localStorage.setItem("dispatcher.publication-draft.v1:incomplete",JSON.stringify({existingTaskId:"incomplete",existingTaskRevision:"2",description:"Unsaved edits"}));
+ const confirm=vi.spyOn(window,"confirm").mockReturnValue(true);
+ vi.spyOn(globalThis,"fetch").mockImplementation(async input=>new Response(JSON.stringify(String(input)==="/api/tasks/incomplete"?{revision:3,document:{id:"incomplete",state:"NEEDS_SPEC",title:"New title",description:"New body"},publicationDraft:{repositoryId:"",acceptanceCriteria:[],execution:{},delivery:{type:"none"}}}:config)));
+ mount(<PublishPage/>,"/publish?task=incomplete");await screen.findByRole("heading",{name:"完善现有任务"});expect((screen.getByLabelText("任务说明") as HTMLTextAreaElement).value).toBe("Unsaved edits");
+ await userEvent.click(screen.getByRole("button",{name:"重新读取任务"}));expect(confirm).toHaveBeenCalled();await waitFor(()=>expect((screen.getByLabelText("任务说明") as HTMLTextAreaElement).value).toBe("New body"));
+});
+it("never persists an empty intermediate draft while reloading a task",async()=>{
+ localStorage.setItem("dispatcher.publication-draft.v1:incomplete",JSON.stringify({existingTaskId:"incomplete",existingTaskRevision:"2",description:"Unsaved edits"}));
+ vi.spyOn(window,"confirm").mockReturnValue(true);
+ const task={revision:3,document:{id:"incomplete",state:"NEEDS_SPEC",title:"New title",description:"New body"},publicationDraft:{repositoryId:"",acceptanceCriteria:[],execution:{},delivery:{type:"none"}}};
+ let reads=0;let release!:(value:Response)=>void;
+ const response=new Promise<Response>(resolve=>{release=resolve;});
+ vi.spyOn(globalThis,"fetch").mockImplementation(async input=>String(input)==="/api/tasks/incomplete"&&++reads>1?response:new Response(JSON.stringify(String(input)==="/api/tasks/incomplete"?task:config)));
+ mount(<PublishPage/>,"/publish?task=incomplete");await screen.findByRole("heading",{name:"完善现有任务"});
+ const writes=vi.spyOn(Storage.prototype,"setItem");
+ await userEvent.click(screen.getByRole("button",{name:"重新读取任务"}));
+ expect((screen.getByLabelText("任务说明") as HTMLTextAreaElement).value).toBe("Unsaved edits");
+ await act(async()=>{release(new Response(JSON.stringify(task)));});
+ await waitFor(()=>expect((screen.getByLabelText("任务说明") as HTMLTextAreaElement).value).toBe("New body"));
+ const descriptions=writes.mock.calls.filter(([key])=>key==="dispatcher.publication-draft.v1:incomplete").map(([,value])=>JSON.parse(String(value)).description);
+ expect(descriptions).not.toContain("");
+ expect(JSON.parse(localStorage.getItem("dispatcher.publication-draft.v1:incomplete")!).description).toBe("New body");
+});
+it("preserves edits made while an explicit task reload is still pending",async()=>{
+ localStorage.setItem("dispatcher.publication-draft.v1:incomplete",JSON.stringify({existingTaskId:"incomplete",existingTaskRevision:"2",description:"Unsaved edits"}));
+ vi.spyOn(window,"confirm").mockReturnValue(true);
+ const task={revision:3,document:{id:"incomplete",state:"NEEDS_SPEC",title:"New title",description:"New body"},publicationDraft:{repositoryId:"",acceptanceCriteria:[],execution:{},delivery:{type:"none"}}};
+ let reads=0;let release!:(value:Response)=>void;
+ const response=new Promise<Response>(resolve=>{release=resolve;});
+ vi.spyOn(globalThis,"fetch").mockImplementation(async input=>String(input)==="/api/tasks/incomplete"&&++reads>1?response:new Response(JSON.stringify(String(input)==="/api/tasks/incomplete"?task:config)));
+ mount(<PublishPage/>,"/publish?task=incomplete");await screen.findByRole("heading",{name:"完善现有任务"});
+ await userEvent.click(screen.getByRole("button",{name:"重新读取任务"}));
+ await userEvent.type(screen.getByLabelText("任务说明")," after reload started");
+ await act(async()=>{release(new Response(JSON.stringify(task)));});
+ await screen.findByText("任务读取期间草稿已修改，当前草稿保留。请再次确认后重新读取。");
+ expect((screen.getByLabelText("任务说明") as HTMLTextAreaElement).value).toBe("Unsaved edits after reload started");
+ expect(JSON.parse(localStorage.getItem("dispatcher.publication-draft.v1:incomplete")!).description).toBe("Unsaved edits after reload started");
+});
+it("retains an incomplete task's explicit policy type instead of silently enabling another semantic analysis",async()=>{
+ const task={revision:1,document:{id:"incomplete",title:"Original",description:"Body",state:"NEEDS_SPEC"},publicationDraft:{repositoryId:"repo",acceptanceCriteria:[],execution:{selectionMode:"policy-auto",profileId:"p",taskTypeId:"fix"},delivery:{type:"none"}},executionIntent:{execution:{selectionMode:"policy-auto",profileId:"p",taskTypeId:"fix"}}};
+ const fetch=vi.spyOn(globalThis,"fetch").mockImplementation(async input=>new Response(JSON.stringify(String(input)==="/api/tasks/incomplete"?task:{...config,config:{...config.config,agentProfiles:[{id:"p",alias:"P",provider:"codex",runnerId:"local",enabled:true}],policies:{modelRouting:{enabled:true,classificationMode:"hybrid",taskTypes:[{id:"fix",name:"修复",enabled:true}]}}}})));
+ mount(<PublishPage/>,"/publish?task=incomplete");await screen.findByRole("heading",{name:"完善现有任务"});expect((screen.getByLabelText("任务类型") as HTMLSelectElement).value).toBe("fix");expect(screen.queryByRole("button",{name:"分析并审阅（调用内部模型）"})).toBeNull();expect(fetch.mock.calls.every(([,init])=>!init?.method||init.method==="GET")).toBe(true);
+});

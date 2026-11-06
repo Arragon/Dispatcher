@@ -1,5 +1,7 @@
+import { childExecutionEnvironment } from "@dispatcher/shared";
 import { spawn as spawnProcess } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { OwnedProcessGroup } from "@dispatcher/adapters";
+import { chmodSync,closeSync,constants,existsSync,fstatSync,lstatSync,mkdirSync,openSync,readdirSync,realpathSync,renameSync,rmSync,statSync,writeSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { arch, platform } from "node:os";
 import { randomUUID } from "node:crypto";
@@ -36,54 +38,62 @@ function redact(value: string): string {
 
 export class BoundedLogWriter {
   private readonly currentPath: string;
+  private readonly ownedNames:RegExp;
   private tailText = "";
   constructor(private readonly directory: string, private readonly name: string, private readonly budget: LogBudget = defaultBudget) {
+    if(!/^[a-z][a-z0-9_-]{0,63}$/i.test(name)||Object.values(budget).some(value=>!Number.isSafeInteger(value)||value<1))throw Error("LOG_BUDGET_INVALID");
     mkdirSync(directory, { recursive: true });
     this.currentPath = join(directory, `${name}.log`);
+    this.ownedNames=new RegExp(`^(?:${[...new Set([name,"stdout","stderr","pty"])].join("|")})\\.log(?:\\.\\d+)?$`);
   }
 
   write(input: string | Uint8Array): void {
     const text = redact(typeof input === "string" ? input : Buffer.from(input).toString("utf8"));
     const bytes = Buffer.byteLength(text);
-    const currentSize = existsSync(this.currentPath) ? statSync(this.currentPath).size : 0;
-    if (currentSize > 0 && currentSize + bytes > this.budget.maxFileBytes) this.rotate();
-    const allowed = Math.min(bytes, this.budget.maxFileBytes);
+    const currentSize = existsSync(this.currentPath) ? this.safeFile(this.currentPath).size : 0;
+    const allowed = Math.min(bytes, this.budget.maxFileBytes,this.budget.maxTotalBytes);
+    if (currentSize > 0 && currentSize + allowed > this.chunkLimitBytes) this.rotate();
     const chunk = Buffer.from(text).subarray(0, allowed);
-    writeFileSync(this.currentPath, chunk, { flag: "a", mode: 0o600 });
+    const descriptor=openSync(this.currentPath,constants.O_WRONLY|constants.O_APPEND|constants.O_CREAT|constants.O_NOFOLLOW|constants.O_NONBLOCK,0o600);
+    try{const file=fstatSync(descriptor);if(!file.isFile()||file.nlink!==1)throw Error("LOG_PATH_UNSAFE");let offset=0;while(offset<chunk.length)offset+=writeSync(descriptor,chunk,offset,chunk.length-offset);}finally{closeSync(descriptor);}
     this.tailText = (this.tailText + stripAnsi(chunk.toString("utf8"))).slice(-this.budget.tailBytes);
     this.enforceTotalBudget();
   }
 
   tail(): string { return this.tailText; }
+  get chunkLimitBytes():number{return Math.min(this.budget.maxFileBytes,this.budget.maxTotalBytes);}
   files(): string[] { return Array.from({ length: this.budget.retentionFiles }, (_, index) => index === 0 ? this.currentPath : `${this.currentPath}.${index}`).filter(existsSync); }
 
   private rotate(): void {
+    if(this.budget.retentionFiles===1){this.safeFile(this.currentPath);rmSync(this.currentPath);return;}
     const last = `${this.currentPath}.${this.budget.retentionFiles - 1}`;
-    if (existsSync(last)) rmSync(last);
+    if (existsSync(last)){this.safeFile(last);rmSync(last);}
     for (let index = this.budget.retentionFiles - 2; index >= 1; index -= 1) {
       const source = `${this.currentPath}.${index}`;
-      if (existsSync(source)) renameSync(source, `${this.currentPath}.${index + 1}`);
+      if (existsSync(source)){this.safeFile(source);renameSync(source, `${this.currentPath}.${index + 1}`);}
     }
     if (existsSync(this.currentPath)) renameSync(this.currentPath, `${this.currentPath}.1`);
   }
 
   private enforceTotalBudget(): void {
     const files = readdirSync(this.directory)
-      .filter((entry) => entry.endsWith(".log") || /\.log\.\d+$/.test(entry))
+      .filter((entry) => this.ownedNames.test(entry))
       .map((entry) => join(this.directory, entry))
       .filter(existsSync)
-      .map((path) => ({ path, bytes: statSync(path).size, modifiedAt: statSync(path).mtimeMs }))
+      .map((path) => ({ path, bytes: this.safeFile(path).size, modifiedAt: this.safeFile(path).mtimeMs }))
       .sort((left, right) => right.modifiedAt - left.modifiedAt);
     while (files.reduce((sum, file) => sum + file.bytes, 0) > this.budget.maxTotalBytes && files.length > 1) {
       const oldest = files.pop();
       if (oldest) rmSync(oldest.path);
     }
   }
+  private safeFile(path:string){const file=lstatSync(path);if(!file.isFile()||file.isSymbolicLink()||file.nlink!==1)throw Error("LOG_PATH_UNSAFE");return file;}
 }
 
 export type ExitClassification = "success" | "cancelled" | "timeout" | "idle-timeout" | "nonzero" | "signal" | "spawn-error";
 export interface ActivityEvent { sessionId: string; stream: "stdout" | "stderr" | "lifecycle"; summary: string; occurredAt: string; }
 export interface ProcessResult { sessionId: string; exitCode: number | null; signal: NodeJS.Signals | null; classification: ExitClassification; stdoutTail: string; stderrTail: string; durationMs: number; }
+export interface ProcessTreeStatus {state:"present"|"empty"|"unknown";scope:"owned-process-group"|"unverified"}
 export interface ManagedProcessHandle {
   id: string;
   pid: number;
@@ -91,6 +101,7 @@ export interface ManagedProcessHandle {
   cancel(): Promise<void>;
   status(): { state: "running" | "completed"; pid: number };
   result(): Promise<ProcessResult>;
+  treeStatus?(): ProcessTreeStatus;
   subscribe(handler: (event: ActivityEvent) => void): () => void;
 }
 
@@ -100,16 +111,52 @@ export function processTreeKillCommand(pid: number, targetPlatform: NodeJS.Platf
 }
 
 interface InternalProcess {
-  handle: ManagedProcessHandle;
+  id:string;pid:number;cancel:ManagedProcessHandle["cancel"];status:ManagedProcessHandle["status"];treeStatus:()=>ProcessTreeStatus;
+  runId:string;cwd:string;mode:"process"|"pty";
+  cwdIdentity?:{path:string;dev:number;ino:number};
 }
+export interface OwnedProcessSnapshot {id:string;runId:string;pid:number;cwd:string;cwdState:"verified"|"unknown";mode:"process"|"pty";state:"running"|"completed";ownership:"owned-live"|"unverified";tree:ProcessTreeStatus}
+export interface OwnedProcessStop {id:string;runId:string;parent:"running"|"completed";stopped:boolean;tree:ProcessTreeStatus}
+function captureDirectory(path:string):InternalProcess["cwdIdentity"] {try{const canonical=realpathSync(path),stat=lstatSync(canonical);if(stat.isDirectory()&&!stat.isSymbolicLink())return {path:canonical,dev:stat.dev,ino:stat.ino};}catch{/* spawning retains its original classified failure */}return undefined;}
+function directoryCurrent(identity:InternalProcess["cwdIdentity"]):boolean {const current=identity&&captureDirectory(identity.path);return Boolean(current&&identity&&current.path===identity.path&&current.dev===identity.dev&&current.ino===identity.ino);}
+function captureProcess(handle:ManagedProcessHandle,input:{runId:string;cwd:string},mode:InternalProcess["mode"],cwdIdentity:InternalProcess["cwdIdentity"]):InternalProcess {return {id:handle.id,pid:handle.pid,runId:input.runId,cwd:cwdIdentity?.path??input.cwd,...(cwdIdentity?{cwdIdentity}:{}),mode,cancel:handle.cancel.bind(handle),status:handle.status.bind(handle),treeStatus:handle.treeStatus?.bind(handle)??(()=>({state:"unknown",scope:"unverified"}))};}
+
+
+export interface ProcessStartInput {runId:string;file:string;args:string[];cwd:string;timeoutMs?:number;idleTimeoutMs?:number;mode?:"process"|"pty";env?:Readonly<Record<string,string|undefined>>}
 
 export class ProcessManager {
   private readonly active = new Map<string, InternalProcess>();
+  private readonly unresolved=new Map<string,InternalProcess>();
+  private readonly stopping=new Map<string,Promise<OwnedProcessStop>>();
   constructor(private readonly logRoot: string, private readonly budget: LogBudget = defaultBudget) {}
   get activeCount(): number { return this.active.size; }
 
-  async start(input: { runId: string; file: string; args: string[]; cwd: string; timeoutMs?: number; idleTimeoutMs?: number; mode?: "process" | "pty" }): Promise<ManagedProcessHandle> {
-    if (input.mode === "pty") return this.startPty(input);
+  inventory():OwnedProcessSnapshot[] {
+    for(const [id,process] of this.unresolved)if(process.treeStatus().state==="empty")this.unresolved.delete(id);
+    if(this.active.size+this.unresolved.size>1000)throw Error("ORPHAN_PROCESS_INVENTORY_LIMIT");
+    return [...this.active.values(),...this.unresolved.values()].map(process=>{const state=process.status().state;return {id:process.id,runId:process.runId,pid:process.pid,cwd:process.cwd,cwdState:directoryCurrent(process.cwdIdentity)?"verified":"unknown",mode:process.mode,state,ownership:state==="running"?"owned-live":"unverified",tree:{...process.treeStatus()}};});
+  }
+  async stopOwned(id:string,assertCurrent:()=>void):Promise<OwnedProcessStop> {
+    const captured=this.active.get(id);
+    if(!captured||captured.status().state!=="running")throw Error("ORPHAN_LIVE_OWNER_REQUIRED");
+    if(!directoryCurrent(captured.cwdIdentity))throw Error("ORPHAN_PROCESS_DIRECTORY_CHANGED");
+    assertCurrent();
+    if(this.active.get(id)!==captured||captured.status().state!=="running")throw Error("ORPHAN_LIVE_OWNER_REQUIRED");
+    if(!directoryCurrent(captured.cwdIdentity))throw Error("ORPHAN_PROCESS_DIRECTORY_CHANGED");
+    const prior=this.stopping.get(id);if(prior)return prior;
+    const outcome=():OwnedProcessStop=>{const tree=captured.treeStatus(),parent=captured.status().state;return {id,runId:captured.runId,parent,stopped:parent==="completed"&&tree.scope==="owned-process-group"&&tree.state==="empty",tree:{...tree}};};
+    let timer:ReturnType<typeof setTimeout>|undefined;
+    // A parent exit is not proof that its descendants or PTY are quiescent.
+    const cancellation=captured.cancel().then(outcome,()=>({...outcome(),stopped:false}));
+    const bounded=Promise.race([cancellation,new Promise<OwnedProcessStop>(resolve=>{timer=setTimeout(()=>resolve({...outcome(),stopped:false}),5000);})]).finally(()=>{if(timer)clearTimeout(timer);});
+    this.stopping.set(id,bounded);void cancellation.then(()=>{if(this.stopping.get(id)===bounded)this.stopping.delete(id);});return bounded;
+  }
+
+
+  async start(request: ProcessStartInput): Promise<ManagedProcessHandle> {
+    const input={...request,args:[...request.args],env:Object.freeze({...request.env??process.env})};
+    const cwdIdentity=captureDirectory(input.cwd);
+    if (input.mode === "pty") return this.startPty(input,cwdIdentity);
     const id = randomUUID();
     const startedAt = Date.now();
     const stdout = new BoundedLogWriter(join(this.logRoot, input.runId), "stdout", this.budget);
@@ -117,35 +164,22 @@ export class ProcessManager {
     const listeners = new Set<(event: ActivityEvent) => void>();
     let classification: ExitClassification | undefined;
     let settled = false;
-    const child = spawnProcess(input.file, input.args, { cwd: input.cwd, shell: false, detached: platform() !== "win32", stdio: ["pipe", "pipe", "pipe"] });
-    if (child.pid === undefined) throw new Error("Process did not receive a pid");
+    const child = spawnProcess(input.file, input.args, { cwd: input.cwd, env: childExecutionEnvironment(input.env, { PWD: input.cwd }), shell: false, detached: platform() !== "win32", stdio: ["pipe", "pipe", "pipe"] });
+    const ownership = new OwnedProcessGroup(child);
+    let rejectResult: (error: unknown) => void = () => undefined;
+    const spawned = new Promise<void>((resolve, reject) => {
+      child.once("error", reject);
+      child.once("spawn", resolve);
+    });
     const emit = (stream: ActivityEvent["stream"], text: string): void => {
       const event = { sessionId: id, stream, summary: stripAnsi(redact(text)).slice(-500), occurredAt: new Date().toISOString() };
       for (const listener of listeners) listener(event);
     };
     let idleTimer: ReturnType<typeof setTimeout> | undefined;
     const terminate = (reason: ExitClassification): void => {
-      if (settled || child.exitCode !== null) return;
-      classification = reason;
-      try {
-        if (platform() !== "win32") process.kill(-child.pid!, "SIGTERM");
-        else {
-          const command = processTreeKillCommand(child.pid!, "win32")!;
-          spawnProcess(command.file, command.args, { shell: false, stdio: "ignore" });
-        }
-      } catch { child.kill("SIGTERM"); }
-      const force = setTimeout(() => {
-        if (child.exitCode === null) {
-          try {
-            if (platform() !== "win32") process.kill(-child.pid!, "SIGKILL");
-            else {
-              const command = processTreeKillCommand(child.pid!, "win32", true)!;
-              spawnProcess(command.file, command.args, { shell: false, stdio: "ignore" });
-            }
-          } catch { child.kill("SIGKILL"); }
-        }
-      }, 2_000);
-      force.unref();
+      if (settled) return;
+      classification ??= reason;
+      void ownership.stop().catch(rejectResult);
     };
     const resetIdle = (): void => {
       if (!input.idleTimeoutMs) return;
@@ -158,32 +192,37 @@ export class ProcessManager {
     resetIdle();
     const timeout = input.timeoutMs ? setTimeout(() => terminate("timeout"), input.timeoutMs) : undefined;
     timeout?.unref();
-    const resultPromise = new Promise<ProcessResult>((resolve) => {
+    const resultPromise = new Promise<ProcessResult>((resolve, reject) => {
+      rejectResult = reject;
       child.on("error", (error) => { classification ??= "spawn-error"; stderr.write(error.message); });
-      child.on("close", (code, signal) => {
+      child.on("close", (code, signal) => { void (async () => {
+        await ownership.stop();
         settled = true;
         if (timeout) clearTimeout(timeout);
         if (idleTimer) clearTimeout(idleTimer);
-        this.active.delete(id);
+        const captured=this.active.get(id);this.active.delete(id);if(captured&&captured.treeStatus().state!=="empty")this.unresolved.set(id,captured);
         const resolved = classification ?? (signal ? "signal" : code === 0 ? "success" : "nonzero");
         emit("lifecycle", resolved);
         resolve({ sessionId: id, exitCode: code, signal: signal as NodeJS.Signals | null, classification: resolved, stdoutTail: stdout.tail(), stderrTail: stderr.tail(), durationMs: Date.now() - startedAt });
-      });
+      })().catch(reject); });
     });
+    await spawned;
+    if (child.pid === undefined) throw new Error("Process did not receive a pid");
     const handle: ManagedProcessHandle = {
       id,
       pid: child.pid,
       send: async (data) => { if (!child.stdin?.writable) throw new Error("Process input is closed"); child.stdin.write(data); },
       cancel: async () => { terminate("cancelled"); await resultPromise; },
       status: () => ({ state: settled ? "completed" : "running", pid: child.pid! }),
+      treeStatus: () => ownership.treeStatus(),
       result: async () => await resultPromise,
       subscribe: (handler) => { listeners.add(handler); return () => listeners.delete(handler); },
     };
-    this.active.set(id, { handle });
+    this.active.set(id, captureProcess(handle,input,"process",cwdIdentity));
     return handle;
   }
 
-  private startPty(input: { runId: string; file: string; args: string[]; cwd: string; timeoutMs?: number; idleTimeoutMs?: number }): ManagedProcessHandle {
+  private startPty(input: ProcessStartInput & {env:Readonly<Record<string,string|undefined>>},cwdIdentity:InternalProcess["cwdIdentity"]): ManagedProcessHandle {
     ensurePtySpawnHelper();
     const id = randomUUID();
     const startedAt = Date.now();
@@ -193,12 +232,13 @@ export class ProcessManager {
     let classification: ExitClassification | undefined;
     const terminal = spawnPty(input.file, input.args, {
       cwd: input.cwd,
-      env: Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)),
-      name: process.env.TERM ?? "xterm-256color",
+      env: childExecutionEnvironment(input.env, { PWD: input.cwd }),
+      name: input.env?.TERM ?? "xterm-256color",
       cols: 120,
       rows: 40,
       useConpty: platform() === "win32",
     });
+    const ownership = new OwnedProcessGroup(terminal);
     const emit = (stream: ActivityEvent["stream"], text: string): void => {
       const event = { sessionId: id, stream, summary: stripAnsi(redact(text)).slice(-500), occurredAt: new Date().toISOString() };
       for (const listener of listeners) listener(event);
@@ -206,11 +246,12 @@ export class ProcessManager {
     let idleTimer: ReturnType<typeof setTimeout> | undefined;
     let timeout: ReturnType<typeof setTimeout> | undefined;
     let resolveResult: (result: ProcessResult) => void = () => undefined;
-    const resultPromise = new Promise<ProcessResult>((resolve) => { resolveResult = resolve; });
+    let rejectResult: (error: unknown) => void = () => undefined;
+    const resultPromise = new Promise<ProcessResult>((resolve, reject) => { resolveResult = resolve; rejectResult = reject; });
     const terminate = (reason: ExitClassification): void => {
       if (settled) return;
-      classification = reason;
-      terminal.kill();
+      classification ??= reason;
+      void ownership.stop().catch(rejectResult);
     };
     const resetIdle = (): void => {
       if (!input.idleTimeoutMs) return;
@@ -223,15 +264,16 @@ export class ProcessManager {
       emit("stdout", data);
       resetIdle();
     });
-    terminal.onExit(({ exitCode, signal }) => {
+    terminal.onExit(({ exitCode, signal }) => { void (async () => {
+      await ownership.stop();
       settled = true;
       if (idleTimer) clearTimeout(idleTimer);
       if (timeout) clearTimeout(timeout);
-      this.active.delete(id);
+      const captured=this.active.get(id);this.active.delete(id);if(captured&&captured.treeStatus().state!=="empty")this.unresolved.set(id,captured);
       const resolved = classification ?? (signal ? "signal" : exitCode === 0 ? "success" : "nonzero");
       emit("lifecycle", resolved);
       resolveResult({ sessionId: id, exitCode, signal: null, classification: resolved, stdoutTail: output.tail(), stderrTail: "", durationMs: Date.now() - startedAt });
-    });
+    })().catch(rejectResult); });
     resetIdle();
     if (input.timeoutMs) {
       timeout = setTimeout(() => terminate("timeout"), input.timeoutMs);
@@ -243,12 +285,13 @@ export class ProcessManager {
       send: async (data) => terminal.write(data),
       cancel: async () => { terminate("cancelled"); await resultPromise; },
       status: () => ({ state: settled ? "completed" : "running", pid: terminal.pid }),
+      treeStatus: () => ({state:"unknown",scope:"unverified"}),
       result: async () => await resultPromise,
       subscribe: (handler) => { listeners.add(handler); return () => listeners.delete(handler); },
     };
-    this.active.set(id, { handle });
+    this.active.set(id, captureProcess(handle,input,"pty",cwdIdentity));
     return handle;
   }
 
-  async shutdown(): Promise<void> { await Promise.all([...this.active.values()].map(({ handle }) => handle.cancel())); }
+  async shutdown(): Promise<void> { await Promise.all([...this.active.values()].map(process => process.cancel())); }
 }

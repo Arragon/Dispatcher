@@ -8,11 +8,13 @@ import {
 } from "@dispatcher/protocol";
 
 export * from "./process.js";
+export * from "./local-git-delivery.js";
 export * from "./verification.js";
 export * from "./journal.js";
 export * from "./lease.js";
 export * from "./reconcile.js";
 export * from "./remote.js";
+export * from "./native-runtime.js";
 export * from "./platform.js";
 export * from "./enrollment.js";
 
@@ -232,3 +234,12 @@ export class EmbeddedRunner {
     if (offline) await this.events.publish("runnerChanged", offline);
   }
 }
+
+export * from "./native-observation.js";
+export * from "./interaction-dispatch.js";
+export * from "./native-event-reconcile.js";
+export * from "./native-quiescence.js";
+export * from "./native-stop.js";
+export * from "./native-reclaim.js";
+
+export * from "./account-quotas.js";

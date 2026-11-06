@@ -1,3 +1,24 @@
+export * from "./local-review.js";
+export * from "./native-session-view.js";
+export * from "./legacy-pricing.js";
+export * from "./decimal.js";
+export * from "./metering.js";
+export * from "./pricing-admission.js";
+export * from "./native-drift.js";
+export * from "./legacy-usage.js";
+export * from "./session-interaction.js";
+export * from "./legacy-selection.js";
+import type { NativeBinding, ExecutionContextRef } from "./session-interaction.js";
+export * from "./profile-console.js";
+export * from "./repository-console.js";
+export * from "./delivery.js";
+export * from "./usage.js";
+export * from "./account-quota.js";
+export * from "./diagnostics.js";
+import type { ExecutionSelection, TaskInputContext } from "./publication.js";
+export type {NativeModelInvocation,NativeTurnCompletion} from "./model-invocation.js";
+export * from "./publication.js";
+export * from "./model-routing.js";
 export const TASK_STATES = [
   "BACKLOG",
   "NEEDS_SPEC",
@@ -137,11 +158,15 @@ export interface TaskContract {
   version: 1;
   revision: number;
   goal: string;
+  instructions?: string;
+  inputContext?: TaskInputContext;
+  referenceLinks?: string[];
+  workspace?: { repositoryId: string; baseRef: string; baseCommit?: string; targetBranch?: string };
   scope: string[];
   acceptanceCriteria: string[];
   verification: string[];
   constraints: string[];
-  delivery: { type: "pull-request" | "commit" | "none"; repository?: string; baseBranch?: string };
+  delivery: { type: "pull-request" | "commit" | "none"; repository?: string; baseBranch?: string; scmConnectorId?:string };
 }
 
 export interface DeliveryEvidence {
@@ -226,6 +251,8 @@ export interface Session {
   providerId: ProviderId;
   profileId: EntityId;
   nativeSessionId?: string;
+  nativeBinding?: NativeBinding;
+  executionRef?: ExecutionContextRef;
   resumable: boolean;
   createdAt: IsoDateTime;
   updatedAt: IsoDateTime;
@@ -238,6 +265,8 @@ export interface VerificationEvidence {
 }
 
 export interface Run {
+  executionSelection?: ExecutionSelection;
+  executionRef?: ExecutionContextRef;
   id: EntityId;
   taskId: EntityId;
   runnerId: EntityId;
@@ -263,7 +292,13 @@ export interface Run {
   failureReason?: string;
   resourceBlockReason?: string;
   recoveryReason?: string;
+  recoveryState?: RunState;
   requiredCapabilities?: string[];
+  /** Selection captured at dispatch, independent of later profile edits. */
+  model?: { id: string; source: "configuration" | "selection" | "runtime" };
+  tokens?: { input: number; output: number; cachedInput?: number };
+  tokenScope?: "latest-turn";
+  telemetryAt?: IsoDateTime;
   prUrl?: string;
   verification: VerificationEvidence;
 }
@@ -297,12 +332,12 @@ const runTransitions: Readonly<Record<RunState, readonly RunState[]>> = {
   CREATED: ["STARTING", "CANCELLED", "SUPERSEDED"],
   STARTING: ["ACTIVE", "RESOURCE_BLOCKED", "RUNNER_UNAVAILABLE", "FAILED", "CANCELLED", "SUPERSEDED"],
   ACTIVE: ["WAITING_USER", "RESOURCE_BLOCKED", "RUNNER_UNAVAILABLE", "SUSPECTED_STALL", "VERIFYING", "FAILED", "CANCELLED", "SUPERSEDED"],
-  WAITING_USER: ["ACTIVE", "FAILED", "CANCELLED", "SUPERSEDED"],
-  RESOURCE_BLOCKED: ["ACTIVE", "FAILED", "CANCELLED", "SUPERSEDED"],
-  RUNNER_UNAVAILABLE: ["ACTIVE", "FAILED", "CANCELLED", "SUPERSEDED"],
-  SUSPECTED_STALL: ["ACTIVE", "FAILED", "CANCELLED", "SUPERSEDED"],
-  VERIFYING: ["ACTIVE", "DELIVERING", "FAILED", "CANCELLED", "SUPERSEDED"],
-  DELIVERING: ["COMPLETE", "FAILED", "CANCELLED", "SUPERSEDED"],
+  WAITING_USER: ["ACTIVE", "RUNNER_UNAVAILABLE", "FAILED", "CANCELLED", "SUPERSEDED"],
+  RESOURCE_BLOCKED: ["ACTIVE", "RUNNER_UNAVAILABLE", "FAILED", "CANCELLED", "SUPERSEDED"],
+  RUNNER_UNAVAILABLE: ["ACTIVE", "WAITING_USER", "RESOURCE_BLOCKED", "SUSPECTED_STALL", "VERIFYING", "DELIVERING", "FAILED", "CANCELLED", "SUPERSEDED"],
+  SUSPECTED_STALL: ["ACTIVE", "RUNNER_UNAVAILABLE", "FAILED", "CANCELLED", "SUPERSEDED"],
+  VERIFYING: ["ACTIVE", "RUNNER_UNAVAILABLE", "DELIVERING", "FAILED", "CANCELLED", "SUPERSEDED"],
+  DELIVERING: ["RUNNER_UNAVAILABLE", "VERIFYING", "COMPLETE", "FAILED", "CANCELLED", "SUPERSEDED"],
   COMPLETE: [],
   FAILED: [],
   CANCELLED: [],

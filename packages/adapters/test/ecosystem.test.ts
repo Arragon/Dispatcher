@@ -15,6 +15,7 @@ import {
   normalizeCliLine,
   runAdapterContract,
   type CliAgentBackend,
+  type AdapterSession,
   type CliTurn,
   type CliTurnResult,
   type DevinBackend,
@@ -22,7 +23,8 @@ import {
 } from "../src/index.js";
 
 class FakeCliTurn implements CliTurn {
-  private state: "running" | "completed" = "running";
+  // Headless follow-up contract uses a completed turn; active turns reject SESSION_BUSY.
+  private state: "running" | "completed" = "completed";
   private resultState: CliTurnResult["state"] = "completed";
   async cancel(): Promise<void> { this.state = "completed"; this.resultState = "cancelled"; }
   status(): "running" | "completed" { return this.state; }
@@ -32,11 +34,43 @@ class FakeCliTurn implements CliTurn {
 const cliBackend: CliAgentBackend = { start: vi.fn(() => new FakeCliTurn()) };
 
 describe("Cursor and Kiro adapters", () => {
+  it("does not claim a persisted active child stopped when its ownership handle was lost",async()=>{
+    const saved:AdapterSession[]=[];const store={load:(id:string)=>saved.findLast(s=>s.id===id),save:(session:AdapterSession)=>{saved.push(structuredClone(session));}};
+    const backend:CliAgentBackend={start:()=>({cancel:async()=>undefined,status:()=>"running",result:async()=>({state:"completed",summary:"",events:[]})})},profile={id:"p",alias:"P",executable:process.execPath};
+    const session=await new CursorAdapter(profile,backend,store).start({runId:"r",workspacePath:"/work"});await expect(new CursorAdapter(profile,backend,store).cancel(session.id)).rejects.toMatchObject({code:"SESSION_DETACHED"});expect(store.load(session.id)?.state).toBe("RUNNING");
+  });
+  it("persists STARTING before native spawn and records only an actual backend PID", async () => {
+    const saved: AdapterSession[] = [];
+    let starts = 0;
+    const store = { load: (id: string) => saved.findLast(s => s.id === id), save: (s: AdapterSession) => { saved.push(structuredClone(s)); } };
+    const backend: CliAgentBackend = { start: () => { expect(saved.at(-1)?.state).toBe("STARTING"); starts++; return { processId: 1234, cancel: async () => undefined, status: () => "running", result: async () => ({ state: "completed", summary: "done", events: [] }) }; } };
+    const profile = { id: "cursor", alias: "Cursor", executable: process.execPath };
+    expect(await new CursorAdapter(profile, backend, store).start({ runId: "r", workspacePath: "/work" })).toMatchObject({ state: "RUNNING", processId: 1234 });
+    await expect(new CursorAdapter(profile, backend, { load: () => undefined, save: () => { throw new Error("disk full"); } }).start({ runId: "r2", workspacePath: "/work" })).rejects.toThrow("disk full");
+    expect(starts).toBe(1);
+  });
+
   it("declare verified backends and pass the capability-aware contract", async () => {
     expect(await runAdapterContract(new CursorAdapter({ id: "cursor-main", alias: "Cursor" }, cliBackend))).toEqual([]);
     expect(await runAdapterContract(new KiroAdapter({ id: "kiro-main", alias: "Kiro" }, cliBackend))).toEqual([]);
     expect(cursorManifest.backends[0]?.capabilities).toContain("structured-events");
     expect(kiroManifest.backends.map((entry) => entry.kind)).toEqual(["headless-cli"]);
+  });
+
+  it("cancels a spawned CLI turn when its RUNNING record cannot be saved", async () => {
+    let cancelled = 0; const saved: AdapterSession[] = [];
+    const adapter = new CursorAdapter({ id: "p", alias: "P", executable: process.execPath }, { start: () => ({ processId: 42, cancel: async () => { cancelled++; }, status: () => "running", result: async () => ({ state: "completed", summary: "done", events: [] }) }) }, {
+      load: id => saved.find(s => s.id === id), save: s => { if (s.state === "RUNNING") throw new Error("disk full"); saved.push(structuredClone(s)); },
+    });
+    await expect(adapter.start({ runId: "r", workspacePath: "/work" })).rejects.toThrow("disk full");
+    expect(saved).toMatchObject([{ state: "STARTING", runId: "r" }]); expect(cancelled).toBe(1);
+  });
+
+  it("stops owned execution even when the cancellation record cannot be persisted",async()=>{
+    let saved:AdapterSession|undefined,cancelled=0;
+    const adapter=new CursorAdapter({id:"p",alias:"P"},{start:()=>({status:()=>"running",cancel:async()=>{cancelled++;},result:async()=>({state:"completed",summary:"done",events:[]})})},{load:()=>saved,save:session=>{if(session.state==="CANCELLED")throw new Error("disk full");saved=structuredClone(session);}});
+    const session=await adapter.start({runId:"r",workspacePath:"/work"});await expect(adapter.cancel(session.id)).rejects.toThrow("disk full");expect(cancelled).toBe(1);
+    await expect(adapter.send(session.id,"must not spawn")).rejects.toMatchObject({code:"SESSION_CANCELLED"});
   });
 
   it("normalizes session, quota, auth and failure output inside the adapter boundary", () => {
@@ -148,4 +182,10 @@ describe("Generic CLI adapter", () => {
     });
     expect(session.backendId).toBe("restricted-pty");
   });
+});
+
+it("does not report Cursor authentication from a zero-exit login without a qualified identity",async()=>{
+  const {chmodSync,mkdtempSync,writeFileSync,rmSync}=await import("node:fs"),{tmpdir}=await import("node:os"),{join}=await import("node:path"),{probeCursorProfile}=await import("../src/ecosystem-cli.js");const root=mkdtempSync(join(tmpdir(),"cursor-probe-")),file=join(root,"native");
+  writeFileSync(file,`#!${process.execPath}\nif(process.argv.includes('--version'))console.log('1.0');else console.log('Login successful!\\nLogged in (unable to fetch user details)');`);chmodSync(file,0o700);
+  try{expect(await probeCursorProfile({id:"a",alias:"A",executable:file})).toMatchObject({installed:true,authenticated:false,authentication:"unknown"});}finally{rmSync(root,{recursive:true,force:true});}
 });

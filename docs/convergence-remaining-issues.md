@@ -1,0 +1,964 @@
+# macOS convergence remaining issues
+
+Local implementation/evidence backlog; none of these rows claims a passed
+Gate. Continue independent units without bypassing data/control safeguards.
+
+## 2026-11-02 current package and owning Runner final admission
+
+A clean1178f46 package is retained at the fixed1178f46-macos-a2 release path.
+Schema19/writer15, relocated HTML/assets/authenticated API/PTY and manifest
+verification pass. Actual packaged TCP HTTP created a compatible NEEDS_SPEC
+inbox Task, retained its body/intent across restart, and preserved identical Task
+and intent bytes in a database-only archive/restored copy. Both restore barriers
+remain; the packaged CLI rejects activation with RESTORE_RECONCILIATION_REQUIRED.
+This is package/local-inbox evidence, without a provider or restored-service Gate.
+
+The main-to-candidate617-file inventory and integration review found a Runner
+start boundary regression: STARTING was persisted before awaited CLI credentials,
+but the Runner supplied no final beforeSend admission. Actual GrokAdapter
+credential-gated expiry/revocation tests each observed an unwanted backend start.
+The owning Runner now rechecks the original envelope lease and current registration
+at that final boundary. Existing uncertainty/cancellation and post-start checks
+remain. Original test bodies are byte-identical;35 Runner and25 native CLI cases
+pass, and affected re-review closes I1. The full gate passes build/typecheck/
+lint/boundaries and5953 tests, but two unchanged Devin producer-entry timing
+cases fail under the full workload; their one focused rerun passes2/2. The
+full result remains failed. The first attempt stopped at two unused imports in
+the owned acceptance helper, fixed without changing lint rules; it ran no tests.
+The1178f46 package predates this fix; its local-inbox observations do not qualify
+the repaired Runner or a subsequent source SHA.
+
+Review M1 was deferred at8f89. The diagnostic follow-up now compares the full
+Node minimum24.22.1:24.21.0/24.22.0 require attention, while24.22.1 and later
+major versions remain supported. Controller build,29 doctor cases and affected
+lint pass; M1 affected review closes the finding. Source bytes and existing
+restore/ownership checks are unchanged. This does not qualify the full suite.
+The integration review records its actual coverage and does not certify every
+line/provider codec or reconstruct historical NS-035 provenance. Exact remote
+CI, the final single review entrypoint, real native/GUI and complete restore
+reconciliation/activation remain open.
+
+## 2026-11-02 publication interaction requirement integration
+
+The existing publication workflow now carries compatible/native-session/specified-
+interface requirements through its draft, review hash, immutable selection and Run.
+ConfigPlan controls explicit feature enablement and profile policy; current backend/
+context capability evidence decides admission. Unknown native/GUI capability blocks
+publication, while compatible create-only intent may remain on a NEEDS_SPEC Task
+until a later execution review. Source requirements and strict reroute target policies
+require publication review before the old execution is stopped or replaced.
+
+The model invocation ledger preserves and validates the frozen requirement, and
+start/continuation rechecks keep the existing control/lease/epoch guards. Schema19/
+writer15 fences already-open14 writers. Old migration bodies1–18 and fixed RHIZA
+artifacts remain unchanged. Current-version test expectations and synthetic release
+headers moved to19/15; historical partial schemas, archive bytes and rollback checks
+remain. One old top-level feature test intentionally now verifies privileged
+confirmation, compatible policy preservation and rejection of qualification claims.
+
+Actual Controller HTTP with synthetic native reader/backend was observed on desktop
+and390px: required desktop UI blocked with disabled confirmation; body/requirement
+survived restart, and only an explicit compatible choice produced a ready preview.
+Both owned hosts stopped gracefully with zero Task/Run/process/provider starts.
+Controlled execution tests additionally assert ACTIVE Run, matching invocation
+ledger and restart retention. Real native/GUI/remote qualification remains OPEN;
+current producer registration restrictions continue to apply.
+
+Review found and closed legacy reroute loss of the requirement; health checks also
+found and fixed the invocation-ledger whitelist. Final basic-mode checks preserve
+compatible inbox creation and reject a strict reroute target before stopping the
+old Run. Related publication/reroute81 cases and final focused review pass;45 final
+functional hashes match. Earlier failed/obsolete gates remain recorded. Final fixed-code `pnpm check`
+passes all non-test gates and272 files/5953 tests (475.14s test phase), exit0; all45
+functional hashes match. This integration does not close the real client Gates.
+
+## 2026-11-02 publication capability view
+
+The existing publication page now explains compatible execution limits and reads
+account-scoped backend/region evidence on demand through the existing profile
+console API and capability renderer. Exact account/config revision fences,
+request cancellation and failed-refresh handling prevent old evidence from
+appearing current. Publication drafts, payloads, model routing and confirmation
+owners are unchanged. This increment does not complete INH-1527: strict native
+requirements still need server admission, frozen execution/old-writer protection
+and qualified native tuples. CV-09/CV-11 and real client/release Gates stay open.
+
+Two direct REDs became GREEN; three focused web files pass32 tests and the Web
+production build passes. An owned fresh Controller with a synthetic generic-cli
+account displayed backend/region/unknown reasons on desktop and390px; draft text
+survived refresh and scrollWidth matched390px. Only the session login wrote via
+HTTP; capability reads were GETs. Closed-host SQLite inspection confirms zero
+canonical Tasks/Runs. The temporary harness called a nonexistent process-audit
+method at shutdown and exited1 before graceful stop. Its PID/listener are gone;
+that harness issue is preserved, corrected to the existing inventory API, and
+browser acceptance was not repeated. No real provider/native qualification is
+claimed. The first full check passed all non-test gates and5938 tests but one
+existing Web text query matched the added helper too. Only the UI sentence was
+changed; original assertions stayed intact. All20 Web files/304 cases now pass,
+and affected-only re-review has no findings. Corrected final `pnpm check` passes
+all non-test gates and271 files/5939 tests (460.95s test phase), exit0. All three
+final functional hashes match the reviewed implementation and wording fix.
+
+## 2026-11-02 orphan inspection and current-owner maintenance
+
+The original bounded orphan report and read-only CLI are restored. Authenticated
+preview/confirmed actions use the current ProcessManager handle, fresh recovery
+references and directory identity; saved PIDs cannot grant signal authority.
+Eligible worktrees move intact into .retained. Referenced, unknown and restore-
+blocked work remains protected, including after queue admission and inspection.
+
+The original bounded parser is unchanged. Live inventory reads through the owning
+SQLite handle/transaction; CLI inspection uses a stable private copy. A real
+competing-writer test confirms the outer SQLite lock remains held. Modern group
+drain/env/input capture is preserved. Actual ESRCH disproved one legacy fixture's
+same-group survival premise; that fixture now exercises PTY unknown membership,
+with original assertions/deadline unchanged. PTY evidence is explicitly unverified.
+Workspace source/tests are byte-identical. Necessary targets pass68+28+26 cases;
+unified review has no findings. Final default `pnpm check` passes270files/5937tests
+and all non-test gates (544.79s test phase), with11reviewed hashes unchanged.
+
+The first build's misplaced shebang and test run against unfinished build outputs
+remain recorded; corrected sequential build/checks pass. No user trees, old live
+data, credentials, provider or schema/writer/dependency changes occurred. This
+restoration does not qualify real native stop/control, restore activation or release.
+
+## 2026-11-02 native workspace retention
+
+Current follow-up: the missing a499d84 native retention owner is now connected to
+Controller's existing WorkspaceManager. Native control/reference/unknown-effect
+facts prevent cleanup, including after Run pruning. Eligible independent trees
+move intact to .retained through the current shared Git queue; ignored/late data
+and branch identity remain available. All18 original retention cases (constructor
+adaptation only), Controller wiring and existing workspace/concurrency checks
+pass4files/30tests. The move-specific concurrency assertion verifies original-path
+departure and retained contents/branch; no deadline or safety assertion is weakened.
+Retained trees consume disk and are not cache/automatic deletion candidates.
+One milestone-review finding reproduced a foreign Git queue key for a local move;
+cleanup now uses the same captured environment for queue lookup and mutation.
+The same mismatch in the adjacent sanitized verification snapshot add is corrected
+through its existing queue argument. Actual A/B queue regressions cover both
+retirement and verification (first snapshot RED retained); affected3files/27tests
+pass; existing candidate regressions pass60cases. Affected re-review closes I1
+with no remainingCritical/Important/Minor. Final default `pnpm check` passed
+267files/5908tests and all non-test gates (485.44s test phase), with all seven
+reviewed functional hashes unchanged. No native/provider/release Gate is promoted.
+
+## 2026-11-02 local native snapshot PR integration
+
+The local HUMAN-return path now connects a qualified verified snapshot to its
+strict authored commit, frozen push target and selected SCM PR, ending at
+COMPLETE/REVIEW. Actual bare-Git/controlled-SCM tests verify the exact tree/SHA,
+lost-response lookup without another Git send or POST, and transactional control
+drift rollback with factual Git/PR receipts retained. The first HTTP run exposed
+the original VERIFIED_DELIVERY_UNAVAILABLE gap. One new safety regression also
+showed that an authority callback could insert uncertain push history after the
+initial read; the inventory now runs after that callback before any Git write.
+A final-callback cancellation regression likewise reproduced one unwanted push
+child, fixed by the strict post-callback signal check before child allocation.
+
+The shared ordinary delivery suite passed3files/77tests, strict push regressions
+passed, and original G2 re-entry purposes passed3cases with an explicit pre-send
+test fixture hold. Their assertion file remains unchanged. The existing
+RunGitDelivery output avoids an immediate duplicate commit re-read in Controller;
+necessary post-push/post-SCM source qualification remains. Milestone review
+passed with no Critical/Important/Minor findings. Final default `pnpm check`
+passed265files/5883tests plus build/typecheck/lint/boundaries (653.62s test phase).
+All six reviewed functional hashes remain unchanged. No assertion/deadline or
+check rule was weakened; original failure logs remain retained. Remote snapshot delivery, actual
+GitHub/provider/native writer/stop qualification, RHIZA model/source eligibility
+and original A/B/human acceptance Gates remain open. This unit changes no schema,
+writer, public protocol, dependency or live data and performs no real network write.
+
+## 2026-11-02 actual Codex app-server version prerequisite
+
+The initial audit reproduced installed0.166.0-alpha.5.1 versus execution
+pin0.162.0-alpha.17.2. After checking both schemas generated by the installed CLI,
+the backend now pins the exact0.166 version, requires root sessionId==thread.id
+and explicitly disables provider model fallback. Old-created threads and other
+versions still refuse; stored identities and cold-continuation barriers remain.
+Root mismatch and version refusal were reproduced before correction. The changed
+backend/transport plus existing spawn/runtime regressions pass4files/159tests.
+
+A controlled real default-backend roundtrip created root thread
+01a19ddb-6d01-7872-abf6-7e27d2583e87 using explicit gpt-6.1-sol/low, persisted its
+binding and native facts, returned the exact requested marker, then read the same
+thread's observation and full history. It used the existing shared native home,
+not an isolated account, without copying credentials or changing configuration.
+The owned local root exited; background tools/native writer release remain unknown.
+This adapter-level evidence is separate from canonical Task/verification/REVIEW,
+native client/control/stop, pricing and release Gates. Milestone review has no
+Critical/Important/Minor findings; final `pnpm check` passed265files/5887tests
+and all non-test gates in456.37s test phase, with the reviewed functional hashes.
+Official contract: https://learn.chatgpt.com/docs/app-server.
+
+## 2026-11-02 current-candidate RHIZA ingress integration
+
+The committed ingress vertical slice is now adapted into the current Dispatcher
+candidate: authenticated service identity, canonical publication/receipt lookup,
+durable job/event/artifact views and fenced cancel/input/reassignment. Protocol1.1
+/artifact1.1.0 remains byte-identical to source8d247177; the schema advances through
+the original RHIZA12–18/writer8–14 catalog with upstream1–11 retained. Later native
+and strict snapshot boundaries remain in place. Input Context now reaches both
+the canonical contract and native prompt.
+
+The focused38-file/652-test run passed651 and identified that omitted Context
+compiler delta; the correction and its direct consumers passed3files/70tests.
+Copilot callback capture, final captured-time authority and verifiedTree receipt
+compatibility have direct regressions. The protocol exporter check passed.
+Milestone review found three omitted Devin source deltas (observation phase,
+catalog reason identity and pipe errors). Existing regressions reproduced six
+failures; the committed fixes preserve later raw-work lifecycle. Affected-file
+re-review has no remaining Critical/Important findings. Final default `pnpm check`
+passed264files/5875tests plus build/typecheck/lint/boundaries (473.44s test phase).
+The first gate attempt stopped at lint on retained draft extensions and an unused
+test import; drafts were renamed to text and the import removed, with no rule or
+assertion weakening. Production model-evidence capabilities, real external
+submission and bilateral RHIZA/native
+acceptance remain unqualified; disabled-by-default and qualification barriers
+remain enforced. No live database/provider/PR operation occurred in this unit.
+The pre-existing Copilot producer observation policy remains a CV-10 qualification
+follow-up; preserving the shared callback does not certify post-ACK native behavior.
+
+## Previous checkpoint 2026-11-02: strict local snapshot delivery
+
+Controller now completes qualified local native snapshot commits using the actual
+authored SHA, preserving proof-scoped command facts and unknown-outcome barriers.
+A fully observed commit can recover failed completion metadata without another
+stage/commit. Final current permission/lease checks follow transactional writes.
+The frozen final functional tuple passed `mise exec -- pnpm check`: 224 files /
+5366 tests and all non-test gates; scoped review has no remaining Critical or
+Important findings. Earlier failed/cancelled runs remain historical evidence.
+
+The two original 10-second timeouts passed after removing unnecessary physical
+preflight reads; deadlines and assertions were preserved. Missing older external
+raw evidence remains unavailable. This is local fixture/real-Git verification,
+not actual provider, native writer exclusion, bound canonical acceptance or
+release qualification. Native PR/remote snapshot delivery and the original
+roadmap remain open. Actual staged startup/browser/restart and database-only
+restore are now observed below; full recovery activation and provider acceptance
+remain next delivery gaps.
+
+## 2026-11-02 macOS A actual host subset
+
+Staged dc6f9d3 runtime passed immutable inventory/relocated package smoke and real
+per-user launchd startup, browser one-time login, repository ConfigPlan, restart
+with exact persisted config readback, and database-only backup/restore to a new
+target. Restored config matches and SQLite integrity is ok. Execution activation
+remains blocked by the original reconciliation barrier. No secret/native storage
+backup or full recovery Gate is implied. Own service is stopped/uninstalled;
+new release/data/repository/backup are retained.
+
+Blocked/limited: offline tarball cache was populated using the unchanged lock in
+an isolated workspace, then normal offline stage passed. Initial startup delay
+has no established cause. The tool cannot target the actual osascript folder
+dialog; UI cancellation drained its owned PID and manual path registration
+worked. Successful native selection, provider/native write-stop, human acceptance,
+full restore activation and release remain open. Details and screenshot paths
+are in docs/evidence/convergence/README.md. No production change or repeated full
+gate was needed for this unit.
+
+## 2026-11-02 explicit-model actual browser/provider loop
+
+The old R-018 account-read block is not reproduced in the current bounded
+Adapter read: Codex0.166.0-alpha.5.1 returned8models/efforts in2146ms, and the
+Controller/browser displayed the real account-scoped directory. A browser-selected
+gpt-6.1-sol/low task executed through the fixed staged runtime, passed required
+verification and reached COMPLETE/REVIEW. Its exact file and unchanged README/
+HEAD were checked. Browser canonical snapshot verification then returned verified;
+human confirmation remains unchecked and the Task remains REVIEW.
+
+The first real task is retained FAILED because this agent registered a nonexistent
+macOS /usr/bin/test path. A ConfigPlan corrected only that owned repository command
+to verified /bin/test; a separate reviewed publication succeeded. No old record,
+assertion or deadline changed. Native-reported model remains unknown; this is
+actual explicit request/execution evidence, not an independent model-echo or
+writer/stop/client Gate. Human acceptance and full recovery remain open.
+
+## Current checkpoint 2026-10-22: authorized continuation
+
+The user explicitly resumed the complete plan and superseded the historical
+quota stop below. Work proceeds in isolated `codex/dispatcher-plan-completion`
+from c027ea3. The nine source WIP/evidence files were copied with SHA256 rechecks;
+`resume-source-20261022.json` records ownership and provenance. Original dirty
+checkouts, fixed0d2cd42 and existing real-data/native evidence remain preserved.
+
+R-004 has a local root-cause fix: five background workers now filter eligible
+Runs before JSON decoding. One cycle over10k inert history changes50k irrelevant
+decodes to0. The unchanged real HTTP10000/500 benchmark with workers enabled
+measured peak174374912B after the fix, compared with257835008B on fixed0d2cd42
+in the same investigation. This is development evidence; no latency improvement
+or fixed-artifact/browser/P4 qualification is claimed.
+
+R-019 now has explicit Pi ConfigPlan configuration, Adapter binding/observer
+composition, canonical dispatch/reroute ExecutionContextRef and runtime ownership.
+Start, sink-failure blocking, not-created cleanup and all-runtime shutdown error
+isolation have targeted regressions. Native source qualification is still missing:
+an actual temporary protocol child can reach Adapter COMPLETED while advance
+correctly rejects NATIVE_STATE_UNKNOWN. Native pending tools/approvals remain
+unknown even with synthetic read evidence. Continue independent development;
+do not manufacture quiescence or promote start evidence into a full Pi loop.
+
+R-010 adds canonical producer-origin/collector-alias admission and native occurrence
+ordering; the exact cost engine deduplicates equivalent aliases. Additive
+schema10/writer6 prevents old writers from duplicating quantities. Migrations1–9
+are unchanged; old archive protocols remain bound to their own schema. Existing
+production legacy emitters keep their old immutable records and contexts. A
+qualified producer/session cutover and billing baseline/UI remain required.
+Account quota now has independent exact-decimal collection, scoped TTL/reset,
+last-success/error state, owned timeout/shutdown, account replacement Guard and
+cached API/UI. Final default `mise exec -- pnpm check` passes167 files/1743 tests
+plus build/typecheck/lint/boundaries. Real Codex quota reads were inconsistent:
+Controller returned error with no values; an isolated transport diagnostic got
+one result and confirmed owned exit, while a later bounded read failed. Raw
+metadata reports are retained; cause and real quota acceptance remain unproven.
+Remote Runner quota forwarding is saved at d5b6871 with strict owner state and
+physical lifecycle guards. Independent scoped review found no concrete code
+defects. The later uninstrumented default full check, including CV-09 transport,
+passed173 files/1798 tests before the transport review fix; a following check
+failed6 intermittent Pi probes. The current full check after canonical observer
+allocation review passes174 files/1825 tests. All earlier failures remain retained,
+and no causal fix for the macOS probe intermittency is claimed. No actual
+service/data/native Gate is promoted by this local verification.
+
+CV-07 now has scoped native-account-model price admission, reviewed immutable
+price snapshots, startup revalidation on Controller/owning Runner, strict native
+price transport and cached per-Run exact cost/API/UI projection. The default
+post-review gate passes170 files/1767 tests. Independent review's completeness
+issue is fixed: read failures retain partial saved amounts; unresolved identity,
+event or source conflicts stay unavailable through later read exceptions until
+admitted recovery. Focused re-review reports no remaining actionable findings.
+Additive schema11/writer7 prevents writer6 bypassing price startup review;
+migrations1–10 are byte-identical, and schema10 archives remain writer6. No real
+data or installed service was upgraded. Conditional-free/rate-interval producer
+admission and real native rate evidence remain required; unqualified rates stay
+unavailable, with no static/public price fallback.
+
+Current2026-10-23 checkpoint: Codex canonical backend/per-execution host,
+ConfigPlan/profile/catalog/Controller composition and the retained native-history
+reader/API are locally verified. Final uninstrumented native-history full3 passes
+179 files/2103 tests (86.37s) and build/typecheck/lint/boundaries after scoped
+independent review and proven RED/GREEN fixes. All59 source Codex service case
+groups remain with canonical fixtures; current service90 includes15 composition
+regressions and16 history API cases. All27 reader cases remain unchanged plus4
+new admission/metadata regressions. Authorized history is bounded and exact-source;
+no transcript persistence/input/reattachment or cold replay is inferred.
+
+Restart recovers only consistent bound metadata as UNKNOWN/manual; unsupported or
+partial data keeps the preflight barrier. Failed local receipt persistence
+retains the closed host for durable-only retry; active canonical Runs still block
+account replacement. R-020 native-probe intermittency is retained, not causally
+fixed by a green suite. A distinct observed transport fixture race (pathname
+visible before JSON completion) is fixed through atomic temporary-file publication
+with unchanged exact receipt/callback/deadline assertions. The unchanged10k test
+continues to prove zero unrelated historical JSON decodes.
+
+OpenCode bounded server is now saved at5698afa after independent spec/quality
+review with no findings. All145 original direct cases remain with documented
+canonical fixtures;32 new context/event/project/approval regressions bring the
+focused slice to177. One final-code default full gate passes183 files/2280 tests
+(88.19s), plus build/typecheck/lint/boundaries. Captured original managed context
+authorizes attach, async waiting precedes input and received follows native ACK;
+local callback ownership and unknown native release stay explicit. This is the
+internal server/read-injection slice only, with no profile/server activation.
+
+OpenCode owned host/producer and exact allocated observer are now saved at105ef8b
+with compatibility fixes a009626. All20+20 original host/producer cases remain;
+current23 host/82 producer and66 shared observer cases cover captured environment,
+pending-create uncertainty, callback ownership, durable terminal facts and source
+input/receiver compatibility. Independent scoped review closes all3 findings.
+Final default check passes185 files/2424 tests (87.92s), plus non-test gates;11
+source/test/architecture/knowledge Git blobs match its captured source manifest.
+The earlier compatibility RED and lint failure remain separate retained evidence.
+
+Canonical OpenCode catalog0208bff is independently approved:31 source safety
+groups map to current AccountModelCatalog/immutable selection, with71 new cases.
+Actual backend identity, original resolver/physical/account capture, eligible
+default membership and post-cleanup fences pass186 files/2495 tests (91.05s,
+wall101.969s) and non-test gates. All10 final Git payload hashes match the gate;
+all21 retained run logs/210 source payload hashes match their saved manifests.
+Relative native account metadata locations reject before I/O rather than reading
+different accounts under parent/child cwd. Root-loss EPERM remains disclosed
+cleanup-unknown, with no claimed deterministic native cleanup or R-020 resolution.
+
+Internal OpenCode runtime source is committed at761dddd. Its original12 cases and
+99 new runtime regressions, plus existing23 and two new host spawn guards, pass
+the final default187 files/2608 tests (104.11s, wall118.173s) and non-test gates.
+All21 tracked Git inputs and16 generated inputs match the final manifest; all808
+saved payload hashes across25 runs match. The prior review attempt failed at the
+service usage limit without producing a report; the fresh2026-10-24 independent
+review is spec compliant/quality Approved with no Critical/Important findings. This local runtime slice remains outside default Controller composition. Its earlier
+2603-test gate, thenable/getter REDs, fixture errors and R-020 remain distinct.
+
+Atomic ConfigPlan/factory registration394a33d is now independently spec compliant
+and quality Approved with no Critical/Important. Both narrow backend unions,
+server-only structural settings and exact factory ownership/opt-in guards land
+together. Final owned focused2/94 and default188files/2695tests (90.23s,
+wall102.482s) pass; four Git payloads match the final gate. Earlier8/279 predates
+final test strengthening, and the intentional Unicode regex RED stays distinct.
+The gate rebuilt eight generated artifacts; a root-only next-plan document also
+changed during it, without changing any owned code/test input.
+
+Controller C1 source809c315 plus callback-owner fixbc3e252 now has independent
+scoped review and clean fix-round1 re-review. Original serviceS1-S5 map to the
+current canonical path; new OpenCode suite55 and eight paired Codex regressions
+pass focused6/334 and final default189files/2758tests (89.34s, command wall107.793s).
+Root verified3 Git inputs,1090post hashes including668 generated, and3270 live
+pre-byte copies across the three fix runs. The original C1 runs retain hash/log
+evidence only; no historical bytes were reconstructed. Callback source returns
+now recheck Controller registry/Adapter ownership, including defined ownership.
+
+Controller C2 db9744e is independently spec compliant/quality Approved with no
+Critical/Important findings. SourceS6-S8, exact raw-operation profile/SQLite
+barriers, atomic durable-only receipt retry and three-provider failure isolation
+pass final focused5/239 and default189files/2787tests (88.99s, wall106.570s).
+Root verifies2 Git inputs,1090post/668generated,52320 live byte copies across48
+run records, and42712 relocated evidence files. The first gate failed at lint
+when historical TS snapshots entered its scan; those bytes/failure remain intact
+outside checkout, and rules are unchanged. Pi capability narrowing preserves its
+real existing interface at that checkpoint; the following PiTask2 now closes
+that raw-status/guard-work engineering gap.
+
+Controller C3 c82af5c is now independently spec compliant/quality Approved with
+no Critical/Important findings. Private checked-storage consistency preserves
+Codex rules; explicit OpenCode qualifier enables unknown/manual restart without
+source/replay. Final focused5/318 and default189files/2878tests (95.52s,
+wall115.461s) pass, including91 new OpenCode cases (86corrupt+5positive). Root
+verifies4Git inputs,3451post/668livegenerated and32258pre+32258post actual bytes
+across16runs. Bootstrap/early timestamp limits are disclosed; final gate exact
+command chronology/output/manifest hashes are complete. No historical evidence
+was reconstructed; the current source guards/other runtime bytes are unchanged.
+
+Pi direct assertion Task1 source76b7839 is independently spec compliant/quality
+Approved with no Critical/Important findings. Test/fixture-only delta adds15service
+cases and injected no-aggregate assertions: six canonical admission drifts, two
+actual RPC child scopes/duplicate cancellation, explicit disable/remove ACTIVE/
+terminal/unknown callback barriers, and saved-config startup. Focused7/196 and
+default189/2893 pass (94.78s,wall112.287602875s). Root verifies3Git blobs,
+3451post/668livegenerated and86275pre+86275post actual copies across25runs.
+Fixture/projection corrections and bootstrap limitations remain disclosed.
+
+Pi raw lifetime Task2 fc4685e is independently spec compliant/quality Approved
+with no Critical/Important findings. Real runtime/producer raw status now feeds
+existing Controller consumers; meaningful RED showed false callback drainage,
+premature profile replacement and SQLite close. Final7/399 and default189/2903
+pass (95.05s,wall112.797663709s). Root verifies5Git/3453post/668generated,
+28runs/74331pre+74331post actual copies,7external scripts and28harnesses.
+Early partial-generated/script/bootstrap evidence limits remain disclosed; final
+complete byte capture is exact. No service/schema/generic API/capability change.
+
+Pi readonly restart Task3 e526609 is independently spec compliant/quality Approved
+with no Critical/Important findings. Explicit UUID/pi-rpc storage qualification and
+two existing consumers preserve unknown/manual recovery without native source.
+49 new Pi cases (44corrupt+5positive) plus exact shared OpenCode test-helper extraction
+pass Pi72/required5/380 and default189/2952 (103.18s,wall121.206177750s).
+Root verifies5Git/3470post/668livegenerated/16buildinfo,12runs with41541pre/41542post
+actual copies. All three Pi source-gap units complete locally; original155-case
+dispositions remain static, and native qualification stays unknown.
+
+Native ownership candidate56db4b5 is preserved non-green WIP: the final default
+gate passed build/typecheck/lint/boundaries but failed19/2999 cases in5files.
+Three real subprocess group-drain paths preserve post-exit kill signal0 EPERM;
+the new sticky uncertainty cannot retry those observations. Exact OS cause and
+relation to independent R020 remain unproven. Sixteen other failures traverse an
+independent unisolated quota reader in two mocked Controller fixtures, with
+pending-vs-uncertain cause unknown. Fixture-only e062118 supplies the existing
+reader seam; focused4/202 and scoped lint pass; scoped re-review closes that
+fixture-boundary finding without new blocking issues.
+No original body/stop or dedicated quota/native-reader assertions were weakened.
+
+Original combined ownership Task1 remains incomplete. A reviewed plan partition
+now specifies independent root-only delivery in
+`docs/superpowers/plans/2026-10-24-root-owned-probe-delivery.md`: restore exact
+pre-WIP group/Codex behavior, retain root owner/explicit probe500ms natural-close
+gate, and require fresh unchanged default full acceptance. WIP/failures and all
+group source cases1/2/3/5/6 remain outstanding for every shared group consumer,
+including Generic, Runner, catalogs/default probes and Codex. Root sourcecase4
+does not depend on the proposed group hardening. This is no runtime toggle or
+claim that original six-case acceptance passed.
+
+Independent root-only unit659fc1b is now spec compliant/quality Approved with
+0Critical/Important and1Minor inherited fixture-log finding deferredCV14. Actual
+rebuilt focused12/297 and sole default191/2985 pass (wall120.966620875s).
+Root verifies493Gittracked/fullgate pre/post bytes,6runs/27462pre+27462post,
+retained wrapper-failure records and exact baseline/restored root-test hunks.
+First mixed source/stale-dist focused failure is retained; building changed its
+runtime inputs before the passing focused run. Original OS cause remains open.
+
+Internal Devin Local ACP client e53ceb2 is now spec compliant/quality Approved:
+91source cases plus22direct regressions, focused5/271 and default192/3098 pass
+(wall133.826532834s). OfficialSDK1.8.0/Zod4.6.7 exactSRI/license/graph and actual
+isolated production attribution pass;28unrelated resolved-audit advisories remain
+open forCV13. Root verifies496tracked/fullgateprepost and source assertion parity,
+14runs/64226pre+64230post actual copies; only2ignored ledgerMarkdown drifts.
+No publicindex/producer/catalog/runtime/config/Controller registration is implied.
+
+One controlled self-exiting freshgroup probe reproduces present→EPERM→ESRCH with
+signal0 only, but its laterps snapshot cannot establish zombie state or original
+failure cause. Pinned officialXNU reference is not matched to this Darwin27 host;
+group finding andR020 remain open, with no unchanged diagnostic repeat/policy fix.
+
+Internal producer/Adapter2631e36 is now independently spec compliant/quality
+Approved, with original32 producer cases+27direct regressions and client113
+preserved. Final default193/3175 plus non-test gates pass wall155.510445s; root
+checks35captures/161111pre+161116post/500Git exact final input bytes and shared
+fixture extraction, no final drift. Explicit Devin allocation, awaited durable
+facts and raw work lifetime remain internal. Full-suite fixture-noise Minor
+staysCV14; public catalog/runtime/config/Controller registration remains pending.
+
+Canonical catalog a10a2c1+1338913 is locally complete after I1fix/re-review:
+29source semantic cases and one explicit laterController lookup pending;
+currentcatalog65/helper46, focus4/283 and finaldefault194/3263 pass. Version
+stderr strict validation closes reviewed admission gap while preserving existing
+callers. Root35captures/161631pre+161635post/503trackedGit and source/fixture
+maps pass, onlypostgateignoredreportMarkdown differs. Native qualification is
+not established; originalM1diagnosticnoise remainsCV14.
+
+Managed runtime a3a4e66+c76d315 is locally complete after two Important review
+fixes: forced pre-binding abort outcome and result capture before validation.
+Source28/prior95 assertion preservation,106runtime/278compatibility, finaldefault
+195/3369 and root52records/240903pre+240908post/506Git audit pass. Eighthistorical
+externalbasename collisions retain explicit provenance limits; newfix uses unique
+copies. Internal runtime source remainsundefined, no registration/nativequalification.
+
+Next: atomic Devin Local config/factory17, Controller30 and the pending
+exact-ID/no-Session case through real canonical routing trial,
+remaining native providers, unresolved shared group safety and original
+provider/GUI/writer/service/release qualification.
+Current native integration uses fixtures only; no real account/config/service activation
+or persisted-format change occurred. Exact SDK/Zod dependencies are recorded above. CV-09 and the full goal remain
+incomplete.
+
+The completed read-only source audits also identify these later development
+units; their static mapping counts are not test results or release evidence:
+
+- Pi155 source assertions retain their static source map. Reviewed Task1 restores
+  G1/G3/G4/G5 direct assertions and saved-config G2; G6raw lifetime now has
+  reviewed behavioral RED/GREEN. Task3 now restores bound cold restart G2.
+  Every frozen case retains a disposition; exact source routing exists, while
+  capability/quiescence remains unqualified.
+- Retention/delivery49 source assertions:6 adapted,4 composed,21 partial and18
+  missing. Preserve CanonicalLocalResults/LocalGitDelivery and existing journals;
+  do not restore a parallel NativeDeliveryCandidates stack.
+- Run canonical verification/preparation inside its isolated snapshot, scrub
+  inherited Git selectors, and connect qualified return invalidation to the same
+  proof/Run transaction. Current commands execute in the mutable managed tree.
+- Bind the owning commit tree to verified bytes, retain occurred push/SCM facts
+  before reporting later authority loss, and prohibit second-stage Git URL
+  rewrites. Existing exact-SHA push/PR receipts remain authoritative.
+- Add durable native/control workspace pins, then recheck physical identity,
+  pins and NUL-delimited tracked/untracked/ignored status at cleanup. Preserve
+  whole-tree raced data through recoverable retirement rather than deletion.
+- Add targeted assertions for already implemented snapshot index/capacity/scope,
+  deletion barrier/tombstone and receipt recovery defenses. A missing historical
+  filename does not establish missing behavior.
+
+Detailed source bodies, decisive assertions and hashes remain in
+`/tmp/dispatcher-pi-source-assertion-map-20261023.{md,json}` and
+`/tmp/dispatcher-retention-delivery-assertion-map-20261023.{md,json}`. Any necessary
+public configuration/Runner protocol change must be decided before its slice;
+no such contract expansion or schema migration is authorized by the audit alone.
+
+## Historical checkpoint 2026-10-22: stopped at remaining 0%
+
+The user changed the stop threshold from10% to0%. Official quota now reports
+used100%/remaining0% (ordinaryUsageAllowed remains true); the explicit user stop
+condition takes precedence. No further implementation or tests are started.
+HEAD remains c027ea3; fixed/last full-gate source remains0d2cd42. Preserve the six
+uncommitted Pi adapter files recorded in quota-stop-20261022.json as unfinished
+WIP. Controller registration has not been implemented. Agent-reported target
+checks:19 RED then19 GREEN; adapters build FAILED TS2375 at
+native-binding-events.ts:61 (possibly undefined nativeSessionId/nativeBinding).
+No full gate ran for this WIP; prior155/1604 does not cover it. Further review is
+needed for pre-creation observer error classification and durable sink-failure
+identity blocking. Do not activate or promote this WIP. A/B remain incomplete.
+
+R-004 diagnostic completed six private synthetic DB/API-inject processes against
+fixed0d2cd42. Comparing no/page/all SQL statement caches did not materially
+explain the earlier274251776B HTTP benchmark peak: API end RSS186351616 /
+186089472 /185450496B; DB end RSS73678848 /71614464 /71319552B. The probe used
+smaller synthetic documents and API injection, so it cannot overturn the retained
+real-HTTP benchmark or qualify P4. No production optimization or threshold change
+was made. Results are retained in quota-stop-20261022.json; probe script/log remain
+/tmp/dispatcher-history-diagnose.{mjs,log}. An exact owned-process lookup confirmed
+no remaining diagnostic process. Adapter agent reports commands completed and
+fixture cleanup ran. Actual HTTP/startup allocation profiling remains open.
+
+Resume only after user authorization, rechecking quota and worktree state. First
+repair and verify the preserved Pi WIP, then complete Controller source/observer
+registration, executionRef/admission plumbing and qualified shutdown behavior.
+Continue R-004 investigation and all original A/B Gates. Existing sources, WIP
+backups, schema9/writer5 boundaries, fixed artifacts and real evidence stay intact.
+
+Historical Execution checkpoint2026-10-20 macOS: official used90%/remaining10% after
+e90b3d7 evidence unit; development stopped per the user's threshold. Production
+source/fixed release0d2cd42, final default155 files1604 tests green. Preserve this
+worktree, all frozen sources/WIP/backups and release; no push/merge/service
+activation. A/B remain incomplete. Resume only on the user's later instruction;
+re-audit quota, dirty/ownership state, Linear and current provider/host evidence.
+
+Whole-range review19db456..4e76656 completed once. Two Important mounted-path
+findings are addressed in the single fix pass: automatic verification now has
+durable per-command SENDING/SETTLED/UNKNOWN receipts and conservative VERIFYING
+startup hold; snapshot add shares Manager's physical-common-directory queue.
+Target5 files26 tests pass; default gate evidence follows in the execution ledger.
+This supersedes older "whole-branch review pending" wording for the inspected
+range only. All listed formal Gates and declined runtime/license judgments stay
+open. Unknown automatic verification requires explicit reconciliation; no recovery
+endpoint, command replay or cleanup of surviving unknown children is authorized.
+The fix adds schema9/writer5 to reject protocol4 binaries that cannot honor those
+receipts; migrations1–8 are unchanged. Schema8 archives remain writer4 and only
+their restored copies upgrade. Upgrade preflight also rejects pending verification
+receipts independently of Run state. Targeted persistence/service regression15
+files121 tests pass. Actual service/data activation is still unqualified.
+Offline upgrade preflight intentionally requires a separately qualified current
+schema. Existing schema8 real-data switch evidence remains historical; this
+schema9 change does not qualify an in-place8→9 service/data activation. Preserve
+the old backup/artifacts and fail closed until that migration/activation workflow
+has its own review and real-data recovery evidence (R-006/R-013).
+R-004 latest fixed-candidate evidence: staged0d2cd42 schema9/writer5 passed
+relocated fixture checks and all10000/500 API history pages, but active-workload
+RSS peaked274251776B (above250MB/250MiB), p95 19.509417ms. The retained report
+2026-10-21T05-49-30.540Z-history.json is informational and a memory-budget concern,
+not an accepted Gate. Do not weaken the budget or infer idle CPU from its93.43%
+active-query measurement. Root cause/current idle/slow-client/soak remain open.
+
+| ID | Linear | State | Evidence / impact / next action |
+| --- | --- | --- | --- |
+| R-001 | INH-1920 / CV-03 | local remediation verified; whole-branch review pending | Reproduced 3 failures at the original all-CPU test pool. Atomic draft replacement/generation checks pass 16 UI cases. Test-worker budget now min(4, CPUs), preserving parallelism and native 3s/5s deadlines; all slow/invalid probe assertions remain. Two complete default pnpm check runs pass 90 files/802 tests. Source and resource evidence: docs/evidence/convergence/README.md. Real CLI/provider qualification remains separate. Latest MAC-01o default gate145/1456: one concurrent profile/worktree add failed while reading another incomplete commondir;1455 passed. Preserve failed log; CV-03c corrects production add/remove ordering by physical Git common directory across aliases/managers, with failed-operation release;146/1459 default passes, no test weakening. Cross-process external Git remains outside this in-process ownership boundary. |
+| R-002 | INH-1841/1845 | real macOS evidence pending | Host-locked native probe at028c7db was cancelled via real API twice, preserving config revision/Task count and cleaning only owned children/temp dirs; it proves no native GUI selection/cancel. Owned dialog drain, output bounds, split UTF-8 and cleanup-unknown latch now pass128/1357 locally. Real Codex0.163.0-alpha.10.2 native-default file execution→required verification PASSED→Run COMPLETE/Task REVIEW now observed once at9e07cae; source clean, dirty candidate/data retained, Controller stopped. Candidate-bound manual review is now mounted in v3 (135/1389); actual retained candidate reverified after restart with zero native replay and observed in browser, Task remains REVIEW. Unlocked Chinese/space native GUI, native cancel, same-session reply and complete browser loop still require evidence. |
+| R-003 | INH-1535/1538/1491/1561 | formal evidence pending | Native identity/release/reclaim and Slack/Linear/GitHub daily chain retain original Gates; unqualified native control stays closed. |
+| R-004 | INH-1562/1390 | performance evidence pending | Initial budgets: idle CPU <1%, RSS <250 MB. Smoke does not replace long-running scenarios; record host/config/SHA and measured values. CV-13a now uses strict cumulative CPU counter deltas/monotonic windows, raw samples, main+WAL+SHM/log growth, minimum600s P0/P1 and confirmed exit0 before cleanup; five regressions/default137/1395 pass. Actual5s smoke0.1997%/116457472B and open-dashboard shutdown are informational. Development600s measuredCPU0.049999%/RSS118374400B but concurrent builds and end-time identity invalidate source qualification; raw report retained with correction sidecar. CV-13d now captures startup identity and only qualified --release-dir runtime can pass600s; default142/1432. Fixed253a792 completed600.010853s/596samples CPU0.0599989% RSS170000384B with runtime verified before/after and exit0, meeting P0 numeric CPU/RSS only. Fixed253a792 authenticatedSSE600.010963s also measuredCPU0.0699987%/RSS169771008B with1 client and exit0; this is not full browser rendering/polling. Full P1/P2–P7/slow-client/soak remain open. MAC-01p now stops SSE output at backpressure, immediately releases subscriber/keep-alive and bounds owned drain to2s (controlled HTTP regressions;147/1462 default). Real slow-reader/burst-memory measurement remains open. CV-11b/CV-13c now page Task Run history in SQLite before JSON decoding; v3 detail uses20/page with separate current/all-active facts (152/1586 default). Legacy unpaged GET, Task deliveries and global Fleet scans retain their existing scope; actual1000/10k/browser P4 measurements remain open. CV-13d adds a runnable synthetic history API workload via the standard benchmark entry;1000/50 pages and10000/500 pages verified (development, informational), DB growth0/exit0,153/1592 full gate. Browser rendering and fixed-artifact P4 qualification remain open. |
+| R-005 | INH-1925 / CV-08 | local composition partial; native activation closed | Local start/continue/resume/advance/verification/delivery/failure/cancel/pause Guards, reserved identity and receipts, priority owned drain, schema-8 writer gate and known-unsent cancellation are locally verified. Publication journal recovery distinguishes RESERVED/SENDING/UNKNOWN and detached ACK without SDK replay; latest default 116 files/1229 tests. Full details and checkpoints: docs/evidence/convergence/README.md. Qualified non-publication STARTING/ACTIVE recovery and original-revision failed-start projection now run without SDK calls. Reroute pre-queue/pre-stop/post-stop authority now stays captured; replacement creation shares reserved-start/final admission and captured owned-CLI cleanup. Remaining: atomic legacy adoption, remote composition, complete qualified native account/context/stop and real process/restore Gates. Advanced takeover UI remains closed. |
+| R-006 | INH-1386/1564 | restore reconciliation and real drill pending | Persistence backup/restore functions and synthetic negative tests are ported; archives/restored databases deliberately retain startup barriers. Read-only doctor and database-only CLI backup/restore preparation are now verified at 121/1281 with source hashes, new-target ownership and both restore barriers preserved. Qualified reconciliation/activation, credential/native storage recovery and real macOS restore evidence are still required before claiming daily recovery. |
+| R-007 | INH-1922 / CV-05 | local default/source adaptation verified; CV-05 still open | Catalog dedupe/cache/ownership, strict default ConfigPlan apply-time proof and account-default Run provenance and adapter identity/immutability fences pass the default 91-file/833-test gate. Old malformed native-default proof is retained and rejected for fresh review. Remaining: diagnostic presentation/reconciliation (R-008), safe old price/capability evidence mapping, executionRef/native prompt-admission assertions and full cross-candidate review. Legacy Run authority is locally verified in R-009 at 109/1085. Concurrent different-model/restart retention is locally covered at 90/819. |
+| R-008 | INH-1922/1926 | local lifecycle verified; real service evidence pending | Owned Codex/CLI/OpenCode readers receive cancellation and drain before success. Controller bounds waiting at 3s, keeps an unresponsive producer separately owned, fences late writes and persists catalog-lifecycle/shutdown UNKNOWN. Default check passes 90/819. Readers now reuse OwnedProcessGroup and require physical-group absence plus bounded callback close, with EPERM producing sanitized MODEL_CATALOG_CLEANUP_UNKNOWN. Default check passes 91/834. MAC-01 still needs diagnostic presentation/reconciliation and true macOS shutdown/restart evidence; a closed HTTP request does not prove remote/native cleanup. |
+| R-009 | INH-1922/1929 | local implementation verified; whole-branch review pending | New HTTP/Slack/reroute Runs now compile one legacy-config ExecutionSelection from the owning adapter actual invocation backend/model defaults; Scheduler and adapter sessions use that same snapshot. Frozen workspace facts come only from the new WorkspaceHandle; no historical backfill or fresh-catalog claim. Qoder retains stored model through continuation. Generic PTY backend and unsupported interactive selection are covered. Default gate passes 109/1085; native/formal CV-05/12 Gates remain open. |
+| R-010 | INH-1923 / CV-06 | legacy read verified; ledger admission/runtime pending | Pure legacy reader preserves raw source, safe stored decimals, attempt/native session and optional billing occurrence; all imports remain read-only and source-origin equivalence unproven. Extend/reconcile canonical origin/attempt/time semantics without rewriting immutable old events or double counting collectors. Passive Codex/Qoder snapshots now avoid waiting for turn.result, retain native observation time and distinguish read failure from execution resources; default gate 93/849. CV-06c now separates owned status execution facts from independent bounded/coalesced usage reads, retains read scope/last-success, retries terminal reads and fences changed-context/shutdown callbacks. Reply/cancel/lease independence passes the default 115/1169 gate. Local scoped quota TTL/API/UI and writer-protected origin admission are implemented. Owning-Runner quota forwarding, public owner-state validation, physical registration/native-file epoch and timeout/shutdown guards are implemented in the current delta; targeted9/91 plus close/cancellation cases and final projection3/19 pass. Independent scoped review found no concrete quota code defects. The current uninstrumented default full check after the reviewed observer allocation passes174/1825. Earlier6 Pi probe failures (169/173 files;1792/1798 tests) remain retained as unresolved R-020 evidence. Remaining: investigate R-020, qualify production source-origin/attempt/session cutover and real-account evidence. |
+| R-011 | INH-1921 / CV-04; INH-1925 / CV-08 | local writer remediation verified; branch/recovery review pending | Additive schema 8/protocol 4 rejects already-open protocol-3 writers and old catalogs. Migration entries 1–7 unchanged. Failed migration and outer rollback restore schema-7 trigger SQL and writer 3; schema-7 source/archive bytes stay unchanged while only restore copy upgrades to schema 8 behind reconciliation barrier. 4 new RED→GREEN cases plus 4-file/30-test target; full-gate result in evidence ledger. No live data/service activation. |
+| R-012 | INH-1925 / CV-08 | default SpawnProcessExecutor locally fixed | Reproduced default Generic execution reporting cancelled before owned drain, including rejected drain. Separate cancellation/input latch now blocks input while status stays nonterminal until owned drain/outcome. Controller production generic uses its separate ProcessManager-backed executor; do not claim that path had this exact defect. Two new controlled real-child/fault-injection cases RED→GREEN, target 2 files/27 tests, default 116/1224. Formal native/provider stop Gates remain open. |
+| R-013 | INH-1933 / MAC-01 | local service foundations verified; activation pending | Shared CLI/restore directory ownership, launchd lifecycle, read-only doctor, structured bounded logs, safe tail and blocked DB-only restore preparation are locally verified. Release closure/hash/relocation primitives and package-owned HTML now pass the default 122/1292 gate. Isolated offline staging now produces source 82a4f26 at a fixed private release path, with 5983 files/116905523 bytes and relocated HTTP/assets/API/real PTY fixture smoke, source cache unchanged. Default 123/1298 passes. Manifest-v2 runtime admission, exact source/release/Node/CLI service binding and pre-database startup rejection now pass 124/1309. The actual 3dc0e00 package passes isolated serve/home/ready, graceful exit/lock release and native plutil pin roundtrip; old v1 artifacts stay inspection-only. New launchd raw streams now go to /dev/null and structured logging remains bounded/redacted (125/1323); legacy definitions remain inspectable. MAC-01j closes owned SSE before graceful stop; MAC-01k captures safe plist bytes/hash and fences observed activation drift (143/1435), actual native XML/binary parse proven. Clean253a792 staged6046 files117245795B with isolated HTTP/assets/API/PTY and no native qualification. MAC-01l offline upgrade preparation now binds reviewed source/data/release facts and validates DB-only restore without editing installed plist or activating data (144/1438); actual retained real-Codex DB and qualified releases passed with simulated supervisor. MAC-01m offline definition switch/explicit reconciliation now uses the existing operational marker, journal and sealed source facts (145/1445); real retained DB failure + old3dc CLI barrier rejection + restored fixture definition proven. MAC-01o adds offline post-switch definition rollback with exact unchanged prepared DB facts, prior transaction retention and old V1 journal compatibility; CV-03c fixes the same-repository Git race and the default146/1459 gate now passes including rollback. Changed-data restore activation, native Runner streams and actual service/login/sleep/Keychain/Agent Gates remain open; no host service installed. MAC-01q additionally proves prepare/forward/reverse/replay against the retained real-Codex DB with qualified3dc/253 artifacts and simulated supervisor: main/WAL exact, old fixture definition restored, displaced files retained, barrier absent. No host activation or changed-data restore qualification. |
+
+| R-014 | INH-1924 / CV-07 | frozen price/projection locally verified; native producer qualification pending | Canonical decimal BigInt cost engine and shared ledger decimal primitives pass 125/1321. Twelve math/provenance cases preserve source a499d84 rate/multiplier/missing/free/segmentation semantics and add exact precision/cache-write/conflict boundaries. Explicit read-only legacy price/precision bridge and lossless old-number projection now pass 126/1328, retaining unproven price admission. Scoped native catalog price admission, reviewed immutable selection, owning-Runner transport/startup revalidation and per-Run API/UI estimates now pass170/1767 locally after review fixes. Conditional-free/rate-interval producer admission and real-account rate qualification remain open; providers without qualified rates stay unavailable. |
+
+| R-015 | INH-1926 / CV-09; INH-1928 / CV-11 | backend and host locally verified; activation and qualification pending | Exact a499d84 resolver/security suite passes 24 cases and default127/1352. No launch or native account calls. Read-only scoped Run/Task projection now passes131/1367 with zero native/SQL side effects and mutation disabled. Internal Codex stdio transport subset is now ported with original7 mapped assertions and9 additional regressions (target16/16); source backend/runtime and canonical composition were pending at that checkpoint, with initial default full check173/1798 passing. Review P2 local-pipe retention was fixed and target16/16 passed again; focused recheck found no residual issue. The following canonical observer increment adds exact allocated-thread persistence with pre/post-synchronous admission, no historical identity adoption and late-state rejection. Helper27 plus selection14 pass; independent focused review has no residual findings; current full174/1825 passes. Earlier6 Pi probe failures remain R-020 follow-up, with no causal-resolution claim. Codex internal backend/host now pass reviewed176/1956; ConfigPlan/Controller activation, other native drivers, selected-source registration, qualified history and write UI remain open; exact session links require ui-roundtrip-qualified evidence. Smoke CPU10.02% is cold informational, not idle Gate. |
+
+| R-016 | INH-1929 / CV-12; INH-1385 | local review/API/UI and real revalidation verified; formal Gates pending | Canonical local verification/acceptance with candidate/context/control fences, retired lease identity, durable non-replay receipts and atomic Task acceptance passes133/1382. Canonical result/verification/accept/cancel and v3 review UI are now mounted, with explicit consent, persistent original requests and owned shutdown; default135/1389 passes. Registered commands use matching managed source, with retained immutable content; this is not hermetic or native quiescence proof. Unknown verification process/restart outcome remains blocked for reconciliation. Backed-up real candidate reverified on restart, changed content invalidated proof, exact restoration matched, zero native starts; browser shows REVIEW/unchecked consent/disabled accept. Real human acceptance and hermetic/native qualification stay open. MAC-01j closes owned SSE during stop; MAC-01p adds transport backpressure and bounded drain. Formal service acceptance still needs host evidence. |
+
+| R-017 | INH-1930 / CV-13 | execution-child authority inheritance locally fixed | Fake-canary child reproduced inherited Controller owner-token/encryption-key variables. Shared boundary strips those two keys after overlays across agent/catalog/probe/process/PTY/verification/Git/native directory execution, preserving provider context. Default140/1398 plus real child cases pass. General environment isolation and full protocol/security/license review retain their existing Gates. CV-13b corrects an omitted boundary: ordinary WorkspaceManager Git still inherited authority until now. Real post-checkout fake-canary RED→GREEN; all effective command environments now filtered; default147/1463 passes. Earlier scope claim narrowed accordingly. |
+
+| R-018 | INH-1922 / CV-05; INH-1845 / LP-07 | real explicit model/effort evidence blocked at upstream account read | Qualified253a792 + Codex0.163.0-alpha.10.2 catalog returned200/unverified/zero models after15s, zero Task/execute starts. Installed schema/stdio verified; metadata-only transport shows initialize37ms then account/read RPC-32603 timeout~15s and process close0. No account result/model list; do not infer auth/network cause, fall back to default as explicit proof or extend deadlines to pass. Private provider-probes2026-10-21T03-19-25.237Z retained; native-default earlier file/verification/REVIEW proof stays separate. |
+
+| R-019 | INH-1927 / CV-10 | committed Pi transport ported; composition pending | Internal a499d84 Pi RPC transport retains34 original assertions plus fake-canary native context case. New owned version-probe uses target group/drain boundary; RPC close retains root-only/native-background unknown semantics. Default148/1498 passes. No default export/registration or capability promotion. CV-10b adds the internal readonly port with all44 source identity/history assertions and shared fixture; default149/1542 passes, write/surface/external-change proof stays unknown. CV-10c ports31 producer assertions plus canonical selection/creation Guard tests; final150/1583 default passes. New producer requires one ExecutionSelection, persists binding before prompt and rechecks post-version creation authority/cancellation. Default Adapter/manifest integration (one source assertion deferred), Controller source/observer lifecycle and real qualification remain; Devin ACP/Copilot committed modules and frozen WIP still require review. |
+
+## Current verification follow-up: intermittent native version probe
+
+R-020 / INH-1927 and INH-1930: two default full checks during remote quota
+composition fail the same unchanged first Pi client/read version probes at the
+existing3s deadline. Latest default result:170/172 files,1780/1782 tests pass;
+complete serial result:171/172 files,1781/1782 tests pass, with pi-rpc-read idle
+projection remaining failed. Build/typecheck/lint/boundaries pass. Isolated
+serial Pi2/80 and four fresh /tmp version probes pass, but do not establish cause
+or full acceptance. No deadlines, defaults, helpers or assertions were weakened;
+unrelated host processes were not changed. Independent quota paths proceed from
+their scoped passing tests while this full-regression block stays open. Keep the
+original logs in the evidence ledger; qualify the first-probe failure with a
+controlled baseline and lifecycle/timing evidence before proposing a fix.
+
+A temporary per-event trace subsequently passed the default2-file/80-test Pi
+target and172-file/1782-test full test command. Spawn returned in about1ms;
+first output latency varied from725ms to2636ms, followed by prompt close/drain.
+No unexpected timeout reproduced, so no cause or production fix is asserted.
+The helper was restored byte-identical. The later uninstrumented default full
+check with the independent CV-09 transport delta passes173 files/1798 tests
+(68.52s), including build/typecheck/lint/boundaries. The current local gate is
+green; this does not establish why earlier default/serial probes failed. Preserve
+all earlier failures and continue R-020 as a root-cause follow-up, not a current
+red-gate claim.
+
+Post-CV-09 pipe-fix full check adds6 failed Pi probes across4 files, including
+mid-file tests (169/173 files;1792/1798 tests;85.37s); Codex transport16 cases
+pass. Build/typecheck/lint/boundaries pass. R-020 is therefore not limited to
+first invocation. The current full gate is RED again; keep the earlier green
+173/1798 result as its own evidence rather than claiming either cause or a fix.
+
+Current canonical-observer post-review default full check passes174 files/1825
+tests (83.80s), plus build/typecheck/lint/boundaries. This is the current green
+local gate; it does not erase earlier failures or explain the macOS loader stall.
+The six-probe /tmp experiment captured one3.031s failure before JavaScript entry,
+with797 owned-child samples at _dyld_start, then five25–44ms successes. No host
+policy or unrelated process was changed; exact OS trigger remains unresolved.
+
+CV-09 Task2 now preserves the internal App Server backend and its64 source
+cases with28 canonical/async/Adapter regressions. Read-only review's2 P2 findings
+and a narrow input-evaluation follow-up are fixed with RED/GREEN evidence;
+per-turn facts are ordered so pending running persistence cannot be overtaken
+by terminal success. Focused7/164 and final correction4/130 pass. Pre-final full3
+passes175/1916; final full4 on the actual reviewed version is RED at172/175 files,
+1914/1917 tests (84.65s):3 Pi version probes fail before Promise-guard, settlement
+and file-boundary assertions. All Codex92/transport16 and non-test gates pass.
+A prior combined target also failed one Codex owned version probe, extending
+the intermittent evidence beyond Pi. Do not retry to green or weaken deadlines.
+Task2 and the whole branch remain pending final regression qualification;
+continue independent runtime/ConfigPlan/native-source units with those safety
+boundaries intact. No backend registration, actual account or service activation.
+
+Latest reviewed runtime post-fix default check is green at176 files/1956 tests
+(82.21s), including all non-test gates and the unchanged Task2 backend. R-020
+root cause stays unresolved; previous failed logs remain. This qualifies local
+backend/host increments only, without activation or real provider Gate promotion.
+
+Current 2026-10-25 Local ACP config/factory checkpoint: ac61772 preserves source17
+and original factory32, adds explicit ConfigPlan/owning factory without startup;
+focused323 and final default196/3463 plus non-test gates pass. Required review and
+root source/input audit recorded in the convergence evidence ledger. Controller
+composition remains: C1 source29 plus actual catalog exact-selector trial, C2
+source restart1 and read-only stored certificate/corruption matrix. A directly
+affected catalog-unknown shutdown path needs behavioral reproduction and storage
+barrier correction in C1. No personal profile/account/service activation. Group/
+EPERM/R020/CV13 audit28/formal Gates/CV14 stay open; complete plan remains active.
+
+Current2026-10-25 Controller C1 checkpoint:175b2d4+bee6483 completes source29,
+actual catalog exact-selector trial and shared raw catalog/storage barriers.
+Review I1 blanket test-teardown swallow fixed and scoped re-review clean; final
+197files3536tests plus non-test gates pass. Source restart1 remains C2 with pure
+checked-storage certificate/corruption matrix. Historical early script capture
+gaps/non-final self-review drift remain explicit in evidence ledger; no retroactive
+proof claim. Config/factory ac61772 stays accepted. Copilot147/runtime41/WIP17+29
+inputs prepared only. Group/EPERM/R020/CV13audit28/CV14/formal Gates and full goal
+remain open; no personal account/profile/service activation.
+
+Current2026-10-25 Local recovery checkpoint:b7d0651 completes original restart
+sourceCase23 plus86corruption/5opaque positives/purity and twoTaskstates; C1other29
+remain, all30source purposes now mapped and locally tested. Required review clean
+except existingMinorCV14; focus428/default198/3630 and all non-test gates pass,
+root513Git/all-input/first-RED generated capture audit zeroerrors. Stored agreement
+does not revive native source/mutations; actual Gates remain open. Next internal
+Copilot client113, then producer34/runtime41/WIPconfig17/service29; codec10 isolated
+seam/notice preparation is not target/client implementation. Remaining provider/UI/
+retention/delivery/CV13-14/group/R020/formal Gates and complete goal remain active.
+
+
+Current2026-10-25 Copilot internal client checkpoint:aa85671+80ab301 preserves all113
+source cases and16direct regressions, covering149/default200files3759tests and
+non-test gates pass. Independent review I1 pre-input unresolved permission was
+reproduced and fixed with meaningful RED; scoped re-review resolves it. Original
+client/codec installed-deployed MIT/SRI/graph and all-command/source/fixture byte
+audits pass; audit28 remains unchanged-version UTC20:01 snapshot, not security
+clearance. Producer34/runtime41/WIPconfig17/service29 still need integration; no
+package-root export/Controller/account activation. Group/EPERM/R020/CV13-14/formal
+Gates and whole goal remain active. Historical fixture identity/copy limits remain
+explicit in evidence ledger.
+
+
+Current2026-10-25 Copilot producer checkpoint:66789bd locally accepted after required
+review0Critical/Important and root18run/520Git byte/source34/old84 observer audit.
+Current73producer/119observer, default201files3867tests/non-test gates pass. Source
+147client113+producer34 purposes mapped; runtime41/WIP17+29 remain. No root export/
+Controller/account activation. WholeSnapshotFrozen=false for exact root-owned
+ignored-ledger metadata delta; code/check inputs frozen, both original bytes kept.
+Original capture key transition corrected append-only. See evidence ledger.
+
+Additional native-acquisition observation: expanded focused12 retained611/612,
+unchanged Devin test217 entered=false at existing1s poll before cleanup assertions.
+Earlier seven-suite502/later default3867 pass its59cases, without unchanged focused
+retry or test/helper/deadline/worker/cache change. No retained open error distinguishes
+delay/failure, no claim of R020's same cause or resolution. Failed12 ephemeral native
+bytes unavailable; original source/output retained. This remains follow-up alongside
+existing loader/group/security/performance/native/formal Gates; whole goal active.
+
+Copilot runtime candidate94da9c1+1652a79+73f0c33 is not yet accepted. Required
+Fix2 review resolves I1/N1 without newCritical/Important after replacing alternating
+callbacks with one mandatory joint canonical/persisted owner decision. Runtime114,
+focused10/761, build/lint pass; source41 and prior103 purposes/tables/164assertions
+retained with explicit API migration, no false old-prefix claim. Future Controller
+C1 must implement actual joint store checks. Original full202/3967 retained one
+unchanged Devin entry-poll failure; I2 is owned by2026-10-25-devin-entry-phase,
+with actual controlled-delay evidence and unchanged post-open wait/native budgets.
+Historical OS/R020 cause remains unknown. I3 lost first exploratory native bytes
+remain an explicit CV14 exception, not fixed; M2 prior negative-path logs deferred.
+No config/service/account/native/writer/formal activation, goal remains active.
+
+Current acceptance supersedes the pending runtime paragraph above:3935178 fixes
+only actual-open setup/observation phases in the existing Devin test. Original59,
+124matchers/19waits retained,64current/focused520/full202files3986tests and non-test
+gates pass. Required review Approved0C/I/newMinor; root8run/524Git/4704full-input/
+661fixture-copy audit clean, reviewed Copilot73f0c33 source/compiled five hashes
+agree. Runtime I2 resolved, local source41→114 unit complete; no unchanged rerun.
+Historical failures/unknown OS-R020 cause, I3 lost first-native bytes exception,
+existing log/committer observations remain. Actual Controller joint-owner consumer
+and config/factory remain next, not qualified by these local fixtures. Upcoming
+atomic6path config unit also hides exact existing dataHome/configHome/agentDirectory/
+sessionDirectory/copilotHome in console projection and protects leaf edits; current
+export already omits settings, no real data-exposure claim. Whole goal stays active.
+
+Copilot config/factory/privacy a77d48f is now locally accepted: source17 original
+calls/tables/inner values preserved except actual buildPlan source fixture→import;
+old factory80 and console7 wholecalls/fake script unchanged, current34/125/18.
+Meaningful RED59failed118passed; final focused10files593tests, one frozen full
+203files4076tests/all non-test checks pass. Independent Spec/Quality Approved0C/I,
+Two inherited Minor observations (diagnostics/local Git identity) remain for CV14.
+Root7run/526Git/
+4711full-input/227generated+20Local-fixture audit and independent source AST map
+clean; full pre/post input/external maps and committed bytes agree, primary preserved.
+Initial build updates15compiled/build-info files; those before/after bytes are retained.
+This resolves the five-directory console/plan protection gap using exact known
+keys; preparation was synthetic, no account/server disclosure claim. Controller C1
+must now implement the actual synchronous joint canonical+persisted owner decision,
+raw shutdown/storage barriers and source-denial; C2 owns original restart1. Existing
+historical I3/group/R020/security/retention/UI/performance/real/formal Gates remain.
+
+Copilot C1 locally complete8122556: actual dedicated Controller composition,
+ConfigPlan/private-home/preflight/profile lifecycle, true synchronous joint owner,
+raw acquisition/observer/result storage barriers, exact cached receipts/retry and
+undefined-source/aggregate-denial are implemented. Unsupported public catalog,
+routing/standalone trial/publication preview+blocked commit allocate no Task/Run/
+Adapter Session/native producer. Source29 maps28 C1+explicit C2restart1; current56
+adds28 controls; oldDevin73 wholefile and both fakeprotocol arrays exact. Independent
+Spec/Quality Approved0C/I/M1 inherited logs. Final focus14files1121 and one full
+204files4132tests/all non-test checks pass; root28phase/530Git/4722fullinput audit
+and source map clean, primary preserved. Only current report status/addendum changed
+AFTER gate, with original frozen report retained; no code/ledger/input gate drift.
+
+NEW historical C1 evidence exception: first temporary Git objects/managed-tree and
+intermediate dist/external/pure-wall provenance were not captured and are now
+unrecoverable. Original native executable identity/bytes, partial inputs and all
+failed outputs remain; root rulings4/5 apply the user's recorded-blocker alternative.
+Later complete v2 captures qualify current local code only, never repair or replay
+those originals. Final controlled96trees/56roots/3806files and all declared inputs
+verified. Initial HUMAN_ACTIVE SQL error was mistakenly described as a send; root
+verifiedzero sends and corrected commentary/Linear99109762. Separate lawfulHUMAN
+RED genuinely sentonce/returnedRUNNING; final row/document equality fixes it. These
+histories and earlier runtimeI3/group/R020 remain explicit CV14 follow-ups, not erased.
+C2 pure readonly restart certificate is next; all real/provider/UI/retention/delivery/
+Node/dependency/performance/CI/rollback/wholebranch/formal Gates remain open.
+
+Copilot C2 locally complete4881a25: appended pure stored-agreement wrapper and
+exact constructor/reconcile consumers, no live source/writer restoration. Original
+restart1 now covered over TaskQUEUED/RUNNING at actual C1STARTING crashpoint, preserving
+literal settings/binding/native files and sanctioned pending-start UNKNOWN receipt.
+Current101cases cover2restart/1purity/89corruption/5opaque/4malformed; source29 now
+mapsC1other28 plusC2one, not an unimplemented restart. Original10263byte helper/
+provider prefix exact; service changes only three tokens. Independent Spec/Quality
+Approved0C/I/M1 logs. Focus20/1506, onefull205/4233/non-test checks pass. Root25run/
+532Git/full4731source43external/current700dist16buildinfo audit zeroerrors; source/
+external bytes and Git full observations frozen,52 reemit identities changed bytesnone,
+primary preserved. Root-owned service source503 verification updated only,503IDs exact.
+
+Intermediate matrix run's wrapper/input-list metadata changed to add Git identity
+and prior C1 audit refs; executed original wrapper and both versions retained, code/
+test bytes unchanged. It is not a frozen-tooling run; corrected finalfocus and full
+are strictly frozen. Current original native/Git firstRED and final captures complete,
+no C1historical-loss waiver reused. Only report result bookkeeping changes aftergate.
+C1 historical irrecoverable inputs/runtimeI3/group/R020/log/identity issues remain;
+Cursor locator/exact resume46, Devinv3, UI/retention/delivery/security/Node/performance/
+CI/wholebranch/realprovider/formal Gates still open. Goal continues, no paid/cloud
+or personal/default native home activated.
+
+Cursor locally complete6d01f89+88265e9: source46→73, actual existing send selector
+hook and bounded metadata library, current canonical missing-model refusal preserved.
+Independent Spec/Quality0C/I/M; finalfocus8/304, changed-finalfull206/4306/non-test
+pass, root19run/535Git/4744source29external/source-table/script-byte/primary audits
+clean. Firstfull4304 retained old candidate; synchronous native allocation redaction
+fixed under ruling4 with two real call-site injected controls and no shared changes.
+Source503 identities/owners fixed, only four verification cells updated. First version
+independent telemetry and old non-strict PID booleans remain unavailable/unproven;
+final direct strict observations do not rewrite that history or grant writer release.
+No account/protocol/Controller source/history/native writer enabled. Existing losses/
+group/R020/committer/log/realprovider/GUI/release/P4/CI remain. NextDevinv3 source74
+includes previously omitted Config13/Controller8; UI14/othercontrol/retention/security/
+Node/performance/wholebranch continue. Free-reset manual request pending because
+Codex UI is tool-restricted, not a paused goal; official98used2remaining stillallowed.
+
+Devinv3 locally accepted45130fb+b091d6c: source74=53native13Config8Controller,
+all exact purposes/tables mapped with canonical profile/STARTING adaptations. ConfigPlan
+owner/budget and bounded readonly port preserve current guards/selection/resource,
+optional custom contract; no Controller cloud reader/writer activation. Write privacy
+diagnostic intentionally static; uncertain delivery remains. Review I1 prefetch
+classification and M1 BOM both fixed/re-reviewed0C/I/M, six new faults/contrasts;
+finalfocus248/full209files4417/allnon-test. Root33run/539Git/4754source261external/
+source74/primary audits clean. Earlier4411/failingfull preserved; generated layers and
+early Controller telemetry limits explicit, first23HTTP bodies verified present.
+Source503 only7 verification cells; original config/controller/start-intent whole-suite
+acceptance remains scoped. LoggingMinor deferred, no blanket suppression. Next security
+runtime/dependency prepared candidate audit0 is isolated-only; actual project audit28/
+Node24.21 remain until next task. UI14/othercontrol/retention/delivery/group/EPERM/R020/
+recovery/performance/CV13-14/realaccount/provider/GUI/writer/service/release Gates open.
+User declined reset; latest official15used85remaining allowed/reset2unused, goalactive.
+
+CV13 security increment5cc7c05 locally accepted: actual Node24.22.1/builtinUndici7.30.1/
+OpenSSL3.5.9, current Fastify/Vite/Vitest and compatible leaf patches; audit0/324deps,
+same9licenses, full209files4417/non-test, isolated production native lifecycle/attribution
+pass. Fresh Spec/Quality0C/I/M. Root17run/540Git/4760source plus installed/module/Node/
+production inventory/primary audits zeroerrors;101intentional generated build deltas and
+one preexisting cache preimage identity-only/postpayload remain explicit. Separatepnpm
+bundledNode26 security,14other-platform execution, clean release/CI/physical/formal and
+CV13 recovery/performance/source tasks are NOT closed. Historical audit28 stays evidence,
+not current installed status. Source503only7verification cells, identities/owners fixed.
+Fresh CV13InProgress/CV14Backlog; no status or reset operation. Next UI14 prepared,
+profile6+Agents8 actual ConfigPlan/localized route adaptation then other controls pending.
+
+
+2026-10-26 readonly control prerequisite3fd1a36+f06b81f locally accepted after
+I1 changing-declaration RED/fix/scoped re-review: source18/46assertions+tables/current5
+preserved, related543/default214files4553/non-test and root provenance/primary/503
+audits pass. New route stays readonly; Web NativeSessionPanel15/Handoff10 and all
+real control/provider/GUI/writer/Gates remain open. Initial M1 expected refusal
+logger noise is explicitly deferred to CV14 along with inferred local Git identity
+and historical capture limits. No production logging suppression or migration/
+credential/native activation. Next UI integrates canonical header and the one
+history viewer; retention/delivery/recovery/performance/full branch work continues.
+
+
+2026-10-26 canonical saved-session/control UI locally accepted a54c654+176a1b6:
+originalPanel15/Handoff10 and protected Summary3/history14/current parent preserved;
+actualTask64/related235/default217files4653/non-test pass, independent full review
+and scoped I1 re-review complete. Initial browser Escape defect was not waived:
+real shared Drawer cancel propagation fixed after RED1fail63pass; actual compiled
+ready/loading/desktop390 repeat keeps parent and restores control trigger. Existing
+unique bounded history and actual SSE404 clearing remain. Production is readonly,
+qualified=false/no mutation callbacks; no native authority or real Gate granted.
+Root source/raw/cache/Git/primary503 audits pass;8verification cells only, original
+identities/owners fixed. Prior failure evidence remains. M1 expected negative logs/
+local Git identity and an unqualified outer-close BODY-focus observation are CV14
+triage; nested I1 resolved. Slack, retention/delivery49, recovery/performance/CV13,
+wholebranch/CI/release and real-provider/GUI/writer/formal Gates still open. Next
+CV12 G5 preparation remains external-only until fresh dispatch; user declines reset.
+
+
+2026-10-28 evidence availability: previous G5 agent ended on usage limit; current
+report and exactly5WIP paths survive, but its old /tmp evidence/preparation and
+three checked native-control UI raw directories are absent (cause unknown). G5
+final default gate has no retained result and remains NOT_VERIFIED/unaccepted.
+Historical accepted observations are not fresh raw-proof claims. New durable
+current-UTC verification proceeds without reconstructing lost records; CV14 retains
+the availability gap and final-candidate proof obligation. Primary original3dirty
+files/head/status still match; no source503 cells or product behavior changed by
+this record. Official ordinary usage is allowed again, reset credits still2;
+root did not operate a reset or alter the user's no-reset preference.
+
+
+2026-10-28 CV12 G5/D30 local increment accepted0318551 after fresh14RED/18controls
+(4actual owned B writes),6files85GREEN/build/lint and ONE default217files4670/
+non-testPASS. IndependentSpecCompliant/Approved0C0I1M; root11phase/rawdependency/
+fixture-stream/43SQLite/physicalref/payload/primary503 audits complete. Exactly5
+product/test paths; only4CV12verification cells append scope. Durable evidence and
+hashes are in the evidence README. Original7Runner/8candidate assertion bodies and
+Runner production remain exact. Older missing raw data stays unavailable, not
+retroactively recreated. External config mutation after last check is still a
+bounded race; other48retention/delivery purposes/allCV12 remain open. M1expected
+fixture logging/inferred Git identity and durable final-candidate UI proof are
+CV14 followups. Next CV11 Slack is existing native fixed-command/thread/epoch/
+legacy-WAITING_USER compatibility, not a new inbox UI. No formal/real Gate closes.
+
+
+2026-10-28 CV11/NS035 primitive increment acceptedf72c3a3: exact native grammar
+and optional monotonic binding epoch only, source2of53purposes. Current semantic9/
+Slack5protected;2files58/build/lint and ONEdefault217files4714/non-test pass;
+separately authorized captured-current typecheck passes with all16compiler-state
+pre/post identity equal. IndependentSpecCompliant/Approved0C0I1M and root11phase/
+15immutable-source/rawpayload/primary503 audits complete. Earlier16compiler-state
+preimages remain unavailable; new qualification does not repair that history, and
+CV14 retains the limitation plus existing diagnostic noise/Git identity/rawUI gaps.
+Only3existing verification cells append scope, source503seven columns/owners fixed.
+Next39routing/control-notice and12native-workflow purposes remain; no Controller
+execution/realSlack/native/GUI/physical-stop/release/RHIZA Gate or CV11Done inferred.

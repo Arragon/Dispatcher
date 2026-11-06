@@ -1,52 +1,35 @@
-import { lazy, Suspense, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { Component, lazy, Suspense, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, NavLink, Navigate, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { api, AUTH_REQUIRED_EVENT, currentSession, signIn, type ConfigResponse } from "./api.js";
+import { ConsoleLayout } from "./ConsoleLayout.js";
+export { Navigation } from "./ConsoleLayout.js";
+import { Icon } from "./ui.js";
 import "./styles.css";
 
 const SettingsPage = lazy(() => import("./SettingsPage.js"));
 const SetupWizard = lazy(() => import("./SetupWizard.js"));
-const LlmPage = lazy(() => import("./LlmPage.js"));
+const LlmPage = lazy(() => import("./ModelsPage.js"));
 const AgentsPage = lazy(() => import("./AgentsPage.js"));
 const FleetPage = lazy(() => import("./FleetPage.js"));
+const PublishPage = lazy(() => import("./PublishPage.js"));
 const TasksPage = lazy(() => import("./TasksPage.js"));
+const DevicesPage = lazy(() => import("./DevicesPage.js"));
+const RepositoriesPage = lazy(() => import("./RepositoriesPage.js"));
+const PoliciesPage = lazy(() => import("./PoliciesPage.js"));
+const DiagnosticsPage = lazy(() => import("./DiagnosticsPage.js"));
 const IntegrationsPage = lazy(() => import("./IntegrationsPage.js"));
-const AssistantDrawer = lazy(() => import("./AssistantDrawer.js"));
-
-const navigation = [
-  ["/overview", "Overview / Fleet", "⌁"],
-  ["/tasks", "Tasks & Runs", "▤"],
-  ["/runners", "Runners", "⌘"],
-  ["/agents", "Agents & Profiles", "◇"],
-  ["/llm", "Internal LLM", "✦"],
-  ["/integrations", "Integrations", "⇄"],
-  ["/policies", "Policies", "◈"],
-  ["/diagnostics", "Logs & Diagnostics", "⌁"],
-  ["/settings", "Settings", "⚙"],
-] as const;
-
-export function Navigation(): React.JSX.Element {
-  return (
-    <aside className="sidebar">
-      <div className="brand"><span className="brand-mark">AD</span><span>Agent<br />Dispatcher</span></div>
-      <nav aria-label="Main navigation">
-        {navigation.map(([path, label, icon]) => (
-          <NavLink key={path} to={path} className={({ isActive }) => isActive ? "nav-link active" : "nav-link"}>
-            <span aria-hidden="true">{icon}</span>{label}
-          </NavLink>
-        ))}
-      </nav>
-      <NavLink to="/setup" className="setup-link">Setup wizard</NavLink>
-    </aside>
-  );
-}
-
 function PageState({ title, detail, tone = "neutral" }: { title: string; detail: string; tone?: "neutral" | "error" }): React.JSX.Element {
   return <div className={`page-state ${tone}`} role={tone === "error" ? "alert" : "status"}><strong>{title}</strong><p>{detail}</p></div>;
 }
 
-function Placeholder({ title, description }: { title: string; description: string }): React.JSX.Element {
-  return <section><header className="page-header"><div><p className="eyebrow">Foundation ready</p><h1>{title}</h1><p>{description}</p></div></header><PageState title="No records yet" detail="This surface is ready for its roadmap milestone." /></section>;
+export class ConsoleBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+  override state = { failed: false };
+  static getDerivedStateFromError(): { failed: boolean } { return { failed: true }; }
+  override render(): ReactNode {
+    if (this.state.failed) return <main className="login"><div className="page-state error" role="alert"><h1>页面加载失败</h1><p>服务更新或页面异常可能导致加载中断。刷新后重新打开。</p><button onClick={() => window.location.reload()}>刷新页面</button></div></main>;
+    return this.props.children;
+  }
 }
 
 export function SecureInput({
@@ -63,22 +46,22 @@ export function SecureInput({
   onDeleted?: () => void;
 }): React.JSX.Element {
   const input = useRef<HTMLInputElement>(null);
-  const [status, setStatus] = useState("Not configured");
+  const [status, setStatus] = useState("尚未配置");
   const [busy, setBusy] = useState(false);
   async function submit(event: FormEvent): Promise<void> {
     event.preventDefault();
     const value = input.current?.value;
     if (!value) return;
     setBusy(true);
-    setStatus("Saving securely…");
+    setStatus("正在安全保存…");
     try {
-      const result = await api<{ secret: { backend: string; reference: string } }>(`/api/secrets/${namespace}/${name}`, { method: "PUT", body: JSON.stringify({ value }) });
+      const result = await api<{ secret: { backend: string; reference: string } }>(`/api/secrets/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`, { method: "PUT", body: JSON.stringify({ value }) });
       if (input.current) input.current.value = "";
       onStored?.(result.secret.reference);
-      setStatus(`Stored in ${result.secret.backend}`);
+      setStatus(`已保存到 ${result.secret.backend}`);
     } catch {
       if (input.current) input.current.value = "";
-      setStatus("Secret could not be stored");
+      setStatus("凭据保存失败，请重试");
     } finally {
       setBusy(false);
     }
@@ -86,12 +69,12 @@ export function SecureInput({
 
   async function testConnection(): Promise<void> {
     setBusy(true);
-    setStatus("Testing stored credential…");
+    setStatus("正在检查已存储凭据…");
     try {
-      const result = await api<{ ok: boolean; secret: { lastTestedAt: string | null } }>(`/api/secrets/${namespace}/${name}/test`, { method: "POST" });
-      setStatus(result.ok ? `Connection test passed at ${result.secret.lastTestedAt ?? "now"}` : "Connection test failed or credential is missing");
+      const result = await api<{ ok: boolean; secret: { lastTestedAt: string | null } }>(`/api/secrets/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/test`, { method: "POST" });
+      setStatus(result.ok ? `凭据检查通过 · ${result.secret.lastTestedAt ?? "刚刚"}` : "凭据检查未通过或尚未配置");
     } catch {
-      setStatus("Connection test could not run");
+      setStatus("凭据检查暂不可用");
     } finally {
       setBusy(false);
     }
@@ -99,14 +82,14 @@ export function SecureInput({
 
   async function deleteSecret(): Promise<void> {
     setBusy(true);
-    setStatus("Deleting stored credential…");
+    setStatus("正在删除已存储凭据…");
     try {
-      await api(`/api/secrets/${namespace}/${name}`, { method: "DELETE" });
+      await api(`/api/secrets/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`, { method: "DELETE" });
       if (input.current) input.current.value = "";
       onDeleted?.();
-      setStatus("Not configured");
+      setStatus("尚未配置");
     } catch {
-      setStatus("Stored credential could not be deleted");
+      setStatus("凭据删除失败，已应用引用可能仍在使用");
     } finally {
       setBusy(false);
     }
@@ -114,8 +97,8 @@ export function SecureInput({
   return (
     <form className="secure-input" onSubmit={(event) => void submit(event)}>
       <label htmlFor={`secret-${namespace}-${name}`}>{label}</label>
-      <div><input ref={input} id={`secret-${namespace}-${name}`} type="password" autoComplete="off" required /><button type="submit" disabled={busy}>Store</button></div>
-      <div className="secure-actions"><button type="button" disabled={busy} onClick={() => void testConnection()}>Test connection</button><button type="button" disabled={busy} onClick={() => void deleteSecret()}>Delete</button></div>
+      <div><input ref={input} id={`secret-${namespace}-${name}`} type="password" autoComplete="off" required /><button type="submit" disabled={busy}>安全保存</button></div>
+      <div className="secure-actions"><button type="button" disabled={busy} onClick={() => void testConnection()}>检查凭据</button><button type="button" disabled={busy} onClick={() => void deleteSecret()}>删除凭据</button></div>
       <small aria-live="polite">{status}</small>
     </form>
   );
@@ -125,6 +108,8 @@ export function AuthGate({ children }: { children: ReactNode }): React.JSX.Eleme
   const [state, setState] = useState<"checking" | "signed-in" | "signed-out">("checking");
   const [error, setError] = useState<string>();
   const token = useRef<HTMLInputElement>(null);
+  const username = useRef<HTMLInputElement>(null);
+  const password = useRef<HTMLInputElement>(null);
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -143,7 +128,20 @@ export function AuthGate({ children }: { children: ReactNode }): React.JSX.Eleme
       window.removeEventListener(AUTH_REQUIRED_EVENT, onAuthRequired);
     };
   }, []);
-  async function submit(event: FormEvent<HTMLFormElement>): Promise<void> {
+  async function submitPassword(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+    const name = username.current?.value ?? "";
+    const value = password.current?.value ?? "";
+    if (password.current) password.current.value = "";
+    try {
+      await signIn({ username: name, password: value });
+      setError(undefined);
+      setState("signed-in");
+    } catch {
+      setError("用户名或密码错误。");
+    }
+  }
+  async function submitToken(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
     const value = token.current?.value ?? "";
     if (token.current) token.current.value = "";
@@ -152,20 +150,29 @@ export function AuthGate({ children }: { children: ReactNode }): React.JSX.Eleme
       setError(undefined);
       setState("signed-in");
     } catch {
-      setError("The owner token was rejected.");
+      setError("Owner token 无效。");
     }
   }
   if (state === "checking") return <PageState title="Loading" detail="Checking your Dispatcher session…" />;
   if (state === "signed-in") return <>{children}</>;
   return (
     <main className="login">
-      <form className="secure-input" onSubmit={(event) => void submit(event)}>
-        <h1>Sign in to Agent Dispatcher</h1>
-        <p>Open the single-use login link printed by <code>dispatcher serve</code>, or paste the owner token from <code>dispatcher auth token</code>.</p>
-        <label htmlFor="owner-token">Owner token</label>
-        <div><input ref={token} id="owner-token" type="password" autoComplete="off" required /><button type="submit">Sign in</button></div>
+      <div className="login-brand"><span className="brand-mark"><Icon name="branch" size={25}/></span><strong>Dispatcher</strong></div><p className="login-intro">连接你的开发工具，
+让任务有序运行。</p>
+      <form className="secure-input" onSubmit={(event) => void submitPassword(event)}>
+        <h1>登录 Agent Dispatcher</h1><p className="muted">使用本地管理员账号进入工作区。</p>
+        <label htmlFor="login-username">用户名</label>
+        <input ref={username} id="login-username" autoComplete="username" defaultValue="admin" required />
+        <label htmlFor="login-password">密码</label>
+        <div><input ref={password} id="login-password" type="password" autoComplete="current-password" required /><button type="submit" className="primary">登录</button></div>
         {error ? <small role="alert">{error}</small> : null}
       </form>
+      <details className="secure-input"><summary>使用一次性链接或 Owner token</summary>
+        <p>也可以打开服务启动时生成的一次性链接。</p>
+        <form onSubmit={(event) => void submitToken(event)}><label htmlFor="owner-token">Owner token</label>
+          <div><input ref={token} id="owner-token" type="password" autoComplete="off" required /><button type="submit" className="primary">登录</button></div>
+        </form>
+      </details>
     </main>
   );
 }
@@ -176,29 +183,30 @@ export function App(): React.JSX.Element {
   return (
     <QueryClientProvider client={queryClient}>
       <AuthGate>
-      <BrowserRouter>
-        <div className="shell">
-          <Navigation />
-          <main>
-            <Suspense fallback={<PageState title="Loading" detail="Preparing this control surface…" />}>
+      <ConsoleBoundary><BrowserRouter>
+        <ConsoleLayout>
+            <Suspense fallback={<PageState title="正在加载" detail="正在准备控制页面…" />}>
               <Routes>
                 <Route path="/overview" element={<FleetPage />} />
                 <Route path="/tasks" element={<TasksPage />} />
-                <Route path="/runners" element={<Placeholder title="Runners" description="Registered execution devices and capabilities." />} />
-                <Route path="/agents" element={<AgentsPage />} />
-                <Route path="/llm" element={<LlmPage />} />
+                <Route path="/publish" element={<PublishPage />} />
+                <Route path="/devices" element={<DevicesPage />} />
+                <Route path="/repositories" element={<RepositoriesPage />} />
+                <Route path="/runners" element={<Navigate to="/devices" replace />} />
+                <Route path="/harnesses" element={<AgentsPage />} />
+                <Route path="/agents" element={<Navigate to="/harnesses" replace />} />
+                <Route path="/models" element={<LlmPage />} />
+                <Route path="/llm" element={<Navigate to="/models" replace />} />
                 <Route path="/integrations" element={<IntegrationsPage />} />
-                <Route path="/policies" element={<Placeholder title="Policies" description="Deterministic execution and approval boundaries." />} />
-                <Route path="/diagnostics" element={<Placeholder title="Logs & Diagnostics" description="Structured system evidence without raw-log flooding." />} />
+                <Route path="/policies" element={<PoliciesPage />} />
+                <Route path="/diagnostics" element={<DiagnosticsPage />} />
                 <Route path="/settings" element={<SettingsPage />} />
                 <Route path="/setup" element={<SetupWizard />} />
                 <Route path="*" element={<Navigate to="/overview" replace />} />
               </Routes>
             </Suspense>
-            <Suspense fallback={null}><AssistantDrawer /></Suspense>
-          </main>
-        </div>
-      </BrowserRouter>
+        </ConsoleLayout>
+      </BrowserRouter></ConsoleBoundary>
       </AuthGate>
     </QueryClientProvider>
   );

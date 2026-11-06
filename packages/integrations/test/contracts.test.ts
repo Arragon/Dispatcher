@@ -279,7 +279,45 @@ describe("SCM delivery contract", () => {
     const input = request();
     input.assertAuthority = (operation) => operations.push(operation);
     await new DeliveryService(database).deliver(new FakeScmConnector(), input);
-    expect(operations).toEqual(["branch", "push", "pull-request", "complete"]);
+    expect(operations).toEqual(["branch", "push", "pull-request", "complete", "complete"]);
     database.close();
+  });
+
+  it("does not persist completion evidence after authority changes during a provider reply",async()=>{
+    const database=new DispatcherDatabase(":memory:"),adapter=new FakeScmConnector(),entered=Promise.withResolvers<void>(),gate=Promise.withResolvers<void>(),original=adapter.createOrGetPullRequest.bind(adapter),input=request();let revoked=false;
+    adapter.createOrGetPullRequest=async request=>{const result=await original(request);entered.resolve();await gate.promise;return result;};input.assertAuthority=()=>{if(revoked)throw new ConnectorError("CONFLICT","Lease revoked",{retryable:false});};
+    try{const pending=new DeliveryService(database).deliver(adapter,input),rejected=expect(pending).rejects.toMatchObject({code:"CONFLICT"});await entered.promise;revoked=true;gate.resolve();await rejected;expect(adapter.pullRequests).toHaveLength(1);expect(database.listDeliveryEvidence(input.taskId)).toEqual([]);expect(database.listEntities("scm-pr-intent")).toContainEqual(expect.objectContaining({state:"PENDING"}));}finally{gate.resolve();database.close();}
+  });
+
+  it("persists CI changes after delivery without repeating push or PR creation", async () => {
+    const database = new DispatcherDatabase(":memory:");
+    const adapter = new FakeScmConnector();
+    let state: "PENDING" | "PASSED" | "FAILED" = "PENDING";
+    adapter.getCiStatus = async () => ({ state });
+    const delivery = new DeliveryService(database);
+    const input = request();
+    input.idempotencyKey = "delivery:run-1:2";
+    await delivery.deliver(adapter, input);
+    state = "FAILED";
+    await delivery.reconcile(adapter, { taskId: "task-1", runId: "run-1", generation: 2, repository: input.repository, assertCurrent: () => undefined });
+    expect(database.listDeliveryEvidence("task-1")).toContainEqual(expect.objectContaining({ kind: "ci", state: "FAILED", revision: 2 }));
+    const repeated = await delivery.deliver(adapter, input);
+    expect(repeated.duplicate).toBe(true);
+    expect(adapter.pullRequests).toHaveLength(1);
+    expect(database.listDeliveryEvidence("task-1")).toHaveLength(3);
+    database.close();
+  });
+  it("distinguishes pushed-commit inference from a provider-reported PR head",async()=>{
+    const database=new DispatcherDatabase(":memory:"),adapter=new FakeScmConnector(),delivery=new DeliveryService(database),input=request();input.idempotencyKey="delivery:run-1:2";
+    try{
+      const first=await delivery.deliver(adapter,input),pr=first.evidence.find(e=>e.kind==="pull-request")!;
+      expect(pr.metadata.headCommitSource).toBe("push-record");
+      let reported=false;
+      const readable=adapter as typeof adapter & {getPullRequest:()=>Promise<{id:string;url:string;number:number;state:"OPEN";headCommit?:string}>};
+      readable.getPullRequest=async()=>({id:pr.externalId,url:pr.url!,number:1,state:"OPEN",...(reported?{headCommit:String(pr.metadata.headCommit)}:{})});
+      const missing=await delivery.reconcile(readable,{taskId:input.taskId,runId:input.run.id,generation:input.run.generation,repository:input.repository,assertCurrent:()=>undefined});expect(missing?.pullRequest.metadata.headCommitSource).toBe("unavailable");
+      reported=true;const confirmed=await delivery.reconcile(readable,{taskId:input.taskId,runId:input.run.id,generation:input.run.generation,repository:input.repository,assertCurrent:()=>undefined});
+      expect(confirmed?.pullRequest.metadata.headCommitSource).toBe("provider");expect(confirmed!.pullRequest.revision).toBeGreaterThan(pr.revision);
+    }finally{database.close();}
   });
 });

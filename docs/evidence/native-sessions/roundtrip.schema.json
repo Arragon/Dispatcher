@@ -1,0 +1,76 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://dispatcher.local/native-roundtrip-evidence-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "id", "capturedAt", "baseCommit", "headCommit", "tuple", "level", "provenance", "requestedModel", "stages", "artifacts", "scenarios", "verification", "limitations"],
+  "properties": {
+    "version": {"const": 1},
+    "id": {"$ref": "#/definitions/id"},
+    "capturedAt": {"$ref": "#/definitions/time"},
+    "baseCommit": {"$ref": "#/definitions/commit"},
+    "headCommit": {"$ref": "#/definitions/commit"},
+    "tuple": {"$ref": "#/definitions/tuple"},
+    "level": {"enum": ["documented", "installed-probed", "runtime-verified", "ui-roundtrip-verified"]},
+    "provenance": {"type": "object", "additionalProperties": false, "required": ["kind"], "properties": {"kind": {"enum": ["fixture", "documented", "native-runtime", "native-ui"]}}},
+    "requestedModel": {"anyOf": [{"$ref": "#/definitions/id"}, {"type": "null"}]},
+    "stages": {
+      "type": "object", "additionalProperties": false, "required": ["initial", "human", "return"],
+      "properties": {"initial": {"$ref": "#/definitions/stage"}, "human": {"$ref": "#/definitions/stage"}, "return": {"$ref": "#/definitions/stage"}}
+    },
+    "artifacts": {
+      "type": "array", "minItems": 1, "maxItems": 100,
+      "items": {
+        "type": "object", "additionalProperties": false, "required": ["id", "kind", "path", "sha256", "bytes", "origin"],
+        "properties": {
+          "id": {"$ref": "#/definitions/id"},
+          "kind": {"enum": ["marker", "screenshot", "trace", "verification"]},
+          "path": {"type": "string", "minLength": 1, "maxLength": 512, "pattern": "^(?!/)(?![A-Za-z]:)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\u0000-\\u001f]+$"},
+          "sha256": {"$ref": "#/definitions/hash"},
+          "bytes": {"type": "integer", "minimum": 1, "maximum": 10485760},
+          "origin": {"enum": ["fixture", "documented", "native-runtime", "native-ui"]}
+        }
+      }
+    },
+    "scenarios": {
+      "type": "array", "minItems": 1, "maxItems": 24,
+      "items": {"type": "object", "additionalProperties": false, "required": ["id", "outcome", "artifactRefs"], "properties": {"id": {"type": "string", "pattern": "^E(?:0[1-9]|1[0-9]|2[0-4])$"}, "outcome": {"enum": ["pass", "fail", "unverified"]}, "artifactRefs": {"$ref": "#/definitions/refs"}}}
+    },
+    "verification": {"type": "object", "additionalProperties": false, "required": ["exitCode", "commit", "artifactRef"], "properties": {"exitCode": {"type": "integer", "minimum": 0, "maximum": 255}, "commit": {"$ref": "#/definitions/commit"}, "artifactRef": {"$ref": "#/definitions/id"}}},
+    "limitations": {"type": "array", "maxItems": 50, "items": {"type": "string", "maxLength": 1000}},
+    "controlEvidence": {
+      "type": "object", "additionalProperties": false, "required": ["exclusion", "otherWriters", "readback", "releaseArtifactRef", "reclaimArtifactRef", "providerCounterexample"],
+      "properties": {
+        "exclusion": {"enum": ["native-enforced", "cooperative", "none"]}, "otherWriters": {"enum": ["none", "present", "unknown"]}, "readback": {"enum": ["complete", "partial", "unknown"]},
+        "releaseArtifactRef": {"$ref": "#/definitions/id"}, "reclaimArtifactRef": {"$ref": "#/definitions/id"},
+        "providerCounterexample": {"type": "object", "additionalProperties": false, "required": ["id", "outcome", "artifactRefs"], "properties": {"id": {"$ref": "#/definitions/id"}, "outcome": {"enum": ["pass", "fail", "unverified"]}, "artifactRefs": {"$ref": "#/definitions/refs"}}}
+      }
+    }
+  },
+  "definitions": {
+    "id": {"type": "string", "minLength": 1, "maxLength": 512, "pattern": "^[^\\u0000-\\u001f]+$"},
+    "hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "commit": {"type": "string", "pattern": "^(?:[a-f0-9]{40}|[a-f0-9]{64})$"},
+    "time": {"type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,3})?Z$"},
+    "refs": {"type": "array", "minItems": 1, "maxItems": 100, "uniqueItems": true, "items": {"$ref": "#/definitions/id"}},
+    "tuple": {
+      "type": "object", "additionalProperties": false,
+      "required": ["providerId", "product", "region", "profileId", "backendId", "runnerId", "os", "architecture", "binaryRef", "installedVersion", "schemaFingerprint", "accountFingerprint", "nativeStoreRef", "client"],
+      "properties": {
+        "providerId": {"$ref": "#/definitions/id"}, "product": {"$ref": "#/definitions/id"}, "region": {"$ref": "#/definitions/id"}, "profileId": {"$ref": "#/definitions/id"}, "backendId": {"$ref": "#/definitions/id"}, "runnerId": {"$ref": "#/definitions/id"},
+        "os": {"enum": ["darwin", "win32", "linux"]}, "architecture": {"$ref": "#/definitions/id"}, "binaryRef": {"type": "string", "pattern": "^binary:[a-zA-Z0-9._-]+$"},
+        "installedVersion": {"$ref": "#/definitions/id"}, "schemaFingerprint": {"$ref": "#/definitions/hash"}, "accountFingerprint": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"}, "nativeStoreRef": {"$ref": "#/definitions/id"},
+        "client": {"type": "object", "additionalProperties": false, "required": ["surface", "id", "version"], "properties": {"surface": {"enum": ["desktop", "web", "tui", "editor"]}, "id": {"$ref": "#/definitions/id"}, "version": {"$ref": "#/definitions/id"}}}
+      }
+    },
+    "stage": {
+      "type": "object", "additionalProperties": false,
+      "required": ["at", "taskId", "contractRevision", "runId", "generation", "sessionId", "nativeSessionId", "executionRefId", "workspaceRef", "reportedModel", "permissionFingerprint", "controlEpoch", "control", "artifactRefs"],
+      "properties": {
+        "at": {"$ref": "#/definitions/time"}, "taskId": {"$ref": "#/definitions/id"}, "contractRevision": {"type": "integer", "minimum": 1}, "runId": {"$ref": "#/definitions/id"}, "generation": {"type": "integer", "minimum": 1},
+        "sessionId": {"$ref": "#/definitions/id"}, "nativeSessionId": {"$ref": "#/definitions/id"}, "nativeThreadId": {"$ref": "#/definitions/id"}, "executionRefId": {"$ref": "#/definitions/id"}, "workspaceRef": {"type": "string", "pattern": "^workspace:[a-zA-Z0-9._-]+$"},
+        "reportedModel": {"$ref": "#/definitions/id"}, "permissionFingerprint": {"$ref": "#/definitions/id"}, "accountFingerprint": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"}, "snapshotCommit": {"$ref": "#/definitions/commit"}, "controlEpoch": {"type": "integer", "minimum": 1}, "control": {"enum": ["AUTOMATED", "HUMAN"]}, "artifactRefs": {"$ref": "#/definitions/refs"}
+      }
+    }
+  }
+}

@@ -19,9 +19,9 @@ afterEach(() => {
 describe("DispatcherDatabase", () => {
   it("migrates an empty database idempotently", () => {
     const db = new DispatcherDatabase(":memory:");
-    expect(db.schemaVersion()).toBe(3);
+    expect(db.schemaVersion()).toBe(19);
     db.migrate();
-    expect(db.schemaVersion()).toBe(3);
+    expect(db.schemaVersion()).toBe(19);
     expect(db.integrityCheck()).toBe(true);
     db.close();
   });
@@ -35,7 +35,7 @@ describe("DispatcherDatabase", () => {
       .run(JSON.stringify({ controller: { id: "legacy" } }), "2026-09-21T00:00:00.000Z");
     old.close();
     const upgraded = new DispatcherDatabase(path);
-    expect(upgraded.schemaVersion()).toBe(3);
+    expect(upgraded.schemaVersion()).toBe(19);
     expect(upgraded.getEntity("runner", "legacy-runner")).toEqual({ state: "OFFLINE" });
     expect(upgraded.handle.prepare("SELECT revision FROM config_state WHERE singleton = 1").get()).toEqual({ revision: 7 });
     expect(upgraded.integrityCheck()).toBe(true);
@@ -83,6 +83,21 @@ describe("DispatcherDatabase", () => {
     expect(db.appendRunEvent(event)).toBe(true);
     expect(db.appendRunEvent(event)).toBe(false);
     db.close();
+  });
+
+  it("updates delivery evidence with revision CAS without weakening insert deduplication", () => {
+    const path = databasePath();
+    const db = new DispatcherDatabase(path);
+    const input = { id: "ci-1", taskId: "task-1", runId: "run-1", connectorInstanceId: "github", kind: "ci", externalId: "commit-1", document: { id: "ci-1", revision: 1, state: "PENDING" }, updatedAt: "2026-10-01T00:00:00Z" };
+    expect(db.saveDeliveryEvidence(input)).toBe(true);
+    expect(db.saveDeliveryEvidence({ ...input, document: { revision: 2, state: "FAILED" } })).toBe(false);
+    expect(db.updateDeliveryEvidence({ id: input.id, externalId: "commit-2", document: { id: input.id, revision: 2, state: "FAILED" }, updatedAt: "2026-10-01T00:01:00Z" }, 1)).toBe(true);
+    expect(db.updateDeliveryEvidence({ id: input.id, externalId: "commit-stale", document: { id: input.id, revision: 2, state: "READY" }, updatedAt: "2026-10-01T00:02:00Z" }, 1)).toBe(false);
+    db.close();
+    const restored = new DispatcherDatabase(path);
+    expect(restored.listDeliveryEvidence("task-1")).toEqual([{ id: "ci-1", revision: 2, state: "FAILED" }]);
+    expect(restored.handle.prepare("SELECT external_id FROM delivery_evidence WHERE id = ?").get("ci-1")).toEqual({ external_id: "commit-2" });
+    restored.close();
   });
 
   it("atomically persists canonical task, binding, inbox and outbox state", () => {

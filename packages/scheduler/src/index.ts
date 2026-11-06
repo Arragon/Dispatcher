@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
-import type { ResourceState, Run, Task, TaskContract } from "@dispatcher/domain";
-import type { AgentAdapter } from "@dispatcher/adapters";
+import type { ResourceState, Run, Task, TaskContract, ExecutionSelection } from "@dispatcher/domain";
+import {AdapterContractError,AdapterStartError,type AgentAdapter,type AdapterStartOutcome} from "@dispatcher/adapters";
+import {isDeepStrictEqual} from "node:util";
 
 export interface DispatchRequirements {
   capabilities: string[];
@@ -70,29 +71,34 @@ export class CanonicalScheduler {
     workspacePath: string;
     generation?: number;
     runId?: string;
+    replacement?: Run;
+    executionSelection?: ExecutionSelection;
+    beforeStart?: () => Promise<void>;
+    onRunStarting?: (run: Run, decision: RoutingDecision) => void;
+    onRunStartSending?: (run: Run) => void;
+    onRunStartSettled?: (run: Run,outcome:AdapterStartOutcome) => void;
   }): Promise<{ run: Run; decision: RoutingDecision }> {
-    if (input.task.state !== "READY" && input.task.state !== "QUEUED") throw new Error(`Task ${input.task.id} is not dispatchable from ${input.task.state}`);
+    if(Boolean(input.onRunStartSending)!==Boolean(input.onRunStartSettled))throw new Error("Start admission requires both sending and settlement callbacks");
+    if (input.replacement) {
+      const previous = input.replacement;
+      if (previous.state !== "SUPERSEDED" || previous.taskId !== input.task.id || input.task.currentRunId !== previous.id || !["RUNNING", "WAITING_USER", "WAITING_RESOURCE"].includes(input.task.state)) throw new Error("Replacement requires the current stopped Run and its canonical task");
+    } else if (input.task.state !== "READY" && input.task.state !== "QUEUED") throw new Error(`Task ${input.task.id} is not dispatchable from ${input.task.state}`);
     const decision = routeDeterministically(input.requirements, this.candidates());
     if (!decision.selected) throw new Error(decision.explanation);
     const runId = input.runId ?? randomUUID();
-    const session = await decision.selected.adapter.start({
-      runId,
-      workspacePath: input.workspacePath,
-      prompt: renderTaskContract(input.contract),
-    });
     const now = new Date().toISOString();
     const run: Run = {
+      ...(input.executionSelection ? {executionSelection:structuredClone(input.executionSelection)} : {}),
       id: runId,
       taskId: input.task.id,
       runnerId: decision.selected.runnerId,
       providerId: decision.selected.providerId,
       profileId: decision.selected.profileId,
-      sessionId: session.id,
-      ...(session.providerSessionId ? { providerSessionId: session.providerSessionId } : {}),
-      resumePolicy: session.providerSessionId || decision.selected.adapter.manifest.capabilities.resume ? "same-session" : "controlled-reroute",
-      state: "ACTIVE",
-      attempt: 1,
-      generation: input.generation ?? 1,
+      sessionId: input.onRunStartSending?randomUUID():`unstarted:${runId}`,
+      resumePolicy: decision.selected.adapter.manifest.capabilities.resume ? "same-session" : "controlled-reroute",
+      state: "STARTING",
+      attempt: input.replacement ? input.replacement.attempt + 1 : 1,
+      generation: input.replacement ? input.replacement.generation + 1 : input.generation ?? 1,
       leaseId: randomUUID(),
       taskRevision: input.taskRevision,
       contractRevision: input.contract.revision,
@@ -102,16 +108,63 @@ export class CanonicalScheduler {
       lastActivityAt: now,
       verification: { state: "PENDING", commands: [...input.contract.verification] },
     };
-    return { run, decision };
+    input.onRunStarting?.(run, decision);
+    await this.startReserved({run,adapter:decision.selected.adapter,contract:input.contract,...(input.beforeStart?{beforeStart:input.beforeStart}:{}),...(input.onRunStartSending?{onRunStartSending:input.onRunStartSending}:{}),...(input.onRunStartSettled?{onRunStartSettled:input.onRunStartSettled}:{})});
+    return {run,decision};
+  }
+
+  async startReserved(input:{run:Run;adapter:AgentAdapter;contract:TaskContract;beforeStart?:()=>Promise<void>;onRunStartSending?:(run:Run)=>void;onRunStartSettled?:(run:Run,outcome:AdapterStartOutcome)=>void}):Promise<Run>{
+    if(Boolean(input.onRunStartSending)!==Boolean(input.onRunStartSettled))throw new Error("Start admission requires both sending and settlement callbacks");
+    const run=input.run,guarded=Boolean(input.onRunStartSending);
+    if(run.state!=="STARTING"||!run.worktree||guarded&&run.sessionId.startsWith("unstarted:"))throw new Error("Reserved start requires its frozen identity and workspace");
+    let invoked=false,admitted=false,creationAdmitted=false,open=true;
+    const beforeSend=()=>{
+      if(!open)throw new AdapterContractError("NATIVE_START_ADMISSION_CLOSED","Native creation admission is closed");
+      input.onRunStartSending!(run);admitted=true;
+    };
+    const beforeCreate=()=>{
+      if(!open)throw new AdapterContractError("NATIVE_START_ADMISSION_CLOSED","Native creation admission is closed");
+      input.onRunStartSending!(run);creationAdmitted=true;
+    };
+    try {
+      await input.beforeStart?.();
+      if(run.executionRef&&(!guarded||input.adapter.supportsExecutionRef!==true))throw new AdapterStartError("not-created","EXECUTION_CONTEXT_UNQUALIFIED","Native execution context requires a qualified owning backend before creation");
+      const request={runId:run.id,workspacePath:run.worktree,prompt:renderTaskContract(input.contract),execution:{generation:run.generation,attempt:run.attempt,leaseId:run.leaseId},...(guarded?{sessionId:run.sessionId,beforeSend}:{}),...(run.executionRef?{executionRef:structuredClone(run.executionRef),beforeCreate}:{}),...(run.executionSelection?{executionSelection:structuredClone(run.executionSelection)}:{})};
+      invoked=true;
+      const session=await input.adapter.start(request);
+      open=false;
+      if(guarded&&(!admitted||run.executionRef&&!creationAdmitted||session.id!==run.sessionId||session.runId!==run.id||session.profileId!==undefined&&session.profileId!==run.profileId||session.workspacePath!==run.worktree||!isDeepStrictEqual(session.execution,request.execution)||!isDeepStrictEqual(session.executionRef,run.executionRef)||!isDeepStrictEqual(session.executionSelection,run.executionSelection)))throw new AdapterContractError("NATIVE_START_IDENTITY_CHANGED","Native creation did not confirm the reserved invocation");
+      input.onRunStartSettled?.(run,{kind:"created",session});
+      run.sessionId = session.id;
+      if (session.providerSessionId) run.providerSessionId = session.providerSessionId;
+      run.resumePolicy = input.adapter.manifest.capabilities.resume ? "same-session" : "controlled-reroute";
+      run.state = "ACTIVE";
+    } catch (error) {
+      open=false;
+      const unknown = guarded?invoked&&!(error instanceof AdapterStartError&&error.creationOutcome==="not-created"):Boolean(error&&typeof error==="object"&&"code" in error&&error.code==="COMMAND_OUTCOME_UNKNOWN");
+      try{input.onRunStartSettled?.(run,{kind:unknown?"unknown":"not-created",code:unknown?"NATIVE_START_OUTCOME_UNKNOWN":error instanceof AdapterStartError?error.code:"START_NOT_SENT"});}
+      catch(settlementError){if(!unknown)throw settlementError;}
+      run.state = unknown ? "RUNNER_UNAVAILABLE" : "FAILED";
+      run.failureReason = `${unknown ? "Native start outcome unknown" : "Agent start failed"}: ${error instanceof Error ? error.message : "unknown process error"}`;
+      if (unknown) { run.resumePolicy = "manual"; run.recoveryReason = "NATIVE_OUTCOME_UNKNOWN"; }
+      else run.endedAt = new Date().toISOString();
+    }
+    return run;
   }
 }
 
 export function renderTaskContract(contract: TaskContract): string {
   return [
     `Goal: ${contract.goal}`,
+    ...(contract.instructions !== undefined ? [`Instructions:\n${contract.instructions}`] : []),
+    ...(contract.inputContext ? [`Input Context (JSON):\n${JSON.stringify(contract.inputContext)}`] : []),
     `Scope:\n${contract.scope.map((item) => `- ${item}`).join("\n")}`,
     `Acceptance criteria:\n${contract.acceptanceCriteria.map((item) => `- ${item}`).join("\n")}`,
     `Verification:\n${contract.verification.map((item) => `- ${item}`).join("\n")}`,
     `Constraints:\n${contract.constraints.map((item) => `- ${item}`).join("\n")}`,
+    ...(contract.referenceLinks?.length ? [`References:\n${contract.referenceLinks.join("\n")}`] : []),
   ].join("\n\n");
 }
+
+export * from "./model-routing.js";
+export * from "./task-classification.js";

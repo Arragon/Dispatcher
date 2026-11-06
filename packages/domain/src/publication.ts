@@ -1,0 +1,86 @@
+import {interactionRequirementSchema,type InteractionRequirement} from "./session-interaction.js";
+import type {ScmDeliverySelection} from "./delivery.js";
+import type { ModelRoutingDecision } from "./model-routing.js";
+import type {PricingSnapshotV1} from "./metering.js";
+export type NativeParameter = string | number | boolean;
+export interface TaskInputContext { packetId: string; formatVersion: string; content: string; inputHash: string }
+export interface ExecutionSelection {
+  version: 1;
+  mode: "manual" | "policy-auto" | "legacy";
+  source: "explicit" | "account-default" | "policy" | "native-default" | "legacy-config";
+  profileId: string; runnerId: string; providerId: string; backendId: string;
+  selectionType: "explicit-model" | "native-default";
+  requestedModel?: string;
+  nativeParameters: Record<string, NativeParameter>;
+  catalogRevision?: string; contextFingerprint: string; configRevision: number; selectedAt: string;
+  routingDecision?: ModelRoutingDecision;
+  /** Owning native price evidence frozen with this reviewed explicit choice. */
+  pricingSnapshot?:PricingSnapshotV1;
+  interactionRequirement?:InteractionRequirement;
+}
+export interface PublishDraftV1 {
+  schemaVersion: 1; clientDraftId: string; title?: string; description: string;
+  projectId: string; repositoryId: string; baseRef?: string; targetBranch?: string;
+  scopePaths?: string[]; acceptanceCriteria: string[]; referenceLinks?: string[]; verificationCommandIds?: string[];
+  constraints?: string[]; inputContext?: TaskInputContext;
+  startMode: "create-only" | "dispatch";
+  execution: { interactionRequirement?:InteractionRequirement; profileId?: string; selectionMode: "manual" | "policy-auto"; taskTypeId?:string; selectionType?: "explicit-model" | "native-default"; selectionSource?: "explicit" | "account-default" | "policy" | "native-default"; nativeModelId?: string; nativeParameters?: Record<string, NativeParameter>; catalogRevision?: string; contextFingerprint?: string; allowUnconfirmedModelAccess?: boolean };
+  delivery: { type: "none" | "commit" | "pull-request"; scmConnectorId?: string; targetRepository?: string; baseBranch?: string };
+}
+export interface PublicationPreview {
+  publicationId: string; revision: number; state: "PREVIEW" | "NEEDS_INPUT" | "NEEDS_REVIEW";
+  expiresAt: string; inputHash: string;
+  routingDecision?:ModelRoutingDecision;
+  taskBinding?:{taskId:string;taskRevision:number};
+  effectiveDelivery?:ScmDeliverySelection;
+  effectiveTask: { title: string; description: string; contractState: "READY" | "NEEDS_SPEC"; missing: string[] };
+  effectiveExecution?: Omit<ExecutionSelection, "version" | "mode" | "source" | "requestedModel" | "selectedAt"> & { nativeModelId?: string; selectionSource: ExecutionSelection["source"]; repositoryBaseCommit: string };
+  checks: Array<{ id: string; status: "passed" | "warning" | "blocked" | "not-required"; code?: string; message: string }>;
+  confirmation: { required: boolean; reviewHash: string; reasons: string[] }; canCommit: boolean;
+}
+export interface PublicationReceipt {
+  publicationId: string; revision: number; state: "TASK_CREATED" | "STARTING" | "STARTED" | "START_FAILED" | "OUTCOME_UNKNOWN";
+  taskId: string; runId?: string; message?: string;
+}
+const short = { type: "string", maxLength: 200 } as const;
+const strings = { type: "array", maxItems: 200, items: { type: "string", minLength: 1, maxLength: 8000 } } as const;
+export const publishDraftSchema = {
+  type: "object", additionalProperties: false, required: ["schemaVersion","clientDraftId","description","projectId","repositoryId","acceptanceCriteria","startMode","execution","delivery"],
+  properties: {
+    schemaVersion: { const: 1 }, clientDraftId: { type: "string", minLength: 1, maxLength: 200 }, title: {type:"string",maxLength:160}, description: {type:"string",minLength:1,maxLength:20000}, projectId: short, repositoryId: short,
+    baseRef: short, targetBranch: short, scopePaths: strings, acceptanceCriteria: strings, referenceLinks: strings, verificationCommandIds: strings, constraints: strings,
+    inputContext: { type: "object", additionalProperties: false, required: ["packetId", "formatVersion", "content", "inputHash"], properties: { packetId: { ...short, minLength: 1 }, formatVersion: { ...short, minLength: 1 }, content: { type: "string", maxLength: 65536 }, inputHash: { type: "string", pattern: "^[a-f0-9]{64}$" } } },
+    startMode: { enum: ["create-only","dispatch"] },
+    execution: {type:"object",additionalProperties:false,required:["selectionMode"],properties:{interactionRequirement:interactionRequirementSchema,profileId:short,taskTypeId:short,selectionMode:{enum:["manual","policy-auto"]},selectionType:{enum:["explicit-model","native-default"]},selectionSource:{enum:["explicit","account-default","policy","native-default"]},nativeModelId:short,nativeParameters:{type:"object",maxProperties:20,additionalProperties:{anyOf:[{type:"string"},{type:"number"},{type:"boolean"}]}},catalogRevision:short,contextFingerprint:short,allowUnconfirmedModelAccess:{type:"boolean"}},allOf:[{if:{required:["selectionType"],properties:{selectionType:{const:"explicit-model"}}},then:{required:["nativeModelId","catalogRevision","contextFingerprint"]}}]},
+    delivery: {type:"object",additionalProperties:false,required:["type"],properties:{type:{enum:["none","commit","pull-request"]},scmConnectorId:short,targetRepository:short,baseBranch:short}},
+  },
+} as const;
+
+export interface ModelCatalogContext {
+  profileId: string; runnerId: string; repositoryId: string; executionContextRef: string;
+  reason: "open" | "selection-change" | "preflight" | "before-start" | "manual-refresh";
+}
+export interface NativeModelPricingV1 {version:1;basis:"native-account-model";nativeParameters:Record<string,NativeParameter>;snapshot:PricingSnapshotV1}
+export interface AccountModelCatalog {
+  profileId: string; runnerId: string; providerId: string; backendId: string;
+  contextFingerprint: string; revision: string; fetchedAt: string;
+  freshness: "native-fresh" | "native-cache" | "unverified";
+  source: "cli-query" | "native-rpc" | "account-api";
+  selectionSupport: "explicit" | "native-default-only" | "unsupported";
+  entries: Array<{id:string;displayName:string;kind:"model"|"tier"|"native-auto";selectable:boolean;unsupportedReason?:string;access:"account-listed"|"unconfirmed"|"denied";parameterOptions:Record<string,NativeParameter[]>;parameterDefaults?:Record<string,NativeParameter>;billing?:{mode:"unknown"|"subscription"|"metered";pricing?:NativeModelPricingV1}}>;
+  failure?: {code:string;message:string};
+}
+
+export interface PublicationFieldError {path:string;code:"required"|"invalid"|"too-long"}
+
+export interface NativeModelDefaultReviewV1 {
+  version:1;profileId:string;repositoryId:string;modelId:string;
+  catalogRevision:string;contextFingerprint:string;allowUnconfirmedModelAccess?:boolean;
+}
+export function isNativeModelDefaultReview(value:unknown):value is NativeModelDefaultReviewV1 {
+  if(!value||typeof value!=="object"||Array.isArray(value))return false;
+  const record=value as Record<string,unknown>;
+  const fields=["profileId","repositoryId","modelId","catalogRevision","contextFingerprint"];
+  const text=(value:unknown)=>typeof value==="string"&&value.length>0&&value.length<=240&&!Array.from(value).some(character=>character.charCodeAt(0)<32||character.charCodeAt(0)===127);
+  return record.version===1&&fields.every(field=>text(record[field]))&&Object.keys(record).every(key=>["version",...fields,"allowUnconfirmedModelAccess"].includes(key))&&(record.allowUnconfirmedModelAccess===undefined||typeof record.allowUnconfirmedModelAccess==="boolean");
+}

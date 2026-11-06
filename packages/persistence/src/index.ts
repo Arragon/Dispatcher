@@ -1,14 +1,50 @@
+import {INTERACTION_REQUIREMENT_SCHEMA_NAME,upgradeInteractionRequirementWriterGate} from "./database-compatibility.js";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { isDeepStrictEqual } from "node:util";
+import { InteractionStoreError, migrateNativeInteractions } from "./interaction-store.js";
+import { assertDatabaseLocationOperational, assertDatabaseOperational, assertDatabaseSchema, CONVERGENCE_SCHEMA_NAME, CONTROL_RUNTIME_SCHEMA_NAME, GUARDED_START_SCHEMA_NAME, databaseWriterProtocol, installWriterGate, upgradeConvergenceWriterGate, upgradeControlRuntimeWriterGate, upgradeGuardedStartWriterGate } from "./database-compatibility.js";
+import { AUTOMATIC_VERIFICATION_SCHEMA_NAME, upgradeAutomaticVerificationWriterGate } from "./database-compatibility.js";
+import { USAGE_ORIGIN_SCHEMA_NAME, upgradeUsageOriginWriterGate } from "./database-compatibility.js";
+import {PRICING_ADMISSION_SCHEMA_NAME,upgradePricingAdmissionWriterGate} from "./database-compatibility.js";
+import { RHIZA_ADMISSION_SCHEMA_NAME, upgradeRhizaAdmissionWriterGate } from "./database-compatibility.js";
+import { RHIZA_JOB_SCHEMA_NAME, upgradeRhizaJobWriterGate } from "./database-compatibility.js";
+
+export * from "./interaction-store.js";
+export * from "./database-compatibility.js";
+export * from "./backup.js";
+export * from "./instance-lock.js";
+export * from "./rhiza-admissions.js";
+export * from "./model-invocations.js";
+export * from "./rhiza-observations.js";
+export * from "./rhiza-commands.js";
+export * from "./rhiza-lineage.js";
+import {migrateRhizaLineage} from "./rhiza-lineage.js";
+import {RHIZA_LINEAGE_SCHEMA_NAME,upgradeRhizaLineageWriterGate} from "./database-compatibility.js";
+import {migrateRhizaCommands} from "./rhiza-commands.js";
+import {RHIZA_CONTROL_SCHEMA_NAME,upgradeRhizaControlWriterGate} from "./database-compatibility.js";
+import {RHIZA_INPUT_SCHEMA_NAME,upgradeRhizaInputWriterGate} from "./database-compatibility.js";
+import {migrateRhizaObservations,migrateRhizaInputObservations} from "./rhiza-observations.js";
+import {RHIZA_OBSERVATION_SCHEMA_NAME,upgradeRhizaObservationWriterGate} from "./database-compatibility.js";
+import {MODEL_EVIDENCE_SCHEMA_NAME,upgradeModelEvidenceWriterGate} from "./database-compatibility.js";
 
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
+
+export interface RunReadFilter {
+  states?: readonly string[];
+  excludedStates?: readonly string[];
+  runnerId?: string;
+  profileIds?: readonly string[];
+  hasPullRequest?: true;
+}
 
 export interface Migration {
   version: number;
   name: string;
   sql: string;
+  afterApply?: (database: DispatcherDatabase) => void;
 }
 
 export const migrations: readonly Migration[] = [
@@ -187,6 +223,165 @@ export const migrations: readonly Migration[] = [
       ) STRICT;
     `,
   },
+  {
+    version: 4,
+    name: "native_session_interaction",
+    sql: `
+      CREATE TABLE native_bindings (
+        session_kind TEXT NOT NULL DEFAULT 'session' CHECK (session_kind = 'session'),
+        session_id TEXT PRIMARY KEY,
+        binding_key TEXT NOT NULL UNIQUE,
+        profile_id TEXT NOT NULL,
+        execution_ref_id TEXT NOT NULL,
+        document_json TEXT NOT NULL,
+        FOREIGN KEY(session_kind, session_id) REFERENCES entities(kind, id)
+      ) STRICT;
+      CREATE TABLE session_controls (
+        session_kind TEXT NOT NULL DEFAULT 'session' CHECK (session_kind = 'session'),
+        session_id TEXT PRIMARY KEY,
+        active_run_id TEXT NOT NULL,
+        epoch INTEGER NOT NULL CHECK (epoch >= 1),
+        revision INTEGER NOT NULL CHECK (revision >= 1),
+        state TEXT NOT NULL CHECK (state IN ('AUTOMATED','HANDOFF_REQUESTED','HUMAN','RECONCILING','CONFLICT')),
+        document_json TEXT NOT NULL,
+        FOREIGN KEY(session_kind, session_id) REFERENCES entities(kind, id)
+      ) STRICT;
+      CREATE TABLE interaction_commands (
+        session_kind TEXT NOT NULL DEFAULT 'session' CHECK (session_kind = 'session'),
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        semantic_hash TEXT NOT NULL,
+        state TEXT NOT NULL CHECK (state IN ('RESERVED','SENDING','ACKNOWLEDGED','UNKNOWN','FAILED','CANCELLED')),
+        revision INTEGER NOT NULL CHECK (revision >= 1),
+        document_json TEXT NOT NULL,
+        FOREIGN KEY(session_kind, session_id) REFERENCES entities(kind, id)
+      ) STRICT;
+      CREATE INDEX interaction_commands_pending_idx ON interaction_commands(session_id, state);
+      CREATE TABLE native_observations (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL REFERENCES native_bindings(session_id),
+        observer_generation INTEGER NOT NULL CHECK (observer_generation >= 1),
+        observer_sequence INTEGER NOT NULL CHECK (observer_sequence >= 1),
+        control_epoch INTEGER NOT NULL CHECK (control_epoch >= 1),
+        document_json TEXT NOT NULL,
+        UNIQUE(id, session_id)
+      ) STRICT;
+      CREATE TABLE native_observation_checkpoints (
+        session_id TEXT PRIMARY KEY REFERENCES native_bindings(session_id),
+        observation_id TEXT NOT NULL REFERENCES native_observations(id),
+        observer_generation INTEGER NOT NULL CHECK (observer_generation >= 1),
+        observer_sequence INTEGER NOT NULL CHECK (observer_sequence >= 1),
+        control_epoch INTEGER NOT NULL CHECK (control_epoch >= 1),
+        FOREIGN KEY(observation_id, session_id) REFERENCES native_observations(id, session_id)
+      ) STRICT;
+      CREATE TABLE control_audit (
+        sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+        id TEXT NOT NULL UNIQUE,
+        session_id TEXT NOT NULL REFERENCES session_controls(session_id),
+        document_json TEXT NOT NULL
+      ) STRICT;
+      CREATE TABLE native_identity_diagnostics (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        code TEXT NOT NULL,
+        binding_key TEXT
+      ) STRICT;
+      CREATE INDEX native_identity_diagnostics_key_idx ON native_identity_diagnostics(binding_key);
+    `,
+    afterApply: migrateNativeInteractions,
+  },
+  {
+    version: 5,
+    name: "minimum_writer_protocol",
+    sql: "",
+    afterApply: database => installWriterGate(database.handle),
+  },
+  {
+    version: 6,
+    name: CONVERGENCE_SCHEMA_NAME,
+    sql: "",
+    afterApply: database => upgradeConvergenceWriterGate(database.handle),
+  },
+  {
+    version: 7,
+    name: CONTROL_RUNTIME_SCHEMA_NAME,
+    sql: "",
+    afterApply: database => upgradeControlRuntimeWriterGate(database.handle),
+  },
+  {
+    version: 8,
+    name: GUARDED_START_SCHEMA_NAME,
+    sql: "",
+    afterApply: database => upgradeGuardedStartWriterGate(database.handle),
+  },
+  {
+    version: 9,
+    name: AUTOMATIC_VERIFICATION_SCHEMA_NAME,
+    sql: "",
+    afterApply: database => upgradeAutomaticVerificationWriterGate(database.handle),
+  },
+  {
+    version: 10,
+    name: USAGE_ORIGIN_SCHEMA_NAME,
+    sql: "",
+    afterApply: database => upgradeUsageOriginWriterGate(database.handle),
+  },
+  {
+    version: 11,
+    name: PRICING_ADMISSION_SCHEMA_NAME,
+    sql: "",
+    afterApply: database => upgradePricingAdmissionWriterGate(database.handle),
+  },
+  {
+    version:12,
+    name: RHIZA_ADMISSION_SCHEMA_NAME,
+    sql: `
+      CREATE TABLE rhiza_admissions (
+        client_id TEXT NOT NULL,
+        command_scope TEXT NOT NULL CHECK (command_scope = 'jobs.submit'),
+        request_id TEXT NOT NULL,
+        request_hash TEXT NOT NULL CHECK (length(request_hash) = 64 AND request_hash NOT GLOB '*[^a-f0-9]*'),
+        repository_id TEXT NOT NULL,
+        profile_id TEXT NOT NULL,
+        authority_id TEXT NOT NULL,
+        job_id TEXT NOT NULL UNIQUE,
+        task_id TEXT NOT NULL UNIQUE,
+        receipt_json TEXT NOT NULL CHECK (json_valid(receipt_json)),
+        PRIMARY KEY (client_id, command_scope, request_id)
+      ) STRICT;
+      CREATE TRIGGER rhiza_admission_no_replace BEFORE INSERT ON rhiza_admissions
+        WHEN EXISTS (SELECT 1 FROM rhiza_admissions
+          WHERE (client_id=NEW.client_id AND command_scope=NEW.command_scope AND request_id=NEW.request_id)
+            OR job_id=NEW.job_id OR task_id=NEW.task_id)
+        BEGIN SELECT RAISE(ABORT,'RHIZA_RECEIPT_IMMUTABLE'); END;
+      CREATE TRIGGER rhiza_admission_no_update BEFORE UPDATE ON rhiza_admissions
+        BEGIN SELECT RAISE(ABORT,'RHIZA_RECEIPT_IMMUTABLE'); END;
+      CREATE TRIGGER rhiza_admission_no_delete BEFORE DELETE ON rhiza_admissions
+        BEGIN SELECT RAISE(ABORT,'RHIZA_RECEIPT_IMMUTABLE'); END;
+    `,
+    afterApply: database => upgradeRhizaAdmissionWriterGate(database.handle),
+  },
+  {
+    version:13,
+    name: RHIZA_JOB_SCHEMA_NAME,
+    sql: "",
+    afterApply: database => upgradeRhizaJobWriterGate(database.handle),
+  },
+  {version:14,name:MODEL_EVIDENCE_SCHEMA_NAME,sql:`
+    CREATE TABLE native_model_invocations(id TEXT PRIMARY KEY,run_id TEXT NOT NULL,session_id TEXT NOT NULL,record_json TEXT NOT NULL CHECK(json_valid(record_json)),sequence INTEGER NOT NULL UNIQUE CHECK(sequence>0)) WITHOUT ROWID;
+    CREATE INDEX native_model_invocations_run ON native_model_invocations(run_id);
+    CREATE TRIGGER native_model_invocations_immutable_update BEFORE UPDATE ON native_model_invocations BEGIN SELECT RAISE(ABORT,'MODEL_INVOCATION_IMMUTABLE'); END;
+    CREATE TRIGGER native_model_invocations_immutable_delete BEFORE DELETE ON native_model_invocations BEGIN SELECT RAISE(ABORT,'MODEL_INVOCATION_IMMUTABLE'); END;
+    CREATE TRIGGER native_model_invocations_immutable_replace BEFORE INSERT ON native_model_invocations WHEN EXISTS(SELECT 1 FROM native_model_invocations WHERE id=NEW.id OR sequence=NEW.sequence) BEGIN SELECT RAISE(ABORT,'MODEL_INVOCATION_IMMUTABLE'); END;
+  `,afterApply:database=>upgradeModelEvidenceWriterGate(database.handle)},
+  {version:15,name:RHIZA_OBSERVATION_SCHEMA_NAME,sql:"",afterApply:database=>{migrateRhizaObservations(database.handle);upgradeRhizaObservationWriterGate(database.handle);}},
+  {version:16,name:RHIZA_CONTROL_SCHEMA_NAME,sql:"",afterApply:database=>{migrateRhizaCommands(database.handle);upgradeRhizaControlWriterGate(database.handle);}},
+  {version:17,name:RHIZA_INPUT_SCHEMA_NAME,sql:`
+   CREATE TRIGGER rhiza_control_event_insert AFTER INSERT ON session_controls BEGIN UPDATE rhiza_job_revisions SET revision=revision+1,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE job_id IN(SELECT a.job_id FROM rhiza_admissions a JOIN canonical_tasks t ON t.id=a.task_id JOIN entities r ON r.kind='run' AND r.id=json_extract(t.document_json,'$.currentRunId') WHERE json_extract(r.document_json,'$.sessionId')=NEW.session_id); END;
+   CREATE TRIGGER rhiza_control_event_update AFTER UPDATE ON session_controls BEGIN UPDATE rhiza_job_revisions SET revision=revision+1,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE job_id IN(SELECT a.job_id FROM rhiza_admissions a JOIN canonical_tasks t ON t.id=a.task_id JOIN entities r ON r.kind='run' AND r.id=json_extract(t.document_json,'$.currentRunId') WHERE json_extract(r.document_json,'$.sessionId') IN (NEW.session_id,OLD.session_id)); END;
+  `,afterApply:database=>{migrateRhizaInputObservations(database.handle);upgradeRhizaInputWriterGate(database.handle);}},
+  {version:18,name:RHIZA_LINEAGE_SCHEMA_NAME,sql:"",afterApply:database=>{migrateRhizaLineage(database.handle);upgradeRhizaLineageWriterGate(database.handle);}},
+  {version:19,name:INTERACTION_REQUIREMENT_SCHEMA_NAME,sql:"",afterApply:database=>upgradeInteractionRequirementWriterGate(database.handle)},
 ] as const;
 
 export class MigrationError extends Error {
@@ -295,15 +490,29 @@ function rowObject(value: unknown): Record<string, unknown> | undefined {
 
 export class DispatcherDatabase {
   readonly handle: DatabaseSync;
+  private savepointSequence = 0;
+  private writerProtocol = 0;
 
   constructor(readonly path: string, appliedMigrations: readonly Migration[] = migrations) {
+    assertDatabaseLocationOperational(path);
     if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
     this.handle = new DatabaseSync(path, { timeout: 5_000, enableForeignKeyConstraints: true });
-    this.handle.exec("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;");
-    this.migrate(appliedMigrations);
+    try {
+      assertDatabaseSchema(this.handle,appliedMigrations);
+      assertDatabaseOperational(this.handle);
+      this.handle.exec("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;");
+      this.migrate(appliedMigrations);
+    } catch (error) {
+      this.handle.close();
+      throw error;
+    }
   }
 
   migrate(appliedMigrations: readonly Migration[] = migrations): void {
+    assertDatabaseSchema(this.handle,appliedMigrations);
+    assertDatabaseOperational(this.handle);
+    this.writerProtocol=appliedMigrations.some(m=>m.version===5&&m.name==="minimum_writer_protocol")?databaseWriterProtocol(this.handle):0;
+    this.handle.function("dispatcher_writer_protocol",{deterministic:true},()=>this.writerProtocol);
     this.handle.exec(`
       CREATE TABLE IF NOT EXISTS schema_migrations (
         version INTEGER PRIMARY KEY,
@@ -316,28 +525,49 @@ export class DispatcherDatabase {
     );
     for (const migration of [...appliedMigrations].sort((left, right) => left.version - right.version)) {
       if (existing.has(migration.version)) continue;
+      const previousWriterProtocol=this.writerProtocol;
       try {
         this.transaction(() => {
+          if(migration.version===6&&migration.name===CONVERGENCE_SCHEMA_NAME)this.writerProtocol=2;
+          if(migration.version===7&&migration.name===CONTROL_RUNTIME_SCHEMA_NAME)this.writerProtocol=3;
+          if(migration.version===8&&migration.name===GUARDED_START_SCHEMA_NAME)this.writerProtocol=4;
+          if(migration.version===9&&migration.name===AUTOMATIC_VERIFICATION_SCHEMA_NAME)this.writerProtocol=5;
+          if(migration.version===10&&migration.name===USAGE_ORIGIN_SCHEMA_NAME)this.writerProtocol=6;
+          if(migration.version===11&&migration.name===PRICING_ADMISSION_SCHEMA_NAME)this.writerProtocol=7;
+          if(migration.version===12&&migration.name===RHIZA_ADMISSION_SCHEMA_NAME)this.writerProtocol=8;
+          if(migration.version===13&&migration.name===RHIZA_JOB_SCHEMA_NAME)this.writerProtocol=9;
+          if(migration.version===14&&migration.name===MODEL_EVIDENCE_SCHEMA_NAME)this.writerProtocol=10;
+          if(migration.version===15&&migration.name===RHIZA_OBSERVATION_SCHEMA_NAME)this.writerProtocol=11;
+          if(migration.version===16&&migration.name===RHIZA_CONTROL_SCHEMA_NAME)this.writerProtocol=12;
+          if(migration.version===17&&migration.name===RHIZA_INPUT_SCHEMA_NAME)this.writerProtocol=13;
+          if(migration.version===18&&migration.name===RHIZA_LINEAGE_SCHEMA_NAME)this.writerProtocol=14;
+          if(migration.version===19&&migration.name===INTERACTION_REQUIREMENT_SCHEMA_NAME)this.writerProtocol=15;
           this.handle.exec(migration.sql);
+          migration.afterApply?.(this);
           this.handle
             .prepare("INSERT INTO schema_migrations(version, name, applied_at) VALUES (?, ?, ?)")
             .run(migration.version, migration.name, new Date().toISOString());
         });
       } catch (error) {
+        this.writerProtocol=previousWriterProtocol;
         throw new MigrationError(migration, error);
       }
     }
   }
 
   transaction<T>(operation: () => T): T {
-    if (this.handle.isTransaction) return operation();
-    this.handle.exec("BEGIN IMMEDIATE");
+    // A caller may catch an inner operation's error and still commit its work.
+    // Savepoints keep that failed operation atomic without aborting the caller.
+    const savepoint = this.handle.isTransaction ? `dispatcher_${++this.savepointSequence}` : undefined;
+    const previousWriterProtocol=this.writerProtocol;
+    this.handle.exec(savepoint ? `SAVEPOINT ${savepoint}` : "BEGIN IMMEDIATE");
     try {
       const result = operation();
-      this.handle.exec("COMMIT");
+      this.handle.exec(savepoint ? `RELEASE SAVEPOINT ${savepoint}` : "COMMIT");
       return result;
     } catch (error) {
-      this.handle.exec("ROLLBACK");
+      this.handle.exec(savepoint ? `ROLLBACK TO SAVEPOINT ${savepoint}; RELEASE SAVEPOINT ${savepoint}` : "ROLLBACK");
+      this.writerProtocol=previousWriterProtocol;
       throw error;
     }
   }
@@ -347,7 +577,52 @@ export class DispatcherDatabase {
     return Number(row?.version ?? 0);
   }
 
+  createEntityIfAbsent(kind: string, id: string, document: JsonValue, updatedAt = new Date().toISOString()): boolean {
+    return this.handle.prepare("INSERT INTO entities(kind, id, document_json, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(kind, id) DO NOTHING").run(kind, id, encode(document), updatedAt).changes === 1;
+  }
+
   saveEntity(kind: string, id: string, document: JsonValue, updatedAt = new Date().toISOString()): void {
+    const previous=["run","session","adapter-session","model-routing-decision","rhiza-job","task-rhiza-binding"].includes(kind)?this.getEntity<JsonValue>(kind,id):undefined;
+    const before=previous&&typeof previous==="object"&&!Array.isArray(previous)?previous:undefined;
+    const after=document&&typeof document==="object"&&!Array.isArray(document)?document:undefined;
+    if((kind==="rhiza-job"||kind==="task-rhiza-binding")&&before){
+      const frozen=(value:Record<string,JsonValue>)=>Object.fromEntries(Object.entries(value).filter(([key])=>kind!=="rhiza-job"||key!=="dispatch"));
+      if(!after||!isDeepStrictEqual(frozen(before),frozen(after)))throw Object.assign(new Error("Frozen RHIZA job authority cannot change"),{code:"IMMUTABLE_RHIZA_JOB"});
+    }
+    if((kind==="session"||kind==="adapter-session")&&before?.nativeBinding){
+      const binding=before.nativeBinding as Record<string,JsonValue>;
+      const projection=kind==="session"?"nativeSessionId":"providerSessionId";
+      if(!after||!isDeepStrictEqual(before.nativeBinding,after.nativeBinding)||after[projection]!==binding.nativeSessionId||before.profileId!==after.profileId||before.id!==after.id)throw new InteractionStoreError("NATIVE_IDENTITY_CHANGED");
+      const frozenFields=kind==="session"?["providerId",...(before.executionRef!==undefined?["executionRef"]:[])]:["runId","backendId"];
+      if(frozenFields.some(field=>!isDeepStrictEqual(before[field],after[field])))throw new InteractionStoreError("NATIVE_IDENTITY_CHANGED");
+      if(kind==="session"&&after.executionRef&&typeof after.executionRef==="object"&&!Array.isArray(after.executionRef)&&after.executionRef.id!==binding.executionRefId)throw new InteractionStoreError("NATIVE_IDENTITY_CHANGED");
+    }
+    if(kind==="adapter-session"){
+      if(["execution","executionRef"].some(field=>before?.[field]!==undefined&&!isDeepStrictEqual(before[field],after?.[field])))throw new ImmutableExecutionContextError();
+      const fields=["executionSelection","modelSelection","legacyModel"];
+      const bound=fields.some(field=>before?.[field]!==undefined);
+      if(fields.filter(field=>after?.[field]!==undefined).length>1||fields.some(field=>before?.[field]!==undefined&&!isDeepStrictEqual(before[field],after?.[field]))||bound&&["id","profileId","backendId","runId","workspacePath"].some(field=>!isDeepStrictEqual(before?.[field],after?.[field])))throw new ImmutableSessionSelectionError();
+    }
+    if(kind==="model-routing-decision"&&before){
+      const frozen=(value:Record<string,JsonValue>)=>Object.fromEntries(Object.entries(value).filter(([key])=>!["status","confirmation","runId","consumedAt"].includes(key)));
+      const same=isDeepStrictEqual(before,after);
+      if(!same&&(!after||before.status!=="ready"||after.status!=="consumed"||typeof after.runId!=="string"||typeof after.consumedAt!=="string"||!after.confirmation||!isDeepStrictEqual(frozen(before),frozen(after))))throw new ImmutableRoutingDecisionError();
+    }
+    if(kind === "run") {
+      if(after?.executionSelection!==undefined&&after.modelSelection!==undefined)throw new ImmutableRunSelectionError();
+      const sessionId=before?.sessionId??after?.sessionId;
+      const session=typeof sessionId==="string"?this.getEntity<JsonValue>("session",sessionId):undefined;
+      const binding=session&&typeof session==="object"&&!Array.isArray(session)?session.nativeBinding:undefined;
+      if(binding&&typeof binding==="object"&&!Array.isArray(binding)&&(!after||after.providerSessionId!==binding.nativeSessionId||after.profileId!==binding.profileId||after.runnerId!==binding.runnerId||after.sessionId!==sessionId||before?.providerId!==undefined&&before.providerId!==after.providerId))throw new InteractionStoreError("NATIVE_IDENTITY_CHANGED");
+      const selection=previous && typeof previous === "object" && !Array.isArray(previous) ? previous.modelSelection : undefined;
+      const next=document && typeof document === "object" && !Array.isArray(document) ? document.modelSelection : undefined;
+      if(selection!==undefined && JSON.stringify(selection)!==JSON.stringify(next)) {
+        throw new ImmutableRunSelectionError();
+      }
+      if(before?.executionSelection!==undefined&&!isDeepStrictEqual(before.executionSelection,after?.executionSelection))throw new ImmutableRunSelectionError();
+      if(before?.modelRoutingDecision!==undefined&&!isDeepStrictEqual(before.modelRoutingDecision,after?.modelRoutingDecision))throw new ImmutableRoutingDecisionError();
+      if(before?.executionRef!==undefined&&!isDeepStrictEqual(before.executionRef,after?.executionRef))throw new ImmutableExecutionContextError();
+    }
     this.handle
       .prepare(`
         INSERT INTO entities(kind, id, document_json, updated_at) VALUES (?, ?, ?, ?)
@@ -364,6 +639,35 @@ export class DispatcherDatabase {
   listEntities<T extends JsonValue>(kind: string): T[] {
     const rows = this.handle.prepare("SELECT document_json FROM entities WHERE kind = ? ORDER BY updated_at DESC").all(kind);
     return rows.map((value) => decode(String(rowObject(value)?.document_json)) as T);
+  }
+
+  /** Select candidate rows before decoding; callers retain work eligibility and authority checks. */
+  listRunsMatching<T extends JsonValue>(filters: readonly RunReadFilter[]): T[] {
+    if (!filters.length) return [];
+    const parameters: string[] = [];
+    const scopes = filters.map(filter => {
+      const clauses: string[] = [];
+      for (const [field, values, excluded] of [["state", filter.states, false], ["state", filter.excludedStates, true], ["profileId", filter.profileIds, false]] as const) {
+        if (values === undefined) continue;
+        if (!values.length) { if (!excluded) clauses.push("0"); continue; }
+        clauses.push(`COALESCE(json_extract(document_json,'$.${field}'),'') ${excluded ? "NOT IN" : "IN"} (${values.map(() => "?").join(",")})`);
+        parameters.push(...values);
+      }
+      if (filter.runnerId !== undefined) { clauses.push("json_extract(document_json,'$.runnerId')=?"); parameters.push(filter.runnerId); }
+      if (filter.hasPullRequest) clauses.push("COALESCE(json_extract(document_json,'$.prUrl'),'') != ''");
+      return `(${clauses.length ? clauses.join(" AND ") : "1"})`;
+    });
+    const rows = this.handle.prepare(`SELECT document_json FROM entities WHERE kind='run' AND (${scopes.join(" OR ")}) ORDER BY updated_at DESC`).all(...parameters);
+    return rows.map(value => decode(String(rowObject(value)?.document_json)) as T);
+  }
+
+  listTaskRunsPage<T extends JsonValue>(taskId:string,offset=0,limit=20):{runs:T[];offset:number;limit:number;total:number;hasActiveRun:boolean;nextOffset?:number} {
+    if(!Number.isSafeInteger(offset)||offset<0||!Number.isSafeInteger(limit)||limit<1||limit>100||!Number.isSafeInteger(offset+limit))throw new Error("INVALID_RUN_PAGE");
+    const scope="kind='run' AND json_extract(document_json,'$.taskId')=?";
+    const counts=rowObject(this.handle.prepare(`SELECT COUNT(*) AS total, SUM(CASE WHEN COALESCE(json_extract(document_json,'$.state'),'UNKNOWN') NOT IN ('COMPLETE','FAILED','CANCELLED','SUPERSEDED') THEN 1 ELSE 0 END) AS active FROM entities WHERE ${scope}`).get(taskId))!;
+    const rows=this.handle.prepare(`SELECT document_json FROM entities WHERE ${scope} ORDER BY updated_at DESC,id ASC LIMIT ? OFFSET ?`).all(taskId,limit,offset);
+    const runs=rows.map(value=>decode(String(rowObject(value)?.document_json)) as T),total=Number(counts.total);
+    return {runs,offset,limit,total,hasActiveRun:Number(counts.active??0)>0,...(offset+runs.length<total?{nextOffset:offset+runs.length}:{})};
   }
 
   appendRunEvent(event: {
@@ -794,6 +1098,15 @@ export class DispatcherDatabase {
     return result.changes === 1;
   }
 
+  updateDeliveryEvidence(input: { id: string; externalId: string; document: JsonValue; updatedAt: string }, baseRevision: number): boolean {
+    if (!input.document || typeof input.document !== "object" || Array.isArray(input.document) || input.document.revision !== baseRevision + 1) throw new Error("Delivery evidence update must increment its revision");
+    const result = this.handle.prepare(`
+      UPDATE delivery_evidence SET external_id = ?, document_json = ?, updated_at = ?
+      WHERE id = ? AND json_extract(document_json, '$.revision') = ?
+    `).run(input.externalId, encode(input.document), input.updatedAt, input.id, baseRevision);
+    return result.changes === 1;
+  }
+
   listDeliveryEvidence<T extends JsonValue>(taskId: string): T[] {
     const rows = this.handle.prepare("SELECT document_json FROM delivery_evidence WHERE task_id = ? ORDER BY updated_at").all(taskId);
     return rows.map((value) => decode(String(rowObject(value)?.document_json)) as T);
@@ -857,4 +1170,20 @@ export class DispatcherDatabase {
   close(): void {
     this.handle.close();
   }
+}
+export class ImmutableSessionSelectionError extends Error {
+  readonly code="IMMUTABLE_SESSION_SELECTION";
+  constructor(){super("A bound session model selection and execution owner cannot change");this.name="ImmutableSessionSelectionError";}
+}
+export class ImmutableRunSelectionError extends Error {
+  readonly code="IMMUTABLE_RUN_SELECTION";
+  constructor(){super("A bound Run model/effort/pricing selection cannot change or be removed");this.name="ImmutableRunSelectionError";}
+}
+export class ImmutableRoutingDecisionError extends Error {
+  readonly code="IMMUTABLE_ROUTING_DECISION";
+  constructor(){super("A frozen routing decision and its consumed Run reference cannot change");this.name="ImmutableRoutingDecisionError";}
+}
+export class ImmutableExecutionContextError extends Error {
+  readonly code="IMMUTABLE_EXECUTION_CONTEXT";
+  constructor(){super("Run execution context is immutable");this.name="ImmutableExecutionContextError";}
 }

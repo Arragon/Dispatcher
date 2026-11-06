@@ -3,10 +3,22 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run test"
+  },
+  "dependencies": {
+    "@agentclientprotocol/sdk": "1.8.0",
+    "@dispatcher/domain": "workspace:*",
+    "@dispatcher/shared": "workspace:*",
+    "vscode-jsonrpc": "10.0.0",
+    "zod": "4.6.7"
   }
 }

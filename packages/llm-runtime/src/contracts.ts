@@ -1,6 +1,6 @@
 export type LlmProtocol = "openai-responses" | "openai-chat" | "anthropic-messages" | "azure-openai-v1";
 
-export type LlmRole = "command_parser" | "config_assistant" | "runtime_summarizer" | "error_classifier";
+export type LlmRole = "command_parser" | "config_assistant" | "runtime_summarizer" | "error_classifier" | "task_classifier";
 
 export type LlmHealthStatus =
   | "HEALTHY"
@@ -26,7 +26,8 @@ export type LlmErrorCode =
   | "SCHEMA_MISMATCH"
   | "MODEL_MISSING"
   | "UNSUPPORTED_CAPABILITY"
-  | "NO_AVAILABLE_PROFILE";
+  | "NO_AVAILABLE_PROFILE"
+  | "SELECTION_CHANGED";
 
 export interface LlmEndpoint {
   id: string;
@@ -77,6 +78,7 @@ export interface LlmToolDefinition {
 export interface LlmRequest {
   messages: LlmMessage[];
   jsonSchema?: Record<string, unknown>;
+  structuredOutputMode?:"required"|"preferred";
   tools?: LlmToolDefinition[];
   maxOutputTokens?: number;
   temperature?: number;
@@ -92,7 +94,14 @@ export interface LlmResponse {
   structured?: unknown;
   usage: LlmUsage;
   providerRequestId?: string;
+  provenance?: LlmCallProvenance;
 }
+export interface LlmCallAttempt {
+  profileId:string;endpointId:string;model:string;protocol:LlmProtocol;
+  startedAt:string;completedAt:string;outcome:"succeeded"|"failed";errorCode?:LlmErrorCode;
+  usage?:LlmUsage;providerRequestId?:string;
+}
+export interface LlmCallProvenance {role:LlmRole;profileId?:string;model?:string;attempts:LlmCallAttempt[]}
 
 export interface LlmCapabilities {
   structuredOutput: boolean;
@@ -140,6 +149,9 @@ export interface LlmProtocolAdapter {
 }
 
 export class LlmRuntimeError extends Error {
+  provenance?:LlmCallProvenance;
+  usage?:LlmUsage;
+  providerRequestId?:string;
   constructor(
     readonly code: LlmErrorCode,
     message: string,

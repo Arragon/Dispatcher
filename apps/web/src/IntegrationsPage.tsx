@@ -1,31 +1,42 @@
-import { useState } from "react";
+import { lazy, Suspense, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { Drawer } from "./Drawer.js";
+import { Icon, Notice, Tabs } from "./ui.js";
+const SettingsPage=lazy(()=>import("./SettingsPage.js"));
 import { api } from "./api.js";
 
 interface Connector { id: string; displayName: string; kind: string; health: string; checkedAt: string; source?: string; reason?: string; pendingOutbox?: number; deadLetters?: number; capabilities?: string[] }
-interface DeadLetter { id: string; connectorInstanceId: string; source: "inbox" | "outbox" | "reconcile"; sourceId: string; reason: string; createdAt: string }
+interface DeadLetter { id: string; connectorInstanceId: string; source: "inbox" | "outbox" | "reconcile"; sourceId: string; reason: string; createdAt: string; canRetry?:boolean }
 
 export default function IntegrationsPage(): React.JSX.Element {
   const connectors = useQuery({ queryKey: ["fleet-connectors"], queryFn: () => api<{ connectors: Connector[] }>("/api/fleet/connectors"), retry: false });
   const deadLetters = useQuery({ queryKey: ["connector-dead-letters"], queryFn: () => api<{ deadLetters: DeadLetter[] }>("/api/connectors/dead-letters"), retry: false });
-  const [message, setMessage] = useState("Recovery actions are explicit and auditable.");
+  const [view,setView]=useState("connections");
+  const [editor,setEditor]=useState<{id?:string}>();
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("同步失败会独立记录，可在这里检查并恢复。");
 
   async function refresh(): Promise<void> { await Promise.all([connectors.refetch(), deadLetters.refetch()]); }
-  async function test(id: string): Promise<void> { try { const result = await api<{ probe: { health: string; checkedAt: string } }>(`/api/connectors/${id}/test`, { method: "POST" }); setMessage(`${id}: ${result.probe.health} at ${new Date(result.probe.checkedAt).toLocaleTimeString()}`); await connectors.refetch(); } catch (error) { setMessage(error instanceof Error ? error.message : "Probe failed"); } }
-  async function reconcile(id: string): Promise<void> { try { const result = await api<{ applied: number; conflicts: number }>(`/api/connectors/${id}/reconcile`, { method: "POST" }); setMessage(`${id}: reconciled ${result.applied}, conflicts ${result.conflicts}`); await refresh(); } catch (error) { setMessage(error instanceof Error ? error.message : "Reconcile failed"); } }
-  async function retry(id: string): Promise<void> { try { await api(`/api/connectors/dead-letters/${id}/retry`, { method: "POST" }); setMessage(`${id}: queued for retry`); await deadLetters.refetch(); } catch (error) { setMessage(error instanceof Error ? error.message : "Retry failed"); } }
+  async function test(id: string): Promise<void> { if (busy) return; setBusy(true); try { const result = await api<{ probe: { health: string; checkedAt: string } }>(`/api/connectors/${encodeURIComponent(id)}/test`, { method: "POST" }); setMessage(`${id}: ${result.probe.health} at ${new Date(result.probe.checkedAt).toLocaleTimeString()}`); await connectors.refetch(); } catch (error) { setMessage(error instanceof Error ? error.message : "连接测试失败"); } finally { setBusy(false); } }
+  async function reconcile(id: string): Promise<void> { if (busy) return; setBusy(true); try { const result = await api<{ applied: number; conflicts: number }>(`/api/connectors/${encodeURIComponent(id)}/reconcile`, { method: "POST" }); setMessage(`${id}：已同步 ${result.applied} 项，冲突 ${result.conflicts} 项`); await refresh(); } catch (error) { setMessage(error instanceof Error ? error.message : "同步失败"); } finally { setBusy(false); } }
+  async function retry(id: string): Promise<void> { if (busy) return; setBusy(true); try { await api(`/api/connectors/dead-letters/${encodeURIComponent(id)}/retry`, { method: "POST" }); setMessage(`${id}：已返回重试队列，等待投递`); await deadLetters.refetch(); } catch (error) { setMessage(error instanceof Error ? error.message : "重试失败"); } finally { setBusy(false); } }
   async function resolveDeadLetter(id: string): Promise<void> {
-    if (!window.confirm(`Resolve dead letter ${id}? This removes it from the active recovery queue.`)) return;
-    try { await api(`/api/connectors/dead-letters/${id}/resolve`, { method: "POST" }); setMessage(`${id}: marked resolved`); await refresh(); }
-    catch (error) { setMessage(error instanceof Error ? error.message : "Resolve failed"); }
+    if (busy) return;
+    if (!window.confirm(`将 ${id} 标记为已处理？它将移出活动恢复队列，此操作不代表同步成功。`)) return;
+    setBusy(true);
+    try { await api(`/api/connectors/dead-letters/${encodeURIComponent(id)}/resolve`, { method: "POST" }); setMessage(`${id}：已标记处理，不代表同步成功`); await refresh(); }
+    catch (error) { setMessage(error instanceof Error ? error.message : "处理失败"); } finally { setBusy(false); }
   }
 
-  if (connectors.isLoading || deadLetters.isLoading) return <div className="page-state">Loading connector registry…</div>;
-  if (connectors.error || deadLetters.error || !connectors.data || !deadLetters.data) return <div className="page-state error">Connector registry is unavailable.</div>;
+  if (connectors.isLoading) return <div className="page-state">正在读取集成…</div>;
+  if (connectors.error || !connectors.data) return <div className="page-state error" role="alert">集成读取失败。<button disabled={busy} onClick={() => void refresh()}>重试</button></div>;
   return <section>
-    <header className="page-header"><div><p className="eyebrow">Capability registry</p><h1>Integrations</h1><p>Connector failures remain isolated from agent health and expose their source, backlog and recovery state.</p></div></header>
-    <div className="panel"><div className="runner-list">{connectors.data.connectors.map((connector) => <article className="connector-card" key={connector.id}><div><strong>{connector.displayName}</strong><p>{connector.kind} · {connector.id}</p></div><span className={`status status-${connector.health.toLowerCase()}`}>{connector.health}</span><dl><div><dt>Health evidence</dt><dd>{connector.source ?? "configuration"} · {new Date(connector.checkedAt).toLocaleString()}</dd></div><div><dt>Pending</dt><dd>{connector.pendingOutbox ?? 0}</dd></div><div><dt>Dead letters</dt><dd>{connector.deadLetters ?? 0}</dd></div><div><dt>Capabilities</dt><dd>{connector.capabilities?.join(", ") || "none"}</dd></div></dl><div className="secure-actions"><button onClick={() => void test(connector.id)}>Test connection</button>{connector.kind === "task" && <button onClick={() => void reconcile(connector.id)}>Reconcile</button>}</div></article>)}</div>{connectors.data.connectors.length === 0 && <div className="empty-inline">No connectors configured.</div>}</div>
-    <div className="panel table-wrap"><div className="panel-heading"><div><p className="eyebrow">Sync recovery</p><h2>Dead letters</h2></div><span>{deadLetters.data.deadLetters.length}</span></div>{deadLetters.data.deadLetters.length ? <table><thead><tr><th>Connector / source</th><th>Reason</th><th>Created</th><th>Recovery</th></tr></thead><tbody>{deadLetters.data.deadLetters.map((entry) => <tr key={entry.id}><td><strong>{entry.connectorInstanceId}</strong><small>{entry.source} · {entry.sourceId}</small></td><td>{entry.reason}</td><td>{new Date(entry.createdAt).toLocaleString()}</td><td><div className="secure-actions"><button disabled={entry.source !== "outbox"} title={entry.source === "outbox" ? "Return the failed outbox event to the delivery queue" : "Only outbox delivery failures can be retried automatically"} onClick={() => void retry(entry.id)}>Retry</button><button onClick={() => void resolveDeadLetter(entry.id)}>Resolve…</button></div></td></tr>)}</tbody></table> : <div className="empty-inline">No sync recovery is required.</div>}</div>
-    <div className="panel notice" aria-live="polite">{message}</div>
+    <header className="page-header"><div><p className="eyebrow">连接与同步</p><h1>平台集成</h1><p>管理任务、消息与代码平台连接，检查同步与恢复事项。</p></div><button className="primary" onClick={()=>setEditor({})}><Icon name="plus"/>添加连接</button></header>
+    <Tabs label="平台集成视图" items={[["connections",`平台连接 ${connectors.data.connectors.length}`],["recovery",`同步恢复 ${deadLetters.data?.deadLetters.length ?? "未知"}`]]} value={view} onChange={setView}/>
+    <Notice>平台同步与执行状态分别记录。重试只会返回投递队列，不代表上游已收到。</Notice>
+    {view === "connections" && <div className="panel"><div className="runner-list">{connectors.data.connectors.map((connector) => <article className="connector-card" key={connector.id}><div><strong>{connector.displayName}</strong><p>{connector.kind} · {connector.id}</p></div><span className={`status status-${connector.health.toLowerCase()}`}>{connector.health}</span>{connector.reason&&<p>{connector.reason}</p>}<dl><div><dt>最近检查</dt><dd>{connector.source ?? "configuration"} · {new Date(connector.checkedAt).toLocaleString()}</dd></div><div><dt>待同步</dt><dd>{connector.pendingOutbox ?? "未提供"}</dd></div><div><dt>失败记录</dt><dd>{connector.deadLetters ?? "未提供"}</dd></div><div><dt>能力</dt><dd>{connector.capabilities?.join(", ") || "未提供"}</dd></div></dl><div className="secure-actions"><button onClick={()=>setEditor({id:connector.id})}>编辑连接与凭据</button><button disabled={busy} onClick={() => void test(connector.id)}>测试连接</button>{connector.kind === "task" && <button disabled={busy} onClick={() => void reconcile(connector.id)}>同步任务</button>}</div></article>)}</div>{connectors.data.connectors.length === 0 && <div className="empty-inline">尚未配置集成。<button onClick={()=>setEditor({})}>配置集成连接</button></div>}</div>}
+    {view === "recovery" && <div className="panel table-wrap"><div className="panel-heading"><div><p className="eyebrow">同步恢复</p><h2>失败记录</h2></div><span>{deadLetters.data?.deadLetters.length}</span></div>{deadLetters.error ? <div className="page-state error" role="alert">同步恢复记录读取失败。<button onClick={()=>void deadLetters.refetch()}>重试</button></div> : deadLetters.isLoading ? <p className="panel-content" role="status">正在读取恢复记录…</p> : deadLetters.data?.deadLetters.length ? <table><thead><tr><th>集成 / 来源</th><th>原因</th><th>时间</th><th>操作</th></tr></thead><tbody>{deadLetters.data?.deadLetters.map((entry) => <tr key={entry.id}><td><strong>{entry.connectorInstanceId}</strong><small>{entry.source} · {entry.sourceId}</small></td><td>{entry.reason}</td><td>{new Date(entry.createdAt).toLocaleString()}</td><td><div className="secure-actions"><button disabled={busy || !entry.canRetry} title={entry.canRetry ? "返回处理队列；不代表同步成功" : "此记录不支持自动重试"} onClick={() => void retry(entry.id)}>重试</button><button disabled={busy} onClick={() => void resolveDeadLetter(entry.id)}>标记已处理…</button></div></td></tr>)}</tbody></table> : <div className="empty-inline">暂无同步失败记录。</div>}</div>}
+    <p className="action-message" aria-live="polite">{message}</p>
+    {editor && <Drawer title={editor.id===undefined?"添加平台连接":"编辑连接与凭据"} onClose={()=>setEditor(undefined)}><Suspense fallback={<p>正在读取配置…</p>}><SettingsPage key={editor.id??"create"} sectionId="connectors" {...(editor.id===undefined?{initialEntity:{id:"",displayName:"",definitionId:"task.linear",kind:"task",enabled:false,settings:{}},onApplied:()=>setEditor(undefined)}:{entityId:editor.id})} embedded/></Suspense></Drawer>}
   </section>;
 }

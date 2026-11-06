@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SecretAccessContext, SecretMetadata, SecretStore } from "@dispatcher/config";
-import type { CodexBackend, DevinBackend } from "@dispatcher/adapters";
+import type { AgentAdapter, CodexBackend, DevinBackend } from "@dispatcher/adapters";
 import { RemoteRunnerClient } from "@dispatcher/runner";
 import { ControllerService } from "../src/service.js";
 import { LifecycleManager } from "../src/lifecycle.js";
@@ -97,6 +97,21 @@ describe("ControllerService", () => {
     expect(applied.statusCode).toBe(200);
     expect(applied.json().config.controller.id).toBe("api-controller");
     await service.stop();
+  });
+
+  it("fences console editing bases and previews Harness creation without applying", async () => {
+    const service = new ControllerService({ownerToken:TEST_OWNER_TOKEN,dataDirectory:dataDirectory(),secretStore:new FakeSecretStore()});
+    await service.start({listen:false});
+    try {
+      const current=service.configuration.current();
+      const stale=await service.app.inject({headers:OWNER,method:"POST",url:"/api/config/plans",payload:{config:current.config,baseRevision:current.revision-1}});
+      expect(stale.statusCode).toBe(409);
+      const preview=await service.app.inject({headers:OWNER,method:"POST",url:"/api/agents/codex/profiles",payload:{id:"review-only",alias:"Review",codexHome:"/private/nonexistent-review-home",previewOnly:true,baseRevision:current.revision}});
+      expect(preview.statusCode).toBe(201);
+      expect(preview.json().plan).toMatchObject({baseRevision:current.revision,changes:expect.any(Array)});
+      expect(service.configuration.current().revision).toBe(current.revision);
+      expect(service.configuration.current().config.agentProfiles).toHaveLength(0);
+    } finally { await service.stop(); }
   });
 
   it("never exposes a secret read endpoint", async () => {
@@ -306,7 +321,7 @@ describe("ControllerService", () => {
     execFileSync("git", ["-C", repositoryRoot, "commit", "-m", "fixture"]);
     const starts: Array<{ codexHome: string; workspacePath: string }> = [];
     const service = new ControllerService({ ownerToken: TEST_OWNER_TOKEN,
-      dataDirectory: directory,
+      dataDirectory: join(directory,"controller"),
       withRunner: true,
       secretStore: new FakeSecretStore(),
       codexBackendFactory: () => ({
@@ -374,9 +389,11 @@ describe("ControllerService", () => {
         };
       },
     };
-    const service = new ControllerService({ ownerToken: TEST_OWNER_TOKEN, dataDirectory: directory, withRunner: true, secretStore: new FakeSecretStore(), codexBackendFactory: () => backend });
+    const service = new ControllerService({ ownerToken: TEST_OWNER_TOKEN, dataDirectory: join(directory,"controller"), withRunner: true, secretStore: new FakeSecretStore(), codexBackendFactory: () => backend });
     await service.start({ listen: false });
     const current = (await service.app.inject({ headers: OWNER,  method: "GET", url: "/api/config" })).json();
+    // This fixture runs a waiting session and a verification session concurrently.
+    current.config.runners[0].capacity = 2;
     current.config.agentProfiles = [{ id: "atlas", provider: "codex", alias: "Atlas", runnerId: "local", settings: { codexHome: "/profiles/atlas" } }];
     current.config.repositories = [{
       id: "acme/repo",
@@ -390,8 +407,10 @@ describe("ControllerService", () => {
 
     const waitingWorkspace = await service.workspaces.create({ repositoryId: "acme/repo", taskId: "task-waiting", runId: "run-waiting", attempt: 1, baseRef: "main", scopePaths: [] });
     const failingWorkspace = await service.workspaces.create({ repositoryId: "acme/repo", taskId: "task-failing", runId: "run-failing", attempt: 1, baseRef: "main", scopePaths: [] });
-    const waitingSession = (await service.app.inject({ headers: OWNER,  method: "POST", url: "/api/agents/profiles/atlas/runs", payload: { workspacePath: waitingWorkspace.path, prompt: "needs input" } })).json().session;
-    const failingSession = (await service.app.inject({ headers: OWNER,  method: "POST", url: "/api/agents/profiles/atlas/runs", payload: { workspacePath: failingWorkspace.path, prompt: "complete" } })).json().session;
+    // Canonical fixtures must own the same Run IDs as their adapter sessions.
+    const adapter=(service as unknown as {agentAdapters:Map<string,AgentAdapter>}).agentAdapters.get("atlas")!;
+    const waitingSession=await adapter.start({runId:"run-waiting",workspacePath:waitingWorkspace.path,prompt:"needs input"});
+    const failingSession=await adapter.start({runId:"run-failing",workspacePath:failingWorkspace.path,prompt:"complete"});
     expect(backendInputs).toEqual([{ prompt: "needs input" }, { prompt: "complete" }]);
     expect((await service.app.inject({ headers: OWNER,  method: "GET", url: `/api/agents/profiles/atlas/sessions/${waitingSession.id}` })).json().session).toMatchObject({ state: "PAUSED" });
     for (const fixture of [
@@ -399,7 +418,7 @@ describe("ControllerService", () => {
       { taskId: "task-failing", runId: "run-failing", sessionId: failingSession.id as string, workspace: failingWorkspace, verification: ["fail"] },
     ]) {
       service.database.writeCanonicalTask(fixture.taskId, 0, {
-        id: fixture.taskId, projectId: "project", title: fixture.taskId, state: "RUNNING",
+        id: fixture.taskId, projectId: "project", title: fixture.taskId, state: "RUNNING", currentRunId: fixture.runId,
         createdAt: "2026-09-22T00:00:00.000Z", updatedAt: "2026-09-22T00:00:00.000Z",
       });
       service.database.saveTaskContract(fixture.taskId, {
@@ -421,7 +440,7 @@ describe("ControllerService", () => {
     expect((await service.app.inject({ headers: OWNER, 
       method: "POST",
       url: `/api/agents/profiles/atlas/sessions/${waitingSession.id}/input`,
-      payload: { message: "approved" },
+      payload: { message: "approved", authority: { runId: "run-waiting", generation: 1, leaseId: "lease", lastActivityAt: waiting.json().run.lastActivityAt, taskRevision: service.database.getCanonicalTask("task-waiting")!.revision } },
     })).statusCode).toBe(200);
     expect(service.database.getEntity("run", "run-waiting")).toMatchObject({ state: "ACTIVE", sessionId: waitingSession.id });
     expect(service.database.getCanonicalTask("task-waiting")?.document).toMatchObject({ state: "RUNNING" });
@@ -455,7 +474,7 @@ describe("ControllerService", () => {
           : { state: "failed", summary: "quota", providerSessionId: "thread-quota", events: [{ type: "resource", state: "QUOTA_EXHAUSTED", reason: "quota exhausted", resetsAt: "2026-09-23T01:00:00.000Z", source: "error", confidence: "high" }] },
       }),
     };
-    const service = new ControllerService({ ownerToken: TEST_OWNER_TOKEN, dataDirectory: directory, withRunner: true, secretStore: new FakeSecretStore(), codexBackendFactory: () => backend });
+    const service = new ControllerService({ ownerToken: TEST_OWNER_TOKEN, dataDirectory: join(directory,"controller"), withRunner: true, secretStore: new FakeSecretStore(), codexBackendFactory: () => backend });
     await service.start({ listen: false });
     const current = (await service.app.inject({ headers: OWNER,  method: "GET", url: "/api/config" })).json();
     current.config.agentProfiles = [{ id: "atlas", provider: "codex", alias: "Atlas", runnerId: "local", settings: { codexHome: "/profiles/atlas" } }];
@@ -463,8 +482,9 @@ describe("ControllerService", () => {
     const plan = await service.app.inject({ headers: OWNER,  method: "POST", url: "/api/config/plans", payload: { config: current.config } });
     expect((await service.app.inject({ headers: OWNER,  method: "POST", url: `/api/config/plans/${plan.json().plan.id}/apply`, payload: { confirmed: true } })).statusCode).toBe(200);
     const workspace = await service.workspaces.create({ repositoryId: "acme/repo", taskId: "task-quota", runId: "run-quota", attempt: 1, baseRef: "main", scopePaths: [] });
-    const started = await service.app.inject({ headers: OWNER,  method: "POST", url: "/api/agents/profiles/atlas/runs", payload: { workspacePath: workspace.path, prompt: "work" } });
-    const sessionId = started.json().session.id as string;
+    // This fixture binds a canonical Run below; preserve that identity in its native session.
+    const adapter = (service as unknown as { agentAdapters: Map<string, AgentAdapter> }).agentAdapters.get("atlas")!;
+    const sessionId = (await adapter.start({ runId: "run-quota", workspacePath: workspace.path, prompt: "work" })).id;
     service.database.writeCanonicalTask("task-quota", 0, {
       id: "task-quota", projectId: "project", title: "Quota task", state: "RUNNING", currentRunId: "run-quota",
       createdAt: "2026-09-22T00:00:00.000Z", updatedAt: "2026-09-22T00:00:00.000Z",

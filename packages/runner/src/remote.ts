@@ -1,8 +1,9 @@
-import { randomUUID } from "node:crypto";
+import { createHash,randomUUID } from "node:crypto";
 import type { Server } from "node:http";
 import type { Runner } from "@dispatcher/domain";
 import {
   PROTOCOL_VERSION,
+  NATIVE_EXECUTION_CAPABILITY,NATIVE_GIT_DELIVERY_CAPABILITY,NATIVE_ACCOUNT_QUOTA_CAPABILITY,requiresNativeGitDelivery,isNativeExecutionCommand,
   createEnvelope,
   parseEnvelope,
   type CommandPayload,
@@ -41,11 +42,18 @@ interface RegistrationResult {
 interface ServerConnection {
   socket: WebSocket;
   runner: Runner;
+  profileInventory: string[];
   nextSequence: number;
   lastReceivedSequence: number;
   lastSeenAt: number;
-  pending: Map<string, { resolve: (value: ProtocolEnvelope<ResponsePayload>) => void; reject: (reason: Error) => void; timer: ReturnType<typeof setTimeout> }>;
+  pending: Map<string, { identity:string;native:boolean;promise:Promise<ProtocolEnvelope<ResponsePayload>>;resolve: (value: ProtocolEnvelope<ResponsePayload>) => void; reject: (reason: Error) => void; timer: ReturnType<typeof setTimeout> }>;
 }
+export function remoteCommandHash(input:{payload:CommandPayload;leaseId?:string;generation?:number}):string {
+  const stable=(value:unknown):unknown=>Array.isArray(value)?value.map(stable):value&&typeof value==="object"?Object.fromEntries(Object.entries(value).sort(([a],[b])=>a<b?-1:a>b?1:0).map(([key,value])=>[key,stable(value)])):value;
+  // Expiry may be renewed; lease identity and the raw command payload cannot change.
+  return createHash("sha256").update(JSON.stringify(stable({payload:input.payload,leaseId:input.leaseId,generation:input.generation}))).digest("hex");
+}
+function canCacheResponse(payload:ResponsePayload):boolean{return payload.type!=="rpc.error"||!["COMMAND_IDEMPOTENCY_CONFLICT","OUT_OF_ORDER"].includes(payload.code);}
 
 export interface RemoteRunnerServerOptions {
   registry: RunnerRegistryPort;
@@ -119,8 +127,14 @@ export class RemoteRunnerServer {
   async sendCommand(runnerId: string, payload: CommandPayload, options: { messageId?: string; leaseId?: string; generation?: number; leaseExpiresAt?: string } = {}): Promise<ProtocolEnvelope<ResponsePayload>> {
     const connection = this.connections.get(runnerId);
     if (!connection) throw new Error(`Runner ${runnerId} is not connected`);
+    if(isNativeExecutionCommand(payload)&&!connection.runner.capabilities.includes(NATIVE_EXECUTION_CAPABILITY))throw new Error("Runner does not advertise native execution capability");
+    if(requiresNativeGitDelivery(payload)&&!connection.runner.capabilities.includes(NATIVE_GIT_DELIVERY_CAPABILITY))throw new Error("Runner does not advertise native git delivery capability");
+    if(payload.type==="native.account_quota"&&!connection.runner.capabilities.includes(NATIVE_ACCOUNT_QUOTA_CAPABILITY))throw new Error("Runner does not advertise native account quota capability");
     if (connection.runner.state === "DRAINING" && payload.type === "run.start") throw new Error(`Runner ${runnerId} is draining`);
     const messageId = options.messageId ?? randomUUID();
+    const identity=remoteCommandHash({payload,...(options.leaseId?{leaseId:options.leaseId}:{}),...(options.generation!==undefined?{generation:options.generation}:{})});
+    const pending=connection.pending.get(messageId);
+    if(pending){if(pending.identity!==identity)throw new Error("Command ID is pending with a different payload or authority");return pending.promise;}
     const envelope = createEnvelope({
       kind: "command",
       messageId,
@@ -134,22 +148,22 @@ export class RemoteRunnerServer {
       ...(options.generation === undefined ? {} : { generation: options.generation }),
       ...(options.leaseExpiresAt ? { leaseExpiresAt: options.leaseExpiresAt } : {}),
     });
-    return await new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        connection.pending.delete(messageId);
-        reject(new Error(`Remote runner RPC timed out: ${payload.type}`));
-      }, this.rpcTimeoutMs);
-      timer.unref();
-      connection.pending.set(messageId, { resolve, reject, timer });
-      try {
-        sendJson(connection.socket, envelope, this.maxBufferedBytes);
-      } catch (error) {
-        clearTimeout(timer);
-        connection.pending.delete(messageId);
-        reject(error instanceof Error ? error : new Error("Remote runner send failed"));
-      }
-    });
+    let resolve!:(value:ProtocolEnvelope<ResponsePayload>)=>void;
+    let reject!:(error:Error)=>void;
+    const promise=new Promise<ProtocolEnvelope<ResponsePayload>>((accept,fail)=>{resolve=accept;reject=fail;});
+    const timer = setTimeout(() => {
+      connection.pending.delete(messageId);
+      reject(new Error(`Remote runner RPC timed out: ${payload.type}`));
+    }, this.rpcTimeoutMs);
+    timer.unref();
+    connection.pending.set(messageId, { identity,native:isNativeExecutionCommand(payload),promise,resolve, reject, timer });
+    try {sendJson(connection.socket, envelope, this.maxBufferedBytes);}
+    catch (error) {clearTimeout(timer);connection.pending.delete(messageId);reject(error instanceof Error ? error : new Error("Remote runner send failed"));}
+    return await promise;
   }
+
+  isConnected(runnerId:string):boolean{return this.connections.get(runnerId)?.socket.readyState===WebSocket.OPEN;}
+  profileInventory(runnerId:string):string[]{return this.isConnected(runnerId)?[...(this.connections.get(runnerId)?.profileInventory??[])]:[];}
 
   disconnect(runnerId: string, reason: string): boolean {
     const connection = this.connections.get(runnerId);
@@ -172,7 +186,7 @@ export class RemoteRunnerServer {
       clearTimeout(registrationTimer);
       try {
         const frame = decode(data) as Partial<RegistrationFrame>;
-        if (frame.type !== "runner.register" || frame.protocolVersion !== PROTOCOL_VERSION || !frame.runner || !Array.isArray(frame.profileInventory) || !Number.isSafeInteger(frame.lastAcknowledgedSequence) || Number(frame.lastAcknowledgedSequence) < 0 || typeof frame.runnerVersion !== "string") {
+        if (frame.type !== "runner.register" || frame.protocolVersion !== PROTOCOL_VERSION || !frame.runner || !Array.isArray(frame.profileInventory) || frame.profileInventory.length>1000 || !frame.profileInventory.every(id=>typeof id==="string"&&id.length>0&&id.length<=200) || new Set(frame.profileInventory).size!==frame.profileInventory.length || !Number.isSafeInteger(frame.lastAcknowledgedSequence) || Number(frame.lastAcknowledgedSequence) < 0 || typeof frame.runnerVersion !== "string") {
           sendJson(socket, { type: "runner.rejected", reason: "unsupported registration or protocol version" } satisfies RegistrationResult, this.maxBufferedBytes);
           socket.close(1002, "invalid registration");
           return;
@@ -189,15 +203,15 @@ export class RemoteRunnerServer {
         }
         registered = true;
         const runner = this.options.registry.register({ ...frame.runner, state: "ONLINE", lastSeenAt: new Date().toISOString() });
-        void this.options.onRunnerChanged?.(runner);
         const existing = this.connections.get(runner.id);
         if (existing) existing.socket.close(1012, "runner reconnected");
-        const connection: ServerConnection = { socket, runner, nextSequence: 1, lastReceivedSequence: Number(frame.lastAcknowledgedSequence), lastSeenAt: Date.now(), pending: new Map() };
+        const connection: ServerConnection = { socket, runner, profileInventory: [...frame.profileInventory], nextSequence: 1, lastReceivedSequence: Number(frame.lastAcknowledgedSequence), lastSeenAt: Date.now(), pending: new Map() };
         this.connections.set(runner.id, connection);
         sendJson(socket, { type: "runner.registered" } satisfies RegistrationResult, this.maxBufferedBytes);
         socket.on("message", (message) => this.receive(connection, message));
-      } catch (error) {
-        socket.close(1002, error instanceof Error ? error.message.slice(0, 100) : "registration failed");
+        void this.options.onRunnerChanged?.(runner);
+      } catch {
+        socket.close(1002, "registration failed");
       }
     });
     socket.on("close", () => {
@@ -235,8 +249,12 @@ export class RemoteRunnerServer {
       const response = envelope as ProtocolEnvelope<ResponsePayload>;
       const pending = connection.pending.get(response.payload.correlationId);
       if (!pending) return;
+      // Replayed replies can share a command ID after a rejected changed-payload
+      // retry. Only the reply bound to this exact request may settle its RPC.
+      if(response.idempotencyKey!==undefined&&response.idempotencyKey!==pending.identity)return;
       clearTimeout(pending.timer);
       connection.pending.delete(response.payload.correlationId);
+      if(pending.native&&!response.idempotencyKey){pending.reject(new Error("Native response command identity is unavailable"));return;}
       pending.resolve(response);
     } catch (error) {
       connection.socket.close(1002, error instanceof Error ? error.message.slice(0, 100) : "invalid envelope");
@@ -266,12 +284,19 @@ export interface RemoteRunnerClientOptions {
   reconnectBackoffMs?: number;
   maxReconnectBackoffMs?: number;
   runnerVersion?: string;
+  onAuthorizationLost?: () => void | Promise<void>;
 }
 
 export class RemoteRunnerClient {
   private readonly handlers = new Map<CommandPayload["type"], CommandHandler>();
   private readonly responses = new Map<string, ProtocolEnvelope<ResponsePayload>>();
+  private readonly commandHashes=new Map<string,string>();
+  private readonly inFlight=new Map<string,Promise<ResponsePayload>>();
+  private readonly pendingReceives = new Set<Promise<void>>();
   private socket: WebSocket | undefined;
+  private registeredSocket: WebSocket | undefined;
+  private readonly memoryOutgoing=new Map<number,ProtocolEnvelope<EventPayload|ResponsePayload>>();
+  private memoryAcknowledgedSequence=0;
   private nextSequence: number;
   private lastReceivedSequence = 0;
   private heartbeat: ReturnType<typeof setInterval> | undefined;
@@ -282,11 +307,11 @@ export class RemoteRunnerClient {
 
   constructor(private readonly options: RemoteRunnerClientOptions) {
     const replay = options.journal?.replay(0) ?? [];
-    this.nextSequence = (replay.at(-1)?.sequence ?? 0) + 1;
+    this.nextSequence = Math.max(replay.at(-1)?.sequence??0,options.journal?.acknowledgedSequence()??0)+1;
     this.currentState = options.runner.state;
     for (const entry of replay) {
       if (entry.envelope.kind === "response" && (entry.envelope.payload.type === "rpc.result" || entry.envelope.payload.type === "rpc.error")) {
-        this.responses.set(entry.envelope.payload.correlationId, entry.envelope as ProtocolEnvelope<ResponsePayload>);
+        if(canCacheResponse(entry.envelope.payload))this.responses.set(entry.envelope.payload.correlationId, entry.envelope as ProtocolEnvelope<ResponsePayload>);
       }
     }
   }
@@ -304,46 +329,57 @@ export class RemoteRunnerClient {
     this.socket = socket;
     try {
       await new Promise<void>((resolve, reject) => {
-        const fail = (error: Error) => reject(error);
-        socket.once("error", fail);
+        const cleanup=()=>{clearTimeout(timer);socket.off("error",fail);socket.off("close",closed);};
+        const fail = (error: Error) => {cleanup();reject(error);};
+        const closed=(code:number)=>{cleanup();if(code===1008)this.handleDisconnect(socket,code);reject(new Error("Remote runner registration closed"));};
+        const timer=setTimeout(()=>fail(new Error("Remote runner registration timed out")),10_000);timer.unref();
+        socket.once("error", fail);socket.once("close",closed);
         socket.once("open", () => {
-          sendJson(socket, {
+          try{sendJson(socket, {
             type: "runner.register",
             protocolVersion: PROTOCOL_VERSION,
             runner: this.options.runner,
             profileInventory: this.options.profileInventory ?? [],
-            lastAcknowledgedSequence: this.options.journal?.acknowledgedSequence() ?? 0,
+            lastAcknowledgedSequence: this.options.journal?.acknowledgedSequence() ?? this.memoryAcknowledgedSequence,
             runnerVersion: this.options.runnerVersion ?? RUNNER_VERSION,
-          } satisfies RegistrationFrame, this.options.maxBufferedBytes ?? 1_048_576);
+          } satisfies RegistrationFrame, this.options.maxBufferedBytes ?? 1_048_576);}catch(error){fail(error instanceof Error?error:new Error("Registration failed"));}
         });
         socket.once("message", (data) => {
-          const result = decode(data) as RegistrationResult;
+          let result:RegistrationResult;try{result=decode(data) as RegistrationResult;if(!result||typeof result!=="object")throw new Error("Invalid registration");}catch{fail(new Error("Invalid remote runner registration response"));return;}
           if (result.type !== "runner.registered") {
-            reject(new Error(result.reason ?? "Remote runner registration rejected"));
+            if(result.reason==="unauthorized")this.handleDisconnect(socket,1008);
+            fail(new Error(result.reason ?? "Remote runner registration rejected"));
             return;
           }
-          socket.off("error", fail);
-          socket.on("message", (message) => void this.receive(message));
+          cleanup();
+          this.registeredSocket=socket;
+          // Send retained frames synchronously before an immediate post-registration RPC can respond.
+          try{this.flushOutgoing(socket);}catch(error){this.registeredSocket=undefined;reject(error);return;}
+          socket.on("message", (message) => {
+            if (this.stopping || this.socket !== socket) return;
+            const pending = this.receive(message, socket).catch(() => socket.terminate()).finally(() => this.pendingReceives.delete(pending));
+            this.pendingReceives.add(pending);
+          });
           resolve();
         });
       });
     } catch (error) {
       socket.terminate();
+      if(this.registeredSocket===socket)this.registeredSocket=undefined;
       this.socket = undefined;
       throw error;
     }
-    for (const entry of this.options.journal?.replay() ?? []) sendJson(socket, entry.envelope, this.options.maxBufferedBytes ?? 1_048_576);
     const interval = Math.max(5_000, this.options.heartbeatIntervalMs ?? 30_000);
     this.heartbeat = setInterval(() => void this.sendEvent({ type: "runner.heartbeat", runnerId: this.options.runner.id, state: this.currentState }).catch(() => undefined), interval);
     this.heartbeat.unref();
     this.reconnectAttempt = 0;
-    socket.once("close", () => this.handleDisconnect(socket));
+    socket.once("close", (code) => this.handleDisconnect(socket, code));
   }
 
   async sendEvent(payload: EventPayload): Promise<void> {
-    const envelope = createEnvelope({ kind: "event", messageId: randomUUID(), traceId: randomUUID(), runnerId: this.options.runner.id, sequence: this.nextSequence++, ackSequence: this.lastReceivedSequence, payload, origin: "runner" });
-    this.options.journal?.append(envelope);
-    sendJson(this.requireSocket(), envelope, this.options.maxBufferedBytes ?? 1_048_576);
+    const envelope = createEnvelope({ kind: "event", messageId: randomUUID(), traceId: randomUUID(), runnerId: this.options.runner.id, sequence: this.nextSequence, ackSequence: this.lastReceivedSequence, payload, origin: "runner" });
+    this.appendOutgoing(envelope);this.nextSequence++;
+    this.flushOutgoing(this.requireSocket());
   }
 
   async stop(): Promise<void> {
@@ -354,59 +390,77 @@ export class RemoteRunnerClient {
     this.heartbeat = undefined;
     const socket = this.socket;
     this.socket = undefined;
-    if (!socket) return;
-    await new Promise<void>((resolve) => {
+    this.registeredSocket=undefined;
+    if (socket && socket.readyState !== WebSocket.CLOSED) await new Promise<void>((resolve) => {
       socket.once("close", () => resolve());
       socket.close(1000, "runner shutdown");
     });
+    await Promise.all(this.pendingReceives);
   }
 
-  private async receive(data: RawData): Promise<void> {
-    const envelope = parseEnvelope(decode(data)) as ProtocolEnvelope<CommandPayload>;
-    if (envelope.kind !== "command") return;
-    if (envelope.ackSequence !== undefined) {
-      this.options.journal?.acknowledge(envelope.ackSequence);
-      this.options.journal?.compact();
+  private async receive(data: RawData, socket: WebSocket): Promise<void> {
+    const envelope=parseEnvelope(decode(data)) as ProtocolEnvelope<CommandPayload>;
+    if(envelope.kind!=="command")return;
+    if(envelope.runnerId!==this.options.runner.id)throw new Error("Command runner identity does not match this Runner");
+    if(envelope.ackSequence!==undefined){
+      if(envelope.ackSequence>=this.nextSequence)throw new Error("Acknowledgement exceeds sent Runner sequence");
+      this.options.journal?.acknowledge(envelope.ackSequence);this.options.journal?.compact();
+      this.memoryAcknowledgedSequence=Math.max(this.memoryAcknowledgedSequence,envelope.ackSequence);
+      for(const sequence of this.memoryOutgoing.keys())if(sequence<=this.memoryAcknowledgedSequence)this.memoryOutgoing.delete(sequence);
     }
-    const duplicate = this.responses.get(envelope.messageId);
-    if (duplicate) {
-      if (envelope.sequence > this.lastReceivedSequence + 1) {
-        await this.respond(envelope, { type: "rpc.error", correlationId: envelope.messageId, code: "OUT_OF_ORDER", message: `Expected sequence ${this.lastReceivedSequence + 1}, received ${envelope.sequence}` });
-        return;
+    const duplicate=this.responses.get(envelope.messageId),pending=this.inFlight.get(envelope.messageId);
+    const knownHash=this.commandHashes.get(envelope.messageId)??this.options.journal?.commandIdentity(envelope.messageId);
+    if(envelope.sequence>this.lastReceivedSequence+1||!duplicate&&!pending&&!knownHash&&envelope.sequence!==this.lastReceivedSequence+1){
+      await this.respond(envelope,{type:"rpc.error",correlationId:envelope.messageId,code:"OUT_OF_ORDER",message:`Expected sequence ${this.lastReceivedSequence+1}, received ${envelope.sequence}`},socket);return;
+    }
+    if(envelope.sequence===this.lastReceivedSequence+1)this.lastReceivedSequence=envelope.sequence;
+    const identity=remoteCommandHash(envelope);
+    if(knownHash&&knownHash!==identity){await this.respond(envelope,{type:"rpc.error",correlationId:envelope.messageId,code:"COMMAND_IDEMPOTENCY_CONFLICT",message:"Command ID was used for a different payload or authority"},socket);return;}
+    if(duplicate){
+      if(!knownHash&&isNativeExecutionCommand(envelope.payload)){await this.respond(envelope,{type:"rpc.error",correlationId:envelope.messageId,code:"COMMAND_OUTCOME_UNKNOWN",message:"Historical native command identity is unavailable; reconcile the existing Run"},socket);return;}
+      await this.respond(envelope,duplicate.payload,socket);return;
+    }
+    if(pending){await this.respond(envelope,await pending,socket);return;}
+    if(knownHash&&isNativeExecutionCommand(envelope.payload)){await this.respond(envelope,{type:"rpc.error",correlationId:envelope.messageId,code:"COMMAND_OUTCOME_UNKNOWN",message:"Native command receipt is no longer retained; reconcile the existing Run"},socket);return;}
+    if(this.options.journal&&!this.options.journal.bindCommand(envelope.messageId,identity))throw new Error("Command binding changed");
+    this.commandHashes.set(envelope.messageId,identity);
+    const operation=this.executeCommand(envelope);this.inFlight.set(envelope.messageId,operation);
+    try{await this.respond(envelope,await operation,socket);}finally{this.inFlight.delete(envelope.messageId);}
+  }
+
+  private async executeCommand(envelope:ProtocolEnvelope<CommandPayload>):Promise<ResponsePayload>{
+    try{
+      if(envelope.payload.type==="runner.drain"){
+        this.currentState=envelope.payload.draining?"DRAINING":"ONLINE";
+        await this.sendEvent({type:"runner.heartbeat",runnerId:this.options.runner.id,state:this.currentState});
+        return {type:"rpc.result",correlationId:envelope.messageId,result:{state:this.currentState}};
       }
-      if (envelope.sequence === this.lastReceivedSequence + 1) this.lastReceivedSequence = envelope.sequence;
-      await this.respond(envelope, duplicate.payload);
-      return;
-    }
-    if (envelope.sequence !== this.lastReceivedSequence + 1) {
-      await this.respond(envelope, { type: "rpc.error", correlationId: envelope.messageId, code: "OUT_OF_ORDER", message: `Expected sequence ${this.lastReceivedSequence + 1}, received ${envelope.sequence}` });
-      return;
-    }
-    this.lastReceivedSequence = envelope.sequence;
-    if (envelope.payload.type === "runner.drain") {
-      this.currentState = envelope.payload.draining ? "DRAINING" : "ONLINE";
-      await this.sendEvent({ type: "runner.heartbeat", runnerId: this.options.runner.id, state: this.currentState });
-      await this.respond(envelope, { type: "rpc.result", correlationId: envelope.messageId, result: { state: this.currentState } });
-      return;
-    }
-    const handler = this.handlers.get(envelope.payload.type);
-    if (!handler) {
-      await this.respond(envelope, { type: "rpc.error", correlationId: envelope.messageId, code: "UNSUPPORTED_COMMAND", message: `No handler registered for ${envelope.payload.type}` });
-      return;
-    }
-    try {
-      const result = await handler(envelope.payload, envelope);
-      await this.respond(envelope, { type: "rpc.result", correlationId: envelope.messageId, result });
-    } catch (error) {
-      await this.respond(envelope, { type: "rpc.error", correlationId: envelope.messageId, code: "HANDLER_FAILED", message: error instanceof Error ? error.message : "Command handler failed" });
+      const handler=this.handlers.get(envelope.payload.type);
+      if(!handler)return {type:"rpc.error",correlationId:envelope.messageId,code:"UNSUPPORTED_COMMAND",message:`No handler registered for ${envelope.payload.type}`};
+      return {type:"rpc.result",correlationId:envelope.messageId,result:await handler(envelope.payload,envelope)};
+    }catch(error){
+      const native=isNativeExecutionCommand(envelope.payload),code=error&&typeof error==="object"&&"code" in error&&typeof error.code==="string"&&/^[A-Z_]+$/.test(error.code)?error.code:"HANDLER_FAILED";
+      return {type:"rpc.error",correlationId:envelope.messageId,code,message:native?"Native operation failed; inspect the owning Runner":error instanceof Error?error.message:"Command handler failed"};
     }
   }
 
-  private async respond(command: ProtocolEnvelope<CommandPayload>, payload: ResponsePayload): Promise<void> {
-    const response = createEnvelope({ kind: "response", messageId: randomUUID(), traceId: command.traceId, runnerId: this.options.runner.id, sequence: this.nextSequence++, ackSequence: this.lastReceivedSequence, correlationId: command.messageId, payload, origin: "runner" });
-    this.responses.set(command.messageId, response);
-    this.options.journal?.append(response);
-    sendJson(this.requireSocket(), response, this.options.maxBufferedBytes ?? 1_048_576);
+  private async respond(command: ProtocolEnvelope<CommandPayload>, payload: ResponsePayload, socket: WebSocket): Promise<void> {
+    const response = createEnvelope({ kind: "response", messageId: randomUUID(), traceId: command.traceId, runnerId: this.options.runner.id, sequence: this.nextSequence, ackSequence: this.lastReceivedSequence, correlationId: command.messageId,idempotencyKey:remoteCommandHash(command), payload, origin: "runner" });
+    if(canCacheResponse(payload))this.responses.set(command.messageId, response);
+    this.appendOutgoing(response);this.nextSequence++;
+    // A late old-connection reply still belongs in the current ordered stream.
+    const target=this.socket===socket?socket:this.registeredSocket;if(target)this.flushOutgoing(target);
+  }
+
+  private appendOutgoing(envelope:ProtocolEnvelope<EventPayload|ResponsePayload>):void {
+    if(this.options.journal){this.options.journal.append(envelope);return;}
+    if(this.memoryOutgoing.size>=10000)throw new Error("Runner outgoing replay capacity exceeded; wait for Controller acknowledgement");
+    this.memoryOutgoing.set(envelope.sequence,envelope);
+  }
+  private flushOutgoing(socket:WebSocket):void {
+    if(this.registeredSocket!==socket||this.socket!==socket||socket.readyState!==WebSocket.OPEN)return;
+    const outgoing=this.options.journal?.replay().map(entry=>entry.envelope)??[...this.memoryOutgoing.values()];
+    for(const envelope of outgoing)sendJson(socket,envelope,this.options.maxBufferedBytes??1_048_576);
   }
 
   private requireSocket(): WebSocket {
@@ -414,12 +468,18 @@ export class RemoteRunnerClient {
     return this.socket;
   }
 
-  private handleDisconnect(socket: WebSocket): void {
+  private handleDisconnect(socket: WebSocket, code: number): void {
     if (this.socket !== socket) return;
     this.socket = undefined;
+    if(this.registeredSocket===socket)this.registeredSocket=undefined;
     if (this.heartbeat) clearInterval(this.heartbeat);
     this.heartbeat = undefined;
     if (this.stopping) return;
+    if (code === 1008) {
+      this.stopping = true;
+      void Promise.resolve().then(() => this.options.onAuthorizationLost?.()).catch(() => undefined);
+      return;
+    }
     const base = Math.max(250, this.options.reconnectBackoffMs ?? 1_000);
     const maximum = Math.max(base, this.options.maxReconnectBackoffMs ?? 30_000);
     const delay = Math.min(maximum, base * 2 ** this.reconnectAttempt++);

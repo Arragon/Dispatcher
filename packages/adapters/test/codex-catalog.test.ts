@@ -1,0 +1,76 @@
+import {fixtureMarker,fixtureOutcome,awaitFixtureReady} from "./catalog-fixtures.js";
+import { describe,expect,it,vi } from "vitest";
+import { readCodexCatalog, normalizeCodexCatalog } from "../src/codex-catalog.js";
+import {CodexAdapter} from "../src/codex.js";
+const context={profileId:"a",runnerId:"local",repositoryId:"repo",executionContextRef:"repo-context",reason:"open" as const};
+const model={model:"native-model",displayName:"Native model",hidden:false,isDefault:true,defaultReasoningEffort:"medium",supportedReasoningEfforts:[{reasoningEffort:"low"},{reasoningEffort:"medium"}]};
+it("keeps App Server and exec catalogs distinct even for the same account and model payload",()=>{
+ const exec=normalizeCodexCatalog({data:[model]},context,"same-context","now"),native=normalizeCodexCatalog({data:[model]},context,"same-context","now","codex-app-server");expect(native.backendId).toBe("codex-app-server");expect(exec.backendId).toBe("codex-exec-json");expect(native.revision).not.toBe(exec.revision);
+});
+it("uses the actual owning Codex Adapter backend for its catalog",async()=>{
+ const start=vi.fn(),adapter=new CodexAdapter({id:"a",alias:"A",codexHome:"/missing/fixture"},{backendId:"codex-app-server",start},undefined,async input=>input.method==="account/read"?{account:null}:{data:[model],nextCursor:null});expect((await adapter.modelCatalog({...context,workspacePath:"/tmp"})).backendId).toBe("codex-app-server");expect(start).not.toHaveBeenCalled();
+});
+it("captures catalog account and backend before awaiting account reads",async()=>{
+ const held=Promise.withResolvers<unknown>(),calls:Array<{codexHome:string;method:string}>=[],input={profile:{id:"a",alias:"A",codexHome:"/missing/original"},context:{...context},backendId:"codex-app-server" as "codex-app-server"|"codex-exec-json",workspacePath:"/tmp",request:async(query:{codexHome:string;method:string})=>{calls.push(query);return query.method==="account/read"?held.promise:{data:[model],nextCursor:null};}},reading=readCodexCatalog(input);
+ input.profile.id="changed";input.profile.codexHome="/missing/changed";input.context.profileId="changed";input.backendId="codex-exec-json";held.resolve({account:null});expect(await reading).toMatchObject({profileId:"a",backendId:"codex-app-server"});expect(calls.every(call=>call.codexHome==="/missing/original")).toBe(true);
+});
+it("rejects foreign account or unsupported backend before catalog I/O",async()=>{
+ const request=vi.fn(async()=>({account:null})),input={profile:{id:"a",alias:"A",codexHome:"/missing"},context,workspacePath:"/tmp",request};await expect(readCodexCatalog({...input,context:{...context,profileId:"foreign"}})).rejects.toMatchObject({code:"NATIVE_CONTEXT_CHANGED"});await expect(readCodexCatalog({...input,backendId:"unsupported" as never})).rejects.toMatchObject({code:"NATIVE_CONTEXT_CHANGED"});expect(request).not.toHaveBeenCalled();
+});
+describe("Codex native catalogs",()=>{
+  it("normalizes only native choices, stable content revisions and unconfirmed access without invented prices",()=>{
+    const a=normalizeCodexCatalog({data:[model]},context,"fingerprint","2026-10-15T00:00:00Z");
+    const b=normalizeCodexCatalog({data:[model]},context,"fingerprint","2026-10-15T01:00:00Z");
+    expect(a.revision).toBe(b.revision);expect(a.entries[0]).toMatchObject({id:"native-model",access:"unconfirmed",parameterOptions:{reasoningEffort:["low","medium"]},billing:{mode:"unknown"}});
+    expect(normalizeCodexCatalog({data:[model]},{...context,profileId:"b"},"other-account","now").revision).not.toBe(a.revision);
+    expect(()=>normalizeCodexCatalog({data:[{...model,defaultReasoningEffort:"invented"}]},context,"fingerprint","now")).toThrow();
+  });
+  it("paginates read-only native requests and rejects cursor cycles",async()=>{
+    const calls:string[]=[];let pages=0;
+    const request=async(input:{method:string})=>{calls.push(input.method);return input.method==="account/read"?{account:{type:"chatgpt",email:"fixture@example.invalid",planType:"pro"}}:{data:[{...model,model:`m${pages++}`}],nextCursor:pages===1?"next":null};};
+    const catalog=await readCodexCatalog({profile:{id:"a",alias:"A",codexHome:"/missing/fixture-native-home"},context,workspacePath:"/tmp",request});
+    expect(catalog.entries).toHaveLength(2);expect(calls).toEqual(["account/read","model/list","model/list"]);expect(JSON.stringify(catalog)).not.toContain("fixture@example.invalid");
+    await expect(readCodexCatalog({profile:{id:"a",alias:"A",codexHome:"/missing"},context,workspacePath:"/tmp",request:async i=>i.method==="account/read"?{account:null}:{data:[model],nextCursor:"cycle"}})).rejects.toMatchObject({code:"INVALID_MODEL_CATALOG"});
+  });
+});
+
+it("reaps native RPC processes before returning and rejects mutating methods",async()=>{
+  const {readCodexNative}=await import("../src/codex-catalog.js");const {mkdtempSync,writeFileSync,readFileSync,chmodSync,rmSync}=await import("node:fs");const {tmpdir}=await import("node:os");const {join}=await import("node:path");
+  const directory=mkdtempSync(join(tmpdir(),"codex-rpc-")),executable=join(directory,"native"),marker=join(directory,"closed");
+  try{
+    writeFileSync(executable,`#!${process.execPath}\nconst rl=require('node:readline').createInterface({input:process.stdin});process.on('SIGTERM',()=>{require('node:fs').writeFileSync(${JSON.stringify(marker)},'closed');process.exit(0);});rl.on('line',line=>{const m=JSON.parse(line);if(m.id)console.log(JSON.stringify({id:m.id,result:m.id===1?{}:{data:[],nextCursor:null}}));});`);chmodSync(executable,0o755);
+    const input={executable,codexHome:directory,workspacePath:directory,method:"model/list" as const,params:{}};
+    expect(await readCodexNative(input)).toMatchObject({data:[]});expect(readFileSync(marker,"utf8")).toBe("closed");
+    await expect(readCodexNative({...input,method:"thread/start" as never})).rejects.toMatchObject({code:"READ_ONLY_QUERY_REQUIRED"});
+  }finally{rmSync(directory,{recursive:true,force:true});}
+});
+
+
+it("cancels an owned read-only RPC and confirms its process closure",async()=>{
+  const {readCodexNative}=await import("../src/codex-catalog.js");const {mkdtempSync,writeFileSync,readFileSync,chmodSync,rmSync}=await import("node:fs");const {tmpdir}=await import("node:os");const {join}=await import("node:path");
+  const directory=mkdtempSync(join(tmpdir(),"codex-cancel-rpc-")),executable=join(directory,"native"),ready=join(directory,"ready"),closed=join(directory,"closed"),abort=new AbortController();
+  const marker=fixtureMarker(ready);let outcome:Promise<unknown>|undefined;
+  try{
+    writeFileSync(executable,`#!${process.execPath}\nprocess.on('SIGTERM',()=>{require('node:fs').writeFileSync(${JSON.stringify(closed)},'closed');process.exit(0);});require('node:fs').writeFileSync(${JSON.stringify(ready)},'ready');process.stdin.resume();`);chmodSync(executable,0o755);
+    outcome=fixtureOutcome(readCodexNative({executable,codexHome:directory,workspacePath:directory,method:"model/list",params:{},signal:abort.signal}));
+    await awaitFixtureReady(marker.ready,outcome);abort.abort();expect(await outcome).toMatchObject({error:{code:"MODEL_CATALOG_CANCELLED"}});expect(readFileSync(closed,"utf8")).toBe("closed");
+  }finally{abort.abort();await outcome;marker.close();rmSync(directory,{recursive:true,force:true});}
+});
+
+
+it.runIf(process.platform!=="win32")("retains POSIX cleanup uncertainty when an owned process group cannot be signalled",async()=>{
+  const {readCodexNative}=await import("../src/codex-catalog.js"),{mkdtempSync,writeFileSync,readFileSync,chmodSync,rmSync,existsSync}=await import("node:fs"),{tmpdir}=await import("node:os"),{join}=await import("node:path");
+  const directory=mkdtempSync(join(tmpdir(),"codex-cleanup-unknown-")),executable=join(directory,"native"),pidFile=join(directory,"pid"),kill=process.kill.bind(process);let timer:ReturnType<typeof setTimeout>|undefined,cleanupError:unknown;
+  writeFileSync(executable,`#!${process.execPath}\nrequire('node:fs').writeFileSync(${JSON.stringify(pidFile)},String(process.pid));setInterval(()=>{},1000);require('node:readline').createInterface({input:process.stdin}).on('line',line=>{const m=JSON.parse(line);if(m.id)console.log(JSON.stringify({id:m.id,result:m.id===1?{}:{data:[]}}));});`);chmodSync(executable,0o755);
+  const denied=vi.spyOn(process,"kill").mockImplementation((pid,signal)=>{if(pid<0&&signal!==0)throw Object.assign(Error("private cleanup detail"),{code:"EPERM"});return kill(pid,signal);});
+  try{
+    const query=readCodexNative({executable,codexHome:directory,workspacePath:directory,method:"model/list",params:{}});
+    const bounded=Promise.race([query,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error("cleanup query did not settle")),2000);})]);
+    await expect(bounded).rejects.toMatchObject({code:"MODEL_CATALOG_CLEANUP_UNKNOWN",message:expect.not.stringContaining("private cleanup detail")});
+  }finally{
+    denied.mockRestore();if(timer)clearTimeout(timer);
+    if(existsSync(pidFile)){const pid=Number(readFileSync(pidFile,"utf8"));try{kill(-pid,"SIGKILL");}catch(error){if((error as NodeJS.ErrnoException).code!=="ESRCH")cleanupError=error;}}
+    rmSync(directory,{recursive:true,force:true});
+  }
+  expect(cleanupError).toBeUndefined();
+});

@@ -1,9 +1,25 @@
-import { execFile } from "node:child_process";
-import { mkdir, realpath, stat } from "node:fs/promises";
+import {GitContextError,readGitWorktreeContext,sameGitWorktreeContext,type GitWorktreeContext} from "./git-context.js";
+import {constants} from "node:fs";
+import {childExecutionEnvironment} from "@dispatcher/shared";
+import {gitInspectionEnvironment,gitUrlRewriteConfigured,readWorkspaceStatus} from "./git-inspection.js";
+import {createHash,randomUUID} from "node:crypto";
+import {isGitDeliveryTarget,type GitDeliveryTarget} from "@dispatcher/domain";
+import { execFile, type ExecFileOptions } from "node:child_process";
+import { mkdir, realpath, stat, lstat, readlink, open } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
-import { promisify } from "node:util";
+import { isDeepStrictEqual, promisify } from "node:util";
 
-const execute = promisify(execFile);
+const executeFile = promisify(execFile);
+const execute = (file:string,args:string[],options:ExecFileOptions={}) => executeFile(file,args,{...options,encoding:"utf8",env:childExecutionEnvironment(options.env??process.env)});
+// Git scans shared worktree administration while adding/removing entries. Keep
+// these mutations ordered across aliases/managers in this owning Runner process.
+const worktreeMutations=new Map<string,Promise<void>>();
+export async function mutateWorktrees<T>(repositoryRoot:string,operation:()=>Promise<T>,environment?:Readonly<Record<string,string|undefined>>):Promise<T>{
+  const reported=(await execute("git",["-C",repositoryRoot,"rev-parse","--git-common-dir"],environment?{env:environment}:{})).stdout.trim(),common=await realpath(resolve(repositoryRoot,reported));
+  const previous=worktreeMutations.get(common)??Promise.resolve();let complete!:()=>void;const completion=new Promise<void>(resolve=>{complete=resolve;}),tail=previous.then(()=>completion);worktreeMutations.set(common,tail);
+  await previous;
+  try{return await operation();}finally{complete();if(worktreeMutations.get(common)===tail)worktreeMutations.delete(common);}
+}
 
 export interface RepositoryRecord {
   id: string;
@@ -18,20 +34,40 @@ export interface WorkspacePlan {
   attempt: number;
   baseRef: string;
   scopePaths: string[];
+  baseCommit?: string;
+  targetBranch?: string;
 }
 
 export interface WorkspaceHandle extends WorkspacePlan {
+  repositoryRoot?: string;
   path: string;
   branch: string;
   baseRevision: string;
   createdAt: string;
 }
 
+export interface SnapshotCommitObservation {context:GitWorktreeContext;head:string;tree:string;parents:string[];branch:string;status:string;files:string[];indexMatches:boolean}
+
 export interface CleanupPlan {
   workspace: WorkspaceHandle;
   safe: boolean;
   reasons: string[];
+  changedFiles?: string[];
+  pins?: WorkspacePin[];
+  action?: "retain-worktree";
 }
+export interface WorkspaceCleanupResult {state:"retained";retainedPath:string;workspace:WorkspaceHandle}
+export interface WorkspacePin {workspaceId:string;sessionId?:string;reason:string}
+export interface WorkspaceRetentionSource {getWorkspacePins(workspace:WorkspaceHandle):readonly WorkspacePin[]}
+
+export interface WorkspaceCandidate {
+  version: 1;
+  id: string;
+  headRevision: string;
+  rootIdentity: { device: number; inode: number };
+  changedFiles: string[];
+}
+
 
 export class WorkspacePolicyError extends Error {
   constructor(readonly code: string, message: string) { super(message); this.name = "WorkspacePolicyError"; }
@@ -62,33 +98,287 @@ export class RepositoryRegistry {
   clear(): void { this.repositories.clear(); }
 }
 
+export async function assertRepositoryIdentity(preview: {root:string;rootIdentity:{device:number;inode:number}}): Promise<void> {
+  try {
+    const canonical = await realpath(preview.root);
+    const identity = await stat(canonical);
+    if (canonical !== preview.root || !identity.isDirectory() || identity.dev !== preview.rootIdentity.device || identity.ino !== preview.rootIdentity.inode) throw Error("changed");
+  } catch { throw new WorkspacePolicyError("REPOSITORY_CHANGED", "所选仓库目录已改变，请重新选择。"); }
+}
+
+
 export class WorkspaceManager {
   private readonly managed = new Map<string, WorkspaceHandle>();
-  constructor(private readonly registry: RepositoryRegistry, private readonly worktreeRoot: string) {}
+  private readonly managedRoots=new Map<string,{device:number;inode:number}>();
+  constructor(private readonly registry: RepositoryRegistry, private readonly worktreeRoot: string,private readonly owningPrivatePaths:()=>readonly string[]=()=>[],private readonly retention?:WorkspaceRetentionSource) {}
 
   get(path: string): WorkspaceHandle | undefined {
     const workspace = this.managed.get(resolve(path));
     return workspace ? structuredClone(workspace) : undefined;
   }
-
-  async create(plan: WorkspacePlan): Promise<WorkspaceHandle> {
-    const repository = this.registry.get(plan.repositoryId);
-    const root = resolve(this.worktreeRoot);
-    await mkdir(root, { recursive: true });
-    const name = `${safeSegment(plan.taskId)}-${safeSegment(plan.runId)}-a${plan.attempt}`;
-    const path = resolve(root, name);
-    if (!within(root, path)) throw new WorkspacePolicyError("WORKSPACE_PATH_ESCAPE", "Worktree path escapes managed root");
-    const branch = `dispatcher/${safeSegment(plan.taskId)}-${safeSegment(plan.runId)}-a${plan.attempt}`;
-    let baseRevision: string;
-    try {
-      baseRevision = (await execute("git", ["-C", repository.root, "rev-parse", "--verify", `${plan.baseRef}^{commit}`])).stdout.trim();
-      await execute("git", ["-C", repository.root, "worktree", "add", "-b", branch, path, baseRevision]);
-    } catch (error) {
-      throw new WorkspacePolicyError("WORKTREE_CREATE_FAILED", error instanceof Error ? error.message : "Worktree creation failed");
+  getForRun(runId:string):WorkspaceHandle|undefined {
+    const found=[...this.managed.values()].filter(workspace=>workspace.runId===runId);
+    return found.length===1?structuredClone(found[0]!):undefined;
+  }
+  private async physicalCandidate(path:string):Promise<string>{
+    let ancestor=resolve(path);
+    for(;;){
+      try{return resolve(await realpath(ancestor),relative(ancestor,resolve(path)));}
+      catch(error){if(!error||typeof error!=="object"||!("code" in error)||!["ENOENT","ENOTDIR"].includes(String(error.code)))throw error;const parent=dirname(ancestor);if(parent===ancestor)throw error;ancestor=parent;}
     }
-    const handle = { ...structuredClone(plan), path, branch, baseRevision, createdAt: new Date().toISOString() };
+  }
+  private async assertPublicScope(repository:RepositoryRecord,scopePaths:string[]):Promise<void>{
+    const privatePaths=this.owningPrivatePaths();
+    if(!privatePaths.length)return;
+    try{
+      const root=await this.physicalCandidate(repository.root),candidates=await Promise.all([root,...scopePaths.map(path=>resolve(root,path))].map(path=>this.physicalCandidate(path)));
+      for(const path of privatePaths){const privatePath=await this.physicalCandidate(isAbsolute(path)?path:resolve(root,path));if(candidates.some(candidate=>within(privatePath,candidate)))throw new WorkspacePolicyError("PRIVATE_PATH_SCOPE","Repository or requested scope enters an owning-process private directory");}
+    }catch(error){if(error instanceof WorkspacePolicyError)throw error;throw new WorkspacePolicyError("PRIVATE_PATH_CHECK_UNAVAILABLE","Owning-process private path boundary could not be verified");}
+  }
+
+  async refs(repositoryId:string,offset=0,limit=50) {
+    if(!Number.isSafeInteger(offset)||offset<0||offset>10_000||!Number.isSafeInteger(limit)||limit<1||limit>100)throw new WorkspacePolicyError("INVALID_REF_PAGE","Ref offset/limit are outside the supported range");
+    const repository=this.registry.get(repositoryId);await this.assertPublicScope(repository,[]);
+    const root=await realpath(repository.root),signal=AbortSignal.timeout(8_000);
+    const top=(await execute("git",["-C",root,"rev-parse","--show-toplevel"],{signal,timeout:8_000,maxBuffer:1024*1024})).stdout.trim();
+    if(await realpath(top)!==root)throw new WorkspacePolicyError("INVALID_REPOSITORY_ROOT","Registered root must be the physical Git root");
+    const output=(await execute("git",["-C",root,"for-each-ref",`--count=${offset+limit+1}`,"--sort=refname","--format=%(refname)%09%(objectname)","refs/heads","refs/remotes","refs/tags"],{signal,timeout:8_000,maxBuffer:2*1024*1024})).stdout;
+    const all=output.trim()?output.trimEnd().split("\n"):[],page=all.slice(offset,offset+limit);
+    const refs:Array<{name:string;commit:string;kind:"branch"|"tag"|"remote"}>=[];
+    for(const line of page){
+      const [name,object]=line.split("\t");
+      if(!name||!object||!/^refs\/(heads|remotes|tags)\//.test(name)||!/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(object))throw new WorkspacePolicyError("INVALID_REF_RESULT","Git returned an invalid reference");
+      // Resolve annotated tags to the exact commit; non-commit tags are not execution bases.
+      let commit:string;try{commit=(await execute("git",["-C",root,"rev-parse","--verify","--end-of-options",`${name}^{commit}`],{signal,timeout:8_000,maxBuffer:1024})).stdout.trim();}catch(error){if(signal.aborted)throw error;continue;}
+      if(!/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(commit))throw new WorkspacePolicyError("INVALID_REF_RESULT","Git returned an invalid commit");
+      const kind=name.startsWith("refs/heads/")?"branch" as const:name.startsWith("refs/tags/")?"tag" as const:"remote" as const;
+      refs.push({name,commit,kind});
+    }
+    return {refs,offset,limit,...(all.length>offset+limit?offset+limit<=10_000?{nextOffset:offset+limit}:{truncated:true}:{})};
+  }
+
+  async deliveryTarget(repositoryId:string):Promise<GitDeliveryTarget>{
+    const {root}=await this.inspect({repositoryId,baseRef:"HEAD",scopePaths:[]});return (await this.deliveryRemote(root)).target;
+  }
+  async resolvePushTarget(workspace:WorkspaceHandle,expected:GitDeliveryTarget,environment?:Readonly<Record<string,string|undefined>>):Promise<string>{
+    // Strict snapshot callers already own a registered tuple; restoring through later ambient Git selectors would change the admitted context.
+    if(environment){if(!isDeepStrictEqual(this.get(workspace.path),workspace))throw new WorkspacePolicyError("WORKSPACE_NOT_MANAGED","Strict push requires the current registered workspace");}
+    else await this.restore(workspace);
+    const current=await this.deliveryRemote(workspace.path,environment);
+    if(expected.version!==1||current.target.host!==expected.host||current.target.repository!==expected.repository||current.target.remoteFingerprint!==expected.remoteFingerprint)throw new WorkspacePolicyError("DELIVERY_TARGET_CHANGED","Owning repository push target changed; review again");
+    return current.url;
+  }
+  private async deliveryRemote(cwd:string,environment?:Readonly<Record<string,string|undefined>>):Promise<{target:GitDeliveryTarget;url:string}>{
+    const invalid=():never=>{throw new WorkspacePolicyError("INVALID_DELIVERY_REMOTE","Delivery requires one matching credential-free HTTPS or Git SSH origin fetch/push target");};
+    let urls:string[];
+    try{
+      const options={cwd,signal:AbortSignal.timeout(8000),timeout:8000,maxBuffer:8192,...(environment?{env:environment}:{})};
+      // Query the same inherited configuration as the owned push, not the isolated inspection environment.
+      let mappings="";try{mappings=(await execute("git",["config","--name-only","--null","--get-regexp","^url\\."],options)).stdout;}catch(error){if((error as {code?:unknown}).code!==1)return invalid();}
+      if(gitUrlRewriteConfigured(mappings))return invalid();
+      urls=await Promise.all([["remote","get-url","--all","origin"],["remote","get-url","--push","--all","origin"]].map(async args=>{const value=(await execute("git",args,options)).stdout.trim();if(!value||value.includes("\n"))return invalid();return value;}));
+    }catch{return invalid();}
+    const identity=(raw:string):{host:string;repository:string}=>{
+      if(raw.length>4000||/[\\%\s?#]/.test(raw))return invalid();
+      let host:string,path:string;const scp=/^git@([a-zA-Z0-9.-]+):([^:]+)$/.exec(raw);
+      if(scp){host=scp[1]!.toLowerCase();path=scp[2]!;}
+      else{let url:URL;try{url=new URL(raw);}catch{return invalid();}if(!["https:","ssh:"].includes(url.protocol)||url.password||url.protocol==="https:"&&url.username||url.protocol==="ssh:"&&url.username!=="git"||raw.split("/").some(part=>part==="."||part===".."))return invalid();host=url.hostname.toLowerCase();path=url.pathname.replace(/^\//,"");}
+      path=path.replace(/\/$/,"").replace(/\.git$/,"");const parts=path.split("/");
+      if(!/^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/.test(host)||parts.length!==2||parts.some(part=>! /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,99}$/.test(part)||part==="."||part===".."))return invalid();
+      return {host,repository:path.toLowerCase()};
+    };
+    const fetch=identity(urls[0]!),push=identity(urls[1]!);if(fetch.host!==push.host||fetch.repository!==push.repository)return invalid();
+    const target={version:1,...push,remoteFingerprint:createHash("sha256").update(JSON.stringify(urls)).digest("hex")};if(!isGitDeliveryTarget(target))return invalid();return {target,url:urls[1]!};
+  }
+
+  /** Filesystem boundary only: no Git process, worktree or native execution. */
+  async inspectScope(plan: Pick<WorkspacePlan, "repositoryId" | "scopePaths">): Promise<{ root: string; rootIdentity: { device: number; inode: number } }> {
+    const repository = this.registry.get(plan.repositoryId);
+    await this.assertPublicScope(repository,plan.scopePaths);
+    const root = await realpath(repository.root);
+    const identity = await stat(root);
+    if (!identity.isDirectory()) throw new WorkspacePolicyError("INVALID_REPOSITORY_ROOT", "Registered root must be a directory");
+    for (const scope of plan.scopePaths) {
+      if (!scope || isAbsolute(scope) || scope.split(/[\\/]/).includes("..") || scope.split(/[\\/]/).includes(".git")) throw new WorkspacePolicyError("INVALID_SCOPE", "Scope must stay inside the repository");
+      if (!within(root, await this.physicalCandidate(resolve(root, scope)))) throw new WorkspacePolicyError("SYMLINK_ESCAPE", "Scope resolves outside repository");
+    }
+    return { root, rootIdentity: { device: identity.dev, inode: identity.ino } };
+  }
+
+  async inspect(plan: Pick<WorkspacePlan, "repositoryId" | "baseRef" | "scopePaths"> & { targetBranch?: string }): Promise<{ baseCommit: string; root: string }> {
+    const { root } = await this.inspectScope(plan);
+    const top = (await execute("git", ["-C", root, "rev-parse", "--show-toplevel"])).stdout.trim();
+    if (await realpath(top) !== root) throw new WorkspacePolicyError("INVALID_REPOSITORY_ROOT", "Registered root must be the physical Git root");
+    if (!plan.baseRef || plan.baseRef.startsWith("-") || Array.from(plan.baseRef).some(c=>c.codePointAt(0)!<=32)) throw new WorkspacePolicyError("INVALID_BASE_REF", "Invalid base reference");
+    const baseCommit = (await execute("git", ["-C", root, "rev-parse", "--verify", "--end-of-options", `${plan.baseRef}^{commit}`])).stdout.trim();
+    if (plan.targetBranch) {
+      try { await execute("git", ["check-ref-format", "--branch", plan.targetBranch]); }
+      catch { throw new WorkspacePolicyError("INVALID_TARGET_BRANCH", "Invalid target branch"); }
+      const refs = (await execute("git", ["-C", root, "for-each-ref", "--format=%(refname)", `refs/heads/${plan.targetBranch}`])).stdout.trim();
+      if (refs) throw new WorkspacePolicyError("BRANCH_EXISTS", "Target branch already exists");
+    }
+    return { baseCommit, root };
+  }
+
+  async plan(plan:WorkspacePlan):Promise<WorkspaceHandle> {
+    if(!Number.isSafeInteger(plan.attempt)||plan.attempt<1)throw new WorkspacePolicyError("INVALID_ATTEMPT","Workspace attempt must be a positive integer");
+    const branch=plan.targetBranch??`dispatcher/${safeSegment(plan.taskId)}-${safeSegment(plan.runId)}-a${plan.attempt}`;
+    const inspected=await this.inspect({repositoryId:plan.repositoryId,baseRef:plan.baseCommit??plan.baseRef,scopePaths:plan.scopePaths,targetBranch:branch});
+    const desired=resolve(this.worktreeRoot);let ancestor=desired;
+    for(;;){try{const physical=await realpath(ancestor);ancestor=resolve(physical,relative(ancestor,desired));break;}catch(error){const parent=dirname(ancestor);if(parent===ancestor)throw error;ancestor=parent;}}
+    const path=resolve(ancestor,`${safeSegment(plan.taskId)}-${safeSegment(plan.runId)}-a${plan.attempt}`);
+    if(!within(ancestor,path))throw new WorkspacePolicyError("WORKSPACE_PATH_ESCAPE","Worktree path escapes managed root");
+    return {...structuredClone(plan),repositoryRoot:inspected.root,path,branch,baseRevision:inspected.baseCommit,createdAt:new Date().toISOString()};
+  }
+
+  async captureCandidate(input: { repositoryId: string; worktree: string; branch: string; scopePaths: string[] }): Promise<WorkspaceCandidate> {
+    const repository = this.registry.get(input.repositoryId);
+    await this.assertPublicScope(repository,input.scopePaths);
+    const options = { timeout: 10_000, maxBuffer: 16 * 1024 * 1024,env:gitInspectionEnvironment() };
+    const value = (result: PromiseSettledResult<string>): string => { if (result.status === "rejected") throw result.reason; return result.value; };
+    let path: string;
+    let identity: Awaited<ReturnType<typeof stat>>;
+    try {
+      const root = await realpath(this.worktreeRoot);
+      path = await realpath(input.worktree);
+      identity = await stat(path);
+      const source = await realpath(repository.root);
+      const git = async (directory: string, args: string[]) => (await execute("git", ["-C", directory,"-c","core.fsmonitor=false","-c","core.hooksPath=/dev/null", ...args], options)).stdout.replace(/\r?\n$/, "");
+      if (!within(root, path) || path === root || path === source || !identity.isDirectory()) throw Error("mismatch");
+      // Settle independent identity reads before refusing or admitting status/content work.
+      const [top,branch,common,registered] = await Promise.allSettled([git(path,["rev-parse","--show-toplevel"]),git(path,["branch","--show-current"]),git(path,["rev-parse","--path-format=absolute","--git-common-dir"]),git(source,["rev-parse","--path-format=absolute","--git-common-dir"])] as const);
+      if (await realpath(value(top)) !== path || value(branch) !== input.branch || await realpath(value(common)) !== await realpath(value(registered))) throw Error("mismatch");
+    } catch { throw new WorkspacePolicyError("CANDIDATE_WORKSPACE_MISMATCH", "Result must belong to its recorded managed Git worktree and branch"); }
+    try {
+      await readWorkspaceStatus(path);
+      const git = async (args: string[]) => (await execute("git", ["-C", path,"-c","core.fsmonitor=false","-c","core.hooksPath=/dev/null", ...args], options)).stdout;
+      const headRevision = (await git(["rev-parse", "--verify", "HEAD"])).trim();
+      const [patchRead,trackedRead,untrackedRead] = await Promise.allSettled([git(["diff", "--no-ext-diff", "--no-textconv", "--binary", "HEAD", "--"]),git(["diff", "--no-ext-diff", "--no-textconv", "--name-only", "-z", "HEAD", "--"]),git(["ls-files", "--others", "--exclude-standard", "-z"])] as const);
+      const patch = value(patchRead);
+      const tracked = value(trackedRead).split("\0").filter(Boolean);
+      const untracked = value(untrackedRead).split("\0").filter(Boolean).sort();
+      if (untracked.length > 10_000) throw Error("candidate limit");
+      const changedFiles = [...new Set([...tracked, ...untracked])].sort();
+      for (const file of changedFiles) {
+        const absolute = resolve(path, file);
+        if (!within(path, absolute) || input.scopePaths.length && !input.scopePaths.some(scope => within(resolve(path, scope), absolute))) throw new WorkspacePolicyError("PATH_OUT_OF_SCOPE", "Result contains changes outside the registered scope");
+      }
+      const rootIdentity = { device: identity.dev, inode: identity.ino };
+      const hash = createHash("sha256").update(JSON.stringify({ headRevision, rootIdentity, branch: input.branch, patch }));
+      let bytes = 0;
+      for (const file of untracked) {
+        const absolute = resolve(path, file);
+        if (!within(path, await realpath(dirname(absolute)))) throw Error("symlink parent");
+        const info = await lstat(absolute);
+        if (!info.isFile() && !info.isSymbolicLink()) throw Error("unsupported file");
+        bytes += info.size;
+        if (bytes > 64 * 1024 * 1024) throw Error("candidate limit");
+        let contents: string | Buffer;
+        if (info.isSymbolicLink()) contents = await readlink(absolute);
+        else {
+          const file = await open(absolute, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+          try {
+            const opened = await file.stat();
+            if (!opened.isFile() || opened.dev !== info.dev || opened.ino !== info.ino || opened.size !== info.size) throw Error("file changed");
+            contents = await file.readFile();
+            if (contents.length !== info.size) throw Error("file changed");
+          } finally { await file.close(); }
+        }
+        hash.update(JSON.stringify({ file, mode: info.mode & 0o777, contentHash: createHash("sha256").update(contents).digest("hex") }));
+      }
+      await assertRepositoryIdentity({ root: path, rootIdentity });
+      if ((await git(["rev-parse", "--verify", "HEAD"])).trim() !== headRevision) throw new WorkspacePolicyError("CANDIDATE_CHANGED", "Result changed while it was being inspected");
+      return { version: 1, id: hash.digest("hex"), headRevision, rootIdentity, changedFiles };
+    } catch (error) {
+      if (error instanceof WorkspacePolicyError) throw error;
+      throw new WorkspacePolicyError("CANDIDATE_UNAVAILABLE", "Result contents could not be safely inspected within the configured limits");
+    }
+  }
+
+
+  async create(plan: WorkspacePlan, options: { beforeCreate?: () => void } = {}): Promise<WorkspaceHandle> {
+    const handle=await this.plan(plan);
+    return mutateWorktrees(handle.repositoryRoot!,async()=>{
+    options.beforeCreate?.();
+    await mkdir(this.worktreeRoot,{recursive:true});
+    const root=await realpath(this.worktreeRoot);
+    if(!within(root,handle.path))throw new WorkspacePolicyError("WORKSPACE_PATH_ESCAPE","Managed root changed after planning");
+    await this.assertPublicScope(this.registry.get(plan.repositoryId),plan.scopePaths);
+    options.beforeCreate?.();
+    try{await execute("git",["-C",handle.repositoryRoot!,"worktree","add","-b",handle.branch,handle.path,handle.baseRevision]);}
+    catch(error){throw new WorkspacePolicyError("WORKTREE_CREATE_FAILED",error instanceof Error?error.message:"Worktree creation failed");}
+    const identity=await lstat(handle.path);this.managedRoots.set(handle.path,{device:identity.dev,inode:identity.ino});
+    this.managed.set(handle.path,structuredClone(handle));return handle;
+    });
+  }
+
+  async restore(handle: WorkspaceHandle): Promise<void> {
+    const managedRoot = await realpath(this.worktreeRoot);
+    const path = await realpath(handle.path);
+    if (!within(managedRoot, path) || path !== resolve(handle.path)) throw new WorkspacePolicyError("WORKSPACE_PATH_ESCAPE", "Restored worktree must be physically inside managed root");
+    const repositoryRoot = handle.repositoryRoot ?? this.registry.get(handle.repositoryId).root;
+    const git = async (cwd: string, args: string[]) => (await execute("git", ["-C", cwd, ...args])).stdout.trim();
+    const common = await realpath(resolve(path, await git(path, ["rev-parse", "--git-common-dir"])));
+    const expected = await realpath(resolve(repositoryRoot, await git(repositoryRoot, ["rev-parse", "--git-common-dir"])));
+    if (common !== expected || await git(path, ["symbolic-ref", "--short", "HEAD"]) !== handle.branch) throw new WorkspacePolicyError("WORKSPACE_IDENTITY_CHANGED", "Worktree identity changed");
+    await git(path, ["merge-base", "--is-ancestor", handle.baseRevision, "HEAD"]);
+    const identity=await lstat(path);this.managedRoots.set(path,{device:identity.dev,inode:identity.ino});
     this.managed.set(path, structuredClone(handle));
-    return handle;
+  }
+
+  async resultFiles(workspace: WorkspaceHandle,environment?:Readonly<Record<string,string|undefined>>): Promise<string[]> {
+    if (!this.get(workspace.path)) throw new WorkspacePolicyError("WORKSPACE_NOT_MANAGED", "Worktree is not restored or registered");
+    const query=environment?this.snapshotQuery(workspace,environment):undefined;
+    const git = async (args: string[]) => query?this.snapshotNames(await query(args)):(await execute("git", ["-C", workspace.path, ...args], { maxBuffer: 1024 * 1024 })).stdout.split("\0").filter(Boolean);
+    const files = [...new Set([...(await git(["diff", "--name-only", "-z", ...(environment?["--no-ext-diff","--no-textconv"]:[]), workspace.baseRevision, "--"])), ...(await git(["ls-files", "--others", "--exclude-standard", "-z"]))])].sort();
+    if (files.length > 5000) throw new WorkspacePolicyError("RESULT_TOO_LARGE", "Change manifest exceeds 5000 files");
+    for (const file of files) await this.assertPathAllowed(workspace, file);
+    return files;
+  }
+
+  private snapshotUnavailable():WorkspacePolicyError{return new WorkspacePolicyError("SNAPSHOT_COMMIT_OBSERVATION_UNAVAILABLE","Complete Git observation is unavailable");}
+  private snapshotNames(output:string):string[]{
+    if(output==="")return [];if(!output.endsWith("\0"))throw this.snapshotUnavailable();
+    const names=output.slice(0,-1).split("\0");
+    if(names.some(name=>!name||isAbsolute(name)||name.split("/").some(part=>!part||part==="."||part==="..")))throw this.snapshotUnavailable();return names;
+  }
+  private snapshotQuery(workspace:WorkspaceHandle,environment:Readonly<Record<string,string|undefined>>):(args:string[],remainingMs?:number)=>Promise<string>{
+    const env=childExecutionEnvironment({...environment},{PWD:workspace.path,GIT_OPTIONAL_LOCKS:"0",GIT_NO_LAZY_FETCH:"1",GIT_TERMINAL_PROMPT:"0"});
+    return async(args,remainingMs=10_000)=>{
+      let stdout:Buffer;
+      try{stdout=(await executeFile("git",["--literal-pathspecs","--no-pager","--no-replace-objects","-C",workspace.path,"-c","diff.autoRefreshIndex=false","-c","core.fsmonitor=false","-c","core.untrackedCache=false","-c","core.ignoreStat=false","-c","core.hooksPath=/dev/null",...args],{encoding:"buffer",env,timeout:Math.min(10_000,remainingMs),maxBuffer:1024*1024})).stdout;}
+      catch(error){const failure=error as {code?:unknown;stdout?:Buffer;stderr?:Buffer};if(args[0]==="config"&&failure.code===1&&Buffer.isBuffer(failure.stdout)&&failure.stdout.length===0&&Buffer.isBuffer(failure.stderr)&&failure.stderr.length===0)throw Object.assign(Error("Git configuration is absent"),{code:1});throw this.snapshotUnavailable();}
+      try{return new TextDecoder("utf-8",{fatal:true,ignoreBOM:true}).decode(stdout);}catch{throw this.snapshotUnavailable();}
+    };
+  }
+  async observeSnapshotCommit(workspace:WorkspaceHandle,expectedTree:string,environment:Readonly<Record<string,string|undefined>>):Promise<SnapshotCommitObservation>{
+    const sha=(value:string)=>/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(value);
+    if(!sha(expectedTree))throw this.snapshotUnavailable();
+    if(!this.get(workspace.path))throw new WorkspacePolicyError("WORKSPACE_NOT_MANAGED","Worktree is not restored or registered");
+    const captured=Object.freeze({...environment}),query=this.snapshotQuery(workspace,captured),scalar=async(args:string[])=>(await query(args)).replace(/\n$/,"");
+    const contextRead=async()=>{try{return await readGitWorktreeContext(workspace.path,scalar);}catch(error){if(error instanceof GitContextError)throw this.snapshotUnavailable();throw error;}};
+    const context=await contextRead();
+    try{await readWorkspaceStatus(workspace.path,10_000,query);}catch(error){if(error instanceof WorkspacePolicyError)throw error;if(error instanceof Error&&["UNTRUSTED_GIT_FILTER_CONFIG","UNQUALIFIED_GIT_PARTIAL_CLONE","UNQUALIFIED_GIT_SUBMODULE"].includes(error.message))throw new WorkspacePolicyError("SNAPSHOT_COMMIT_ENVIRONMENT_UNAVAILABLE","Git policy does not qualify this environment");throw this.snapshotUnavailable();}
+    const head=await scalar(["rev-parse","--verify","HEAD"]);if(!sha(head))throw this.snapshotUnavailable();
+    const tree=await scalar(["rev-parse","--verify",`${head}^{tree}`]),body=await query(["cat-file","commit",head]),bytes=Buffer.from(body,"utf8");
+    // Revision walks honor grafts/shallow ancestry. Qualify the actual commit object,
+    // including all terminal bytes, before reading its structural headers.
+    if(!sha(tree)||createHash(head.length===40?"sha1":"sha256").update(`commit ${bytes.length}\0`).update(bytes).digest("hex")!==head)throw this.snapshotUnavailable();
+    const boundary=body.indexOf("\n\n"),oid=new RegExp(`^[a-f0-9]{${head.length}}$`),parents:string[]=[];
+    if(boundary<0)throw this.snapshotUnavailable();
+    const headers=body.slice(0,boundary).split("\n");let field="",trees=0;
+    for(const [index,line] of headers.entries()){
+      if(line.startsWith(" ")){if(!field||field==="tree"||field==="parent")throw this.snapshotUnavailable();continue;}
+      const separator=line.indexOf(" ");if(separator<1)throw this.snapshotUnavailable();field=line.slice(0,separator);const value=line.slice(separator+1);
+      if(index===0&&field!=="tree")throw this.snapshotUnavailable();
+      if(field==="tree"){if(++trees!==1||!oid.test(value)||value!==tree)throw this.snapshotUnavailable();}
+      if(field==="parent"){if(!oid.test(value))throw this.snapshotUnavailable();parents.push(value);}
+    }
+    if(trees!==1)throw this.snapshotUnavailable();
+    const branch=await scalar(["symbolic-ref","--short","HEAD"]);if(!branch||/[\0\r\n]/.test(branch))throw this.snapshotUnavailable();
+    const status=await query(["status","--porcelain=v1","-z","--untracked-files=all"]),indexMatches=(await query(["diff","--cached","--raw","-z","--no-ext-diff","--no-textconv",expectedTree,"--"]))==="",files=await this.resultFiles(workspace,captured);
+    if(await scalar(["rev-parse","--verify","HEAD"])!==head||!sameGitWorktreeContext(context,await contextRead()))throw this.snapshotUnavailable();
+    return {context,head,tree,parents,branch,status,files,indexMatches};
   }
 
   async fetch(repositoryId: string): Promise<void> {
@@ -98,14 +388,22 @@ export class WorkspaceManager {
   }
 
   async assertPathAllowed(workspace: WorkspaceHandle, candidate: string): Promise<string> {
+    let repository:RepositoryRecord;
+    try{repository=this.registry.get(workspace.repositoryId);}
+    catch(error){if(!(error instanceof WorkspacePolicyError)||error.code!=="REPOSITORY_NOT_FOUND"||!workspace.repositoryRoot)throw error;repository={id:workspace.repositoryId,root:workspace.repositoryRoot};}
+    await this.assertPublicScope({...repository,root:workspace.repositoryRoot??repository.root},[candidate]);
     const workspaceRoot = await realpath(workspace.path);
     const absolute = resolve(workspaceRoot, candidate);
     if (!within(workspaceRoot, absolute)) throw new WorkspacePolicyError("PATH_OUT_OF_SCOPE", "Path escapes worktree");
     let canonical: string;
     try { canonical = await realpath(absolute); }
     catch {
-      const parent = await realpath(dirname(absolute));
-      canonical = resolve(parent, absolute.slice(dirname(absolute).length + 1));
+      let parent = dirname(absolute);
+      while (parent !== workspaceRoot) {
+        try { const resolved = await realpath(parent); canonical = resolve(resolved, relative(parent, absolute)); break; }
+        catch { parent = dirname(parent); }
+      }
+      canonical ??= absolute;
     }
     if (!within(workspaceRoot, canonical)) throw new WorkspacePolicyError("SYMLINK_ESCAPE", "Path resolves outside worktree");
     if (workspace.scopePaths.length > 0) {
@@ -119,29 +417,52 @@ export class WorkspaceManager {
     return canonical;
   }
 
-  async cleanupPlan(workspace: WorkspaceHandle): Promise<CleanupPlan> {
+  async cleanupPlan(input: WorkspaceHandle): Promise<CleanupPlan> {
+    const workspace=structuredClone(input);
     const reasons: string[] = [];
-    const root = resolve(this.worktreeRoot);
+    const changedFiles:string[]=[],pins:WorkspacePin[]=[];
+    const root = await realpath(this.worktreeRoot);
     const path = resolve(workspace.path);
-    if (!within(root, path)) reasons.push("workspace is outside managed root");
+    if (!within(root, path)||path===root) reasons.push("workspace is outside managed root");
     const registered = this.managed.get(path);
-    if (!registered || registered.runId !== workspace.runId || registered.branch !== workspace.branch || registered.baseRevision !== workspace.baseRevision) reasons.push("workspace is not registered by this manager");
+    if (!registered || !isDeepStrictEqual(registered,workspace)) reasons.push("workspace is not registered by this manager");
     try {
-      const info = await stat(path);
-      if (!info.isDirectory()) reasons.push("workspace is not a directory");
-      const status = (await execute("git", ["-C", path, "status", "--porcelain"])).stdout.trim();
-      if (status) reasons.push("workspace has uncommitted changes");
+      const info = await lstat(path),identity=this.managedRoots.get(path);
+      const canonical=await realpath(path),canonicalRoot=await realpath(root);
+      const repositoryRoot=workspace.repositoryRoot??this.registry.get(workspace.repositoryId).root;
+      const options={timeout:10_000,maxBuffer:256*1024,env:gitInspectionEnvironment()};
+      const git=async(directory:string,args:string[])=>(await execute("git",["-C",directory,"-c","core.fsmonitor=false","-c","core.hooksPath=/dev/null",...args],options)).stdout.replace(/\r?\n$/,"");
+      if(!info.isDirectory()||!identity||identity.device!==info.dev||identity.inode!==info.ino||!within(canonicalRoot,canonical)||canonical===canonicalRoot||await realpath(await git(path,["rev-parse","--show-toplevel"]))!==canonical||await realpath(await git(path,["rev-parse","--path-format=absolute","--git-common-dir"]))!==await realpath(await git(repositoryRoot,["rev-parse","--path-format=absolute","--git-common-dir"]))||await git(path,["branch","--show-current"])!==workspace.branch)reasons.push("workspace identity changed");
+      const status=(await readWorkspaceStatus(path)).split("\0").filter(Boolean);
+      for(let index=0;index<status.length;index++){const entry=status[index]!;changedFiles.push(entry.slice(3));if(/[RC]/.test(entry.slice(0,2)))changedFiles.push(status[++index]!);}
+      if (status.length) reasons.push("workspace has uncommitted changes");
     } catch { reasons.push("workspace cannot be inspected"); }
-    return { workspace: structuredClone(workspace), safe: reasons.length === 0, reasons };
+    try{if(this.retention)pins.push(...structuredClone(this.retention.getWorkspacePins(structuredClone(workspace))));}catch{reasons.push("workspace retention cannot be confirmed");}
+    for(const pin of pins)reasons.push(`workspace is pinned: ${pin.reason}`);
+    return { workspace: structuredClone(workspace), safe: reasons.length === 0, reasons,changedFiles:[...new Set(changedFiles)].sort(),pins,action:"retain-worktree" };
   }
 
-  async cleanup(plan: CleanupPlan): Promise<void> {
-    if (!plan.safe) throw new WorkspacePolicyError("UNSAFE_CLEANUP", plan.reasons.join("; "));
-    const repository = this.registry.get(plan.workspace.repositoryId);
+  async cleanup(plan: CleanupPlan,assertCurrent?:()=>void): Promise<WorkspaceCleanupResult> {
+    const requested=structuredClone(plan);
+    if (!requested.safe) throw new WorkspacePolicyError("UNSAFE_CLEANUP", requested.reasons.join("; "));
+    const repositoryRoot = requested.workspace.repositoryRoot ?? this.registry.get(requested.workspace.repositoryId).root;
+    const environment=gitInspectionEnvironment();
+    return mutateWorktrees(repositoryRoot,async()=>{
+    assertCurrent?.();
+    const current=await this.cleanupPlan(requested.workspace);
+    if(!current.safe)throw new WorkspacePolicyError("UNSAFE_CLEANUP",current.reasons.join("; "));
     try {
-      await execute("git", ["-C", repository.root, "worktree", "remove", plan.workspace.path]);
-      this.managed.delete(resolve(plan.workspace.path));
+      const root=await realpath(this.worktreeRoot),retainedRoot=resolve(root,".retained");
+      await mkdir(retainedRoot,{recursive:true,mode:0o700});
+      if(!(await lstat(retainedRoot)).isDirectory()||await realpath(retainedRoot)!==retainedRoot)throw new WorkspacePolicyError("UNSAFE_CLEANUP","Retention directory identity changed");
+      const retainedPath=resolve(retainedRoot,randomUUID());
+      // Git remove can delete ignored files created after its clean check.
+      assertCurrent?.();
+      await execute("git", ["-C", repositoryRoot, "worktree", "move", current.workspace.path,retainedPath],{timeout:10_000,maxBuffer:256*1024,env:environment});
+      this.managed.delete(resolve(current.workspace.path));this.managedRoots.delete(resolve(current.workspace.path));
+      return {state:"retained",retainedPath,workspace:structuredClone(current.workspace)};
     }
-    catch (error) { throw new WorkspacePolicyError("WORKTREE_REMOVE_FAILED", error instanceof Error ? error.message : "Worktree removal failed"); }
+    catch (error) { if(error instanceof WorkspacePolicyError)throw error;throw new WorkspacePolicyError("WORKTREE_RETAIN_FAILED", error instanceof Error ? error.message : "Worktree retirement failed"); }
+    },environment);
   }
 }

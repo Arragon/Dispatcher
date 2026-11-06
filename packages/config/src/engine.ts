@@ -59,8 +59,11 @@ function configurationFromState(state: StoredConfigState): DispatcherConfig {
 
 function inferRisk(before: DispatcherConfig, after: DispatcherConfig): ConfigRisk {
   if (
-    before.controller.adminStrategy !== after.controller.adminStrategy ||
-    JSON.stringify(before.policies) !== JSON.stringify(after.policies)
+    before.controller.adminStrategy!==after.controller.adminStrategy || before.controller.listen!==after.controller.listen || before.controller.port!==after.controller.port || before.controller.deploymentMode!==after.controller.deploymentMode ||
+    JSON.stringify(before.runners.map(r=>({id:r.id,mode:r.mode,credentialRef:r.credentialRef})))!==JSON.stringify(after.runners.map(r=>({id:r.id,mode:r.mode,credentialRef:r.credentialRef}))) ||
+    JSON.stringify(before.policies) !== JSON.stringify(after.policies) ||
+    JSON.stringify(before.nativeInteraction)!==JSON.stringify(after.nativeInteraction) ||
+    JSON.stringify(before.rhizaIngress) !== JSON.stringify(after.rhizaIngress)
   ) {
     return "privileged";
   }
@@ -78,9 +81,9 @@ function inferRisk(before: DispatcherConfig, after: DispatcherConfig): ConfigRis
 
 function changes(before: DispatcherConfig, after: DispatcherConfig): ConfigChange[] {
   const result: ConfigChange[] = [];
-  for (const key of Object.keys(after) as Array<keyof DispatcherConfig>) {
+  for (const key of new Set([...Object.keys(before),...Object.keys(after)]) as Set<keyof DispatcherConfig>) {
     if (JSON.stringify(before[key]) !== JSON.stringify(after[key])) {
-      result.push({ op: "replace", path: `/${key}`, before: asJson(before[key]), after: asJson(after[key]) });
+      result.push({ op: "replace", path: `/${key}`, before: asJson(before[key]??null), after: asJson(after[key]??null) });
     }
   }
   return result;
@@ -156,7 +159,7 @@ export class ConfigurationEngine {
 
   getPlan(id: string): ConfigPlan | undefined {
     const stored = this.database.getConfigPlan(id);
-    return stored ? (stored.plan as unknown as ConfigPlan) : undefined;
+    return stored ? {...(stored.plan as unknown as ConfigPlan),state:stored.state as ConfigPlanState,updatedAt:stored.updatedAt} : undefined;
   }
 
   proposedConfig(id: string): DispatcherConfig {
@@ -224,7 +227,7 @@ export class ConfigurationEngine {
             ? error.code
             : runtimeRollbackFailed
               ? "CONFIG_RUNTIME_ROLLBACK_FAILED"
-              : "CONFIG_APPLY_FAILED",
+              : error instanceof ConfigPlanError ? error.code : "CONFIG_APPLY_FAILED",
         },
         updatedAt: now,
       };
@@ -244,6 +247,7 @@ export class ConfigurationEngine {
       if (runtimeRollbackFailed) {
         throw new ConfigPlanError("CONFIG_RUNTIME_ROLLBACK_FAILED", "Configuration plan failed and runtime rollback also failed", { cause: error });
       }
+      if (error instanceof ConfigPlanError) throw error;
       throw new ConfigPlanError("CONFIG_APPLY_FAILED", "Configuration plan failed and was rolled back", { cause: error });
     }
   }

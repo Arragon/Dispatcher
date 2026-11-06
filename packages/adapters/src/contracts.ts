@@ -1,3 +1,5 @@
+import type { NativeInteractionPort } from "./interaction-contracts.js";
+import type { NativeBinding, NativeBindingEvent, ExecutionContextRef, TurnObservation, ExecutionSelection, AccountModelCatalog, ModelCatalogContext, AccountQuotaSnapshot,AccountQuotaState, UsageObservationV1,ResourceState } from "@dispatcher/domain";
 export type AdapterPlatform = "darwin" | "linux" | "win32";
 export type BackendKind = "sdk" | "api" | "daemon" | "headless-cli" | "pty";
 
@@ -31,6 +33,14 @@ export interface AdapterManifest {
 export type AdapterSessionState = "STARTING" | "RUNNING" | "PAUSED" | "CANCELLED" | "COMPLETED" | "FAILED";
 
 export interface AdapterSession {
+  /** Execution facts already observed by status/result; independent of billing reads. */
+  executionResource?:{state:ResourceState;reason?:string;resetsAt?:string;source:"session"|"error";confidence:"high"|"medium"|"low";checkedAt:string};
+  executionSelection?: ExecutionSelection;
+  /** A present empty snapshot preserves a known omission; absent is historical data. */
+  legacyModel?:{id?:string};
+  turnId?:string;
+  turnStartedAt?:string;
+  modelInvocationId?:string;
   id: string;
   runId: string;
   backendId: string;
@@ -38,6 +48,13 @@ export interface AdapterSession {
   state: AdapterSessionState;
   profileId?: string;
   providerSessionId?: string;
+  nativeBinding?:NativeBinding;
+  execution?:{generation:number;attempt:number;leaseId?:string};
+  executionRef?:ExecutionContextRef;
+  nativeInvocationId?:string;
+  turnObservation?:TurnObservation;
+  nativeIdentityIssue?:string;
+  processId?: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -56,16 +73,56 @@ export interface AdapterResult {
   artifacts: Array<{ path: string; kind: string }>;
 }
 
+export interface NativeObserverContext {
+  sessionId:string;runId:string;profileId:string;backendId:string;invocationId:string;
+  generation?:number;attempt?:number;leaseId?:string;
+}
+export type NativeObserverBegin=(context:NativeObserverContext)=>(()=>boolean);
+export type NativeEventSink=(event:NativeBindingEvent)=>void|Promise<void>;
+export type AdapterStartOutcome={kind:"created";session:AdapterSession}|{kind:"not-created"|"unknown";code:string;diagnostic?:string};
+
+export interface AdapterStartInput {
+  runId:string;sessionId?:string;workspacePath:string;backendId?:string;prompt?:string;
+  executionSelection?:ExecutionSelection;beforeSend?:()=>void;beforeCreate?:()=>void;execution?:AdapterSession["execution"];
+  executionRef?:ExecutionContextRef;
+}
+
+/** Capture request facts before async preparation; never invent invocation counters. */
+export function captureAdapterStartInput(input:AdapterStartInput):AdapterStartInput {
+  const request={...input};
+  const e=input.execution;
+  if(e!==undefined){
+    if(!e||!Number.isSafeInteger(e.generation)||e.generation<1||!Number.isSafeInteger(e.attempt)||e.attempt<1||e.leaseId!==undefined&&(typeof e.leaseId!=="string"||!e.leaseId||e.leaseId.length>240||Array.from(e.leaseId).some(c=>c.charCodeAt(0)<32||c.charCodeAt(0)===127)))throw new AdapterStartError("not-created","INVALID_EXECUTION_CONTEXT","Invocation counters require the owning Run generation and attempt");
+    request.execution={generation:e.generation,attempt:e.attempt,...(e.leaseId!==undefined?{leaseId:e.leaseId}:{})};
+  }
+  if(input.executionSelection)request.executionSelection=structuredClone(input.executionSelection);
+  if(input.executionRef)request.executionRef=structuredClone(input.executionRef);
+  return request;
+}
+
 export interface AgentAdapter {
+  readonly interaction?:NativeInteractionPort;
   readonly manifest: AdapterManifest;
-  start(input: { runId: string; workspacePath: string; backendId?: string; prompt?: string }): Promise<AdapterSession>;
-  send(sessionId: string, message: string): Promise<AdapterEvent>;
-  pause(sessionId: string): Promise<AdapterSession>;
-  resume(sessionId: string): Promise<AdapterSession>;
-  cancel(sessionId: string): Promise<AdapterSession>;
+  readonly supportsExecutionSelection?: boolean;
+  readonly supportsExecutionRef?: boolean;
+  setNativeEventSink?(sink:NativeEventSink,onBegin:NativeObserverBegin):void;
+  /** Existing configured invocation defaults only; this does not qualify native selection. */
+  legacyInvocationDefaults?():{backendId:string;model?:string};
+  modelCatalog?(context: ModelCatalogContext & {workspacePath:string;signal?:AbortSignal}): Promise<AccountModelCatalog>;
+  start(input: AdapterStartInput): Promise<AdapterSession>;
+  send(sessionId: string, message: string, beforeSend?:()=>void): Promise<AdapterEvent>;
+  pause(sessionId: string, beforeSend?:()=>void): Promise<AdapterSession>;
+  resume(sessionId: string, beforeSend?:()=>void): Promise<AdapterSession>;
+  cancel(sessionId: string, beforeSend?:()=>void): Promise<AdapterSession>;
   status(sessionId: string): Promise<AdapterSession>;
   result(sessionId: string): Promise<AdapterResult>;
   usage?(sessionId: string): Promise<Record<string, unknown>>;
+  /** Reads already owned native events only; never waits for an active turn or performs a provider query. */
+  usageObservations?(sessionId:string):Promise<UsageObservationV1[]>;
+  /** Independent owning-account read. Never creates a turn or infers Run cost. */
+  accountQuota?(signal?:AbortSignal):Promise<AccountQuotaSnapshot>;
+  /** Remote owning cache projection; its freshness and last success must not be restamped locally. */
+  accountQuotaState?(signal?:AbortSignal):Promise<AccountQuotaState>;
   diagnostics?(sessionId: string): Promise<Record<string, unknown>>;
 }
 
@@ -74,6 +131,40 @@ export class AdapterContractError extends Error {
     super(message);
     this.name = "AdapterContractError";
   }
+}
+
+export class AdapterStartError extends AdapterContractError {
+  constructor(readonly creationOutcome:"not-created"|"unknown",code:string,message:string){super(code,message);this.name="AdapterStartError";}
+}
+/** Produced only at the final local boundary, before invoking any native write. */
+export class AdapterAdmissionError extends AdapterContractError {
+  readonly dispatch="not-sent";
+  constructor(code:string){super(code,"Native write admission rejected");this.name="AdapterAdmissionError";}
+}
+export function assertAdapterWriteAdmission(guard:(()=>void)|undefined):void {
+  if(!guard)return;
+  try{
+    const outcome:unknown=guard();
+    if(outcome!==undefined){void Promise.resolve(outcome).catch(()=>undefined);throw new AdapterAdmissionError("NATIVE_CAPABILITY_UNVERIFIED");}
+  }catch(error){
+    const code=(error as {code?:unknown})?.code;
+    throw new AdapterAdmissionError(typeof code==="string"&&/^[A-Z][A-Z0-9_]{0,79}$/.test(code)?code:"NATIVE_WRITE_ADMISSION_REJECTED");
+  }
+}
+
+export function assertAdapterStartAdmission(guard:(()=>void)|undefined):void {
+  try{assertAdapterWriteAdmission(guard);}catch(error){throw startPreparationFailure(error);}
+}
+
+export function localStartFailure(error:unknown):unknown {
+  const code=error&&typeof error==="object"&&"code" in error?error.code:undefined;
+  return ["ENOENT","EACCES","ENOEXEC","EPERM"].includes(String(code))
+    ? new AdapterStartError("not-created","SPAWN_FAILED",error instanceof Error?error.message:String(code))
+    : error;
+}
+
+export function startPreparationFailure(error:unknown):AdapterStartError {
+  return new AdapterStartError("not-created",error instanceof AdapterContractError?error.code:"START_PREPARATION_FAILED",error instanceof Error?error.message:"Agent preparation failed before creation");
 }
 
 function schemaProperties(schema: Record<string, unknown>): Record<string, unknown> {

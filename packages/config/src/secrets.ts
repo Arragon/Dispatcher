@@ -47,9 +47,10 @@ function authorize(reference: string, context: SecretAccessContext): void {
     return;
   }
   const { namespace } = parseSecretReference(reference);
+  if (namespace === "rhiza" && context.principal !== "controller") throw new SecretStoreError("SECRET_ACCESS_DENIED", "Secret access denied");
   const expectedPurpose = namespace === "llm"
     ? "llm"
-    : ["linear", "github", "slack"].includes(namespace)
+    : ["linear", "github", "slack", "rhiza"].includes(namespace)
       ? "integration"
       : "provider";
   if (context.purpose !== expectedPurpose) throw new SecretStoreError("SECRET_ACCESS_DENIED", "Secret access denied");

@@ -26,7 +26,7 @@ export interface NormalizedMessage {
   text: string;
   occurredAt: string;
   idempotencyKey: string;
-  action?: { id: string; value?: string; expectedRevision?: number; generation?: number };
+  action?: { id: string; value?: string; expectedRevision?: number; generation?: number; controlEpoch?: number };
 }
 
 export interface MessagingDelivery {
@@ -62,6 +62,7 @@ export interface ConversationBinding {
   runId?: string;
   sessionId?: string;
   generation: number;
+  controlEpoch?: number;
   revision: number;
   state: "ACTIVE" | "WAITING_USER" | "CLOSED";
   updatedAt: string;
@@ -278,6 +279,7 @@ export class SlackMessagingConnector implements MessagingAdapter {
     const actionValue = typeof firstAction?.value === "string" ? firstAction.value : undefined;
     let parsedAction: Record<string, unknown> | undefined;
     if (actionValue) { try { parsedAction = JSON.parse(actionValue) as Record<string, unknown>; } catch { parsedAction = { value: actionValue }; } }
+    if (parsedAction && Object.hasOwn(parsedAction,"controlEpoch") && (!Number.isSafeInteger(parsedAction.controlEpoch) || (parsedAction.controlEpoch as number)<0)) throw new ConnectorError("INVALID_EVENT", "Slack control epoch is invalid", {retryable:false,operation:"ingress"});
     return {
       kind: "message",
       message: {
@@ -290,7 +292,7 @@ export class SlackMessagingConnector implements MessagingAdapter {
         text: String(event?.text ?? payload.text ?? parsedAction?.text ?? ""),
         occurredAt: this.now().toISOString(),
         idempotencyKey,
-        ...(firstAction ? { action: { id: String(firstAction.action_id ?? firstAction.block_id ?? "action"), ...(actionValue ? { value: actionValue } : {}), ...(typeof parsedAction?.expectedRevision === "number" ? { expectedRevision: parsedAction.expectedRevision } : {}), ...(typeof parsedAction?.generation === "number" ? { generation: parsedAction.generation } : {}) } } : {}),
+        ...(firstAction ? { action: { id: String(firstAction.action_id ?? firstAction.block_id ?? "action"), ...(actionValue ? { value: actionValue } : {}), ...(typeof parsedAction?.expectedRevision === "number" ? { expectedRevision: parsedAction.expectedRevision } : {}), ...(typeof parsedAction?.generation === "number" ? { generation: parsedAction.generation } : {}), ...(typeof parsedAction?.controlEpoch === "number" ? { controlEpoch: parsedAction.controlEpoch } : {}) } } : {}),
       },
     };
   }
@@ -358,10 +360,18 @@ export class ConversationBindingService {
   bind(input: Omit<ConversationBinding, "id" | "revision" | "updatedAt">, now = new Date().toISOString()): ConversationBinding {
     const id = `${input.connectorInstanceId}:${input.conversationId}:${input.threadId}`;
     const existing = this.store.getConversation(id);
+    if (input.controlEpoch !== undefined && (!Number.isSafeInteger(input.controlEpoch) || input.controlEpoch < 0 || existing?.controlEpoch !== undefined && input.controlEpoch < existing.controlEpoch)) {
+      throw new ConnectorError("CONFLICT", "Conversation control epoch is stale", { retryable: false, operation: "write" });
+    }
     if (existing && (existing.taskId !== input.taskId || existing.runId !== input.runId || existing.generation !== input.generation)) {
       throw new ConnectorError("CONFLICT", "Conversation thread is already bound to another intervention", { retryable: false, operation: "write" });
     }
-    const binding: ConversationBinding = { ...structuredClone(input), id, revision: existing?.revision ?? 1, updatedAt: now };
+    const controlEpoch = input.controlEpoch ?? existing?.controlEpoch;
+    const binding: ConversationBinding = {
+      ...structuredClone(input), ...(controlEpoch !== undefined ? { controlEpoch } : {}), id,
+      revision: existing ? existing.revision + (controlEpoch !== existing.controlEpoch ? 1 : 0) : 1,
+      updatedAt: now,
+    };
     this.store.saveConversation(binding);
     return structuredClone(binding);
   }

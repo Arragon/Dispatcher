@@ -1,0 +1,325 @@
+{
+  "schemaVersion": 1,
+  "scenario": "history",
+  "startedAt": "2026-11-03T00:30:37.607Z",
+  "durationSeconds": 5,
+  "environment": {
+    "platform": "darwin",
+    "architecture": "arm64",
+    "kernel": "27.0.0",
+    "cpuModel": "Apple M6",
+    "availableCpus": 12,
+    "node": "v24.22.1",
+    "pid": 40216,
+    "runtimeKind": "qualified-release",
+    "sourceSha": "9c3731405d1a2f018542510ed6b38ae5ab2c41dc",
+    "sourceDirty": false,
+    "harnessSourceSha": "20789deec4cd4a26ba953796a390499aa93c99b5",
+    "harnessSourceDirty": true,
+    "harnessScriptSha256": "71a50f6beca88cc4b3169fd60dd59cdb5c05b8e883615a12f2fcaa459bc036d4",
+    "measurementScriptSha256": "ddbf325b2f5747a2d59f3eb822a2a85ecffa67aa30ea629b33c7d7e384bf1c67",
+    "runtimeSelectorSha256": "3c578e840ececd62e8a6ebb353808bdb07385473217317bbf52cb7c56ea9d2e5",
+    "historyWorkloadSha256": "38ac8ccbb4ea6e85cd2aeea70cc3178a3f2623d4c4adda6db2217a0b3bb143b5",
+    "controllerEntrypointSha256": "5e57257e4205b6f9f83c4e948d8253cb30f344a147067a22e33111f21b8c46e6",
+    "releaseDirectory": "/Users/wangdongxin/.local/share/dispatcher/releases/9c3731405d1a2f018542510ed6b38ae5ab2c41dc-macos-a5",
+    "releaseManifestSha256": "b2d0eb6eafa263871af29224d091cca9f70d22aaf3273a1c21a4198b901c2a58",
+    "smokeScope": "isolated-package-fixture",
+    "runtimeIntegrity": {
+      "qualified": true,
+      "state": "verified"
+    }
+  },
+  "measurements": {
+    "sampleCount": 47,
+    "measuredSeconds": 5.010809583,
+    "cpuAveragePercent": 90.60412144581787,
+    "rssMaximumBytes": 239976448,
+    "cpuBasis": "process-cumulative-time-delta-over-monotonic-window",
+    "samples": [
+      {
+        "rssBytes": 230457344,
+        "cpuSeconds": 0.65,
+        "observedAtMs": 2506.547792
+      },
+      {
+        "rssBytes": 231227392,
+        "cpuSeconds": 0.75,
+        "observedAtMs": 2611.214583
+      },
+      {
+        "rssBytes": 231768064,
+        "cpuSeconds": 0.86,
+        "observedAtMs": 2713.915292
+      },
+      {
+        "rssBytes": 232341504,
+        "cpuSeconds": 0.96,
+        "observedAtMs": 2821.663583
+      },
+      {
+        "rssBytes": 232898560,
+        "cpuSeconds": 1.06,
+        "observedAtMs": 2928.36075
+      },
+      {
+        "rssBytes": 233357312,
+        "cpuSeconds": 1.17,
+        "observedAtMs": 3036.108667
+      },
+      {
+        "rssBytes": 235405312,
+        "cpuSeconds": 1.29,
+        "observedAtMs": 3138.752875
+      },
+      {
+        "rssBytes": 235536384,
+        "cpuSeconds": 1.3900000000000001,
+        "observedAtMs": 3247.628167
+      },
+      {
+        "rssBytes": 235667456,
+        "cpuSeconds": 1.49,
+        "observedAtMs": 3349.546708
+      },
+      {
+        "rssBytes": 235798528,
+        "cpuSeconds": 1.5899999999999999,
+        "observedAtMs": 3455.324667
+      },
+      {
+        "rssBytes": 235831296,
+        "cpuSeconds": 1.7,
+        "observedAtMs": 3558.748208
+      },
+      {
+        "rssBytes": 235929600,
+        "cpuSeconds": 1.8,
+        "observedAtMs": 3662.945375
+      },
+      {
+        "rssBytes": 236437504,
+        "cpuSeconds": 1.9,
+        "observedAtMs": 3768.779333
+      },
+      {
+        "rssBytes": 236945408,
+        "cpuSeconds": 2,
+        "observedAtMs": 3875.735875
+      },
+      {
+        "rssBytes": 237371392,
+        "cpuSeconds": 2.11,
+        "observedAtMs": 3982.504125
+      },
+      {
+        "rssBytes": 237879296,
+        "cpuSeconds": 2.21,
+        "observedAtMs": 4090.351708
+      },
+      {
+        "rssBytes": 238338048,
+        "cpuSeconds": 2.31,
+        "observedAtMs": 4192.38125
+      },
+      {
+        "rssBytes": 238616576,
+        "cpuSeconds": 2.41,
+        "observedAtMs": 4294.343417
+      },
+      {
+        "rssBytes": 238747648,
+        "cpuSeconds": 2.51,
+        "observedAtMs": 4397.527
+      },
+      {
+        "rssBytes": 238747648,
+        "cpuSeconds": 2.61,
+        "observedAtMs": 4500.975667
+      },
+      {
+        "rssBytes": 239501312,
+        "cpuSeconds": 2.7199999999999998,
+        "observedAtMs": 4606.645167
+      },
+      {
+        "rssBytes": 239632384,
+        "cpuSeconds": 2.82,
+        "observedAtMs": 4711.41275
+      },
+      {
+        "rssBytes": 239648768,
+        "cpuSeconds": 2.93,
+        "observedAtMs": 4817.003792
+      },
+      {
+        "rssBytes": 239763456,
+        "cpuSeconds": 3.02,
+        "observedAtMs": 4920.583333
+      },
+      {
+        "rssBytes": 239894528,
+        "cpuSeconds": 3.12,
+        "observedAtMs": 5023.964208
+      },
+      {
+        "rssBytes": 239894528,
+        "cpuSeconds": 3.23,
+        "observedAtMs": 5133.305375
+      },
+      {
+        "rssBytes": 239894528,
+        "cpuSeconds": 3.33,
+        "observedAtMs": 5242.730083
+      },
+      {
+        "rssBytes": 239894528,
+        "cpuSeconds": 3.44,
+        "observedAtMs": 5353.458708
+      },
+      {
+        "rssBytes": 239894528,
+        "cpuSeconds": 3.54,
+        "observedAtMs": 5463.973625
+      },
+      {
+        "rssBytes": 239910912,
+        "cpuSeconds": 3.64,
+        "observedAtMs": 5566.087708
+      },
+      {
+        "rssBytes": 239910912,
+        "cpuSeconds": 3.74,
+        "observedAtMs": 5668.476083
+      },
+      {
+        "rssBytes": 239927296,
+        "cpuSeconds": 3.84,
+        "observedAtMs": 5771.355125
+      },
+      {
+        "rssBytes": 239927296,
+        "cpuSeconds": 3.94,
+        "observedAtMs": 5876.117792
+      },
+      {
+        "rssBytes": 239927296,
+        "cpuSeconds": 4.04,
+        "observedAtMs": 5981.979417
+      },
+      {
+        "rssBytes": 239927296,
+        "cpuSeconds": 4.15,
+        "observedAtMs": 6092.354667
+      },
+      {
+        "rssBytes": 239943680,
+        "cpuSeconds": 4.26,
+        "observedAtMs": 6203.263333
+      },
+      {
+        "rssBytes": 239943680,
+        "cpuSeconds": 4.36,
+        "observedAtMs": 6315.007083
+      },
+      {
+        "rssBytes": 239943680,
+        "cpuSeconds": 4.46,
+        "observedAtMs": 6420.130583
+      },
+      {
+        "rssBytes": 239943680,
+        "cpuSeconds": 4.57,
+        "observedAtMs": 6530.813458
+      },
+      {
+        "rssBytes": 239943680,
+        "cpuSeconds": 4.67,
+        "observedAtMs": 6636.989333
+      },
+      {
+        "rssBytes": 239943680,
+        "cpuSeconds": 4.77,
+        "observedAtMs": 6742.901333
+      },
+      {
+        "rssBytes": 239943680,
+        "cpuSeconds": 4.88,
+        "observedAtMs": 6848.341125
+      },
+      {
+        "rssBytes": 239943680,
+        "cpuSeconds": 4.98,
+        "observedAtMs": 6954.939458
+      },
+      {
+        "rssBytes": 239960064,
+        "cpuSeconds": 5.08,
+        "observedAtMs": 7063.436625
+      },
+      {
+        "rssBytes": 239976448,
+        "cpuSeconds": 5.19,
+        "observedAtMs": 7173.970292
+      },
+      {
+        "rssBytes": 239976448,
+        "cpuSeconds": 5.19,
+        "observedAtMs": 7175.467542
+      },
+      {
+        "rssBytes": 239976448,
+        "cpuSeconds": 5.19,
+        "observedAtMs": 7517.357375
+      }
+    ],
+    "controllerReportedRssBytes": 239992832,
+    "databaseMainBytes": 4251648,
+    "databaseWalBytes": 49472,
+    "databaseShmBytes": 32768,
+    "databaseBytes": 4333888,
+    "logBytes": 155743,
+    "storageBasis": "sqlite-main-wal-shm-and-structured-log-files",
+    "databaseGrowthBytes": 0,
+    "logGrowthBytes": 155298,
+    "dashboardClients": 0,
+    "history": {
+      "synthetic": true,
+      "taskId": "benchmark-history",
+      "taskCount": 1,
+      "runCount": 10000,
+      "nativeWorkloadConfigured": false,
+      "pages": 500,
+      "runsVerified": 10000,
+      "pageSize": 20,
+      "maximumResponseBytes": 5952,
+      "latencyMs": {
+        "minimum": 7.005083999999897,
+        "p50": 8.579999999999927,
+        "p95": 11.751082999999198,
+        "p99": 12.246917000000394,
+        "maximum": 27.592000000000553
+      }
+    },
+    "controllerLlmCallsSinceStart": 0,
+    "controllerLlmCallScope": {
+      "basis": "generate-attempts",
+      "includesExplicitProbes": false,
+      "reset": "controller-instance",
+      "startedAt": "2026-11-03T00:30:39.329Z"
+    }
+  },
+  "targets": {
+    "idleCpuPercentBelow": 1,
+    "rssBytesBelow": 262144000
+  },
+  "assessment": "informational",
+  "limitations": [
+    "Synthetic terminal Run metadata and Controller API pagination only; no browser rendering, native/provider workload or formal P4 acceptance. Page latency and response bytes include scoped Task metadata.",
+    "Controller process CPU/RSS only; native descendants, event-loop lag, open handles, network, full browser history, synthetic SSE burst and 8-hour soak Gates are not measured here."
+  ],
+  "cleanup": {
+    "confirmed": true,
+    "exitCode": 0,
+    "signal": null
+  }
+}

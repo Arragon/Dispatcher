@@ -1,0 +1,234 @@
+import type {InteractionMode,NativeSurface} from "@dispatcher/domain";
+import {PublicationNativeScope,interactionRequirementLabel} from "./PublicationNativeScope.js";
+import {RepositoryRefPicker} from "./RepositoryContext.js";
+import { RoutingDecision } from "./RoutingDecision.js";
+import { NativeModelPicker,type NativeModelChoice } from "./NativeModelPicker.js";
+import type { PublishDraftV1, PublicationPreview, PublicationReceipt, TaskModelRoutingConfig, Task, TaskContract } from "@dispatcher/domain";
+import { PublicationOutcome } from "./PublicationOutcome.js";
+import {PricingSnapshotView} from "./CostEstimateView.js";
+import { useEffect, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { Link, useSearchParams } from "react-router-dom";
+import { api, ApiError, type ConfigResponse } from "./api.js";
+import { Drawer } from "./Drawer.js";
+import { Icon, Notice, ProviderMark } from "./ui.js";
+import { safeLink } from "./task-view.js";
+
+interface Repository { id: string; root?: string; defaultBaseRef: string; scopePaths: string[]; verificationCommands: Array<{id:string;required:boolean}> }
+interface Profile { id: string; alias: string; provider: string; runnerId: string; enabled?: boolean; settings?: Record<string, unknown> }
+interface Config { connectors?:Array<{id:string;kind:string;definitionId:string;displayName:string;enabled:boolean}>; repositories: Repository[]; agentProfiles: Profile[]; policies?:{modelRouting?:TaskModelRoutingConfig} }
+interface TaskContext {revision:number;document:Task;contract?:TaskContract;executionIntent?:{execution:PublishDraftV1["execution"]};publicationDraft?:PublishDraftV1}
+interface Draft { interactionMode:InteractionMode|"";nativeSurface:NativeSurface|"";existingTaskId:string;existingTaskRevision:string; selectionMode:"manual"|"policy-auto";taskTypeId:string; clientDraftId:string; title: string; description: string; repositoryId: string; profileId: string; startMode: "create-only" | "dispatch"; deliveryType:"none"|"commit"|"pull-request"; scmConnectorId:string;targetRepository:string;baseBranch:string; acceptance: string; references: string; baseRef:string; targetBranch: string; nativeModelId:string; choiceSource:"explicit"|"account-default"; reasoningEffort:string; catalogRevision:string; contextFingerprint:string; modelAccessAcknowledged:string }
+const fieldLabels={title:"任务标题",description:"任务说明",repositoryId:"项目仓库",profileId:"Harness 账号",acceptance:"验收条件",references:"参考链接",targetBranch:"目标分支",baseRef:"基准引用",scmConnectorId:"SCM 连接器",targetRepository:"远端仓库",baseBranch:"PR 基准分支",nativeModelId:"原生模型"} as const;
+type FormField=keyof typeof fieldLabels;
+type FieldIssues=Partial<Record<FormField,string>>;
+const fieldPaths:Record<string,FormField>={"/title":"title","/description":"description","/repositoryId":"repositoryId","/projectId":"repositoryId","/scopePaths":"repositoryId","/verificationCommandIds":"repositoryId","/acceptanceCriteria":"acceptance","/referenceLinks":"references","/targetBranch":"targetBranch","/baseRef":"baseRef","/execution/profileId":"profileId","/execution/nativeModelId":"nativeModelId","/execution/nativeParameters":"nativeModelId","/execution/catalogRevision":"nativeModelId","/execution/contextFingerprint":"nativeModelId","/delivery/scmConnectorId":"scmConnectorId","/delivery/targetRepository":"targetRepository","/delivery/baseBranch":"baseBranch"};
+function responseFieldIssues(value:unknown):FieldIssues{
+  const issues:FieldIssues={};if(!Array.isArray(value))return issues;
+  for(const item of value.slice(0,32))if(item&&typeof item==="object"&&typeof item.path==="string"){
+    const field=Object.entries(fieldPaths).find(([path])=>item.path===path||item.path.startsWith(`${path}/`))?.[1];
+    if(field&&["required","invalid","too-long"].includes(item.code))issues[field]??=item.code==="required"?"请填写此字段。":item.code==="too-long"?"内容超出允许长度，请缩短后重试。":"字段内容不符合要求，请检查后重试。";
+  }
+  return issues;
+}
+const emptyDraft: Draft = {interactionMode:"",nativeSurface:"desktop",existingTaskId:"",existingTaskRevision:"",selectionMode:"manual",taskTypeId:"",clientDraftId:"",title:"",description:"",repositoryId:"",profileId:"",startMode:"create-only",deliveryType:"none",scmConnectorId:"",targetRepository:"",baseBranch:"",acceptance:"",references:"",baseRef:"",targetBranch:"",nativeModelId:"",choiceSource:"explicit",reasoningEffort:"",catalogRevision:"",contextFingerprint:"",modelAccessAcknowledged:""};
+const receiptKey = "dispatcher.publication-receipt.v1";
+interface CommitReview { routingAccepted?:boolean; draft?:Draft; attempted?:boolean; publicationId:string;revision:number;reviewHash:string;key:string }
+function restoreReview(storageKey=receiptKey):CommitReview|undefined {
+  try {
+    const saved=JSON.parse(localStorage.getItem(storageKey)??"null") as CommitReview|null;
+    if(!saved||typeof saved.publicationId!=="string"||typeof saved.reviewHash!=="string"||typeof saved.key!=="string"||!Number.isInteger(saved.revision))return undefined;
+    const {draft:storedDraft,...identity}=saved;
+    return {...identity,...(storedDraft&&typeof storedDraft==="object"?{draft:readDraft(storedDraft as unknown as Record<string,unknown>)}:{})};
+  }catch{return undefined;}
+}
+const draftKey = "dispatcher.publication-draft.v1";
+function readDraft(source: Record<string,unknown>): Draft {
+  return Object.fromEntries(Object.entries(emptyDraft).map(([key,value]) => [key, key === "interactionMode" ? ["compatible","native-session","native-gui"].includes(String(source[key]))?source[key]:"" : key === "nativeSurface" ? ["desktop","ide","web","mobile","tui"].includes(String(source[key]))?source[key]:"" : key === "choiceSource" ? source[key] === "account-default" ? "account-default" : "explicit" : key === "selectionMode" ? source[key] === "policy-auto" ? "policy-auto" : "manual" : key === "deliveryType" ? ["commit","pull-request"].includes(String(source[key])) ? source[key] : "none" : key === "startMode" ? source[key] === "dispatch" ? "dispatch" : "create-only" : typeof source[key] === "string" ? source[key] : value])) as unknown as Draft;
+}
+function restoreDraft(storageKey=draftKey): Draft {
+  try {
+    const data: unknown = JSON.parse(localStorage.getItem(storageKey) ?? "null");
+    if (!data || typeof data !== "object") return {...emptyDraft};
+    const source = data as Record<string,unknown>;
+    return readDraft(source);
+  } catch { return {...emptyDraft}; }
+}
+function lines(value: string): string[] { return value.split("\n").map((line) => line.trim()).filter(Boolean); }
+export default function PublishPage():React.JSX.Element {
+  const [params]=useSearchParams();return <PublicationComposer key={params.get("task")??"new"}/>;
+}
+function draftFromTask(context:TaskContext,existingTaskId:string):Draft {
+  const contract=context.contract,source=context.publicationDraft,intent=context.executionIntent?.execution;
+  return {...emptyDraft,
+      interactionMode:intent?.interactionRequirement?.mode??"",nativeSurface:intent?.interactionRequirement?.surface??"desktop",profileId:intent?.profileId??"",selectionMode:intent?.selectionMode??"manual",taskTypeId:intent?.taskTypeId??"",nativeModelId:intent?.nativeModelId??"",choiceSource:intent?.selectionSource==="account-default"?"account-default":"explicit",reasoningEffort:typeof intent?.nativeParameters?.reasoningEffort==="string"?intent.nativeParameters.reasoningEffort:"",catalogRevision:intent?.catalogRevision??"",contextFingerprint:intent?.contextFingerprint??"",
+      existingTaskId,existingTaskRevision:String(context.revision),clientDraftId:`task:${existingTaskId}:${context.revision}`,title:context.document.title,description:contract?.instructions??context.document.description??"",repositoryId:contract?.workspace?.repositoryId??source?.repositoryId??"",acceptance:(contract?.acceptanceCriteria??source?.acceptanceCriteria??[]).join("\n"),references:(contract?.referenceLinks??source?.referenceLinks??[]).join("\n"),baseRef:contract?.workspace?.baseRef??source?.baseRef??"",targetBranch:contract?.workspace?.targetBranch??source?.targetBranch??"",deliveryType:contract?.delivery.type??source?.delivery.type??"none",scmConnectorId:contract?.delivery.scmConnectorId??source?.delivery.scmConnectorId??"",targetRepository:contract?.delivery.repository??source?.delivery.targetRepository??"",baseBranch:contract?.delivery.baseBranch??source?.delivery.baseBranch??"",startMode:context.document.state==="NEEDS_SPEC"?"create-only":"dispatch"};
+}
+function PublicationComposer(): React.JSX.Element {
+  const query = useQuery({queryKey:["config"],queryFn:()=>api<ConfigResponse<Config>>("/api/config?view=console")});
+  const [params] = useSearchParams();
+  const existingTaskId=params.get("task")??"";
+  const activeDraftKey=existingTaskId?`${draftKey}:${existingTaskId}`:draftKey;
+  const activeReceiptKey=existingTaskId?`${receiptKey}:${existingTaskId}`:receiptKey;
+  const taskQuery=useQuery({queryKey:["publication-task",existingTaskId],queryFn:()=>api<TaskContext>(`/api/tasks/${encodeURIComponent(existingTaskId)}`),enabled:Boolean(existingTaskId),retry:false});
+  const [draft, setDraft] = useState<Draft>(() => {const restoredDraft=restoreDraft(activeDraftKey);const restored=!existingTaskId&&restoredDraft.existingTaskId?{...emptyDraft}:restoredDraft;return {...restored,clientDraftId:restored.clientDraftId||crypto.randomUUID(),...(params.get("profile")?{profileId:params.get("profile")!,nativeModelId:"",choiceSource:"explicit",reasoningEffort:"",catalogRevision:"",contextFingerprint:"",modelAccessAcknowledged:""}:{}),...(params.get("repository")?{repositoryId:params.get("repository")!}:{})};});
+  const [error, setError] = useState("");
+  const [fieldErrors,setFieldErrors]=useState<FieldIssues>({});
+  const composer=useRef<HTMLElement>(null);
+  const [saved, setSaved] = useState("");
+  const [review, setReview] = useState(false);
+  const [routingAccepted,setRoutingAccepted]=useState(false);
+  const [preview,setPreview]=useState<PublicationPreview>();
+  const [receipt,setReceipt]=useState<PublicationReceipt>();
+  const [busy,setBusy]=useState(false);
+  const pendingReview=useRef<CommitReview|undefined>(restoreReview(activeReceiptKey));
+  const draftGeneration=useRef(0);
+  const operation=useRef(false);
+  useEffect(()=>{let active=true;const stored=pendingReview.current;const generation=draftGeneration.current;if(stored)void api<PublicationPreview|PublicationReceipt>(`/api/task-publications/${stored.publicationId}`).then(value=>{if(!active)return;if("taskId" in value||generation===draftGeneration.current)acceptRead(value);else setSaved("当前草稿已修改；上次预检保留，可主动读取原回执。");}).catch(()=>{if(active)setError("上次发布回执读取失败；草稿已保留，请重新读取回执后继续。");});return()=>{active=false;};},[]);
+  const loadedTask=useRef("");
+  useEffect(()=>{
+    const context=taskQuery.data;if(!existingTaskId||!context||(!context.contract?.workspace&&!context.publicationDraft))return;
+    const revisionKey=`${existingTaskId}:${context.revision}`;if(loadedTask.current===revisionKey)return;
+    if(loadedTask.current){setError("任务版本已改变，当前草稿保留。请备份后重新读取任务再审阅。");return;}
+    loadedTask.current=revisionKey;
+    if(context.document.state==="NEEDS_SPEC"&&draft.existingTaskId===existingTaskId&&draft.existingTaskRevision&&draft.existingTaskRevision!==String(context.revision)){setError("任务版本已改变，当前草稿保留。请备份后重新读取任务再审阅。");return;}
+    draftGeneration.current++;setReview(false);setPreview(undefined);
+    setDraft(previous=>context.document.state==="NEEDS_SPEC"&&previous.existingTaskId===existingTaskId&&previous.existingTaskRevision===String(context.revision)?previous:draftFromTask(context,existingTaskId));
+  },[taskQuery.data,existingTaskId]);
+  const completing=Boolean(existingTaskId&&taskQuery.data?.document.state==="NEEDS_SPEC"&&taskQuery.data.publicationDraft);
+  const frozenTask=Boolean(existingTaskId&&!completing);
+  const saving = useRef(false);
+  const importInput = useRef<HTMLInputElement>(null);
+  const [importing,setImporting] = useState(false);
+  useEffect(() => {
+    try { localStorage.setItem(activeDraftKey,JSON.stringify(draft)); }
+    catch { setSaved("浏览器无法保存草稿，请使用备份下载。"); }
+  },[draft,activeDraftKey]);
+  const repositories = query.data?.config.repositories ?? [];
+  const profiles = query.data?.config.agentProfiles ?? [];
+  const scmConnectors=query.data?.config.connectors?.filter(connector=>connector.kind==="scm"&&connector.definitionId==="scm.github")??[];
+  const repository = repositories.find((entry) => entry.id === draft.repositoryId);
+  const profile = profiles.find((entry) => entry.id === draft.profileId);
+  const generatedTitle = draft.description.split("\n").map((line) => line.replace(/^#+\s*/, "").trim()).find(Boolean) ?? "未命名任务";
+  const title = draft.title.trim() || (Array.from(generatedTitle).length > 80 ? `${Array.from(generatedTitle).slice(0,80).join("")}…` : generatedTitle);
+  function edit(changes: Partial<Draft>): void { setFieldErrors(current=>{const next={...current};for(const key of Object.keys(changes))delete next[key as FormField];return next;});draftGeneration.current++; setDraft((current) => ({...current,...changes})); setError(""); setSaved(""); setReview(false); setPreview(undefined); }
+  function focusField(field:FormField):void{const target=composer.current?.querySelector<HTMLElement>(`[data-publication-field="${field}"]`);const details=target?.closest("details");if(details)details.open=true;target?.focus({preventScroll:true});target?.scrollIntoView?.({block:"center",inline:"nearest"});}
+  function reportFields(issues:FieldIssues,message="请检查标记的字段。"):boolean{const first=Object.keys(issues)[0] as FormField|undefined;if(!first)return false;setFieldErrors(issues);setError(message);queueMicrotask(()=>focusField(first));return true;}
+  function fieldProps(field:FormField){return {id:`publication-${field}`,"data-publication-field":field,"aria-invalid":Boolean(fieldErrors[field]),...(fieldErrors[field]?{"aria-describedby":`publication-error-${field}`}:{})};}
+  function fieldHint(field:FormField){return fieldErrors[field]?<small className="field-error" id={`publication-error-${field}`}>{fieldErrors[field]}</small>:null;}
+  async function importDraft(file?:File):Promise<void> {
+    if (!file || importing) return;
+    setImporting(true); setError("");
+    try {
+      if(file.size > 256_000) throw new Error("草稿文件过大，请选择小于 256 KB 的备份。");
+      const text = await new Promise<string>((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(String(reader.result));reader.onerror=()=>reject(new Error("草稿读取失败"));reader.readAsText(file);});
+      const data:unknown=JSON.parse(text);
+      if(!data || typeof data !== "object" || !("schemaVersion" in data) || data.schemaVersion !== 1) throw new Error("不支持的草稿格式，请选择版本 1 的 JSON 备份。");
+      const source=data as Record<string,unknown>;
+      if(typeof source.description !== "string" || Object.keys(emptyDraft).some((key)=>source[key] !== undefined && typeof source[key] !== "string") || (source.startMode !== undefined && !["dispatch","create-only"].includes(String(source.startMode)))) throw new Error("草稿字段格式无效。");
+      if(source.interactionMode!==undefined&&!["","compatible","native-session","native-gui"].includes(String(source.interactionMode))||source.nativeSurface!==undefined&&!["","desktop","ide","web","mobile","tui"].includes(String(source.nativeSurface)))throw new Error("草稿原生交互要求格式无效。");
+      if(source.deliveryType!==undefined&&!["none","commit","pull-request"].includes(String(source.deliveryType)))throw new Error("草稿交付方式无效。");
+      if ((draft.title || draft.description) && !window.confirm("导入会替换当前浏览器草稿，继续吗？建议先下载备份。")) return;
+      edit({...readDraft(source),clientDraftId:typeof source.clientDraftId==="string"&&source.clientDraftId?source.clientDraftId:crypto.randomUUID()});setReview(false);setSaved("草稿已导入并保存在当前浏览器，尚未创建任务。");
+    } catch(error) {setError(error instanceof SyntaxError ? "草稿不是有效的 JSON 文件。" : error instanceof Error ? error.message : "导入失败，当前草稿保留。");}
+    finally {setImporting(false);if(importInput.current)importInput.current.value="";}
+  }
+  function backup(): void {
+    if (saving.current) return;
+    saving.current = true;
+    const url = URL.createObjectURL(new Blob([JSON.stringify({schemaVersion:1,...draft},null,2)],{type:"application/json"}));
+    const link = document.createElement("a"); link.href=url; link.download="dispatcher-task-draft.json"; link.click();
+    setTimeout(() => URL.revokeObjectURL(url),1000); saving.current=false; setSaved("任务草稿已导出，未创建任务。");
+  }
+  async function reloadTask():Promise<void>{
+    if(operation.current||busy||pendingReview.current?.attempted||!window.confirm("重新读取会放弃本任务的未提交修改。可先备份草稿，继续吗？"))return;
+    operation.current=true;setBusy(true);
+    const generation=draftGeneration.current;
+    try {
+      const result=await taskQuery.refetch();
+      const context=result.data;
+      if(result.error||!context||(!context.contract?.workspace&&!context.publicationDraft)){setError("任务读取失败，当前草稿保留。");return;}
+      if(generation!==draftGeneration.current){setError("任务读取期间草稿已修改，当前草稿保留。请再次确认后重新读取。");return;}
+      loadedTask.current=`${existingTaskId}:${context.revision}`;
+      draftGeneration.current++;setDraft(draftFromTask(context,existingTaskId));
+      setError("");setReview(false);setPreview(undefined);pendingReview.current=undefined;localStorage.removeItem(activeReceiptKey);setReceipt(undefined);
+    } finally {operation.current=false;setBusy(false);}
+  }
+  async function check(reanalyze=false): Promise<void> {
+    if(operation.current)return;
+    if(existingTaskId&&(!taskQuery.data||(!completing&&(!taskQuery.data.contract?.workspace||taskQuery.data.document.state!=="READY")))){setError("现有任务尚不可派发，请先完善契约或刷新状态。");return;}
+    if(pendingReview.current?.attempted&&!receipt){setError("上次提交尚未确认，请读取原回执或沿用原提交重试。");try{await recover();}catch{ /* Keep the original pending commit identity. */ }return;}
+    const issues:FieldIssues={};
+    if(!draft.description.trim())issues.description="请填写任务说明。";
+    if(Array.from(draft.title).length>160)issues.title="标题最多 160 字，请缩短后重试。";
+    if(Array.from(draft.description).length>20_000)issues.description="任务说明最多 20,000 字，请缩短后重试。";
+    if(lines(draft.references).some(value=>!safeLink(value)))issues.references="参考链接只支持不含账号密码的 http / https 地址。";
+    if(Array.from(draft.acceptance).length>8_000)issues.acceptance="验收条件最多 8,000 字。";
+    if(Array.from(draft.references).length>2_000)issues.references="参考链接总长度最多 2,000 字。";
+    if(Array.from(draft.targetBranch).length>200)issues.targetBranch="目标分支最多 200 字。";
+    if(draft.startMode==="dispatch"){if(!repository)issues.repositoryId="请选择已登记仓库。";if(!profile||profile.enabled===false)issues.profileId="请选择已启用的账号。";if(!draft.acceptance.trim())issues.acceptance="请填写明确的验收条件。";}
+    if(draft.interactionMode&&!profile)issues.profileId="选择交互要求前请先选择账号。";
+    if(draft.interactionMode==="native-gui"&&!draft.nativeSurface)issues.profileId="请选择必须可用的原生界面。";
+    if(reportFields(issues))return;
+    setFieldErrors({});
+    setError("");operation.current=true;setBusy(true);const generation=draftGeneration.current;
+    const originalDraft=completing?taskQuery.data?.publicationDraft:undefined;
+    const payload:PublishDraftV1={schemaVersion:1,clientDraftId:draft.clientDraftId,title:draft.title,description:draft.description,projectId:repository?`local:${repository.id}`:"local:inbox",repositoryId:repository?.id??"",acceptanceCriteria:lines(draft.acceptance),referenceLinks:lines(draft.references),scopePaths:originalDraft&&originalDraft.repositoryId===repository?.id&&originalDraft.scopePaths?.length?originalDraft.scopePaths:repository?(repository.scopePaths.length?repository.scopePaths:["."]):[],verificationCommandIds:originalDraft&&originalDraft.repositoryId===repository?.id&&originalDraft.verificationCommandIds?.length?originalDraft.verificationCommandIds:repository?.verificationCommands.map(c=>c.id)??[],...(draft.baseRef?{baseRef:draft.baseRef}:{}),...(draft.targetBranch?{targetBranch:draft.targetBranch}:{}),startMode:draft.startMode,execution:draft.selectionMode==="policy-auto"?{selectionMode:"policy-auto",...(profile?{profileId:profile.id}:{}),...(draft.taskTypeId?{taskTypeId:draft.taskTypeId}:{}),allowUnconfirmedModelAccess:draft.modelAccessAcknowledged==="yes"}:{selectionMode:"manual",selectionType:draft.nativeModelId?"explicit-model":"native-default",...(profile?{profileId:profile.id}:{}),...(draft.nativeModelId?{nativeModelId:draft.nativeModelId,selectionSource:draft.choiceSource,nativeParameters:draft.reasoningEffort?{reasoningEffort:draft.reasoningEffort}:{},catalogRevision:draft.catalogRevision,contextFingerprint:draft.contextFingerprint,allowUnconfirmedModelAccess:draft.modelAccessAcknowledged==="yes"}:{})},delivery:{type:draft.deliveryType,...(draft.deliveryType==="pull-request"?{scmConnectorId:draft.scmConnectorId,targetRepository:draft.targetRepository,baseBranch:draft.baseBranch}:{})}};
+    if(draft.interactionMode&&profile)payload.execution.interactionRequirement={version:1,profileId:profile.id,mode:draft.interactionMode,executionLocation:"managed-worktree",...(draft.interactionMode==="native-gui"&&draft.nativeSurface?{surface:draft.nativeSurface}:{})};
+    try {if(reanalyze)await api("/api/model-routing/preview?reanalyze=true",{method:"POST",body:JSON.stringify(payload)});const value=await api<PublicationPreview>(existingTaskId?`/api/tasks/${encodeURIComponent(existingTaskId)}/publications/preview`:"/api/task-publications/preview",{method:"POST",body:JSON.stringify(existingTaskId?{expectedRevision:Number(draft.existingTaskRevision),execution:payload.execution,...(completing?{draft:payload}:{})}:payload)});if(generation!==draftGeneration.current)return;if(!value.publicationId)throw new Error("服务端没有返回有效预检，请检查后重试。");const pending={draft:structuredClone(draft),publicationId:value.publicationId,revision:value.revision,reviewHash:value.confirmation.reviewHash,key:crypto.randomUUID()};localStorage.setItem(activeReceiptKey,JSON.stringify(pending));pendingReview.current=pending;setPreview(value);setRoutingAccepted(false);setReceipt(undefined);setReview(true);}catch(error){if(error instanceof ApiError&&reportFields(responseFieldIssues(error.fieldErrors),error.message))return;setError(error instanceof Error?error.message:"预检失败，草稿保留。");}finally{operation.current=false;setBusy(false);}
+  }
+  function acceptRead(value:PublicationPreview|PublicationReceipt):void {
+    const pending=pendingReview.current;
+    if(pending&&("taskId" in value||value.state==="NEEDS_REVIEW")){
+      pending.attempted=false;try{localStorage.setItem(activeReceiptKey,JSON.stringify(pending));}catch{setSaved("回执已读取，浏览器存储不可用，请保留任务 ID。");}
+    }
+    if("taskId" in value){setReceipt(value);setReview(false);}else{setPreview(value);setRoutingAccepted(pending?.routingAccepted===true);setReview(true);}
+  }
+  async function recover():Promise<void> {
+    const pending=pendingReview.current;if(!pending)return;
+    const value=await api<PublicationPreview|PublicationReceipt>(`/api/task-publications/${pending.publicationId}`);
+    acceptRead(value);
+  }
+  async function commit():Promise<void> {
+    const pending=pendingReview.current;if(operation.current||!preview?.canCommit||!pending||!deliveryReviewReady||pending.draft?.description!==preview.effectiveTask.description)return;
+    operation.current=true;setBusy(true);setError("");
+    try {pending.routingAccepted=pending.attempted?pending.routingAccepted===true:routingAccepted;localStorage.setItem(activeReceiptKey,JSON.stringify({...pending,attempted:true}));pending.attempted=true;const value=await api<PublicationReceipt>(`/api/task-publications/${pending.publicationId}/commit`,{method:"POST",headers:{"Idempotency-Key":pending.key},body:JSON.stringify({revision:pending.revision,reviewHash:pending.reviewHash,confirmation:{accepted:true,...(preview.routingDecision?{routingAccepted:pending.routingAccepted===true}:{})}})});acceptRead(value);}
+    catch(error){setError(error instanceof Error?error.message:"提交结果未知，请读取回执。");try{await recover();}catch{setError("提交结果未知。请保留当前草稿与回执，重新登录后读取回执，避免重复创建。");}}
+    finally{operation.current=false;setBusy(false);}
+  }
+  const semanticAnalysis=draft.selectionMode==="policy-auto"&&!draft.taskTypeId&&query.data?.config.policies?.modelRouting?.classificationMode==="hybrid";
+  const reviewedDraft=pendingReview.current?.draft;
+  const reviewBound=Boolean(reviewedDraft&&reviewedDraft.description===preview?.effectiveTask.description&&(preview?.taskBinding?.taskId??"")===existingTaskId);
+  const nativeScopeProfile=draft.profileId;
+  const nativeScopeBackend=reviewBound&&preview?.effectiveExecution?.profileId===nativeScopeProfile?preview.effectiveExecution.backendId:undefined;
+  if(existingTaskId&&taskQuery.isLoading)return <div className="page-state" role="status">正在读取现有任务契约…</div>;
+  const reviewedDelivery=preview?.effectiveDelivery;
+  const deliveryReviewReady=reviewedDraft?.startMode!=="dispatch"||reviewedDraft.deliveryType!=="pull-request"||Boolean(reviewedDelivery);
+  return <section ref={composer} className="publish-page">
+    <header className="page-header"><div><h1>{existingTaskId?completing?"完善现有任务":"审阅现有任务":"发布任务"}</h1><p>{existingTaskId?completing?`任务 ${existingTaskId} · 补齐后保存到原任务，或预检确认后直接派发。`:`任务 ${existingTaskId} · 保留原任务和冻结契约，仅审阅本次执行选择。`:"描述你想完成的工作，选择项目与执行方式。"}</p></div><div className="page-actions"><input ref={importInput} aria-label="导入任务草稿" type="file" hidden accept="application/json,.json" onChange={(event)=>void importDraft(event.target.files?.[0])}/><button disabled={importing||Boolean(existingTaskId)} onClick={()=>importInput.current?.click()}><Icon name="folder"/>{importing ? "导入中…" : "导入草稿"}</button><button onClick={backup}><Icon name="download"/>备份草稿</button>{existingTaskId&&<button disabled={busy||Boolean(pendingReview.current?.attempted)} onClick={()=>void reloadTask()}>重新读取任务</button>}<Link className="button-link" to="/tasks">查看任务</Link></div></header>
+    <Notice tone="neutral">提交前先完成服务端预检。仅创建会保留待完善任务；立即派发会在确认后启动原生 Agent。</Notice>
+    {existingTaskId&&(taskQuery.error||(!taskQuery.data?.contract?.workspace&&!completing))&&<Notice tone="error">任务契约读取失败或不支持此派发入口。<button onClick={()=>void taskQuery.refetch()}>重新读取</button></Notice>}
+    {receipt && <><PublicationOutcome receipt={receipt} existingTask={Boolean(existingTaskId)}/>{existingTaskId?<Link className="button-link" to="/publish">发布新任务</Link>:<button disabled={busy} onClick={()=>{setDraft({...emptyDraft,clientDraftId:crypto.randomUUID()});setReceipt(undefined);setPreview(undefined);setReview(false);pendingReview.current=undefined;localStorage.removeItem(activeReceiptKey);setError("");setSaved("已开始新草稿，原任务保留在任务页。");}}>开始新任务草稿</button>}</>}
+    {pendingReview.current && <button disabled={busy} onClick={()=>void recover().catch(e=>setError(e instanceof Error?e.message:"回执读取失败"))}>重新读取发布回执</button>}
+    {query.error && <Notice tone="error">项目与账号读取失败。<button onClick={() => void query.refetch()}>重新读取</button>草稿可继续编辑。</Notice>}
+    {(error||Object.keys(fieldErrors).length>0)&&<Notice tone="error">{error||"请检查标记的字段。"}{Object.keys(fieldErrors).length>0&&<ul>{(Object.entries(fieldErrors) as Array<[FormField,string]>).map(([field,message])=><li key={field}><a href={`#publication-${field}`} onClick={event=>{event.preventDefault();focusField(field);}}>{fieldLabels[field]}：{message}</a></li>)}</ul>}</Notice>}
+    <div className="publish-layout"><div className="publish-left">
+      <article className="panel publish-project"><header className="composer-heading"><span className="step-number">1</span><h2>选择项目</h2><Link to="/repositories">管理仓库</Link></header><label>项目仓库<select {...fieldProps("repositoryId")} value={draft.repositoryId} onChange={(event) => edit({repositoryId:event.target.value,baseRef:"",targetRepository:"",baseBranch:"",nativeModelId:"",choiceSource:"explicit",reasoningEffort:"",catalogRevision:"",contextFingerprint:"",modelAccessAcknowledged:""})} disabled={query.isLoading||frozenTask}><option value="">{query.isLoading ? "正在读取仓库…" : "选择已登记的项目仓库"}</option>{repositories.map((entry) => <option value={entry.id} key={entry.id}>{entry.id}</option>)}</select></label>{fieldHint("repositoryId")}<div className="project-context"><span><Icon name="folder" size={14}/>{repository?.root ?? repository?.id ?? "尚未选择项目"}</span><span><Icon name="branch" size={14}/>{repository?.defaultBaseRef ?? "基准分支未确定"}</span></div>{repository&&<div {...fieldProps("baseRef")} tabIndex={-1}><RepositoryRefPicker key={repository.id} id={repository.id} value={draft.baseRef} onChange={baseRef=>edit({baseRef})} disabled={frozenTask}/>{fieldHint("baseRef")}</div>}<p className="composer-hint"><Icon name="shield" size={14}/>实际执行将使用受管工作目录，项目路径不会作为账号配置目录。</p></article>
+      <article className="panel flush-panel"><header className="composer-editor-heading"><span className="step-number">2</span><h2>描述任务</h2><span className="pill">Markdown</span></header><div className="composer-editor"><input className="composer-title" aria-label="任务标题" readOnly={frozenTask} placeholder="任务标题（可选，可从正文生成）" {...fieldProps("title")} value={draft.title} onChange={(event) => edit({title:event.target.value})}/>{fieldHint("title")}<textarea className="composer-description" aria-label="任务说明" readOnly={frozenTask} placeholder={'你想完成什么？\n\n补充背景、目标、需要注意的约束，以及你期望的结果。'} {...fieldProps("description")} value={draft.description} onChange={(event) => edit({description:event.target.value})}/>{fieldHint("description")}<div className="composer-templates"><span>从模板开始</span>{[["修复问题","## 问题现象\n\n## 复现步骤\n\n## 预期行为\n"],["开发功能","## 功能目标\n\n## 使用场景\n\n## 约束与边界\n"],["代码审查","## 审查范围\n\n## 重点关注\n\n## 输出要求\n"]].map(([name,text]) => <button disabled={frozenTask} key={name} onClick={() => edit({description:`${draft.description}${draft.description ? "\n\n" : ""}${text}`})}>{name}</button>)}</div></div><footer className="composer-footer"><span><Icon name="shield" size={12}/>草稿仅保存在当前浏览器</span><span>{Array.from(draft.description).length.toLocaleString()} / 20,000 字</span></footer></article>
+      <details className="composer-details"><summary><Icon name="check"/><strong>验收与参考</strong><small>明确完成条件</small><Icon name="chevron" size={14}/></summary><div><label>验收条件（每行一条）<textarea readOnly={frozenTask} {...fieldProps("acceptance")} value={draft.acceptance} onChange={(event) => edit({acceptance:event.target.value})} placeholder="例如：保留现有接口行为，相关回归测试通过"/></label>{fieldHint("acceptance")}<label>参考链接（每行一条）<textarea readOnly={frozenTask} {...fieldProps("references")} value={draft.references} onChange={(event) => edit({references:event.target.value})} placeholder="https://…"/></label>{fieldHint("references")}<p className="muted">链接作为引用保存，不会自动访问或下载。</p></div></details>
+      <details className="composer-details"><summary><Icon name="branch"/><strong>执行范围与交付</strong><small>继承项目设置</small><Icon name="chevron" size={14}/></summary><div><label>目标分支（可选）<input readOnly={frozenTask} {...fieldProps("targetBranch")} value={draft.targetBranch} onChange={(event) => edit({targetBranch:event.target.value})} placeholder="由服务端创建受管分支"/></label>{fieldHint("targetBranch")}<dl className="details-grid"><div><dt>允许修改的范围</dt><dd>{repository ? repository.scopePaths.join("、") || "整个仓库（.）" : "项目尚未登记执行范围"}</dd></div><div><dt>已登记验证命令</dt><dd>{repository?.verificationCommands.map((entry) => `${entry.id}${entry.required ? "（必需）" : ""}`).join("、") || "未登记"}</dd></div><div><dt>交付方式</dt><dd>{draft.deliveryType==="pull-request"?"验证后推送并创建 PR":draft.deliveryType==="commit"?"在 Runner 工作区提交，保留结果待验收":"保留工作区，验证后人工验收"}</dd></div><div><dt>模型选择方式</dt><dd>{draft.selectionMode==="policy-auto"?"Policy 自动路由 · 仅限已选账号":"手动选择"}</dd></div></dl></div></details>
+    </div><aside className="publish-side"><article className="panel flush-panel"><header className="panel-heading"><h2>执行设置</h2><Icon name="settings" size={16}/></header><div className="publish-setting"><label>执行方式<select disabled={frozenTask} value={draft.startMode} onChange={(event) => edit({startMode:event.target.value as Draft["startMode"]})}><option value="create-only">{completing?"保存到原任务，稍后派发":"仅创建，稍后派发"}</option><option value="dispatch">立即派发</option></select></label><p>{draft.startMode === "create-only" ? completing?"补齐内容保存到原任务，不启动 Agent。":"保存为待派发或待完善任务，不启动 Agent。" : "通过预检并确认后，才会开始执行。"}</p></div><div className="publish-setting"><label>交付方式<select disabled={frozenTask} value={draft.deliveryType} onChange={event=>edit({deliveryType:event.target.value as Draft["deliveryType"]})}><option value="none">保留工作区结果</option><option value="commit">在本次工作区创建本地提交</option><option value="pull-request">推送受管分支并创建 Pull Request</option></select></label><p>{draft.deliveryType==="commit"?"验证通过后，在本次受管工作区记录 commit；不推送远端。":draft.deliveryType==="pull-request"?"验证通过后，推送受管分支并创建 PR；CI 与人工验收分别检查。":"交付选择随任务保存，通过预检和确认后执行。"}</p>
+        {draft.deliveryType==="pull-request"&&<>
+          <label>SCM 连接器<select disabled={frozenTask} {...fieldProps("scmConnectorId")} value={draft.scmConnectorId} onChange={event=>edit({scmConnectorId:event.target.value})}><option value="">选择用于本次交付的连接器</option>{draft.scmConnectorId&&!scmConnectors.some(connector=>connector.id===draft.scmConnectorId)&&<option value={draft.scmConnectorId}>{draft.scmConnectorId}（当前未配置）</option>}{scmConnectors.map(connector=><option key={connector.id} value={connector.id} disabled={!connector.enabled}>{connector.displayName}{!connector.enabled?"（已停用）":""}</option>)}</select></label>{fieldHint("scmConnectorId")}
+          <label>远端仓库<input readOnly={frozenTask} {...fieldProps("targetRepository")} value={draft.targetRepository} onChange={event=>edit({targetRepository:event.target.value})} placeholder="owner/repository"/></label>{fieldHint("targetRepository")}
+          <label>PR 基准分支<input readOnly={frozenTask} {...fieldProps("baseBranch")} value={draft.baseBranch} onChange={event=>edit({baseBranch:event.target.value})} placeholder="例如 main"/></label>{fieldHint("baseBranch")}
+          <p>服务端会核对所选连接器、仓库和 Runner 上的 origin。PR 交付不会自动合并。</p>
+        </>}
+      </div><div className="publish-setting"><label>Harness 账号<select {...fieldProps("profileId")} value={draft.profileId} onChange={(event) => edit({profileId:event.target.value,nativeModelId:"",choiceSource:"explicit",reasoningEffort:"",catalogRevision:"",contextFingerprint:"",modelAccessAcknowledged:""})}><option value="">选择执行账号</option>{profiles.map((entry) => <option key={entry.id} value={entry.id} disabled={entry.enabled === false}>{entry.alias}{entry.enabled === false ? "（已停用）" : ""}</option>)}</select></label>{fieldHint("profileId")}{profile && <div className="selected-profile"><ProviderMark provider={profile.provider}/><div><strong>{profile.alias}</strong><small>{profile.provider} · {profile.runnerId === "local" ? "本机" : profile.runnerId}</small></div></div>}<p>账号启用、登录验证和设备在线分别检查。</p></div><div className="publish-setting"><label>模型选择方式<select value={draft.selectionMode} onChange={event=>edit({selectionMode:event.target.value as Draft["selectionMode"],taskTypeId:"",nativeModelId:"",choiceSource:"explicit",reasoningEffort:"",catalogRevision:"",contextFingerprint:"",modelAccessAcknowledged:""})}><option value="manual">本次手动指定</option><option value="policy-auto" disabled={!query.data?.config.policies?.modelRouting?.enabled}>Policy 自动匹配{!query.data?.config.policies?.modelRouting?.enabled?"（策略未启用）":""}</option></select></label></div>{draft.selectionMode==="policy-auto"?<div className="publish-setting"><p>仅在已选账号内匹配。未命中、冲突或目录失效会阻止执行。点击检查时才分类。</p>{semanticAnalysis&&<Notice>混合模式将标题和任务说明发送到已配置的内部分类模型。分析有独立用量记录；重复读取目录不会再次推理。</Notice>}<label>任务类型<select value={draft.taskTypeId} onChange={event=>edit({taskTypeId:event.target.value})}><option value="">由策略识别</option>{query.data?.config.policies?.modelRouting?.taskTypes.filter(type=>type.enabled).map(type=><option key={type.id} value={type.id}>{type.name}</option>)}</select></label><label><input type="checkbox" checked={draft.modelAccessAcknowledged==="yes"} onChange={event=>edit({modelAccessAcknowledged:event.target.checked?"yes":""})}/>知悉目录不代表模型访问权限</label>{draft.startMode==="create-only"&&<p>仅创建不分类，派发前需要重新审阅模型选择。</p>}</div>:<div className="publish-setting"><div {...fieldProps("nativeModelId")} tabIndex={-1}><NativeModelPicker key={`${draft.profileId}:${draft.repositoryId}:${draft.interactionMode}:${draft.nativeSurface}`} profileId={draft.profileId} repositoryId={draft.repositoryId} {...(query.data?{configRevision:query.data.revision}:{})} {...(typeof profile?.settings?.model==="string"?{accountDefaultModel:profile.settings.model}:{})} value={{modelId:draft.nativeModelId,source:draft.choiceSource,effort:draft.reasoningEffort,catalogRevision:draft.catalogRevision,contextFingerprint:draft.contextFingerprint,allowUnconfirmed:draft.modelAccessAcknowledged==="yes"}} onChange={(choice:NativeModelChoice)=>edit({nativeModelId:choice.modelId,choiceSource:choice.source??"explicit",reasoningEffort:choice.effort,catalogRevision:choice.catalogRevision,contextFingerprint:choice.contextFingerprint,modelAccessAcknowledged:choice.allowUnconfirmed?"yes":""})}/>{fieldHint("nativeModelId")}</div></div>}<PublicationNativeScope key={`${nativeScopeProfile}:${query.data?.revision??"unknown"}`} profileId={nativeScopeProfile} mode={draft.interactionMode} surface={draft.nativeSurface} onChange={value=>edit({interactionMode:value.mode,nativeSurface:value.surface,nativeModelId:"",choiceSource:"explicit",reasoningEffort:"",catalogRevision:"",contextFingerprint:"",modelAccessAcknowledged:""})} configRevision={query.data?.revision??0} contextReady={Boolean(query.data)&&!query.isFetching&&!query.error} {...(nativeScopeBackend?{backendId:nativeScopeBackend}:{})}/><footer className="table-footer">选择与参数将随 Run 冻结，启动前重新核验。</footer></article><div className="publish-checks"><h3>正式发布所需条件</h3><p><Icon name="check" size={14}/>项目与执行范围</p><p><Icon name="check" size={14}/>账号、设备与模型证据</p><p><Icon name="check" size={14}/>验收条件与验证命令</p><p><Icon name="check" size={14}/>完整任务正文与交付方式</p></div></aside></div>
+    <footer className="publish-bar"><div><Icon name="shield"/><span>{draft.startMode === "create-only" ? existingTaskId?"保存到原任务，稍后派发":"仅创建，稍后派发" : "立即派发前需要确认"}<small>{saved || (receipt?"任务已保存；请查看任务，或重新读取任务后再次审阅。":"草稿自动保存在当前浏览器，尚未提交到服务端。")}</small></span></div><div className="page-actions"><button onClick={backup}>备份草稿</button>{semanticAnalysis&&<button disabled={busy||Boolean(existingTaskId&&receipt)} onClick={()=>void check(true)}>重新分析并审阅</button>}<button className="primary" disabled={busy||Boolean(existingTaskId&&receipt)} onClick={()=>void check()}><Icon name="check"/>{busy?"处理中…":semanticAnalysis?"分析并审阅（调用内部模型）":"检查并审阅"}</button></div></footer>
+    {review && <Drawer variant="modal" title="审阅任务草稿" onClose={() => {if(!busy)setReview(false);}}><Notice tone="neutral">服务端预检回执：{preview?.publicationId} · {preview?.effectiveTask.contractState} · {preview?.expiresAt}</Notice>{preview?.taskBinding&&<Notice>审阅现有任务 {preview.taskBinding.taskId} · 任务版本 {preview.taskBinding.taskRevision}；不创建另一份任务。</Notice>}{preview?.checks.map(check=><p key={check.id}>{check.status} · {check.message}</p>)}<dl className="details-grid"><div><dt>任务标题</dt><dd>{preview?.effectiveTask.title??title}</dd></div><div><dt>执行方式</dt><dd>{reviewedDraft?.startMode === "create-only" ? existingTaskId?"保存到原任务":"仅创建" : "立即派发"}</dd></div><div><dt>交付方式</dt><dd>{reviewedDraft?.deliveryType==="commit"?"验证后本地提交，不推送":reviewedDraft?.deliveryType==="pull-request"?"显式 Pull Request":"保留工作区结果"}</dd></div><div><dt>项目仓库</dt><dd>{reviewedDraft?.repositoryId || "未选择 · 待完善"}</dd></div><div><dt>原生交互要求</dt><dd>{interactionRequirementLabel(preview?.effectiveExecution?.interactionRequirement?.mode??reviewedDraft?.interactionMode??"",preview?.effectiveExecution?.interactionRequirement?.surface??reviewedDraft?.nativeSurface??"")}</dd></div><div><dt>执行账号</dt><dd>{preview?.effectiveExecution?.profileId || reviewedDraft?.profileId || "未选择"}</dd></div></dl>{reviewedDraft?.deliveryType==="pull-request"&&(reviewedDelivery?<>
+        <Notice tone="warning">派发后，通过验证的受管分支将推送到以下仓库并创建 PR；结果仍需验收。</Notice>
+        <dl className="details-grid"><div><dt>SCM 连接器</dt><dd>{scmConnectors.find(connector=>connector.id===reviewedDelivery.scmConnectorId)?.displayName??reviewedDelivery.scmConnectorId}</dd></div><div><dt>服务端核对的远端仓库</dt><dd>{reviewedDelivery.target.host}/{reviewedDelivery.repository}</dd></div><div><dt>PR 基准分支</dt><dd>{reviewedDelivery.baseBranch}</dd></div></dl>
+      </>:<Notice tone="warning">{reviewedDraft.startMode==="create-only"?"仅创建任务，PR 交付尚未核验；派发前需要重新审阅目标与执行条件。":"服务端尚未提供可审阅的 PR 目标，请重新检查。"}</Notice>)}{!reviewBound&&<Notice tone="warning">旧回执缺少对应草稿快照，请关闭此窗口并重新检查。已尝试提交的发布须先读取原回执。</Notice>}<h3>服务端执行选择</h3><p>{preview?.effectiveExecution?`${preview.effectiveExecution.profileId} · ${preview.effectiveExecution.selectionType} · ${preview.effectiveExecution.nativeModelId??"沿用原生配置"} · ${JSON.stringify(preview.effectiveExecution.nativeParameters)}`:(reviewedDraft?.startMode==="dispatch"?"尚无可用的执行选择，请先处理预检阻断项。":"仅创建任务，不启动执行")}</p>{preview?.effectiveExecution?.pricingSnapshot&&<PricingSnapshotView snapshot={preview.effectiveExecution.pricingSnapshot}/>}{preview?.routingDecision&&<><RoutingDecision decision={preview.routingDecision}/>{preview.routingDecision.confirmation.required&&<label><input type="checkbox" checked={routingAccepted} onChange={event=>setRoutingAccepted(event.target.checked)}/>确认本次自动路由选择</label>}</>}<h3>完整任务说明</h3><pre>{preview?.effectiveTask.description}</pre><h3>验收条件</h3><p>{reviewedDraft?.acceptance || "未填写 · 待完善"}</p><button disabled={busy || !preview?.canCommit || !reviewBound || !deliveryReviewReady || Boolean(preview?.routingDecision?.confirmation.required&&!routingAccepted)} className="primary" onClick={()=>void commit()}>{busy?"正在提交…":reviewedDraft?.startMode==="dispatch"?reviewedDraft.deliveryType==="pull-request"?"确认启动并交付 PR":"确认并启动执行":existingTaskId?"确认并保存原任务":"确认并创建任务"}</button><button onClick={backup}>下载草稿备份</button></Drawer>}
+  </section>;
+}

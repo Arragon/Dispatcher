@@ -1,22 +1,86 @@
-import { existsSync, statSync } from "node:fs";
+import {publicationInteraction,assertFrozenInteractionRequirement} from "./interaction-requirements.js";
+import {registerOrphanRoutes} from "./orphans.js";
+import {readRecoveryInventoryFromDatabase} from "@dispatcher/persistence";
+import {NativeWorkflowAuthority} from "./native-workflow-authority.js";
+import {selectRunConversation} from "./messaging-conversations.js";
+import {NativeControlNotices} from "./native-control-notices.js";
+import {profileInteractionView,loadProfileEvidence} from "./profile-interaction-view.js";
+import {resolveSnapshotVerification,preparationEvidenceQualifies,type SnapshotPreparation,type SnapshotPreparationEvidence} from "./snapshot-verification.js";
+import {CanonicalLocalResults} from "./local-results.js";
+import {CodexExecutionRuntime} from "./codex-runtime.js";
+import {OpenCodeExecutionRuntime} from "./opencode-runtime.js";
+import {DevinExecutionRuntime,assertDevinRuntimeSettings} from "./devin-runtime.js";
+import {CopilotExecutionRuntime,assertCopilotRuntimeSettings} from "./copilot-runtime.js";
+import {PiExecutionRuntime} from "./pi-runtime.js";
+import {NativeHistoryService,NativeHistoryError} from "./native-history.js";
+import {nativeSessionView} from "./native-session-view.js";
+import {NativeSessionRetention} from "./native-session-retention.js";
+import {isGuardedControllerStart,isReadableManagedCodexRun,isReadableManagedOpenCodeRun,isReadableManagedPiRun,isReadableManagedDevinRun,isReadableManagedCopilotRun} from "./start-recovery.js";
+import {parseNativeModelDefaultReview,qualifyNativeModelDefault,readNativeModelDefaultEvidence} from "./model-defaults.js";
+import {isExecutionContextRef,nativeBindingKey,normalizeNativeBinding,type NativeDriftPolicy,type NativeBinding,type InteractionCapabilities,type NativeResponse,type RunGitDelivery,type ScmDeliverySelection,type MutationFence,type ExecutionContextRef,type NativeControlView,type NativeObservation,type Session,type NativeModelInvocation,type NativeTurnCompletion} from "@dispatcher/domain";
+import {NativeInteractions,InteractionGuardError,type ControllerInteractionOperation,type InteractionPrincipal} from "./native-interactions.js";
+import {AdapterAdmissionError,readInteractionCapabilities,assertAdapterWriteAdmission,type AdapterStartOutcome} from "@dispatcher/adapters";
+import { resolveProfileExecutionContext } from "./execution-context.js";
+import { ProfileProbeService } from "./profile-probes.js";
+import { CredentialContext } from "./credential-context.js";
+import { RhizaServiceAuth, RhizaIngressError } from "./rhiza-auth.js";
+import { RhizaTargets, rhizaAdapterBuildVersion, rhizaRepositoryIdentity, type RhizaTargetFacts } from "./rhiza-targets.js";
+import { rhizaDigest } from "./rhiza-semantics.js";
+import { RhizaOperations } from "./rhiza-operations.js";
+import { RhizaJobs } from "./rhiza-jobs.js";
+import {RhizaViews} from "./rhiza-views.js";
+import {RhizaCancellations} from "./rhiza-cancellations.js";
+import {RhizaInputs} from "./rhiza-inputs.js";
+import { RHIZA_API_PREFIX, rhizaV1Schema, type RhizaHandshakeRequestV1, type RhizaWorkOrderV1, type RhizaSubmitRequestV1, type RhizaCancellationRequestV1, type RhizaInputRequestV1 } from "@dispatcher/protocol";
+import {DirectorySelections,type DirectoryPicker} from "./local-directories.js";
+import {RunInputReceipts,InputReceiptError,type RunInputIdentity,type RunInputAuthority} from "./run-inputs.js";
+import {UsageObservations,UsageObservationError,type UsageContext} from "./usage-observations.js";
+import {AccountQuotas} from "@dispatcher/runner";
+import {buildDiagnostics,diagnosticChecks} from "./diagnostics.js";
+import type { ProfileConsoleView,NativeSessionConsoleView,RepositoryConsoleContext,RepositoryRefs,DeliveryEvidence,LocalVerificationRequest,LocalAcceptanceRequest } from "@dispatcher/domain";
+import { applyConfigEdits, consoleConfig,exportConsoleConfig, consoleConfigPlan } from "./config-edits.js";
+import {qualifyRoutingPolicy,type PolicyConfigEvidence} from "./policy-config.js";
+import {TaskClassifier} from "./task-classifier.js";
+import { remoteCatalog, remoteRunInventory,remoteRepositoryRefs,remoteCommitResult,remoteDeliveryTarget,remotePushResult } from "./remote-results.js";
+import { RemoteNativeAdapter } from "./remote-adapter.js";
+import { NATIVE_EXECUTION_CAPABILITY,NATIVE_GIT_DELIVERY_CAPABILITY,NATIVE_MODEL_PRICING_CAPABILITY,NATIVE_ACCOUNT_QUOTA_CAPABILITY,requiresNativeGitDelivery,requiresNativeModelPricing, type CommandPayload } from "@dispatcher/protocol";
+import {admitCatalogPricing,samePricingTerms} from "@dispatcher/domain";
+import { ModelRoutingService } from "./model-routing.js";
+import type { WorkspaceHandle } from "@dispatcher/workspace";
+import { PublicationService, PublicationError, publicationValidationFields, contentHash, assertPublicationScope, type PublicationRecord } from "./task-publications.js";
+import { publishDraftSchema, type PublishDraftV1, type ExecutionSelection, type AccountModelCatalog, type ModelCatalogContext } from "@dispatcher/domain";
+import { projectViews, publicWebUrl } from "./console-projection.js";
+import { existsSync, realpathSync, statSync } from "node:fs";
 import { PassThrough } from "node:stream";
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { arch, platform } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import fastify, { type FastifyBaseLogger, type FastifyInstance } from "fastify";
+import { isDeepStrictEqual } from "node:util";
+import fastify, { type FastifyBaseLogger, type FastifyInstance, type FastifyRequest } from "fastify";
 import fastifyStatic from "@fastify/static";
 import {
   CodexAdapter,
+  createNativeProfileAdapter,
+  nativePrivatePaths,
+  probeNativeProfile,
   codexManifest,
   QoderAdapter,
   qoderManifest,
-  CursorAdapter,
   cursorManifest,
-  KiroAdapter,
+  StructuredCliAdapter,
+  AdapterContractError,
   kiroManifest,
+  antigravityManifest, zcodeManifest, workbuddyCliManifest, qoderCnManifest,
+  opencodeManifest,
+  grokManifest,
+  piManifest,
+  isNativeCliProvider,
+  probeNativeCliProfile,
   DevinAdapter,
-  devinManifest,
+  devinManifest, devinLocalAcpManifest, copilotManifest,
+  type CopilotExecutionScope, type CopilotExecutionBackend,
+  type DevinLocalAcpExecutionScope, type DevinLocalAcpExecutionBackend,
   LocalServiceAdapter,
   localServiceManifest,
   GenericCliAdapter,
@@ -24,7 +88,6 @@ import {
   genericMockManifest,
   buildAdapterCompatibilityMatrix,
   manifestCapabilities,
-  assessManifestCapabilities,
   probeCodexProfile,
   probeQoderProfile,
   probeCursorProfile,
@@ -36,11 +99,16 @@ import {
   type AdapterSession,
   type SessionStore,
   type CodexBackend,
+  type CodexStartInput, type CodexAppServerBackend, type CodexAppServerScope, type CodexNativeAuthority, type NativeInteractionPort,
+  type CodexReadRequest,
   type CodexProfileConfig,
   type QoderBackend,
   type QoderProfileConfig,
   type CliAgentBackend,
   type CliAgentProfile,
+  type CliStartInput,
+  type OpenCodeV2OwnedScope, type OpenCodeV2ExecutionBackend,
+  type NativeCliProvider,
   type DevinBackend,
   type DevinProfileConfig,
   type LocalServiceProfileConfig,
@@ -49,16 +117,20 @@ import {
 import {
   assertRequiredSecretsAvailable,
   ConfigurationEngine,
+  repositoryRunnerId,
   ConfigPlanError,
   ConfigValidationError,
   createDefaultSecretStore,
   dispatcherConfigSchema,
+  validateConfig,
   dispatcherConfigUiSchema,
   requiredSecretReferences,
   SecretStoreError,
   type SecretMetadata,
   type SecretStore,
   type DispatcherConfig,
+  type AgentProfileConfig,
+  type RepositoryConfig,
 } from "@dispatcher/config";
 import {
   RESOURCE_STATES,
@@ -71,6 +143,7 @@ import {
   type Runner,
   type Task,
   type TaskContract,
+  type Project,
 } from "@dispatcher/domain";
 import {
   CoalescingEventStream,
@@ -90,7 +163,6 @@ import {
   DeliveryService,
   GitHubScmConnector,
   LinearTaskConnector,
-  LocalGitTransport,
   SlackMessagingConnector,
   MessagingIdentityService,
   ConversationBindingService,
@@ -111,9 +183,9 @@ import {
   type TaskPlatformAdapter,
 } from "@dispatcher/integrations";
 import { LlmRuntime, LlmRuntimeError, type FetchLike, type LlmConfiguration, type LlmRole } from "@dispatcher/llm-runtime";
-import { createLogger, redactValue } from "@dispatcher/observability";
-import { DispatcherDatabase, RevisionConflictError, type JsonValue } from "@dispatcher/persistence";
-import { EmbeddedRunner, EventBus, LeaseFenceError, ProcessManager, RemoteRunnerServer, RunnerEnrollmentAuthority, RunnerLeaseAuthority, RunnerRegistry, VerificationRegistry, type RunnerEnrollmentRecord, type RunnerEvents } from "@dispatcher/runner";
+import { createLogger, redactNativeText,redactValue, redactNativePayload } from "@dispatcher/observability";
+import { DispatcherDatabase, InteractionStore, RevisionConflictError, ModelInvocationStore, RhizaVerificationStore, type JsonValue } from "@dispatcher/persistence";
+import { EmbeddedRunner, EventBus, LeaseFenceError, LocalGitDelivery, LocalGitDeliveryError, ProcessManager, RemoteRunnerServer, RunnerEnrollmentAuthority, RunnerLeaseAuthority, RunnerRegistry, VerificationRegistry, reconcileRunnerState, type LocalSnapshotCommitInput, type LocalSnapshotPushInput, type RunnerEnrollmentRecord, type RunnerEvents, type RuntimeLocalDisconnectResult,type VerificationCommand,type VerificationResult,type NativeEventCheckpoint } from "@dispatcher/runner";
 import {
   SemanticPolicyError,
   SemanticToolRegistry,
@@ -125,14 +197,17 @@ import {
   type TypedIntentV2,
   TaskContractCompiler,
 } from "@dispatcher/semantic";
-import { CanonicalScheduler } from "@dispatcher/scheduler";
-import { RepositoryRegistry, WorkspaceManager, WorkspacePolicyError } from "@dispatcher/workspace";
+import { CanonicalScheduler, routeDeterministically, type DispatchCandidate } from "@dispatcher/scheduler";
+import { RepositoryRegistry, WorkspaceManager, WorkspacePolicyError,VerificationSnapshots,type DeliveryCandidate,type CandidateSource } from "@dispatcher/workspace";
 import { BackgroundLoop, backoffDelayMs, runBounded } from "./background.js";
-import { ControlPlaneAuth, OWNER_PRINCIPAL_ID, OWNER_ROLES, OWNER_TOKEN_REFERENCE, type ControlPrincipal } from "./control-auth.js";
+import { ControlPlaneAuth, isRhizaIngressPath, OWNER_PASSWORD_REFERENCE, OWNER_PRINCIPAL_ID, OWNER_ROLES, OWNER_TOKEN_REFERENCE, type ControlPrincipal } from "./control-auth.js";
+import { hashOwnerPassword, validOwnerPassword } from "./owner-password.js";
 import { LifecycleManager, type ServiceModule } from "./lifecycle.js";
 import { MESSAGING_INBOX_KIND, MessagingInbox, type MessagingInboxRecord } from "./messaging-inbox.js";
 
 export interface ControllerOptions {
+  logDestination?:{write(message:string):void};
+  directoryPicker?:DirectoryPicker;
   dataDirectory: string;
   withRunner?: boolean;
   host?: string;
@@ -142,14 +217,20 @@ export interface ControllerOptions {
   llmFetch?: FetchLike;
   integrationFetch?: (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
   gitTransport?: GitTransport;
+  codexNativeReader?: (input:CodexReadRequest)=>Promise<unknown>;
+  copilotExecutionFactory?: (scope:CopilotExecutionScope,executionRef:ExecutionContextRef)=>CopilotExecutionBackend;
+  devinExecutionFactory?: (scope:DevinLocalAcpExecutionScope,executionRef:ExecutionContextRef)=>DevinLocalAcpExecutionBackend;
+  opencodeExecutionFactory?: (scope:OpenCodeV2OwnedScope,executionRef:ExecutionContextRef)=>OpenCodeV2ExecutionBackend;
+  codexAppServerFactory?: (scope:CodexAppServerScope,authority?:CodexNativeAuthority)=>CodexAppServerBackend;
   codexBackendFactory?: (profile: CodexProfileConfig) => CodexBackend;
   qoderBackendFactory?: (profile: QoderProfileConfig) => QoderBackend;
-  cliBackendFactory?: (provider: "cursor" | "kiro", profile: CliAgentProfile) => CliAgentBackend;
+  cliBackendFactory?: (provider: "cursor" | "kiro" | NativeCliProvider, profile: CliAgentProfile) => CliAgentBackend;
   devinBackendFactory?: (profile: DevinProfileConfig) => DevinBackend;
   modules?: ServiceModule[];
   ownerToken?: string;
   allowedHosts?: string[];
   clock?: () => Date;
+  profileProbeExecutor?:(profile:AgentProfileConfig,repository?:RepositoryConfig)=>Promise<unknown>;
   backgroundWorker?: BackgroundWorkerOptions;
 }
 
@@ -165,29 +246,90 @@ export interface BackgroundWorkerOptions {
   runMaxDelayMs?: number;
 }
 
+type OwnedNativeRuntime=CopilotExecutionRuntime|PiExecutionRuntime|CodexExecutionRuntime|OpenCodeExecutionRuntime|DevinExecutionRuntime;
+type TaskDispatchResult = { run: Run; routing: { explanation: string; eligible: unknown[]; rejected: unknown[] } };
+class TaskDispatchError extends Error {
+  constructor(readonly code: string, readonly statusCode: number, message: string) { super(message); }
+}
+
 type AdvanceResult = { waiting: boolean; run: Run; task: Task; deliveries: JsonValue[] };
+interface MessagingResumeReceipt {
+  version: 1;
+  runId: string;
+  sessionId: string;
+  generation: number;
+  interventionRevision: number;
+  controlEpoch?: number;
+  principalId: string;
+  connectorInstanceId: string;
+  conversationId: string;
+  threadId: string;
+}
+interface DeliveryFeedback {
+  version: 1;
+  id: string;
+  runId: string;
+  generation: number;
+  body: string;
+  severity: Notification["severity"];
+  status: "PENDING" | "SENT" | "OBSOLETE";
+  failures: number;
+  nextAttemptAt: string;
+}
 
 const CREDENTIAL_PATTERN = /(?:sk-|xox[baprs]-|gh[op]_)[a-z0-9_-]{8,}/i;
 const ADVANCEABLE_RUN_STATES = new Set<Run["state"]>(["ACTIVE", "VERIFYING", "DELIVERING"]);
 
+interface SessionStopIntent {version:1;actorId:string;operation:"cancel"|"fail"|"cleanup-start";fence:MutationFence;requestedAt:string}
+interface LocalStartAdmission {fence:MutationFence;adapter:AgentAdapter;beforeSend():void;settled(outcome:AdapterStartOutcome):void;assertProjection():void}
+interface AutomaticVerificationCommand {version:1;id:string;runId:string;generation:number;commandId:string;fence:MutationFence;semanticsHash:string;state:"SENDING"|"SETTLED"|"UNKNOWN";snapshotScope?:{version:1;proofId:string;snapshotId:string;phase:"preparation"|"verification";index:number;basisHash:string};result?:Awaited<ReturnType<VerificationRegistry["run"]>>}
+interface NativeSnapshotBasis {
+ runId:string;taskId:string;sessionId:string;generation:number;leaseId:string;taskRevision:number;controlEpoch:number;controlRevision:number;configRevision:number;
+ contractHash:string;repositoryHash:string;profileHash:string;executionHash:string;policyHash:string;controlHash:string;bindingHash:string;observationHash:string;frozenVerificationHash:string;invalidationHash:string;
+}
+interface NativeSnapshotReturnAction {
+ version:1;commandId:string;reportId:string;runId:string;sessionId:string;controlEpoch:number;action:"verify";state:"authorized"|"consumed";observationRef:string;
+}
+interface NativeSnapshotCommittedReturn {
+ version:1;commandId:string;phase:"committed";binding:NativeBinding;driftPolicy:NativeDriftPolicy;
+ report:{id:string;ready:true;observation:NativeObservation};commit:{action:"verify";reportId:string;control:unknown;fence:MutationFence};
+}
+interface NativeSnapshotReturn {
+ id:string;action:NativeSnapshotReturnAction;returned:NativeSnapshotCommittedReturn;frozen:{policy:NativeDriftPolicy};
+}
+interface NativeSnapshotProof {
+ format:"native-snapshot-verification-v1";version:1;id:string;runId:string;basis:NativeSnapshotBasis;snapshot:DeliveryCandidate;preparation:SnapshotPreparationEvidence;verification:VerificationCommand[];commandIds:string[];checks:VerificationResult[];state:"CAPTURED"|"VERIFIED"|"FAILED"|"UNKNOWN";reasonCode?:string;verifiedAt?:string;
+}
+
+interface SessionAuthority {version:1;fingerprint:string;repositoryId?:string;stopState:NativeSessionConsoleView["stopState"];stopIntent?:SessionStopIntent}
+type BoundSession=AdapterSession&{authority?:SessionAuthority};
 class DatabaseSessionStore implements SessionStore {
-  constructor(private readonly database: DispatcherDatabase) {}
+  recordModelInvocation(record:NativeModelInvocation):void {new ModelInvocationStore(this.database).append(record);}
+  recordTurnCompletion(record:NativeTurnCompletion):void {new ModelInvocationStore(this.database).appendCompletion(record);}
+  constructor(private readonly database: DispatcherDatabase,private readonly beforeSpawn?:(session:AdapterSession)=>void,private readonly bind?:(session:AdapterSession)=>SessionAuthority|undefined) {}
   load(id: string): AdapterSession | undefined {
     const value = this.database.getEntity<JsonValue>("adapter-session", id);
     return value as unknown as AdapterSession | undefined;
   }
   save(session: AdapterSession): void {
-    this.database.saveEntity("adapter-session", session.id, JSON.parse(JSON.stringify(session)) as JsonValue, session.updatedAt);
+    if(session.state==="STARTING")this.beforeSpawn?.(session);
+    const previous=this.load(session.id) as BoundSession|undefined;
+    // Never adopt historical unbound sessions into the current account implicitly.
+    const authority=previous?previous.authority:this.bind?.(session);
+    this.database.saveEntity("adapter-session", session.id, json({...session,...(authority?{authority}:{})}), session.updatedAt);
   }
 }
 
 class DatabaseSemanticWorkflowStore implements SemanticWorkflowStore {
-  constructor(private readonly database: DispatcherDatabase) {}
+  constructor(private readonly database: DispatcherDatabase,private readonly beforeSave:(record:SemanticWorkflowRecord)=>void) {}
   get(id: string): SemanticWorkflowRecord | undefined {
     return this.database.getEntity<JsonValue>("semantic-workflow", id) as unknown as SemanticWorkflowRecord | undefined;
   }
   save(record: SemanticWorkflowRecord): void {
-    this.database.saveEntity("semantic-workflow", record.id, json(record), record.updatedAt);
+    this.database.transaction(()=>{
+      this.beforeSave(record);
+      this.database.saveEntity("semantic-workflow", record.id, json(record), record.updatedAt);
+    });
   }
 }
 
@@ -226,7 +368,10 @@ interface SecretBody {
 }
 
 interface ConfigPlanBody {
+  nativeModelDefault?: unknown;
+  baseRevision?: number;
   config?: unknown;
+  edits?: unknown;
   actor?: string;
 }
 
@@ -255,7 +400,10 @@ interface SecretTestState {
   lastTestStatus: "ok" | "failed";
 }
 
-interface CodexProfileBody {
+interface ProfilePlanOptions { previewOnly?: boolean; baseRevision?: number }
+
+interface CodexProfileBody extends ProfilePlanOptions {
+  enabled?: boolean;
   id?: string;
   alias?: string;
   runnerId?: string;
@@ -264,7 +412,7 @@ interface CodexProfileBody {
   model?: string;
 }
 
-interface QoderProfileBody {
+interface QoderProfileBody extends ProfilePlanOptions {
   id?: string;
   alias?: string;
   runnerId?: string;
@@ -273,16 +421,21 @@ interface QoderProfileBody {
   model?: string;
 }
 
-interface EcosystemProfileBody {
+interface EcosystemProfileBody extends ProfilePlanOptions {
+  trustWorkspace?: boolean;
+  enabled?: boolean;
+  configDir?: string;
   id?: string;
   alias?: string;
   runnerId?: string;
   credentialRef?: string;
   executable?: string;
   model?: string;
+  approveTools?: boolean;
   organizationId?: string;
   apiBase?: string;
   maxSessionAcu?: number;
+  createAsUserId?: string;
   provider?: "workbuddy" | "codebuddy";
   baseUrl?: string;
   healthPath?: string;
@@ -302,6 +455,7 @@ interface CodexRunBody {
 
 interface TaskDispatchBody {
   profileId?: string;
+  execution?: PublishDraftV1["execution"];
   repositoryId?: string;
   baseRef?: string;
   capabilities?: string[];
@@ -348,7 +502,7 @@ function llmConfiguration(config: DispatcherConfig["internalLlm"]): LlmConfigura
   };
 }
 
-const adapterManifests = [genericMockManifest, genericCliManifest, codexManifest, qoderManifest, cursorManifest, devinManifest, kiroManifest, localServiceManifest] as const;
+const adapterManifests = [genericMockManifest, genericCliManifest, codexManifest, qoderManifest, cursorManifest, devinManifest, devinLocalAcpManifest, copilotManifest, kiroManifest, localServiceManifest, opencodeManifest, grokManifest, piManifest, antigravityManifest, zcodeManifest, workbuddyCliManifest, qoderCnManifest] as const;
 
 function manifestForProvider(provider: string) {
   if (provider === "workbuddy" || provider === "codebuddy") return localServiceManifest;
@@ -372,6 +526,7 @@ function localServiceProfile(body: EcosystemProfileBody): LocalServiceProfileCon
   };
 }
 
+function commitMessage(goal:string):string{return `Dispatcher: ${goal.split(/\r?\n/)[0]!.slice(0,160)}`;}
 export class ControllerService {
   readonly app: FastifyInstance;
   readonly database: DispatcherDatabase;
@@ -383,13 +538,28 @@ export class ControllerService {
   readonly llm: LlmRuntime;
   readonly repositories = new RepositoryRegistry();
   readonly workspaces: WorkspaceManager;
+  readonly localResults:CanonicalLocalResults;
+  private readonly verificationSnapshots:VerificationSnapshots;
   readonly connectors = new ConnectorRegistry();
   readonly tasks: CanonicalTaskService;
+  private readonly nativeInteractions:NativeInteractions;
+  private readonly copilotRuntimes=new Map<string,CopilotExecutionRuntime>();
+  private readonly codexRuntimes=new Map<string,CodexExecutionRuntime>();
+  private readonly devinRuntimes=new Map<string,DevinExecutionRuntime>();
+  private readonly opencodeRuntimes=new Map<string,OpenCodeExecutionRuntime>();
+  private readonly nativeRuntimeAdapters=new WeakMap<OwnedNativeRuntime,AgentAdapter>();
+  private readonly nativeDisconnects=new WeakMap<OwnedNativeRuntime,Promise<RuntimeLocalDisconnectResult[]>>();
+  private readonly durableNativeDisconnects=new WeakSet<OwnedNativeRuntime>();
+  private readonly nativeStartSettlements=new Map<string,{promise:Promise<void>;resolve:()=>void;reject:(error:unknown)=>void}>();
+  private readonly nativeObservationReads=new Map<string,Promise<unknown>>();
+  private readonly piRuntimes=new Map<string,PiExecutionRuntime>();
   readonly projections: ProjectionWorker;
   readonly semanticTools: SemanticToolRegistry;
   readonly semanticWorkflows: SemanticWorkflowEngine;
   readonly messagingIdentity: MessagingIdentityService;
   readonly conversations: ConversationBindingService;
+  private readonly nativeControlNotices:NativeControlNotices;
+  private readonly nativeWorkflowAuthority:NativeWorkflowAuthority;
   private readonly taskCompiler = new TaskContractCompiler();
   private readonly fleet = new FleetReadModel();
   private readonly fleetEvents = new CoalescingEventStream(512);
@@ -397,9 +567,28 @@ export class ControllerService {
   private readonly resourceProbes = new ResetAwareProbeScheduler();
   private readonly attentionNotifications = new AttentionNotificationPolicy();
   private readonly leaseAuthority = new RunnerLeaseAuthority();
+  private readonly pendingConsoleInputs = new Set<string>();
+  private readonly profileProbes:ProfileProbeService;
+  private readonly credentialContext:CredentialContext;
+  private readonly directorySelections:DirectorySelections;
+  private readonly runInputs:RunInputReceipts;
+  private readonly usageObservations:UsageObservations;
+  private readonly accountQuotas:AccountQuotas;
+  private readonly usageReads=new Map<string,{runId:string;profileId:string;promise:Promise<void>}>();
+  private usageReadClosed=false;
+  private readonly usageShutdown=new AbortController();
+  private standaloneUsageRead:Promise<void>|undefined;
   private readonly secureLinks: SecureDashboardLinkIssuer;
   private readonly messagingChannels = new Map<string, string>();
   private readonly agentAdapters = new Map<string, AgentAdapter>();
+  private readonly profileAdapterConfigurations = new Map<string, { profile: AgentProfileConfig; runner: { id: string; mode: string; credentialRef?: string } | undefined }>();
+  private readonly pendingProfileStarts = new Map<string, number>();
+  private readonly trialReservations = new Map<string, { runnerId: string; workspacePath: string }>();
+  private readonly pendingSessionCancellations = new Map<string, Promise<AdapterSession>>();
+  private readonly uncertainSessionStops = new Set<string>();
+  private localPrivatePaths:readonly string[]=[];
+  private readonly revokedRunnerCredentials = new Set<string>();
+  private readonly runnerCredentialOperations = new Set<string>();
   private readonly rawWebhookBodies = new WeakMap<object, Uint8Array>();
   private readonly startedAt = Date.now();
   private readonly embeddedRunner?: EmbeddedRunner;
@@ -410,21 +599,55 @@ export class ControllerService {
   private listening = false;
   private stopping?: Promise<void>;
   private dashboardClients = 0;
+  private readonly dashboardStreamClosers = new Set<() => void>();
   private readonly secretTestStates = new Map<string, SecretTestState>();
   private readonly agentProcesses: ProcessManager;
+  private readonly localGitDelivery:LocalGitDelivery;
+  private readonly verificationSources:VerificationSnapshots;
   private readonly controlAuth: ControlPlaneAuth;
+  private readonly rhizaAuth: RhizaServiceAuth;
+  private readonly rhizaTargets: RhizaTargets;
+  private readonly rhizaOperations: RhizaOperations;
+  private readonly rhizaJobs: RhizaJobs;
+  private readonly rhizaViews:RhizaViews;
+  private readonly rhizaCancellations:RhizaCancellations;
+  private readonly rhizaInputs:RhizaInputs;
   private readonly requestPrincipals = new WeakMap<object, ControlPrincipal>();
   private readonly messagingInbox: MessagingInbox;
   private readonly background: BackgroundLoop;
+  private dispatchQueue: Promise<void> = Promise.resolve();
   private readonly runAdvances = new Map<string, Promise<AdvanceResult>>();
+  private readonly runCancellations = new Map<string, Promise<Run>>();
+  private readonly runReroutes = new Map<string, AbortController>();
+  private readonly cancelledRunIds = new Set<string>();
+  private readonly localCommands = new Map<string, { controller: AbortController; settled: Promise<void> }>();
+  private readonly dispatchingRuns = new Set<string>();
+  private readonly remoteLifecycleJobs = new Map<string,Promise<void>>();
+  private readonly remoteLifecycleQueued = new Set<string>();
   private readonly runRetries = new Map<string, { failures: number; nextAttemptAt: number }>();
   private projectionDrain: Promise<unknown> | undefined;
   private ownerToken: Promise<string> | undefined;
 
   constructor(readonly options: ControllerOptions) {
-    const logger = createLogger({ level: process.env.LOG_LEVEL ?? "info" });
-    this.app = fastify({ loggerInstance: logger as unknown as FastifyBaseLogger });
+    const logger = createLogger({ level: process.env.LOG_LEVEL ?? "info" },options.logDestination);
+    this.app = fastify({ loggerInstance: logger as unknown as FastifyBaseLogger, ajv: {customOptions:{coerceTypes:false,removeAdditional:false}} });
     this.database = new DispatcherDatabase(join(options.dataDirectory, "dispatcher.sqlite"));
+    // Schema support is not native execution authority. Only this Controller
+    // qualifies its exact unbound start journal or explicit provider read-only managed records.
+    const persistedRuns=this.database.listEntities<JsonValue>("run") as unknown as Run[];
+    const nativeSessions=new Set(this.database.handle.prepare("SELECT session_id FROM native_bindings").all().map(row=>row.session_id));
+    const controlledRuns=new Set(this.database.handle.prepare("SELECT active_run_id FROM session_controls").all().map(row=>row.active_run_id));
+    if(persistedRuns.some(run=>!isTerminalRunState(run.state)&&!isReadableManagedCodexRun(this.database,run)&&!isReadableManagedOpenCodeRun(this.database,run)&&!isReadableManagedPiRun(this.database,run)&&!isReadableManagedDevinRun(this.database,run)&&!isReadableManagedCopilotRun(this.database,run)&&(run.executionRef||Object.hasOwn(run,"modelSelection")||nativeSessions.has(run.sessionId)||controlledRuns.has(run.id)&&!isGuardedControllerStart(this.database,run)))||[...controlledRuns].some(id=>!persistedRuns.some(run=>run.id===id))){
+      this.database.close();
+      throw new TaskDispatchError("NATIVE_CONTROL_RUNTIME_UNAVAILABLE",409,"This database has native execution requiring the control runtime. Keep the original binary/data backup until native control integration is qualified.");
+    }
+    this.nativeInteractions=new NativeInteractions(this.database,()=>this.now());
+    this.profileProbes=new ProfileProbeService(this.database,()=>this.now());
+    this.credentialContext=new CredentialContext(this.database);
+    this.directorySelections=new DirectorySelections(options.directoryPicker);
+    this.runInputs=new RunInputReceipts(this.database,()=>this.now());
+    this.usageObservations=new UsageObservations(this.database,()=>this.now());
+    this.accountQuotas=new AccountQuotas(this.database,this.agentAdapters,id=>{try{const context=this.resolveProfileExecutionContext(id,undefined,"probe");this.credentialContext.assertAvailable(context.profile);return context.fingerprint;}catch{return;}},(type,id,data)=>{this.fleetEvents.publish(type,id,data);},()=>this.now(),error=>this.app.log.warn({error:redactValue(error)},"Account quota persistence failed"));
     this.agentProcesses = new ProcessManager(join(options.dataDirectory, "agent-logs"));
     this.enrollments = new RunnerEnrollmentAuthority(
       this.database.listEntities<JsonValue>("runner-enrollment") as unknown as RunnerEnrollmentRecord[],
@@ -437,8 +660,11 @@ export class ControllerService {
     }
     this.resourceRegistry.restore(this.database.listEntities<JsonValue>("resource-signal") as unknown as ResourceSnapshot[]);
     this.resourceProbes.restore(this.database.listEntities<JsonValue>("resource-probe-schedule") as unknown as ResourceProbeSchedule[]);
-    this.workspaces = new WorkspaceManager(this.repositories, join(options.dataDirectory, "worktrees"));
-    this.tasks = new CanonicalTaskService(this.database, () => this.now());
+    const nativeSessionRetention=new NativeSessionRetention(this.database);
+    this.workspaces = new WorkspaceManager(this.repositories, join(options.dataDirectory, "worktrees"),()=>this.localPrivatePaths,{getWorkspacePins:workspace=>nativeSessionRetention.getWorkspacePins(workspace.runId)});
+    this.localGitDelivery=new LocalGitDelivery(this.database,this.agentProcesses,this.workspaces);
+    this.verificationSources=new VerificationSnapshots(this.workspaces,join(options.dataDirectory,"verification-snapshots"));
+    this.tasks = new CanonicalTaskService(this.database, () => this.now(),next=>{if(["REVIEW","DONE"].includes(next.state))this.rhizaJobs.assertTaskCandidate(next.id,next.currentRunId);});
     this.projections = new ProjectionWorker(this.database, this.connectors);
     this.secrets = options.secretStore ?? createDefaultSecretStore({ dataDirectory: options.dataDirectory });
     const worker = options.backgroundWorker ?? {};
@@ -450,19 +676,38 @@ export class ControllerService {
       ...(worker.inboxMaxDelayMs === undefined ? {} : { maxDelayMs: worker.inboxMaxDelayMs }),
     });
     this.controlAuth = new ControlPlaneAuth({
+      evaluateServiceBearer: (token, request) => this.rhizaAuth.authenticate(token, request),
       resolveOwnerToken: () => this.resolveOwnerToken(),
+      resolveOwnerPasswordHash: async () => (await this.secrets.metadata(OWNER_PASSWORD_REFERENCE)).exists
+        ? this.secrets.resolve(OWNER_PASSWORD_REFERENCE, { principal: "controller", purpose: "provider" })
+        : undefined,
       allowedHosts: [...new Set(["localhost", "127.0.0.1", "::1", ...(options.host && !["0.0.0.0", "::"].includes(options.host) ? [options.host] : []), ...(options.allowedHosts ?? [])])],
       clock: () => this.now(),
     });
     this.secureLinks = new SecureDashboardLinkIssuer(`http://${options.host ?? "127.0.0.1"}:${options.port ?? 8347}`, randomUUID());
     this.llm = new LlmRuntime(this.database, (reference) => this.secrets.resolve(reference, { principal: "controller", purpose: "llm" }), options.llmFetch);
     this.configuration = new ConfigurationEngine(this.database, { apply: (config) => this.applyRuntimeConfiguration(config) });
+    this.rhizaAuth = new RhizaServiceAuth({ config: () => this.configuration.current().config, secrets: this.secrets,
+      credentials: this.credentialContext, now: () => this.now(), authorizationRevision: () => this.configuration.current().revision, capabilities: () => ["targets.read","jobs.read","jobs.cancel","jobs.input","events.read","artifacts.read"] });
+    this.rhizaTargets = new RhizaTargets(this.database, this.rhizaAuth, { config: () => this.configuration.current(), now: () => this.now(),
+      facts: (repositoryId, profileId) => this.rhizaTargetFacts(repositoryId, profileId), inspectScope: (repositoryId, scopePaths) => this.workspaces.inspectScope({ repositoryId, scopePaths }) });
+    this.rhizaOperations = new RhizaOperations(this.database, this.rhizaAuth);
+    this.verificationSnapshots=new VerificationSnapshots(this.workspaces,join(options.dataDirectory,"verification-snapshots"));
+    this.localResults=new CanonicalLocalResults(this.database,this.configuration,this.tasks,this.workspaces,this.verificationSnapshots,()=>this.now());
     this.applyRuntimeConfiguration(this.configuration.current().config);
     this.semanticTools = new SemanticToolRegistry({ highRiskRequiresConfirmation: this.configuration.current().config.policies.highRiskRequiresConfirmation });
-    this.semanticWorkflows = new SemanticWorkflowEngine(this.semanticTools, new DatabaseSemanticWorkflowStore(this.database));
+    this.semanticWorkflows = new SemanticWorkflowEngine(this.semanticTools, new DatabaseSemanticWorkflowStore(this.database,record=>{
+      if(record.state!=="EXECUTED"||record.toolName!=="run.history"||record.principal.channel!=="messaging")return;
+      const run=this.database.getEntity<JsonValue>("run",String(record.intent.arguments.target)) as unknown as Run|undefined;
+      if(!run)throw new ConnectorError("CONFLICT","Run authority is unavailable",{retryable:false});
+      // The final success fence and write share one transaction; FAILED remains owned by the engine.
+      this.nativeWorkflowAuthority.assert(record.id,run,record.principal,false);
+    }));
     const messagingStore = new DatabaseMessagingStateStore(this.database);
     this.messagingIdentity = new MessagingIdentityService(messagingStore);
     this.conversations = new ConversationBindingService(messagingStore);
+    this.nativeControlNotices=new NativeControlNotices({database:this.database,conversations:this.conversations,conversationFor:run=>this.runConversation(run),connector:id=>this.connectors.get<MessagingAdapter>(id),clock:()=>this.now(),warn:(error,runId)=>this.app.log.warn({error:redactValue(error),runId},"native control notification delivery failed")});
+    this.nativeWorkflowAuthority=new NativeWorkflowAuthority({database:this.database,identities:this.messagingIdentity,interactions:this.nativeInteractions,conversationFor:run=>this.runConversation(run),clock:()=>this.now()});
     this.registerSemanticTools();
     this.events = new EventBus<RunnerEvents>(1_000, (error, topic) => {
       logger.error({ error: redactValue(error), topic }, "event handler failed");
@@ -471,11 +716,15 @@ export class ControllerService {
       this.database.saveEntity("runner", runner.id, json(runner));
     });
     for (const runner of this.database.listEntities<JsonValue>("runner")) {
-      this.runners.register(runner as unknown as Runner);
+      const stored=runner as unknown as Runner;
+      this.runners.register({...stored,...(this.configuration.current().config.runners.some(runner=>runner.id===stored.id&&runner.mode==="remote")?{state:"OFFLINE" as const}:{})});
     }
     this.events.subscribe("runnerChanged", async (runner) => {
       this.database.saveEntity("runner", runner.id, json(runner));
       this.fleetEvents.publish("runner.changed", runner.id, redactValue(runner));
+      if (this.embeddedRunner?.runner.id === runner.id && runner.state === "ONLINE") await this.renewEmbeddedLeases();
+      if(this.configuration.current().config.runners.some(configured=>configured.id===runner.id&&configured.mode==="remote")&&this.remoteRunnerServer.isConnected(runner.id)&&runner.capabilities.includes(NATIVE_EXECUTION_CAPABILITY))await this.reconcileRemoteLifecycle(runner.id);
+      else if(!this.stopping&&this.configuration.current().config.runners.some(configured=>configured.id===runner.id&&configured.mode==="remote")&&["DEGRADED","OFFLINE"].includes(runner.state))for(const value of this.database.listEntities<JsonValue>("run")){const run=value as unknown as Run;if(run.runnerId===runner.id&&!isTerminalRunState(run.state))this.markRemoteUnavailable(run.id,"Awaiting owning Runner reconnection","REMOTE_RECONCILE_REQUIRED");}
       if (runner.state === "OFFLINE") await this.notifyOperationalAttention({ key: runner.id, state: "RUNNER_OFFLINE", subject: `Runner offline: ${runner.displayName}`, body: `${runner.id} stopped reporting capacity.` });
     });
     this.remoteRunnerServer = new RemoteRunnerServer({
@@ -484,9 +733,11 @@ export class ControllerService {
       path: "/runner",
       authenticate: async ({ runnerId, bearerToken }) => {
         if (!bearerToken) return false;
-        const configured = this.configuration.current().config.runners.find((runner) => runner.id === runnerId && runner.mode === "remote");
-        if (!configured?.credentialRef) return false;
-        const expected = await this.secrets.resolve(configured.credentialRef, { principal: "controller", purpose: "provider" });
+        const context = this.runnerCredentialContext(runnerId);
+        if (!context.usable || !context.credentialRef) return false;
+        let expected:string;try{expected=await this.secrets.resolve(context.credentialRef, { principal: "controller", purpose: "provider" });}catch{return false;}
+        const current = this.runnerCredentialContext(runnerId);
+        if (!current.usable || current.fingerprint !== context.fingerprint) return false;
         const suppliedBytes = Buffer.from(bearerToken);
         const expectedBytes = Buffer.from(expected);
         return suppliedBytes.length === expectedBytes.length && timingSafeEqual(suppliedBytes, expectedBytes);
@@ -526,8 +777,16 @@ export class ControllerService {
     });
     modules.push(...(options.modules ?? []));
     this.background = new BackgroundLoop([
+      { name: "embedded-leases", run: () => this.renewEmbeddedLeases() },
       { name: "messaging-inbox", run: () => this.processMessagingInbox(worker.inboxBatchSize ?? 10) },
+      { name: "standalone-usage", run: async () => {this.kickStandaloneUsage();} },
+      { name: "run-usage", run: async () => {this.kickDueRunUsage();} },
+      { name: "account-quota", run: async () => {this.accountQuotas.kick(this.configuration.current().config.agentProfiles.filter(profile=>profile.enabled!==false).map(profile=>profile.id));} },
+      {name:"native-observation",run:()=>this.refreshNativeObservations(worker.maxConcurrentRuns??2)},
       { name: "run-advancement", run: () => this.advanceDueRuns(worker.maxConcurrentRuns ?? 2, worker.runBaseDelayMs ?? 1_000, worker.runMaxDelayMs ?? 5 * 60_000) },
+      { name: "run-attention", run: () => this.notifyDueAttention() },
+      { name: "delivery-reconcile", run: () => this.reconcileDeliveryRuns(worker.maxConcurrentRuns ?? 2) },
+      { name: "delivery-feedback", run: () => this.notifyDeliveryFeedback() },
       { name: "projection-drain", run: async () => { await this.drainProjections(this.now()); } },
     ], {
       intervalMs: worker.intervalMs ?? 2_000,
@@ -535,7 +794,83 @@ export class ControllerService {
     });
     if (worker.enabled) modules.push({ name: "background-worker", start: () => this.background.start(), stop: () => this.background.stop() });
     this.lifecycle = new LifecycleManager(modules);
+    this.modelRouting = new ModelRoutingService(this.database,()=>this.now(),new TaskClassifier(this.database,this.llm,()=>this.now()));
+    this.publications = new PublicationService(this.database, this.configuration, this.tasks, { inspect: plan => this.inspectRepository(plan) }, () => this.now(), {
+      prepareDelivery:(draft,repository)=>this.prepareScmDelivery(draft,repository),
+      prepare: (draft,repository,workspacePath,context) => this.preparePublication(draft,repository,workspacePath,context),
+      dispatch: async (record,taskId) => (await this.dispatchTask(taskId,{profileId:record.selection!.profileId,repositoryId:record.repository!.id},`publication:${record.preview.publicationId}`,record)).run,
+    });
+    this.publications.reconcile();
+    this.rhizaJobs = new RhizaJobs(this.database, this.rhizaAuth, this.rhizaTargets, this.publications, { now: () => this.now() });
+    this.rhizaJobs.reconcile();
+    this.rhizaViews=new RhizaViews(this.database,this.rhizaAuth,this.rhizaJobs,()=>this.now(),run=>this.canCancelRhizaRun(run),run=>this.canInputRhizaRun(run));
+    this.rhizaCancellations=new RhizaCancellations(this.database,this.rhizaAuth,this.rhizaViews,{now:()=>this.now(),supports:run=>this.canCancelRhizaRun(run),cancelUnstarted:(taskId,commandId,guard)=>{guard();const task=this.database.getCanonicalTask<JsonValue>(taskId)!;this.tasks.execute({id:`rhiza-cancel:${commandId}`,taskId,baseRevision:task.revision,actor:"rhiza-cancellation",command:{type:"task.transition",state:"CANCELLED"}});},stop:async(run,principal,guard)=>{
+      guard();const stopped=await this.cancelRunExecution(run,{id:principal.id,roles:["operator"],profileId:run.profileId},guard),session=this.database.getEntity<JsonValue>("adapter-session",run.sessionId) as unknown as BoundSession|undefined,intent=session?.authority?.stopIntent;
+      if(stopped.state!=="CANCELLED"||stopped.id!==run.id||stopped.generation!==run.generation||stopped.sessionId!==run.sessionId||stopped.leaseId!==run.leaseId||!session||this.sessionStopState(session)!=="confirmed"||intent?.operation!=="cancel"||intent.fence.runId!==run.id||intent.fence.sessionId!==run.sessionId||intent.fence.generation!==run.generation||intent.fence.leaseId!==run.leaseId)throw new AdapterContractError("CANCELLATION_UNCONFIRMED","Original owned stop is not confirmed");
+      return {kind:"stopped",runId:run.id,runGeneration:run.generation,sessionId:run.sessionId,leaseId:run.leaseId};
+    }});
+    this.rhizaInputs=new RhizaInputs(this.database,this.rhizaAuth,this.rhizaViews,this.runInputs,{now:()=>this.now(),supports:(run,phase)=>this.canInputRhizaRun(run,phase==="admission"),prepare:(run,request,principal)=>{
+      const authority:RunInputAuthority={runId:run.id,generation:run.generation,leaseId:run.leaseId,taskRevision:request.taskRevision,...(run.lastActivityAt?{lastActivityAt:run.lastActivityAt}:{})},inputId=`rhiza-${rhizaDigest({clientId:principal.service!.clientId,scope:"jobs.input",requestId:request.requestId})}`,session=this.database.getEntity<JsonValue>("adapter-session",run.sessionId) as unknown as AdapterSession;
+      return {input:this.sessionInputIdentity(principal,{profileId:run.profileId,sessionId:run.sessionId},{message:request.input,inputId,authority},session).input!,authority};
+    },send:async(run,request,reservation,guard)=>{
+      const result=await this.sendSessionInput({id:reservation.input.actorId,roles:["operator"],profileId:run.profileId},{profileId:run.profileId,sessionId:run.sessionId},{message:request.input,inputId:reservation.input.inputId,authority:reservation.authority},{input:reservation.input,guard});
+      if(result.statusCode!==200)throw new InputReceiptError("INPUT_OUTCOME_UNKNOWN","Original native input did not acknowledge acceptance");
+    }});
+    this.reconcileLocalStartJournals();
     this.registerRoutes();
+  }
+
+  private saveStartupReceipts(run:Run):void {
+    for(const value of this.database.listEntities<JsonValue>("task-publication")){const publication=value as unknown as PublicationRecord;if(publication.receipt?.runId===run.id)this.publications.markOutcome(publication.owner,publication.preview.publicationId,run);}
+    for(const row of this.database.handle.prepare("SELECT id,document_json FROM entities WHERE kind='task-dispatch' AND json_extract(document_json,'$.run.id')=?").all(run.id)){
+      const receipt=JSON.parse(String(row.document_json)) as {run:Run;routing:unknown};
+      if(receipt.run.generation===run.generation&&receipt.run.leaseId===run.leaseId)this.database.saveEntity("task-dispatch",String(row.id),json({...receipt,run}));
+    }
+  }
+
+  private reconcileLocalStartJournals():void {
+    for(const value of this.database.listEntities<JsonValue>("run")){
+      const run=value as unknown as Run;
+      if(!isTerminalRunState(run.state)&&(isReadableManagedCodexRun(this.database,run)||isReadableManagedOpenCodeRun(this.database,run)||isReadableManagedPiRun(this.database,run)||isReadableManagedDevinRun(this.database,run)||isReadableManagedCopilotRun(this.database,run))){
+        this.database.transaction(()=>{
+          const store=new InteractionStore(this.database),binding=store.binding(run.sessionId)!;
+          store.invalidateObservation({sessionId:run.sessionId,readBarrier:randomUUID(),observation:{version:1,id:`restart-read:${randomUUID()}`,nativeSessionId:binding.nativeSessionId,...(binding.nativeThreadId?{nativeThreadId:binding.nativeThreadId}:{}),executionRefId:binding.executionRefId,scopeFingerprint:"unknown",observedAt:this.now().toISOString(),state:"unknown",pendingTools:"unknown",pendingApprovals:"unknown",historyMode:"unknown",readability:"unknown"}});
+          this.markRemoteUnavailable(run.id,"Original native execution has no live source after Controller restart","NATIVE_OUTCOME_UNKNOWN",run);
+          this.saveStartupReceipts(this.database.getEntity<JsonValue>("run",run.id) as unknown as Run);
+        });continue;
+      }
+      if(run.state==="VERIFYING"&&!this.configuration.current().config.runners.some(runner=>runner.id===run.runnerId&&runner.mode==="remote")){
+        this.database.transaction(()=>{
+          for(const value of this.database.listEntities<JsonValue>("run-verification-command")){
+            const receipt=value as unknown as AutomaticVerificationCommand;
+            if(receipt.runId===run.id&&receipt.state==="SENDING")this.database.saveEntity("run-verification-command",receipt.id,json({...receipt,state:"UNKNOWN"}));
+          }
+          // Old VERIFYING records without receipts cannot prove no command was sent.
+          this.markRemoteUnavailable(run.id,"Automatic verification requires reconciliation after Controller restart","VERIFICATION_OUTCOME_UNKNOWN",run);
+        });
+        continue;
+      }
+      if(!["STARTING","ACTIVE","FAILED"].includes(run.state)||!isGuardedControllerStart(this.database,run))continue;
+      this.database.transaction(()=>{
+        const current=this.database.getEntity<JsonValue>("run",run.id) as unknown as Run,command=this.nativeInteractions.startForRun(run.id),task=this.database.getCanonicalTask<JsonValue>(run.taskId);
+        if(!command||!task||!isGuardedControllerStart(this.database,current))return;
+        if(command.state==="FAILED"&&["STARTING","FAILED"].includes(current.state)&&(task.document as unknown as Task).state==="QUEUED"&&task.revision===command.fence.expectedTaskRevision){
+          // A sealed not-created receipt is a past fact, even after its lease expires.
+          // It grants no new execution authority and cannot acknowledge a later Task edit.
+          if(current.state==="STARTING"){
+            assertRunTransition(current.state,"FAILED");current.state="FAILED";current.endedAt=this.now().toISOString();
+            const code=command.code&&/^[A-Z][A-Z0-9_]{0,79}$/.test(command.code)?command.code:"START_NOT_CREATED";current.failureReason=`Native startup did not create a session: ${code}`;this.database.saveEntity("run",current.id,json(current));
+          }
+          this.tasks.execute({id:`startup-failed:${current.id}:${current.generation}`,taskId:current.taskId,baseRevision:task.revision,actor:"startup-recovery",command:{type:"task.transition",state:"FAILED"}});
+          const session=this.database.getEntity<JsonValue>("adapter-session",current.sessionId) as unknown as AdapterSession|undefined;
+          if(session&&session.state==="STARTING")this.database.saveEntity("adapter-session",session.id,json({...session,state:"FAILED",updatedAt:this.now().toISOString()}));
+          this.saveStartupReceipts(current);return;
+        }
+        if(isTerminalRunState(current.state))return;
+        this.markRemoteUnavailable(current.id,"Local startup or process ownership is unconfirmed after Controller restart; inspect the original execution","NATIVE_OUTCOME_UNKNOWN",current);
+        const unavailable=this.database.getEntity<JsonValue>("run",current.id) as unknown as Run;this.saveStartupReceipts(unavailable);
+      });
+    }
   }
 
   runBackgroundCycle(): Promise<void> {
@@ -549,6 +884,15 @@ export class ControllerService {
   }
 
   async start(input: { listen?: boolean } = {}): Promise<void> {
+    for (const value of this.database.listEntities<JsonValue>("workspace-handle")) {
+      const handle=value as unknown as WorkspaceHandle;
+      if (this.database.getEntity("workspace-transfer", handle.runId)) continue;
+      const config=this.configuration.current().config,repository=config.repositories.find(repository=>repository.id===handle.repositoryId);
+      const recordedOwner=(value as Record<string,JsonValue>).runnerId;if(typeof recordedOwner==="string"&&recordedOwner!==(config.runners.find(runner=>runner.mode==="embedded")?.id??"local"))continue;
+      if(repository&&config.runners.some(runner=>runner.id===repositoryRunnerId(config,repository)&&runner.mode==="remote"))continue;
+      try { await this.workspaces.restore(value as unknown as WorkspaceHandle); }
+      catch (error) { this.app.log.warn({error:redactValue(error)},"worktree restoration requires operator inspection"); }
+    }
     await this.lifecycle.start();
     try {
       await this.app.ready();
@@ -558,6 +902,7 @@ export class ControllerService {
       }
     } catch (error) {
       await this.lifecycle.stop();
+      await Promise.allSettled([...this.remoteLifecycleJobs.values()]);
       throw error;
     }
   }
@@ -565,10 +910,51 @@ export class ControllerService {
   async stop(): Promise<void> {
     if (this.stopping) return this.stopping;
     this.stopping = (async () => {
+      this.rhizaJobs.closeAdmissions();
+      this.rhizaCancellations.closeAdmissions();
+      this.rhizaInputs.closeAdmissions();
+      for(const {runtime} of this.allNativeRuntimes())runtime.beginShutdown();
+      for(const pending of this.nativeStartSettlements.values())pending.reject(new InteractionGuardError("NATIVE_RUNTIME_DRAIN_REQUIRED"));this.nativeStartSettlements.clear();
+      this.accountQuotas.beginShutdown();
+      const runtimeStopErrors:unknown[]=[];
+      // Disconnect public native waiters before dependent publication/ingress drains.
+      const nativeRuntimeStops=Promise.allSettled(this.allNativeRuntimes().map(async({profileId,backendId,runtime})=>({profileId,backendId,receipts:await this.disconnectNativeRuntime(profileId,runtime)})));
+      this.usageReadClosed=true;
+      this.usageShutdown.abort();
+      for(const read of this.usageReads.values())try{
+        const state=this.database.getEntity<JsonValue>("usage-read-state",read.runId);
+        this.database.saveEntity("usage-error",read.runId,{runId:read.runId,profileId:read.profileId,status:"unknown",reasonCode:"USAGE_SHUTDOWN_PENDING",observedAt:this.now().toISOString()});
+        if(state&&typeof state==="object"&&!Array.isArray(state))this.database.saveEntity("usage-read-state",read.runId,json({...state,state:"unknown",reasonCode:"USAGE_SHUTDOWN_PENDING",closedAt:this.now().toISOString()}));
+      }catch(error){this.app.log.warn({error:redactValue(error),runId:read.runId},"Usage shutdown evidence could not be persisted");}
+      this.catalogShutdown.abort();
+      let localReviewStopError:unknown;try{await this.localResults.close();}catch(error){localReviewStopError=error;}
+      await this.directorySelections.close();
       await this.lifecycle.stop();
-      if (this.listening) await this.app.close();
-      else await this.app.close();
+      await Promise.allSettled([...this.remoteLifecycleJobs.values()]);
+      await this.profileProbes.drain();
+      try{await this.drainCatalogReads();}catch(error){runtimeStopErrors.push(error);}
+      try{await this.accountQuotas.close();}catch(error){runtimeStopErrors.push(error);}
+      // Drain every owned runtime before persisting receipts: one failed write must
+      // not strand another profile's process or prevent HTTP shutdown.
+      const runtimeStops=await nativeRuntimeStops;
+      for(const result of runtimeStops){
+        if(result.status==="rejected"){runtimeStopErrors.push(result.reason);continue;}
+        const {profileId,backendId,receipts}=result.value;
+        try{this.database.saveEntity("native-runtime-disconnect",profileId,json({profileId,backendId,receipts,observedAt:this.now().toISOString()}));}
+        catch(error){runtimeStopErrors.push(error);}
+      }
+      await Promise.allSettled([...this.nativeObservationReads.values()]);
+      await this.rhizaJobs.drain();
+      await this.rhizaCancellations.drain();
+      await this.rhizaInputs.drain();
+      // Hijacked SSE responses otherwise keep Fastify close waiting for the browser.
+      for (const close of this.dashboardStreamClosers) close();
+      await this.app.close();
       this.events.close();
+      if(localReviewStopError)runtimeStopErrors.push(localReviewStopError);
+      if(this.allNativeRuntimes().some(({runtime})=>runtime.hasUnclosedHosts()||"hasActiveOperations" in runtime&&runtime.hasActiveOperations()))runtimeStopErrors.push(new AdapterContractError("NATIVE_RUNTIME_CLEANUP_UNKNOWN","Owned native callbacks or processes remain unconfirmed; preserve the database for reconciliation"));
+      if(runtimeStopErrors.length===1)throw runtimeStopErrors[0];
+      if(runtimeStopErrors.length)throw new AggregateError(runtimeStopErrors,"Native runtime shutdown could not be fully recorded");
       this.database.checkpoint();
       this.database.close();
       this.listening = false;
@@ -576,18 +962,158 @@ export class ControllerService {
     return this.stopping;
   }
 
+  private nativeRuntime(profileId:string):OwnedNativeRuntime|undefined {return this.copilotRuntimes.get(profileId)??this.codexRuntimes.get(profileId)??this.piRuntimes.get(profileId)??this.opencodeRuntimes.get(profileId)??this.devinRuntimes.get(profileId);}
+  private allNativeRuntimes():Array<{profileId:string;backendId:"pi-rpc"|"codex-app-server"|"opencode-server-v2"|"devin-local-acp"|"copilot-rpc";runtime:OwnedNativeRuntime}> {return [...[...this.copilotRuntimes].map(([profileId,runtime])=>({profileId,backendId:"copilot-rpc" as const,runtime})),...[...this.piRuntimes].map(([profileId,runtime])=>({profileId,backendId:"pi-rpc" as const,runtime})),...[...this.codexRuntimes].map(([profileId,runtime])=>({profileId,backendId:"codex-app-server" as const,runtime})),...[...this.opencodeRuntimes].map(([profileId,runtime])=>({profileId,backendId:"opencode-server-v2" as const,runtime})),...[...this.devinRuntimes].map(([profileId,runtime])=>({profileId,backendId:"devin-local-acp" as const,runtime}))];}
+
+  private nativePort(binding:NativeBinding):NativeInteractionPort|undefined {
+    const profileId=binding.profileId,runtime=this.nativeRuntime(profileId);
+    if(runtime){
+      const adapter=this.nativeRuntimeAdapters.get(runtime);
+      if(!adapter||this.agentAdapters.get(profileId)!==adapter)return undefined;
+      const source=runtime.source(binding);
+      return this.nativeRuntime(profileId)===runtime&&this.agentAdapters.get(profileId)===adapter&&this.nativeRuntimeAdapters.get(runtime)===adapter?source:undefined;
+    }
+    if(binding.backendId==="opencode-server-v2"||binding.backendId==="devin-local-acp"||binding.backendId==="copilot-rpc")return undefined;
+    return this.agentAdapters.get(binding.profileId)?.interaction;
+  }
+
+  private nativeHistoryService(expectedRun:Run):NativeHistoryService {
+    const captured=structuredClone(expectedRun);
+    return new NativeHistoryService(this.database,binding=>{
+      if(this.stopping)return undefined;
+      try{const port=this.nativePort(binding),handle=port?.readHandle?.(structuredClone(binding));return port&&handle&&isDeepStrictEqual(handle.binding,binding)?{binding,scopeFingerprint:handle.scopeFingerprint,port}:undefined;}catch{return undefined;}
+    },(principal,scope)=>{
+      const run=this.database.getEntity<JsonValue>("run",scope.runId) as unknown as Run|undefined;
+      if(!run||run.id!==captured.id||run.sessionId!==captured.sessionId||run.taskId!==captured.taskId||run.profileId!==captured.profileId||run.providerId!==captured.providerId||run.runnerId!==captured.runnerId||run.generation!==captured.generation||run.attempt!==captured.attempt||run.leaseId!==captured.leaseId||run.worktree!==captured.worktree||!isDeepStrictEqual(run.executionRef,captured.executionRef)||!isDeepStrictEqual(run.executionSelection,captured.executionSelection))return false;
+      return this.nativeInteractions.authorizeInteraction(principal,"history",this.nativeInteractions.fenceFor(run,"history-read")).allowed;
+    });
+  }
+
+  private async refreshNativeObservation(run:Run,principal:InteractionPrincipal):Promise<void> {
+    this.nativeInteractions.assertInteraction(principal,"collect",this.nativeInteractions.fenceFor(run,"native-observation-read"));
+    const binding=new InteractionStore(this.database).binding(run.sessionId),adapter=this.agentAdapters.get(run.profileId),port=binding?this.nativePort(binding):undefined;
+    if(this.stopping||!binding||!port)return;
+    let pending=this.nativeObservationReads.get(run.sessionId);
+    if(!pending){pending=this.nativeInteractions.refreshNativeObservation(principal,run,port,()=>{if(this.stopping||this.agentAdapters.get(run.profileId)!==adapter||this.nativePort(binding)!==port)throw new InteractionGuardError("NATIVE_READ_SOURCE_CHANGED");});this.nativeObservationReads.set(run.sessionId,pending);void pending.then(()=>this.nativeObservationReads.delete(run.sessionId),()=>this.nativeObservationReads.delete(run.sessionId));}
+    await pending;
+  }
+  private async refreshNativeObservations(limit:number):Promise<void> {
+    const store=new InteractionStore(this.database),runs=(this.database.listRunsMatching<JsonValue>([{excludedStates:["STARTING","COMPLETE","FAILED","CANCELLED","SUPERSEDED"]}]) as unknown as Run[]).filter(run=>{const binding=store.binding(run.sessionId),port=binding?this.nativePort(binding):undefined;
+      try{const capabilities=port?.capabilities();return Boolean(port?.readHandle&&port.history&&capabilities?.durableIdentity.support==="supported"&&capabilities.historyRead.support==="supported");}catch{return false;}
+    }).sort((a,b)=>(store.observation(a.sessionId)?.observedAt??"").localeCompare(store.observation(b.sessionId)?.observedAt??"")).slice(0,limit);
+    const outcomes=await Promise.allSettled(runs.map(run=>this.refreshNativeObservation(run,{id:"native-observer",roles:["viewer"],profileId:run.profileId})));
+    outcomes.forEach((outcome,index)=>{if(outcome.status==="rejected")this.app.log.warn({error:redactValue(outcome.reason),runId:runs[index]!.id},"native observation refresh failed");});
+  }
+
+  private codexNativeAuthority(scope:CodexAppServerScope):CodexNativeAuthority {
+    const rows=this.database.handle.prepare("SELECT document_json FROM entities WHERE kind='run' AND json_extract(document_json,'$.executionRef.id')=? LIMIT 2").all(scope.executionRefId) as Array<{document_json:string}>;
+    const original=rows.length===1?JSON.parse(rows[0]!.document_json) as Run:undefined;
+    if(!original?.executionRef)throw new InteractionGuardError("NATIVE_IDENTITY_CHANGED");
+    const reference=structuredClone(original.executionRef),adapter=this.agentAdapters.get(scope.profileId),originalControl=new InteractionStore(this.database).control(original.sessionId);
+    const invocation=(this.database.getEntity<JsonValue>("adapter-session",original.sessionId) as unknown as AdapterSession|undefined)?.nativeInvocationId;
+    if(!original.executionSelection||!invocation)throw new InteractionGuardError("NATIVE_IDENTITY_CHANGED");
+    this.assertManagedCodexInput(scope.profileId,{executionRef:reference,workspacePath:scope.workspacePath,executionSelection:original.executionSelection,commandId:invocation});
+    const connectionEpoch=this.nativeInteractions.allocateNativeConnectionEpoch();
+    const current=(binding:NativeBinding):Run=>{
+      const run=this.database.getEntity<JsonValue>("run",original.id) as unknown as Run|undefined,workspace=this.workspaces.get(scope.workspacePath);
+      if(this.agentAdapters.get(scope.profileId)!==adapter||!run||run.sessionId!==original.sessionId||run.generation!==original.generation||run.attempt!==original.attempt||run.leaseId!==original.leaseId||run.profileId!==scope.profileId||run.providerId!=="codex"||run.runnerId!==scope.runnerId||run.worktree!==original.worktree||!isDeepStrictEqual(run.executionRef,reference)||!isDeepStrictEqual(run.executionSelection,original.executionSelection)||!workspace||workspace.runId!==run.id||!isExecutionContextRef(reference)||reference.kind!=="managed-worktree"||workspace.repositoryId!==reference.repositoryId||workspace.branch!==reference.branch||workspace.baseRevision!==reference.baseRevision||binding.profileId!==scope.profileId||binding.backendId!=="codex-app-server"||binding.runnerId!==scope.runnerId||binding.nativeStoreRef!==scope.nativeStoreRef||binding.executionRefId!==scope.executionRefId||!isDeepStrictEqual(this.persistedNativeBinding(scope.profileId,binding.nativeSessionId),binding))throw new InteractionGuardError("NATIVE_IDENTITY_CHANGED");
+      this.assertManagedCodexInput(scope.profileId,{executionRef:reference,workspacePath:scope.workspacePath,executionSelection:original.executionSelection!,commandId:invocation});
+      return run;
+    };
+    const prepareIngress=original.state==="STARTING"?async(binding:NativeBinding):Promise<MutationFence>=>{
+      const run=current(binding),task=this.database.getCanonicalTask<JsonValue>(run.taskId),start=this.nativeInteractions.startForRun(run.id);
+      let fence=this.nativeInteractions.fenceFor(run,`native-request:${randomUUID()}`);
+      if(start?.state==="SENDING"){
+        if(run.state!=="STARTING"||task?.revision!==start.fence.expectedTaskRevision||(task.document as unknown as Task).state!=="QUEUED"||start.fence.runId!==run.id||start.fence.sessionId!==run.sessionId||start.fence.generation!==run.generation||start.fence.leaseId!==run.leaseId||start.profileId!==binding.profileId)throw new InteractionGuardError("NATIVE_START_OUTCOME_UNKNOWN");
+        fence={...fence,expectedTaskRevision:task.revision+1};
+        let pending=this.nativeStartSettlements.get(run.id);
+        if(!pending){if(this.nativeStartSettlements.size>=128||this.stopping)throw new InteractionGuardError("NATIVE_RUNTIME_DRAIN_REQUIRED");let resolveStart!:()=>void,rejectStart!:(error:unknown)=>void;const promise=new Promise<void>((resolve,reject)=>{resolveStart=resolve;rejectStart=reject;});pending={promise,resolve:resolveStart,reject:rejectStart};this.nativeStartSettlements.set(run.id,pending);}
+        await pending.promise;
+        const settled=this.nativeInteractions.startForRun(run.id);
+        if(settled?.state!=="ACKNOWLEDGED"||settled.actorId!==start.actorId||settled.profileId!==start.profileId||!isDeepStrictEqual(settled.fence,start.fence))throw new InteractionGuardError("NATIVE_START_OUTCOME_UNKNOWN");
+      }else if(start?.state!=="ACKNOWLEDGED")throw new InteractionGuardError("NATIVE_START_OUTCOME_UNKNOWN");
+      const live=current(binding),control=new InteractionStore(this.database).control(live.sessionId);
+      if(!originalControl||control?.epoch!==originalControl.epoch||control.revision!==originalControl.revision)throw new InteractionGuardError("STALE_CONTROL_REVISION");
+      this.nativeInteractions.assertNativeAuthority(binding,fence,"ingress");return fence;
+    }:undefined;
+    return {connectionEpoch,...(prepareIngress?{prepareIngress}:{}),fenceFor:binding=>{
+      const run=current(binding),control=new InteractionStore(this.database).control(run.sessionId);
+      if(!originalControl||control?.epoch!==originalControl.epoch||control.revision!==originalControl.revision)throw new InteractionGuardError("STALE_CONTROL_REVISION");
+      return this.nativeInteractions.fenceFor(run,`native-request:${randomUUID()}`);
+    },assert:(binding,fence,operation)=>{
+      const run=current(binding);if(fence.runId!==run.id||fence.sessionId!==run.sessionId)throw new InteractionGuardError("NATIVE_IDENTITY_CHANGED");
+      if(operation==="ingress"){const control=new InteractionStore(this.database).control(run.sessionId);if(!originalControl||control?.epoch!==originalControl.epoch||control.revision!==originalControl.revision)throw new InteractionGuardError("STALE_CONTROL_REVISION");}
+      this.nativeInteractions.assertNativeAuthority(binding,fence,operation);
+    }};
+  }
+
+  async disconnectNativeRuntime(profileId:string,expectedRuntime?:OwnedNativeRuntime):Promise<RuntimeLocalDisconnectResult[]> {
+    const runtime=expectedRuntime??this.nativeRuntime(profileId);
+    if(!runtime)throw new PublicationError("NATIVE_RUNTIME_NOT_FOUND",404,"No managed native runtime exists for this profile.");
+    if(!expectedRuntime)runtime.beginShutdown();
+    let closing=this.nativeDisconnects.get(runtime);
+    if(!closing){
+      closing=(async()=>{
+        const receipts=await runtime.disconnectLocal();
+        this.database.transaction(()=>{
+          const store=new InteractionStore(this.database),at=this.now().toISOString(),id=randomUUID();
+          this.database.saveEntity("native-runtime-local-disconnect",id,json({version:1,id,profileId,at,receipts}));
+          const rows=this.database.handle.prepare("SELECT id FROM entities WHERE kind='adapter-session' AND json_extract(document_json,'$.profileId')=?").all(profileId) as Array<{id:string}>;
+          for(const row of rows){const binding=store.binding(row.id);if(!binding||binding.backendId!==runtime.backendId)continue;
+            store.invalidateObservation({sessionId:row.id,readBarrier:randomUUID(),observation:{version:1,id:`local-disconnect:${randomUUID()}`,nativeSessionId:binding.nativeSessionId,...(binding.nativeThreadId?{nativeThreadId:binding.nativeThreadId}:{}),executionRefId:binding.executionRefId,scopeFingerprint:"unknown",observedAt:at,state:"unknown",pendingTools:"unknown",pendingApprovals:"unknown",historyMode:"unknown",readability:"unknown"}});
+          }
+        });
+        this.durableNativeDisconnects.add(runtime);return receipts;
+      })().catch(error=>{this.nativeDisconnects.delete(runtime);throw error;});this.nativeDisconnects.set(runtime,closing);
+    }
+    return structuredClone(await closing);
+  }
+
+  private fenceNativeSpawn(runId: string, profileId?: string): void {
+    const run = this.database.getEntity<JsonValue>("run", runId) as unknown as Run | undefined;
+    if (!run) return; // Independent trial admission has its own workspace/capacity reservation.
+    const task = this.database.getCanonicalTask<JsonValue>(run.taskId)?.document as unknown as Task | undefined;
+    if (this.cancelledRunIds.has(run.id) || task?.currentRunId !== run.id || (profileId && run.profileId !== profileId) || isTerminalRunState(run.state) || ["DONE", "FAILED", "CANCELLED"].includes(task.state)) throw new AdapterContractError("SESSION_DETACHED", "Canonical native startup authority changed");
+    this.restoreLeaseAuthority(run);
+    this.leaseAuthority.fence(run.id, run.leaseId, run.generation, "native-spawn", this.now().toISOString());
+  }
+
   private restoreLeaseAuthority(run: Run): void {
     if (this.leaseAuthority.current(run.id)) return;
-    const expiresAt = run.leaseExpiresAt ?? new Date(Date.now() + 15 * 60_000).toISOString();
+    const expiresAt = run.leaseExpiresAt ?? new Date(this.now().getTime() + 15 * 60_000).toISOString();
     this.leaseAuthority.issue({ runId: run.id, runnerId: run.runnerId, leaseId: run.leaseId, generation: run.generation, expiresAt });
+    if(run.revokedLeaseIds?.includes(run.leaseId))this.leaseAuthority.revoke(run.id,run.leaseId,run.generation,"Persisted authority revocation",this.now().toISOString());
     this.persistLatestLeaseAudit(run.id);
   }
 
-  private fenceDelivery(run: Run, operation: "branch" | "push" | "pull-request" | "complete"): void {
+  private assertDeliveryAuthority(run: Run, operation: "verify" | "commit" | "branch" | "push" | "pull-request" | "complete", completedSnapshot=false, at?:string): void {
+    if(operation!=="verify")this.rhizaJobs.assertCandidate(run,at);
+    const current = this.database.getEntity<JsonValue>("run", run.id) as unknown as Run | undefined;
+    if(completedSnapshot){
+      if(operation!=="complete")throw new ConnectorError("CONFLICT","Completed metadata cannot authorize a delivery send");
+      this.nativeInteractions.assertCompletedDelivery(run,at);
+    }else this.assertRunInteraction(run,current?.state==="VERIFYING"?"verify":"deliver");
+    const task=this.database.getCanonicalTask<JsonValue>(run.taskId)?.document as unknown as Task|undefined;
+    if(task?.currentRunId!==run.id||task.state!==(completedSnapshot?"REVIEW":"VERIFYING"))throw new ConnectorError("CONFLICT","Task no longer authorizes this verification/delivery",{retryable:false,operation:"delivery"});
+    const remote = this.configuration.current().config.runners.some(runner => runner.id === run.runnerId && runner.mode === "remote");
+    if (this.revokedRunnerCredentials.has(run.runnerId) || remote && !this.runnerCredentialContext(run.runnerId).usable) throw new ConnectorError("CONFLICT", "Owning Runner authorization is revoked", { retryable: false, operation: "delivery" });
+    if (this.cancelledRunIds.has(run.id) || !current || current.generation !== run.generation || current.leaseId !== run.leaseId || !(completedSnapshot?["COMPLETE"]:["VERIFYING", "DELIVERING"]).includes(current.state)) throw new ConnectorError("CONFLICT", "Delivery authority rejected: stale or terminal run", { retryable: false, operation: "delivery" });
+    const scmSelection=this.database.getEntity<JsonValue>("run-delivery-selection",run.id) as unknown as ScmDeliverySelection|undefined;
+    if(scmSelection&&this.connectorConfigurationFingerprint(scmSelection.scmConnectorId)!==scmSelection.contextFingerprint)throw new ConnectorError("CONFLICT","Reviewed SCM context changed before delivery",{retryable:false,operation:"delivery"});
+  }
+
+  private fenceDelivery(run: Run, operation: "verify" | "commit" | "branch" | "push" | "pull-request" | "complete", completedSnapshot=false): void {
+    this.assertDeliveryAuthority(run,operation,completedSnapshot);
     this.restoreLeaseAuthority(run);
     try {
-      this.leaseAuthority.fence(run.id, run.leaseId, run.generation, operation);
+      this.leaseAuthority.fence(run.id, run.leaseId, run.generation, operation, this.now().toISOString());
       this.persistLatestLeaseAudit(run.id);
+      if(completedSnapshot){
+        // Finish all audit/clock callbacks before the final pure authority checks.
+        const at=this.now().toISOString();
+        this.assertDeliveryAuthority(run,operation,true,at);
+        this.leaseAuthority.assertCurrent(run.id,run.leaseId,run.generation,operation,at);
+      }
     } catch (error) {
       this.persistLatestLeaseAudit(run.id);
       if (error instanceof LeaseFenceError) {
@@ -602,11 +1128,197 @@ export class ControllerService {
     const record = audit.at(-1);
     if (!record) return;
     this.database.saveEntity("lease-audit", `${runId}:${audit.length}`, json(record), record.occurredAt);
+    if(this.leaseAuthority.current(runId)?.revokedAt){const run=this.database.getEntity<JsonValue>("run",runId) as unknown as Run|undefined;if(run&&record.leaseId===run.leaseId&&record.generation===run.generation&&!run.revokedLeaseIds?.includes(run.leaseId)){run.revokedLeaseIds=[...(run.revokedLeaseIds??[]),run.leaseId];this.database.saveEntity("run",run.id,json(run));}}
+  }
+
+  private async failRun(run:Run,reason:string):Promise<void>{
+    const current=this.database.getEntity<JsonValue>("run",run.id) as unknown as Run|undefined;
+    if(!current||current.generation!==run.generation||current.leaseId!==run.leaseId||isTerminalRunState(current.state)||this.nativeInteractions.hasUncertainStart(run.id))return;
+    const fence=this.nativeInteractions.fenceFor(current,`failure:${current.id}:${current.generation}`),principal={id:"run-worker",roles:["operator"],profileId:current.profileId};
+    if(!this.nativeInteractions.authorizeInteraction(principal,"fail",fence).allowed)return;
+    const session=this.database.getEntity<JsonValue>("adapter-session",current.sessionId) as unknown as AdapterSession|undefined;
+    if(!session||current.sessionId.startsWith("unstarted:"))return;
+    if(this.sessionStopUncertain(session))return;
+    // Bound native runtimes need a qualified session-scoped stop, never a host kill.
+    if(current.executionRef||session.nativeBinding||this.database.handle.prepare("SELECT 1 FROM native_bindings WHERE session_id=?").get(session.id)){
+      this.markRemoteUnavailable(current.id,"Native failure requires qualified session-scoped stop evidence","NATIVE_OUTCOME_UNKNOWN",current);return;
+    }
+    // Stop existing owned commands before waiting for their Session lane.
+    this.restoreLeaseAuthority(current);
+    this.leaseAuthority.revoke(current.id,current.leaseId,current.generation,"Run failure cleanup",this.now().toISOString());
+    this.persistLatestLeaseAudit(current.id);
+    this.cancelledRunIds.add(current.id);
+    const localCommand=this.localCommands.get(current.id),advancing=this.runAdvances.get(current.id);
+    localCommand?.controller.abort();
+    this.markRemoteUnavailable(current.id,"Failure cleanup requested; waiting for owned execution to stop","NATIVE_OUTCOME_UNKNOWN",current);
+    fence.expectedTaskRevision=this.database.getCanonicalTask<JsonValue>(current.taskId)!.revision;
+    this.nativeInteractions.acknowledgeTaskRevision(current);
+    await this.nativeInteractions.withMutationLane(current.sessionId,async()=>{
+      const assertAuthority=()=>this.nativeInteractions.assertInteraction(principal,"fail",fence);
+      assertAuthority();
+      const adapter=this.agentAdapters.get(current.profileId);if(!adapter)throw new AdapterContractError("SESSION_DETACHED","Owning adapter is unavailable for failure cleanup");
+      this.uncertainSessionStops.add(session.id);
+      try{
+        try{
+          this.saveSessionStop(session,"requested",{version:1,actorId:principal.id,operation:"fail",fence,requestedAt:this.now().toISOString()});
+        }
+        catch(error){this.app.log.warn({error:redactValue(error),runId:current.id},"Failure cleanup intent persistence failed");}
+        const local=adapter instanceof CodexAdapter||adapter instanceof QoderAdapter||adapter instanceof StructuredCliAdapter||adapter instanceof GenericCliAdapter;
+        if(local&&(await adapter.diagnostics?.(session.id))?.attached!==true)throw new AdapterContractError("SESSION_DETACHED","Saved native state is not owned process termination evidence");
+        assertAuthority();
+        let admitted=false;
+        const stopped=await adapter.cancel(session.id,()=>{assertAdapterWriteAdmission(assertAuthority);admitted=true;});
+        if(!admitted)throw new AdapterContractError("NATIVE_CAPABILITY_UNVERIFIED","Stop backend omitted final admission");
+        if(stopped.id!==session.id||stopped.runId!==current.id||!["CANCELLED","COMPLETED","FAILED"].includes(stopped.state))throw new AdapterContractError("CANCELLATION_UNCONFIRMED","Owned failure cleanup did not confirm termination");
+        assertAuthority();this.saveSessionStop(stopped,"confirmed");this.uncertainSessionStops.delete(session.id);
+        await localCommand?.settled.catch(error=>{if(!(error instanceof AdapterContractError&&error.code==="RUN_CANCELLED")&&!(error instanceof LocalGitDeliveryError&&error.code==="COMMIT_ABORTED"))throw error;});
+        await advancing?.catch(()=>undefined);
+        this.database.transaction(()=>{
+          assertAuthority();
+          const latest=this.database.getEntity<JsonValue>("run",current.id) as unknown as Run;
+          assertRunTransition(latest.state,"FAILED");latest.state="FAILED";latest.failureReason=String(redactValue(reason));latest.endedAt=this.now().toISOString();
+          this.database.saveEntity("run",latest.id,json(latest));
+          const task=this.database.getCanonicalTask<JsonValue>(latest.taskId)!;
+          if(!["DONE","FAILED","CANCELLED"].includes((task.document as unknown as Task).state))this.tasks.execute({id:`run:${latest.id}:${latest.generation}:failed`,taskId:latest.taskId,baseRevision:task.revision,actor:"run-worker",command:{type:"task.transition",state:"FAILED"}});
+          this.nativeInteractions.acknowledgeTaskRevision(latest);
+        });
+        this.nativeInteractions.acknowledgeSettledMutationOutcome(current.sessionId);
+        this.fleetEvents.publish("run.changed",current.id,{id:current.id,state:"FAILED"});
+        this.cancelledRunIds.delete(current.id);
+        const failed=this.database.getEntity<JsonValue>("run",current.id) as unknown as Run;
+        try{await this.notifyAttention(failed);}catch(error){this.attentionNotifications.recover(failed.taskId);this.app.log.warn({error:redactValue(error),runId:failed.id},"Failure attention notification is pending");}
+      }catch(error){
+        if(error instanceof AdapterAdmissionError){this.uncertainSessionStops.delete(session.id);this.saveSessionStop(session,"none");this.nativeInteractions.acknowledgeSettledMutationOutcome(current.sessionId);}
+        else if(this.sessionStopState(session)!=="confirmed")try{this.saveSessionStop(session,"unconfirmed");}catch(recordError){this.app.log.warn({error:redactValue(recordError),runId:current.id},"Failure cleanup remains unconfirmed");}
+        this.markRemoteUnavailable(current.id,"Owned failure cleanup is unconfirmed; inspect the original execution","NATIVE_OUTCOME_UNKNOWN",current);
+        throw error;
+      }
+    }).catch(error=>{this.app.log.warn({error:redactValue(error),runId:current.id},"Failure cleanup requires reconciliation");});
+  }
+
+  private async renewEmbeddedLeases(): Promise<void> {
+    const runnerId = this.embeddedRunner?.runner.id;
+    if (!runnerId || !this.runners.list().some((runner) => runner.id === runnerId && runner.state === "ONLINE")) return;
+    const now = this.now();
+    for (const value of this.database.listRunsMatching<JsonValue>([{runnerId,excludedStates:["COMPLETE","FAILED","CANCELLED","SUPERSEDED"]}])) {
+      const run = value as unknown as Run;
+      if (run.runnerId !== runnerId || isTerminalRunState(run.state)) continue;
+      this.restoreLeaseAuthority(run);
+      const lease = this.leaseAuthority.current(run.id)!;
+      if (lease.generation === run.generation && lease.leaseId === run.leaseId && !lease.revokedAt && Date.parse(lease.expiresAt) - now.getTime() > 5 * 60_000) continue;
+      try {
+        const renewed = this.leaseAuthority.renew(run.id, run.leaseId, run.generation, new Date(now.getTime() + 15 * 60_000).toISOString(), now.toISOString());
+        run.leaseExpiresAt = renewed.expiresAt;
+        this.database.saveEntity("run", run.id, json(run));
+        this.persistLatestLeaseAudit(run.id);
+      } catch (error) {
+        this.persistLatestLeaseAudit(run.id);
+        if (!(error instanceof LeaseFenceError)) throw error;
+        await this.failRun(run, `Embedded Runner ${error.message}`);
+      }
+    }
+  }
+
+  private markRemoteUnavailable(runId:string,reason:string,code="NATIVE_OUTCOME_UNKNOWN",expected?:Pick<Run,"leaseId"|"generation">):void {
+    if(this.dispatchingRuns.has(runId))return;
+    let changed=false;
+    this.database.transaction(()=>{
+      const run=this.database.getEntity<JsonValue>("run",runId) as unknown as Run|undefined;
+      if(!run||isTerminalRunState(run.state)||run.state==="CREATED")return;
+      if(expected&&(run.leaseId!==expected.leaseId||run.generation!==expected.generation))return;
+      if(run.state!=="RUNNER_UNAVAILABLE"){run.recoveryState=run.state;assertRunTransition(run.state,"RUNNER_UNAVAILABLE");run.state="RUNNER_UNAVAILABLE";}
+      run.recoveryReason=code;run.resumePolicy="manual";this.database.saveEntity("run",run.id,json(run));
+      changed=true;
+      const stored=this.database.getCanonicalTask<JsonValue>(run.taskId),task=stored?.document as unknown as Task|undefined;
+      if(stored&&task?.currentRunId===run.id&&["RUNNING","QUEUED"].includes(task.state))this.tasks.execute({id:`remote-unavailable:${run.id}:${stored.revision}`,taskId:run.taskId,baseRevision:stored.revision,actor:"remote-reconciliation",command:{type:"task.transition",state:task.state==="QUEUED"?"WAITING_RESOURCE":"WAITING_USER"}});
+      for(const value of this.database.listEntities<JsonValue>("task-publication")){
+        const publication=value as unknown as PublicationRecord;
+        if(publication.receipt?.runId===run.id){publication.receipt={...publication.receipt,state:"OUTCOME_UNKNOWN",message:reason};this.database.saveEntity("task-publication",publication.preview.publicationId,json(publication));}
+      }
+    });
+    if(changed)this.fleetEvents.publish("run.changed",runId,{id:runId,state:"RUNNER_UNAVAILABLE",recoveryReason:code});
+  }
+  private reconcileRemoteLifecycle(runnerId:string):Promise<void> {
+    if(this.stopping)return Promise.resolve();
+    const active=this.remoteLifecycleJobs.get(runnerId);if(active){this.remoteLifecycleQueued.add(runnerId);return active;}
+    const work=Promise.resolve().then(async()=>{
+      do{
+        this.remoteLifecycleQueued.delete(runnerId);if(this.stopping)return;
+        try{await this.reconcileRemoteRunner(runnerId);await this.renewRemoteLeases(runnerId);}
+        catch(error){this.app.log.warn({runnerId,error:redactValue(error)},"remote ownership reconciliation is unconfirmed");}
+      }while(this.remoteLifecycleQueued.has(runnerId));
+    });
+    this.remoteLifecycleJobs.set(runnerId,work);
+    void work.finally(()=>{if(this.remoteLifecycleJobs.get(runnerId)===work)this.remoteLifecycleJobs.delete(runnerId);});
+    return work;
+  }
+  private async reconcileRemoteRunner(runnerId:string):Promise<void> {
+    const before=new Set(this.database.listEntities<JsonValue>("run").map(value=>value as unknown as Run).filter(run=>run.runnerId===runnerId&&!isTerminalRunState(run.state)).map(run=>contentHash({id:run.id,generation:run.generation,leaseId:run.leaseId})));
+    const actual=remoteRunInventory(await this.remoteRequest(runnerId,{type:"runner.reconcile"}),runnerId);
+    const runs=this.database.listEntities<JsonValue>("run").map(value=>value as unknown as Run).filter(run=>run.runnerId===runnerId&&!isTerminalRunState(run.state)&&before.has(contentHash({id:run.id,generation:run.generation,leaseId:run.leaseId})));
+    const owned=runs.filter(run=>(this.database.getCanonicalTask<JsonValue>(run.taskId)?.document as unknown as Task|undefined)?.currentRunId===run.id);
+    const expected=owned.map(run=>{
+      const start=this.database.getEntity<JsonValue>("remote-native-start",run.id) as {commandHash?:string}|undefined;
+      return {runId:run.id,runnerId,generation:run.generation,leaseId:run.leaseId,...(run.worktree?{workspace:run.worktree}:{}),...(!run.sessionId.startsWith("unstarted:")?{sessionId:run.sessionId}:{}),...(start?.commandHash?{startCommandHash:start.commandHash}:{}),requiresNativeOwnership:true};
+    });
+    for(const decision of reconcileRunnerState(runnerId,expected,actual)){
+      if(this.stopping||this.dispatchingRuns.has(decision.runId))continue;
+      const observed=actual.find(row=>row.runId===decision.runId),run=runs.find(run=>run.id===decision.runId);
+      if(decision.action==="STOP_STALE"&&observed){const current=this.database.getEntity<JsonValue>("run",decision.runId) as unknown as Run|undefined;if(current&&!isTerminalRunState(current.state)&&current.generation===observed.generation&&current.leaseId===observed.leaseId&&(this.database.getCanonicalTask<JsonValue>(current.taskId)?.document as unknown as Task|undefined)?.currentRunId===current.id)continue;}
+      this.database.saveEntity("remote-reconciliation",decision.runId,json({runnerId,...decision,observedAt:this.now().toISOString(),...(observed?{observation:observed}:{})}));
+      if(decision.action==="STOP_STALE"){
+        if(observed&&!observed.settledAt&&observed.nativeState!=="CANCELLED")await this.remoteRequest(runnerId,{type:"lease.revoke",leaseId:observed.leaseId,generation:observed.generation,reason:decision.reason});
+        continue;
+      }
+      if(!run)continue;
+      const start=this.database.getEntity<JsonValue>("remote-native-start",run.id) as {commandHash?:string;runnerId?:string;generation?:number;leaseId?:string}|undefined;
+      if(decision.action!=="KEEP"||!observed||!start?.commandHash||start.runnerId!==runnerId||start.generation!==run.generation||start.leaseId!==run.leaseId||observed.profileId!==run.profileId){this.markRemoteUnavailable(run.id,decision.reason,"NATIVE_OUTCOME_UNKNOWN",run);continue;}
+      this.restoreLeaseAuthority(run);
+      const canonical=this.leaseAuthority.current(run.id)!;
+      if(canonical.revokedAt||observed.lease.revokedAt||Date.parse(observed.lease.expiresAt)<=this.now().getTime()||!run.leaseExpiresAt||Date.parse(run.leaseExpiresAt)<=this.now().getTime()){
+        if(!observed.lease.revokedAt)await this.remoteRequest(runnerId,{type:"lease.revoke",leaseId:run.leaseId,generation:run.generation,reason:"Canonical authority expired or was revoked"});
+        this.markRemoteUnavailable(run.id,"Remote authority requires operator inspection","REMOTE_LEASE_INVALID",run);continue;
+      }
+      if(run.state!=="RUNNER_UNAVAILABLE"&&run.state!=="STARTING")continue;
+      const adapter=this.agentAdapters.get(run.profileId);if(!(adapter instanceof RemoteNativeAdapter)){this.markRemoteUnavailable(run.id,"Remote native backend is unavailable","NATIVE_OUTCOME_UNKNOWN",run);continue;}
+      const session=adapter.reconcileSession(await this.remoteRequest(runnerId,{type:"native.run",runId:run.id,action:"status"},run),run);
+      this.database.transaction(()=>{
+        const current=this.database.getEntity<JsonValue>("run",run.id) as unknown as Run|undefined,stored=this.database.getCanonicalTask<JsonValue>(run.taskId),task=stored?.document as unknown as Task|undefined;
+        if(!current||isTerminalRunState(current.state)||current.generation!==run.generation||current.leaseId!==run.leaseId||task?.currentRunId!==run.id||!["RUNNER_UNAVAILABLE","STARTING"].includes(current.state))return;
+        const restored:Run["state"]=current.recoveryState&&["ACTIVE","WAITING_USER","RESOURCE_BLOCKED","SUSPECTED_STALL","VERIFYING","DELIVERING"].includes(current.recoveryState)?current.recoveryState:"ACTIVE";
+        assertRunTransition(current.state,restored);current.state=restored;current.sessionId=session.id;if(session.providerSessionId)current.providerSessionId=session.providerSessionId;
+        delete current.recoveryReason;delete current.recoveryState;delete current.failureReason;current.resumePolicy=session.providerSessionId||adapter.manifest.capabilities.resume?"same-session":"controlled-reroute";
+        this.database.saveEntity("run",current.id,json(current));
+        if(stored&&restored==="ACTIVE"&&["WAITING_USER","WAITING_RESOURCE","QUEUED"].includes(task.state))this.tasks.execute({id:`remote-reattach:${current.id}:${stored.revision}`,taskId:current.taskId,baseRevision:stored.revision,actor:"remote-reconciliation",command:{type:"task.transition",state:"RUNNING"}});
+        for(const value of this.database.listEntities<JsonValue>("task-publication")){const publication=value as unknown as PublicationRecord;if(publication.receipt?.runId===current.id)this.publications.markOutcome(publication.owner,publication.preview.publicationId,current);}
+      });
+      this.fleetEvents.publish("run.changed",run.id,{id:run.id,source:"remote-reconciliation"});
+    }
+  }
+  private async renewRemoteLeases(runnerId:string):Promise<void> {
+    for(const value of this.database.listEntities<JsonValue>("run")){
+      const run=value as unknown as Run;if(run.runnerId!==runnerId||isTerminalRunState(run.state)||run.state==="RUNNER_UNAVAILABLE"||this.dispatchingRuns.has(run.id)||!run.leaseExpiresAt||Date.parse(run.leaseExpiresAt)-this.now().getTime()>5*60_000)continue;
+      this.restoreLeaseAuthority(run);
+      try{
+        this.leaseAuthority.fence(run.id,run.leaseId,run.generation,"remote-renew",this.now().toISOString());
+        const expiresAt=new Date(this.now().getTime()+15*60_000).toISOString();
+        const acknowledged=await this.remoteRequest(runnerId,{type:"lease.renew",leaseId:run.leaseId,generation:run.generation,expiresAt},run,`native-renew:${run.id}:${run.generation}:${Date.parse(expiresAt)}`) as {runId?:unknown;runnerId?:unknown;leaseId?:unknown;generation?:unknown;expiresAt?:unknown;revokedAt?:unknown};
+        if(!acknowledged||acknowledged.runId!==run.id||acknowledged.runnerId!==runnerId||acknowledged.leaseId!==run.leaseId||acknowledged.generation!==run.generation||acknowledged.expiresAt!==expiresAt||acknowledged.revokedAt)throw new AdapterContractError("REMOTE_RESULT_INVALID","Remote lease renewal acknowledgement does not match canonical authority");
+        const current=this.database.getEntity<JsonValue>("run",run.id) as unknown as Run|undefined;
+        if(!current||isTerminalRunState(current.state)||current.state==="RUNNER_UNAVAILABLE"||current.generation!==run.generation||current.leaseId!==run.leaseId)throw new AdapterContractError("RUN_CHANGED","Canonical authority changed while renewing its remote lease");
+        const renewed=this.leaseAuthority.renew(run.id,run.leaseId,run.generation,expiresAt,this.now().toISOString());current.leaseExpiresAt=renewed.expiresAt;this.database.saveEntity("run",current.id,json(current));this.persistLatestLeaseAudit(run.id);
+      }catch(error){
+        try{await this.remoteRequest(runnerId,{type:"lease.revoke",leaseId:run.leaseId,generation:run.generation,reason:"Canonical renewal was not confirmed"},run);}catch(cleanup){this.app.log.warn({runId:run.id,error:redactValue(cleanup)},"remote renewal cleanup is unconfirmed");}
+        try{this.leaseAuthority.revoke(run.id,run.leaseId,run.generation,"Canonical renewal was not confirmed",this.now().toISOString());}catch{/* A newer generation remains authoritative. */}
+        this.persistLatestLeaseAudit(run.id);this.markRemoteUnavailable(run.id,"Remote lease renewal could not be confirmed","REMOTE_LEASE_INVALID",run);this.app.log.warn({runId:run.id,error:redactValue(error)},"remote lease renewal failed");
+      }
+    }
   }
 
   private genericProcessExecutor(): ProcessExecutor {
     return {
       start: async (input) => {
+        this.fenceNativeSpawn(input.runId);
         const handle = await this.agentProcesses.start({ runId: input.runId, file: input.file, args: input.args, cwd: input.cwd, ...(input.mode === "pty" ? { mode: "pty" as const } : { mode: "process" as const }) });
         const state = async (): Promise<"running" | "cancelled" | "completed" | "failed"> => {
           if (handle.status().state === "running") return "running";
@@ -627,10 +1339,118 @@ export class ControllerService {
     };
   }
 
+  private async planConfiguration(proposed:unknown,actor:string,source:Parameters<ConfigurationEngine["buildPlan"]>[2],nativeModelDefault?:unknown) {
+    const snapshot=this.configuration.current(),next=validateConfig(proposed);
+    const review=nativeModelDefault===undefined?undefined:parseNativeModelDefaultReview(nativeModelDefault);
+    const scopeRef=review?this.resolveProfileExecutionContext(review.profileId,review.repositoryId,"catalog").fingerprint:undefined;
+    if(review)await qualifyNativeModelDefault(snapshot.config,next,review,(profileId,repositoryId)=>this.modelCatalog(profileId,repositoryId,"selection-change"));
+    const evidence=await qualifyRoutingPolicy(snapshot.config,next,(profileId,repositoryId)=>this.modelCatalog(profileId,repositoryId,"selection-change"));
+    if(this.configuration.current().revision!==snapshot.revision)throw new RevisionConflictError(snapshot.revision,this.configuration.current().revision);
+    if(review&&scopeRef!==this.resolveProfileExecutionContext(review.profileId,review.repositoryId,"catalog").fingerprint)throw new PublicationError("MODEL_DEFAULT_PLAN_STALE",409,"Native account context changed while reviewing the default model");
+    return this.database.transaction(()=>{
+      const plan=this.configuration.buildPlan(next,actor,source);
+      if(evidence)this.database.saveEntity("policy-plan-evidence",plan.id,json(evidence));
+      if(review)this.database.saveEntity("model-default-plan",plan.id,json({format:"v3-model-default-plan-v1",actorId:actor,configRevision:snapshot.revision,scopeRef,review}));
+      return plan;
+    });
+  }
+  private async applyConfigurationPlan(id:string,options:{confirmed?:boolean;actorId?:string}={}) {
+    const plan=this.configuration.getPlan(id);if(plan&&plan.state!=="PLANNED")return this.configuration.applyPlan(id,options);
+    const snapshot=this.configuration.current();if(plan&&snapshot.revision!==plan.baseRevision)throw new RevisionConflictError(plan.baseRevision,snapshot.revision);
+    const next=this.configuration.proposedConfig(id);
+    const rawDefault=this.database.getEntity<JsonValue>("model-default-plan",id);
+    const reviewedDefault=readNativeModelDefaultEvidence(rawDefault);
+    if(rawDefault!==undefined&&!reviewedDefault)throw new PublicationError("MODEL_DEFAULT_REVIEW_REQUIRED",409,"Legacy default-model evidence needs a fresh native review");
+    if(reviewedDefault){
+      if(reviewedDefault.actorId!==options.actorId)throw new PublicationError("MODEL_DEFAULT_PLAN_FORBIDDEN",403,"This default-model review belongs to another operator");
+      if(reviewedDefault.configRevision!==snapshot.revision||reviewedDefault.scopeRef!==this.resolveProfileExecutionContext(reviewedDefault.review.profileId,reviewedDefault.review.repositoryId,"catalog").fingerprint)throw new PublicationError("MODEL_DEFAULT_PLAN_STALE",409,"Native default-model context changed; review a new plan");
+      await qualifyNativeModelDefault(snapshot.config,next,reviewedDefault.review,(profileId,repositoryId)=>this.modelCatalog(profileId,repositoryId,"selection-change"));
+    }
+    const evidence=await qualifyRoutingPolicy(snapshot.config,next,(profileId,repositoryId)=>this.modelCatalog(profileId,repositoryId,"selection-change"));
+    if(evidence){const reviewed=this.database.getEntity<JsonValue>("policy-plan-evidence",id) as unknown as PolicyConfigEvidence|undefined;if(!reviewed||contentHash(reviewed)!==contentHash(evidence))throw new ConfigPlanError("ROUTING_PLAN_STALE","Native routing evidence changed; build and review a new ConfigPlan");}
+    await assertRequiredSecretsAvailable(next,this.secrets);
+    await this.refreshChangingTrialSessions(snapshot.config, next);
+    if(reviewedDefault&&reviewedDefault.scopeRef!==this.resolveProfileExecutionContext(reviewedDefault.review.profileId,reviewedDefault.review.repositoryId,"catalog").fingerprint)throw new PublicationError("MODEL_DEFAULT_PLAN_STALE",409,"Native account context changed before applying the default model");
+    return this.configuration.applyPlan(id,options);
+  }
+  private async rollbackConfigurationPlan(id:string) {
+    const stored=this.database.getConfigPlan(id),snapshot=this.configuration.current();
+    if(stored?.state!=="APPLIED")return this.configuration.rollbackPlan(id);
+    if(stored)await qualifyRoutingPolicy(snapshot.config,validateConfig(stored.before),(profileId,repositoryId)=>this.modelCatalog(profileId,repositoryId,"selection-change"));
+    if (stored) await this.refreshChangingTrialSessions(snapshot.config, validateConfig(stored.before));
+    if(this.configuration.current().revision!==snapshot.revision)throw new RevisionConflictError(snapshot.revision,this.configuration.current().revision);
+    return this.configuration.rollbackPlan(id);
+  }
+
+  private profileHasActiveOperations(id: string): boolean {
+    const adapter=this.agentAdapters.get(id),runtime=this.nativeRuntime(id),owned=adapter instanceof StructuredCliAdapter||adapter instanceof CodexAdapter||adapter instanceof RemoteNativeAdapter;
+    return (this.pendingProfileStarts.get(id)??0)>0
+      || this.accountQuotas.hasPending(id)
+      || (this.devinRuntimes.has(id)&&[...this.nativeCatalogProfiles.values()].includes(id))
+      || (this.database.listEntities<JsonValue>("run") as unknown as Run[]).some(run=>run.profileId===id&&!isTerminalRunState(run.state))
+      || Boolean(owned&&adapter.hasActiveOperations())
+      || Boolean(runtime&&"hasActiveOperations" in runtime&&runtime.hasActiveOperations())
+      || (this.database.listEntities<JsonValue>("adapter-session") as unknown as AdapterSession[]).some(session=>session.profileId===id&&(this.pendingConsoleInputs.has(session.id)||this.pendingSessionCancellations.has(session.id)||this.sessionStopUncertain(session)||session.state==="PAUSED"||!owned&&["STARTING","RUNNING"].includes(session.state)));
+  }
+  private assertCredentialChangeAllowed(reference: string): void {
+    this.credentialContext.assertAvailable(reference);
+    const config=this.configuration.current().config;
+    for(const profile of config.agentProfiles){
+      const runner=config.runners.find(candidate=>candidate.id===profile.runnerId);
+      if(runner?.mode!=="remote"&&this.credentialContext.references(profile).includes(reference)&&this.profileHasActiveOperations(profile.id))throw new ConfigPlanError("CREDENTIAL_IN_USE","Finish or cancel the account's active operations before replacing its credential");
+    }
+  }
   private applyRuntimeConfiguration(config: DispatcherConfig): void {
+    this.credentialContext.assertAvailable(config);
+    // Startup applies configuration before constructing the executor; live applies
+    // must retain that executor's exact identity. Disabled reservations do no I/O.
+    for(const profile of config.agentProfiles.filter(profile=>profile.enabled!==false&&profile.provider==="devin-local")){
+      const embeddedId=this.embeddedRunner?.runner.id??this.configuration.current().config.runners.find(runner=>runner.mode==="embedded")?.id??"local";
+      if(!this.options.withRunner||profile.runnerId!==embeddedId||!config.runners.some(runner=>runner.id===embeddedId&&runner.mode==="embedded"))throw new ConfigPlanError("NATIVE_RUNTIME_SCOPE_UNSUPPORTED","Devin Local ACP requires this Controller's embedded executor");
+      try{assertDevinRuntimeSettings({id:profile.id,alias:profile.alias,executable:stringSetting(profile.settings?.executable)!},stringSetting(profile.settings?.dataHome)!,stringSetting(profile.settings?.configHome)!);}
+      catch{throw new ConfigPlanError("NATIVE_RUNTIME_SCOPE_UNSUPPORTED","Devin Local ACP requires existing explicit native paths");}
+    }
+    for(const profile of config.agentProfiles.filter(profile=>profile.enabled!==false&&profile.provider==="copilot")){
+      const embeddedId=this.embeddedRunner?.runner.id??this.configuration.current().config.runners.find(runner=>runner.mode==="embedded")?.id??"local";
+      if(!this.options.withRunner||profile.runnerId!==embeddedId||!config.runners.some(runner=>runner.id===embeddedId&&runner.mode==="embedded"))throw new ConfigPlanError("NATIVE_RUNTIME_SCOPE_UNSUPPORTED","Copilot RPC requires this Controller's embedded executor");
+      try{assertCopilotRuntimeSettings({id:profile.id,alias:profile.alias,executable:stringSetting(profile.settings?.executable)!},stringSetting(profile.settings?.copilotHome)!);}
+      catch{throw new ConfigPlanError("NATIVE_RUNTIME_SCOPE_UNSUPPORTED","Copilot RPC requires existing explicit native paths");}
+    }
+    const retainedAdapters = new Map<string, AgentAdapter>();
+    const runnerIdentity = (runnerId: string) => {
+      const runner = config.runners.find(candidate => candidate.id === runnerId);
+      return runner ? { id: runner.id, mode: runner.mode, ...(runner.credentialRef ? { credentialRef: runner.credentialRef } : {}) } : undefined;
+    };
+    const adapterConfiguration = (profile: AgentProfileConfig) => structuredClone({ profile, runner: runnerIdentity(profile.runnerId) });
+    for (const [id, previous] of this.profileAdapterConfigurations) {
+      const adapter = this.agentAdapters.get(id);
+      const next = config.agentProfiles.find(profile => profile.id === id && profile.enabled !== false);
+      const runtime=this.nativeRuntime(id),unchanged=Boolean(next&&isDeepStrictEqual(previous,adapterConfiguration(next)));
+      if(!unchanged&&this.devinRuntimes.has(id)&&this.catalogCleanupUnknownProfiles.has(id))throw new ConfigPlanError("NATIVE_RUNTIME_DRAIN_REQUIRED","Native catalog cleanup remains unconfirmed for this profile");
+      if(runtime?.isClosed()&&(!this.durableNativeDisconnects.has(runtime)||runtime.hasUnclosedHosts())&&!unchanged)throw new ConfigPlanError("NATIVE_RUNTIME_DRAIN_REQUIRED","Persist proven local cleanup before replacing a closed native runtime");
+      if (adapter && next && unchanged) {
+        retainedAdapters.set(id, adapter);
+        continue;
+      }
+      if (this.profileHasActiveOperations(id)) throw new ConfigPlanError("ACTIVE_AGENT_PROFILE", `Finish or cancel active harness operations before changing or removing profile ${id}`);
+      if(runtime?.hasUnclosedHosts())throw new ConfigPlanError("NATIVE_RUNTIME_DRAIN_REQUIRED","Disconnect the owned native runtime before changing its profile");
+      if (previous.runner?.mode === "remote" && !isDeepStrictEqual(previous.runner, runnerIdentity(previous.runner.id)) && this.remoteRunnerServer?.isConnected(previous.runner.id)) {
+        throw new ConfigPlanError("RUNNER_CONNECTED", "Revoke and disconnect the Runner before changing its execution identity");
+      }
+    }
+    for (const previous of this.configuration.current().config.runners) {
+      const next = config.runners.find(runner => runner.id === previous.id);
+      if (next && next.mode === previous.mode && next.credentialRef === previous.credentialRef) continue;
+      if (this.runnerCredentialOperations.has(previous.id)) throw new ConfigPlanError("RUNNER_CREDENTIAL_BUSY", "Finish the current Runner credential operation before changing its identity");
+      if (this.remoteRunnerServer?.isConnected(previous.id)) throw new ConfigPlanError("RUNNER_CONNECTED", "Revoke and disconnect the Runner before changing its execution identity");
+      if (this.embeddedRunner?.runner.id === previous.id && previous.mode === "embedded") throw new ConfigPlanError("EMBEDDED_RUNNER_RESTART_REQUIRED", "The embedded executor identity is fixed for this process; restart with the new configuration");
+    }
     this.llm.configure(llmConfiguration(config.internalLlm));
     this.repositories.clear();
+    const privatePaths=[resolve(this.options.dataDirectory),...nativePrivatePaths(config.agentProfiles.filter(profile=>!config.runners.some(runner=>runner.id===profile.runnerId&&runner.mode==="remote")))];
+    this.localPrivatePaths=privatePaths;
     for (const repository of config.repositories) {
+      if (config.runners.some(runner => runner.id === repositoryRunnerId(config,repository) && runner.mode === "remote")) continue;
       this.repositories.register({
         id: repository.id,
         root: repository.root,
@@ -674,7 +1494,7 @@ export class ControllerService {
           instance,
           credentialRef: configured.credentialRef,
           resolveSecret: (reference) => this.secrets.resolve(reference, { principal: "controller", purpose: "integration" }),
-          transport: this.options.gitTransport ?? new LocalGitTransport(),
+          transport: this.options.gitTransport ?? {ensureBranch:async()=>{throw new ConnectorError("CONFLICT","Canonical delivery requires owning Git execution",{retryable:false});},push:async()=>{throw new ConnectorError("CONFLICT","Canonical delivery requires owning Git execution",{retryable:false});}},
           ...(this.options.integrationFetch ? { fetch: this.options.integrationFetch } : {}),
           ...(stringSetting(configured.settings?.apiBase) ? { apiBase: stringSetting(configured.settings?.apiBase)! } : {}),
         }));
@@ -703,20 +1523,95 @@ export class ControllerService {
     }
 
     this.agentAdapters.clear();
-    const store = new DatabaseSessionStore(this.database);
-    for (const profile of config.agentProfiles.filter((entry) => entry.provider === "codex")) {
-      const codexHome = stringSetting(profile.settings?.codexHome);
-      if (!codexHome) continue;
-      const adapterProfile: CodexProfileConfig = {
-        id: profile.id,
-        alias: profile.alias,
-        codexHome,
-        ...(stringSetting(profile.settings?.executable) ? { executable: stringSetting(profile.settings?.executable)! } : {}),
-        ...(stringSetting(profile.settings?.model) ? { model: stringSetting(profile.settings?.model)! } : {}),
-      };
-      this.agentAdapters.set(profile.id, new CodexAdapter(adapterProfile, this.options.codexBackendFactory?.(adapterProfile), store));
+    for(const id of this.copilotRuntimes.keys())if(!retainedAdapters.has(id))this.copilotRuntimes.delete(id);
+    for(const id of this.codexRuntimes.keys())if(!retainedAdapters.has(id))this.codexRuntimes.delete(id);
+    for(const id of this.devinRuntimes.keys())if(!retainedAdapters.has(id))this.devinRuntimes.delete(id);
+    for(const id of this.opencodeRuntimes.keys())if(!retainedAdapters.has(id))this.opencodeRuntimes.delete(id);
+    for(const id of this.piRuntimes.keys())if(!retainedAdapters.has(id))this.piRuntimes.delete(id);
+    for (const [id, adapter] of retainedAdapters) this.agentAdapters.set(id, adapter);
+    for (const id of this.profileAdapterConfigurations.keys()) {
+      if (!retainedAdapters.has(id)) this.profileAdapterConfigurations.delete(id);
     }
-    for (const profile of config.agentProfiles.filter((entry) => entry.provider === "qoder")) {
+    const store = new DatabaseSessionStore(this.database, session => this.fenceNativeSpawn(session.runId, session.profileId),session=>{
+      if(!session.profileId)return;
+      const repositoryId=this.workspaces.get(session.workspacePath)?.repositoryId;
+      const context=this.resolveProfileExecutionContext(session.profileId,repositoryId,"start");
+      return {version:1,fingerprint:context.fingerprint,...(repositoryId?{repositoryId}:{}),stopState:"none"};
+    });
+    for(const profile of config.agentProfiles.filter(profile=>profile.enabled!==false&&config.runners.some(runner=>runner.id===profile.runnerId&&runner.mode==="remote"))){
+      if(retainedAdapters.has(profile.id))continue;
+      const manifest=manifestForProvider(profile.provider);
+      if(!manifest||!(profile.provider==="codex"||profile.provider==="cursor"||profile.provider==="kiro"||isNativeCliProvider(profile.provider)))continue;
+      this.agentAdapters.set(profile.id,new RemoteNativeAdapter({profileId:profile.id,runnerId:profile.runnerId,manifest,
+        run:id=>{const run=this.database.getEntity<JsonValue>("run",id) as unknown as Run|undefined;if(!run)return;const task=this.database.getCanonicalTask<JsonValue>(run.taskId)?.document as unknown as Task|undefined;if(task?.currentRunId!==id||task.state!=="QUEUED")return;this.restoreLeaseAuthority(run);this.leaseAuthority.fence(run.id,run.leaseId,run.generation,"native-start",this.now().toISOString());return run;},
+        sessionRun:id=>{const session=store.load(id);const run=session?this.database.getEntity<JsonValue>("run",session.runId) as unknown as Run|undefined:undefined;return run?.sessionId.startsWith("unstarted:")?{...run,sessionId:id}:run;},
+        request:(payload,run,messageId)=>this.remoteRequest(profile.runnerId,payload,run,messageId),
+        saveSession:session=>{const previous=store.load(session.id);if(previous&&(previous.runId!==session.runId||previous.profileId!==session.profileId))throw new AdapterContractError("COMMAND_OUTCOME_UNKNOWN","Remote session identity collides with another Run");store.save(session);},
+        reserveStart:(run,commandHash)=>{const previous=this.database.getEntity<JsonValue>("remote-native-start",run.id) as {commandHash?:string}|undefined;if(previous&&previous.commandHash!==commandHash)throw new AdapterContractError("EXECUTION_CONFLICT","Remote Run start is already bound to a different descriptor");this.database.saveEntity("remote-native-start",run.id,json({runId:run.id,runnerId:run.runnerId,generation:run.generation,leaseId:run.leaseId,commandHash}));},
+        active:()=>this.database.listEntities<JsonValue>("run").some(value=>{const run=value as unknown as Run;return run.profileId===profile.id&&!isTerminalRunState(run.state);}),
+      }));
+      this.profileAdapterConfigurations.set(profile.id, adapterConfiguration(profile));
+    }
+    const enabledProfiles = config.agentProfiles.filter((profile) => profile.enabled !== false && !config.runners.some(runner => runner.id === profile.runnerId && runner.mode === "remote"));
+    const resolveProviderCredential = (reference: string): Promise<string> => this.secrets.resolve(reference, { principal: "controller", purpose: "provider" });
+    for (const profile of enabledProfiles) {
+      if (retainedAdapters.has(profile.id)) continue;
+      let copilotRuntime:CopilotExecutionRuntime|undefined,copilotAdapter:AgentAdapter|undefined,piRuntime:PiExecutionRuntime|undefined,codexRuntime:CodexExecutionRuntime|undefined,opencodeRuntime:OpenCodeExecutionRuntime|undefined,devinRuntime:DevinExecutionRuntime|undefined,devinAdapter:AgentAdapter|undefined;
+      if(profile.nativeInteraction?.backendId==="copilot-rpc"){
+        copilotRuntime=new CopilotExecutionRuntime({profile:{id:profile.id,alias:profile.alias,executable:stringSetting(profile.settings?.executable)!},copilotHome:stringSetting(profile.settings?.copilotHome)!,runnerId:profile.runnerId,assertCurrent:(input,expectedBinding)=>this.assertManagedCopilotCurrent(profile.id,copilotRuntime!,copilotAdapter!,input,expectedBinding),bindingFor:id=>this.persistedNativeBinding(profile.id,id),...(this.options.copilotExecutionFactory?{factory:this.options.copilotExecutionFactory}:{})});
+        this.copilotRuntimes.set(profile.id,copilotRuntime);
+      }
+      if(profile.nativeInteraction?.backendId==="codex-app-server"){
+        codexRuntime=new CodexExecutionRuntime({profile:{id:profile.id,alias:profile.alias,executable:stringSetting(profile.settings?.executable)!,codexHome:stringSetting(profile.settings?.codexHome)!,...(stringSetting(profile.settings?.model)?{model:stringSetting(profile.settings?.model)!}:{})},runnerId:profile.runnerId,assertInput:input=>{
+          if(!codexRuntime||this.codexRuntimes.get(profile.id)!==codexRuntime||this.nativeRuntimeAdapters.get(codexRuntime)!==this.agentAdapters.get(profile.id))throw new InteractionGuardError("EXECUTION_CONTEXT_DRIFT");
+          this.assertManagedCodexInput(profile.id,input);
+        },bindingFor:id=>this.persistedNativeBinding(profile.id,id),authorityFor:scope=>this.codexNativeAuthority(scope),...(this.options.codexAppServerFactory?{factory:this.options.codexAppServerFactory}:{})});this.codexRuntimes.set(profile.id,codexRuntime);
+      }
+      if(profile.nativeInteraction?.backendId==="opencode-server-v2"){
+        opencodeRuntime=new OpenCodeExecutionRuntime({profile:{id:profile.id,alias:profile.alias,executable:stringSetting(profile.settings?.executable)!,...(stringSetting(profile.settings?.model)?{model:stringSetting(profile.settings?.model)!}:{}),approveTools:false},runnerId:profile.runnerId,assertInput:input=>{
+          if(!opencodeRuntime||this.opencodeRuntimes.get(profile.id)!==opencodeRuntime||this.nativeRuntimeAdapters.get(opencodeRuntime)!==this.agentAdapters.get(profile.id))throw new InteractionGuardError("EXECUTION_CONTEXT_DRIFT");
+          this.assertManagedOpenCodeInput(profile.id,input);
+        },bindingFor:id=>this.persistedNativeBinding(profile.id,id),...(this.options.opencodeExecutionFactory?{factory:this.options.opencodeExecutionFactory}:{})});
+        this.opencodeRuntimes.set(profile.id,opencodeRuntime);
+      }
+      if(profile.nativeInteraction?.backendId==="devin-local-acp"){
+        const assertOwner=()=>{if(!devinRuntime||!devinAdapter||this.devinRuntimes.get(profile.id)!==devinRuntime||this.nativeRuntimeAdapters.get(devinRuntime)!==devinAdapter||this.agentAdapters.get(profile.id)!==devinAdapter)throw new InteractionGuardError("EXECUTION_CONTEXT_DRIFT");};
+        devinRuntime=new DevinExecutionRuntime({profile:{id:profile.id,alias:profile.alias,executable:stringSetting(profile.settings?.executable)!},dataHome:stringSetting(profile.settings?.dataHome)!,configHome:stringSetting(profile.settings?.configHome)!,runnerId:profile.runnerId,assertInput:input=>{assertOwner();this.assertManagedDevinInput(profile.id,input);},bindingFor:id=>{assertOwner();return this.persistedNativeBinding(profile.id,id);},...(this.options.devinExecutionFactory?{factory:this.options.devinExecutionFactory}:{})});
+        this.devinRuntimes.set(profile.id,devinRuntime);
+      }
+      if(profile.nativeInteraction?.backendId==="pi-rpc"){
+        piRuntime=new PiExecutionRuntime({profile:{id:profile.id,alias:profile.alias,executable:stringSetting(profile.settings?.executable)!,model:stringSetting(profile.settings?.model)!},agentDirectory:stringSetting(profile.settings?.agentDirectory)!,sessionDirectory:stringSetting(profile.settings?.sessionDirectory)!,runnerId:profile.runnerId,assertInput:input=>this.assertManagedPiInput(profile.id,input),bindingFor:id=>this.persistedNativeBinding(profile.id,id)});
+        this.piRuntimes.set(profile.id,piRuntime);
+      }
+      const adapter = createNativeProfileAdapter(profile, {
+        ...(copilotRuntime?{copilotBackendFactory:()=>copilotRuntime!}:{}),
+        ...(devinRuntime?{devinLocalBackendFactory:()=>devinRuntime!}:{}),
+        store, resolveCredential: resolveProviderCredential,
+        ...(codexRuntime?{codexBackendFactory:()=>codexRuntime!}:this.options.codexBackendFactory ? { codexBackendFactory: this.options.codexBackendFactory } : {}),
+        ...(this.options.codexNativeReader ? { codexNativeReader: this.options.codexNativeReader } : {}),
+        ...(opencodeRuntime?{cliBackendFactory:()=>opencodeRuntime!}:piRuntime?{cliBackendFactory:()=>piRuntime!}:this.options.cliBackendFactory ? { cliBackendFactory: this.options.cliBackendFactory } : {}),
+      });
+      if (adapter) {
+        copilotAdapter=adapter;devinAdapter=adapter;const runtime=copilotRuntime??codexRuntime??piRuntime??opencodeRuntime??devinRuntime;if(runtime)this.nativeRuntimeAdapters.set(runtime,adapter);
+        codexRuntime?.setNativeRequestSink(event=>{
+          if(this.stopping||this.agentAdapters.get(profile.id)!==adapter)throw new InteractionGuardError("NATIVE_REQUEST_CONNECTION_CHANGED");
+          const port=event.binding.profileId===profile.id?this.nativePort(event.binding):undefined;if(!port)throw new InteractionGuardError("SESSION_OWNER_MISMATCH");
+          this.nativeInteractions.registerNativeRequest(event.fence,event.request,{binding:event.binding,scopeFingerprint:event.scopeFingerprint,port});
+        });
+        adapter.setNativeEventSink?.(event=>{
+          if(this.stopping)throw new AdapterContractError("NATIVE_OBSERVER_CLOSED","Controller observation is closed");
+          const result=this.nativeInteractions.applyNativeBindingEvent(event);
+          if(!result.applied&&result.code!=="DUPLICATE_NATIVE_EVENT")throw new AdapterContractError(result.code??"NATIVE_EVENT_REJECTED","Native observation requires reconciliation");
+        },context=>{const current=this.nativeInteractions.registerNativeObserver(context);return ()=>{
+          const session=store.load(context.sessionId);
+          return !this.stopping&&this.agentAdapters.get(profile.id)===adapter&&Boolean(session&&this.sessionContextState(session)==="current")&&current();
+        };});
+        this.agentAdapters.set(profile.id, adapter);
+        this.profileAdapterConfigurations.set(profile.id, adapterConfiguration(profile));
+      }
+    }
+    for (const profile of enabledProfiles.filter((entry) => entry.provider === "qoder")) {
+      if (retainedAdapters.has(profile.id)) continue;
       const adapterProfile: QoderProfileConfig = {
         id: profile.id,
         alias: profile.alias,
@@ -726,21 +1621,8 @@ export class ControllerService {
       };
       this.agentAdapters.set(profile.id, new QoderAdapter(adapterProfile, this.options.qoderBackendFactory?.(adapterProfile), store));
     }
-    const resolveProviderCredential = (reference: string): Promise<string> => this.secrets.resolve(reference, { principal: "controller", purpose: "provider" });
-    for (const profile of config.agentProfiles.filter((entry) => entry.provider === "cursor" || entry.provider === "kiro")) {
-      const adapterProfile: CliAgentProfile = {
-        id: profile.id,
-        alias: profile.alias,
-        ...(stringSetting(profile.settings?.executable) ? { executable: stringSetting(profile.settings?.executable)! } : {}),
-        ...(profile.credentialRef ? { credentialRef: profile.credentialRef } : {}),
-        ...(stringSetting(profile.settings?.model) ? { model: stringSetting(profile.settings?.model)! } : {}),
-      };
-      const backend = this.options.cliBackendFactory?.(profile.provider as "cursor" | "kiro", adapterProfile);
-      this.agentAdapters.set(profile.id, profile.provider === "cursor"
-        ? new CursorAdapter(adapterProfile, backend, store, resolveProviderCredential)
-        : new KiroAdapter(adapterProfile, backend, store, resolveProviderCredential));
-    }
-    for (const profile of config.agentProfiles.filter((entry) => entry.provider === "devin")) {
+    for (const profile of enabledProfiles.filter((entry) => entry.provider === "devin")) {
+      if (retainedAdapters.has(profile.id)) continue;
       const organizationId = stringSetting(profile.settings?.organizationId);
       if (!organizationId || !profile.credentialRef) continue;
       const adapterProfile: DevinProfileConfig = {
@@ -750,10 +1632,12 @@ export class ControllerService {
         credentialRef: profile.credentialRef,
         ...(stringSetting(profile.settings?.apiBase) ? { apiBase: stringSetting(profile.settings?.apiBase)! } : {}),
         ...(typeof profile.settings?.maxSessionAcu === "number" ? { maxSessionAcu: profile.settings.maxSessionAcu } : {}),
+        ...(stringSetting(profile.settings?.createAsUserId) ? { createAsUserId: stringSetting(profile.settings?.createAsUserId)! } : {}),
       };
       this.agentAdapters.set(profile.id, new DevinAdapter(adapterProfile, this.options.devinBackendFactory?.(adapterProfile), store, resolveProviderCredential, this.options.integrationFetch as typeof fetch | undefined));
     }
-    for (const profile of config.agentProfiles.filter((entry) => entry.provider === "workbuddy" || entry.provider === "codebuddy")) {
+    for (const profile of enabledProfiles.filter((entry) => entry.provider === "workbuddy" || entry.provider === "codebuddy")) {
+      if (retainedAdapters.has(profile.id)) continue;
       const settings = profile.settings;
       const required = ["baseUrl", "healthPath", "startPath", "statusPath", "inputPath", "cancelPath"] as const;
       if (required.some((key) => !stringSetting(settings?.[key]))) continue;
@@ -772,7 +1656,8 @@ export class ControllerService {
       };
       this.agentAdapters.set(profile.id, new LocalServiceAdapter(adapterProfile, resolveProviderCredential, this.options.integrationFetch as typeof fetch | undefined, store));
     }
-    for (const profile of config.agentProfiles.filter((entry) => entry.provider === "generic-cli")) {
+    for (const profile of enabledProfiles.filter((entry) => entry.provider === "generic-cli")) {
+      if (retainedAdapters.has(profile.id)) continue;
       const executable = stringSetting(profile.settings?.executable);
       const args = stringArraySetting(profile.settings?.args);
       if (!executable || !args) continue;
@@ -781,6 +1666,20 @@ export class ControllerService {
         args,
         ...(profile.settings?.mode === "pty" || profile.settings?.mode === "headless" ? { mode: profile.settings.mode } : {}),
       }, store, profile.id));
+    }
+    for (const profile of enabledProfiles) {
+      if (this.agentAdapters.has(profile.id)) this.profileAdapterConfigurations.set(profile.id, adapterConfiguration(profile));
+    }
+    if (this.embeddedRunner) {
+      const configured = config.runners.find(runner => runner.id === this.embeddedRunner!.runner.id && runner.mode === "embedded");
+      const reported = this.runners.list().find(runner => runner.id === this.embeddedRunner!.runner.id);
+      // Controller owns this executor's concurrency setting; remote reports stay with their owner.
+      if (configured && reported) this.runners.register({ ...reported, capacity: configured.capacity, displayName: configured.displayName });
+    }
+    for(const repository of config.repositories){
+      const id=`local:${repository.id}`,existing=this.database.getEntity<JsonValue>("project",id) as unknown as Project|undefined;
+      if(existing?.repository&&existing.repository!==repository.id)throw new ConfigPlanError("LOCAL_PROJECT_CONFLICT","Local project repository binding is already owned by another registration");
+      if(!existing?.repository)this.database.saveEntity("project",id,json({...existing,id,name:existing?.name??repository.id,repository:repository.id,revision:existing?.revision??1,updatedAt:this.now().toISOString()}));
     }
   }
 
@@ -896,7 +1795,8 @@ export class ControllerService {
       const currentTime = current?.lastActivityAt ?? current?.endedAt ?? current?.startedAt ?? "";
       if (!current || runTime > currentTime) latestRunByTask.set(run.taskId, run);
     }
-    const tasks = this.database.listCanonicalTasks<JsonValue>().map(({ document }) => {
+    const canonicalTasks = this.database.listCanonicalTasks<JsonValue>();
+    const tasks = canonicalTasks.map(({ document, revision }) => {
       const task = document as unknown as Task;
       const run = task.currentRunId ? runsById.get(task.currentRunId) : latestRunByTask.get(task.id);
       return {
@@ -905,8 +1805,12 @@ export class ControllerService {
         title: task.title,
         state: task.state,
         updatedAt: task.updatedAt,
+        revision,
+        archiveRevision: (this.database.getEntity<JsonValue>("task-archive", task.id) as { revision?: number } | undefined)?.revision ?? 0,
+        ...((this.database.getEntity<JsonValue>("task-archive", task.id) as { archivedAt?: string } | undefined)?.archivedAt ? { archivedAt: (this.database.getEntity<JsonValue>("task-archive", task.id) as { archivedAt: string }).archivedAt } : {}),
+        ...(task.currentRunId ? { currentRunId: task.currentRunId } : run ? { currentRunId: run.id } : {}),
         ...(run ? { profileId: run.profileId } : {}),
-        ...(task.bindings?.length ? { externalRefs: task.bindings.map((binding) => ({ connectorInstanceId: binding.connectorInstanceId, externalId: binding.externalId })) } : {}),
+        ...(task.bindings?.length ? { externalRefs: task.bindings.map((binding) => ({ connectorInstanceId: binding.connectorInstanceId, externalId: binding.externalId, ...(publicWebUrl(binding.externalUrl) ? { externalUrl: publicWebUrl(binding.externalUrl)! } : {}) })) } : {}),
       };
     });
     const runs = storedRuns.map((run) => {
@@ -920,6 +1824,13 @@ export class ControllerService {
         createdAt,
         updatedAt: run.lastActivityAt ?? run.endedAt ?? createdAt,
         ...(run.lastActivityAt ? { lastActivityAt: run.lastActivityAt } : {}),
+        ...(run.model ? { model: run.model } : run.executionSelection?.requestedModel ? {model:{id:run.executionSelection.requestedModel,source:"selection" as const}} : {}),
+        ...(run.tokens ? { tokens: run.tokens } : {}),
+        ...(run.tokenScope ? { tokenScope: run.tokenScope } : {}),
+        ...(run.telemetryAt ? { telemetryAt: run.telemetryAt } : {}),
+        ...(run.worktree ? { worktree: run.worktree } : {}),
+        ...(run.branch ? { branch: run.branch } : {}),
+        ...(run.endedAt ? { endedAt: run.endedAt } : {}),
         ...(run.state === "WAITING_USER" ? { waitingReason: run.activitySummary ?? "User input required" } : {}),
         ...(resource?.state ? { resourceState: resource.state } : {}),
         ...(run.activitySummary || run.failureReason || run.resourceBlockReason ? { summary: run.activitySummary ?? run.failureReason ?? run.resourceBlockReason } : {}),
@@ -928,8 +1839,10 @@ export class ControllerService {
     const deadLetters = this.database.listDeadLetters<JsonValue>();
     const connectors = this.connectors.list().map((adapter) => {
       const blockers = this.database.connectorDeletionBlockers(adapter.instance.id);
-      const probe = this.database.getEntity<JsonValue>("connector-health", adapter.instance.id) as { health?: typeof adapter.instance.health; checkedAt?: string; message?: string } | undefined;
-      const health = probe?.health ?? adapter.instance.health;
+      const probe = this.database.getEntity<JsonValue>("connector-health", adapter.instance.id) as { health?: typeof adapter.instance.health; checkedAt?: string; message?: string; contextFingerprint?: string } | undefined;
+      const contextChanged=Boolean(probe&&probe.contextFingerprint!==this.connectorConfigurationFingerprint(adapter.instance.id));
+      const expired=Boolean(probe?.checkedAt&&Date.parse(probe.checkedAt)+5*60_000<now.getTime());
+      const health = contextChanged||expired ? "UNKNOWN" as const : probe?.health ?? adapter.instance.health;
       return {
         id: adapter.instance.id,
         displayName: adapter.instance.displayName,
@@ -937,7 +1850,7 @@ export class ControllerService {
         health,
         checkedAt: probe?.checkedAt ?? adapter.instance.updatedAt,
         source: probe ? "probe" as const : "configuration" as const,
-        ...(probe?.message ? { reason: probe.message } : health === "HEALTHY" ? {} : { reason: health }),
+        ...(contextChanged?{reason:"连接或凭据已变更，请重新检查"}:expired?{reason:"连接检查已过期，请重新检查"}:probe?.message ? { reason: probe.message } : health === "HEALTHY" ? {} : { reason: health }),
         pendingOutbox: blockers.pendingOutbox,
         deadLetters: deadLetters.filter((entry) => entry.connectorInstanceId === adapter.instance.id).length,
         capabilities: adapter.definition.capabilities.filter((capability) => capability.support === "supported").map((capability) => `${capability.namespace}@${capability.version}`),
@@ -949,7 +1862,7 @@ export class ControllerService {
         id: profile.id,
         alias: profile.alias,
         provider: profile.provider,
-        state: this.agentAdapters.has(profile.id) ? "CONFIGURED" : "UNAVAILABLE",
+        state: profile.enabled === false ? "DISABLED" : this.agentAdapters.has(profile.id) ? "CONFIGURED" : "UNAVAILABLE",
         resourceState: resource.evidence.length ? resource.state : this.profileResourceState(profile.id),
         ...(resource.evidence.length ? {
           resourceReason: resource.reason,
@@ -961,12 +1874,126 @@ export class ControllerService {
         runnerId: profile.runnerId,
       };
     });
-    return this.fleet.rebuild({ tasks, runs, connectors, profiles }, now);
+    const projects = projectViews(canonicalTasks.map(({ document }) => document as unknown as Task), this.database.listEntities<JsonValue>("project") as unknown as Project[], this.configuration.current().config.repositories, (id) => this.database.getTaskContract<JsonValue>(id) as unknown as TaskContract | undefined);
+    return this.fleet.rebuild({ projects, tasks, runs, connectors, profiles }, now);
+  }
+
+  private saveUsageObservations(input:unknown,context:UsageContext):boolean{
+    const identity=context.standalone?`session:${context.sessionId}`:context.runId;
+    const reference={profileId:context.profileId,...(context.standalone?{sessionId:context.sessionId}:{runId:context.runId})};
+    try{
+      const inserted=this.usageObservations.record(input,context);
+      if(Array.isArray(input)&&input.length&&this.database.getEntity("usage-error",identity))this.database.saveEntity("usage-error",identity,{...reference,status:"resolved",observedAt:this.now().toISOString()});
+      if(inserted)this.fleetEvents.publish("usage.changed",identity,reference);
+      return (this.database.getEntity("usage-error",identity) as {status?:string}|undefined)?.status!=="unknown";
+    }catch(error){this.database.saveEntity("usage-error",identity,{...reference,status:"unknown",reasonCode:error instanceof UsageObservationError?error.code:"USAGE_UNAVAILABLE",observedAt:this.now().toISOString()});this.app.log.warn({error:redactValue(error),...reference},"Native usage observation rejected");return false;}
+  }
+  private async collectStandaloneUsage():Promise<void>{
+    if(this.usageReadClosed)return;
+    const sessions=(this.database.listEntities<JsonValue>("adapter-session") as unknown as BoundSession[]).filter(session=>{
+      if(this.canonicalSession(session)||!session.profileId||!session.turnId||this.sessionContextState(session)!=="current")return false;
+      const cursor=this.database.getEntity<JsonValue>("standalone-usage-cursor",session.id) as {turnId?:string}|undefined;
+      return !["COMPLETED","CANCELLED","FAILED"].includes(session.state)||cursor?.turnId!==session.turnId;
+    });
+    await runBounded(sessions,4,async session=>{
+      if(this.usageReadClosed)return;
+      const adapter=this.agentAdapters.get(session.profileId!);if(!adapter?.usageObservations)return;
+      try{
+        await adapter.status(session.id);
+        if(this.usageReadClosed)return;
+        const observations=await adapter.usageObservations(session.id),current=this.database.getEntity<JsonValue>("adapter-session",session.id) as unknown as BoundSession|undefined;
+        if(this.usageReadClosed||!current||current.profileId!==session.profileId||current.runId!==session.runId||current.turnId!==session.turnId||current.authority?.fingerprint!==session.authority?.fingerprint||this.canonicalSession(current)||this.sessionContextState(current)!=="current")return;
+        if(this.saveUsageObservations(observations,{profileId:session.profileId!,runId:session.runId,sessionId:session.id,standalone:true})&&["COMPLETED","CANCELLED","FAILED"].includes(current.state))this.database.saveEntity("standalone-usage-cursor",session.id,{turnId:current.turnId!});
+      }catch(error){if(!this.usageReadClosed)this.database.saveEntity("usage-error",`session:${session.id}`,{profileId:session.profileId!,sessionId:session.id,status:"unknown",reasonCode:error instanceof UsageObservationError?error.code:"USAGE_UNAVAILABLE",observedAt:this.now().toISOString()});}
+    });
+  }
+
+  private kickStandaloneUsage():void {
+    if(this.usageReadClosed||this.standaloneUsageRead)return;
+    this.standaloneUsageRead=this.collectStandaloneUsage().catch(error=>{if(!this.usageReadClosed)this.app.log.warn({error:redactValue(error)},"Standalone usage collection failed");}).finally(()=>{this.standaloneUsageRead=undefined;});
+  }
+  private kickDueRunUsage():void {
+    if(this.usageReadClosed)return;
+    const profileIds=[...this.agentAdapters].filter(([,adapter])=>adapter.usage).map(([id])=>id);
+    for(const value of this.database.listRunsMatching<JsonValue>([{profileIds}])){if(this.usageReads.size>=4)break;const run=value as unknown as Run;if(typeof run.sessionId==="string"&&!run.sessionId.startsWith("unstarted:"))this.kickRunUsage(run);}
+  }
+  private usageSourceScope(run:Run,adapter:AgentAdapter):string|undefined {
+      try{
+        const current=this.database.getEntity<JsonValue>("run",run.id) as unknown as Run|undefined;
+        const session=this.database.getEntity<JsonValue>("adapter-session",run.sessionId) as unknown as AdapterSession|undefined;
+        if(this.agentAdapters.get(run.profileId)!==adapter||!current||!session||current.sessionId!==run.sessionId||current.profileId!==run.profileId||session.runId!==run.id||session.profileId!==run.profileId||current.generation!==run.generation||current.leaseId!==run.leaseId)return;
+        if(this.sessionContextState(session)!=="current")return;
+        const control=this.database.handle.prepare("SELECT epoch,revision,state FROM session_controls WHERE session_id=?").get(run.sessionId);
+        if(control&&control.state!=="AUTOMATED")return;
+        return contentHash({runId:current.id,generation:current.generation,leaseId:current.leaseId,sessionId:session.id,turnId:session.turnId,nativeInvocationId:session.nativeInvocationId,...(!session.turnId&&!session.nativeInvocationId?{episode:current.lastActivityAt}:{}),control,context:this.resolveProfileExecutionContext(run.profileId,undefined,"probe").fingerprint});
+      }catch{return;}
+  }
+
+  private kickRunUsage(run:Run):void {
+    if(this.usageReadClosed||this.usageReads.has(run.id)||this.usageReads.size>=4)return;
+    const adapter=this.agentAdapters.get(run.profileId);if(!adapter?.usage)return;
+    const scope=()=>this.usageSourceScope(run,adapter);
+    const scopeKey=scope();if(!scopeKey)return;
+    const previous=this.database.getEntity<JsonValue>("usage-read-state",run.id) as {scopeKey?:string;state?:string;readAttempts?:number;nextAttemptAt?:string;lastSuccessAt?:string;lastSuccessfulScopeKey?:string}|undefined;
+    if(previous?.scopeKey===scopeKey&&(previous.state==="complete"||Date.parse(previous.nextAttemptAt??"")>this.now().getTime()))return;
+    const readAttempts=previous?.scopeKey===scopeKey?(previous.readAttempts??0)+1:1;
+    const record={version:1,runId:run.id,profileId:run.profileId,sessionId:run.sessionId,scopeKey,readAttempts,requestedAt:this.now().toISOString(),...(previous?.lastSuccessAt?{lastSuccessAt:previous.lastSuccessAt,lastSuccessfulScopeKey:previous.lastSuccessfulScopeKey}:{})};
+    this.database.saveEntity("usage-read-state",run.id,json({...record,state:"pending"}));
+    const current=():boolean=>{
+      if(this.usageReadClosed)return false;
+      if(scope()===scopeKey)return true;
+      const pending=this.database.getEntity<JsonValue>("usage-read-state",run.id) as {scopeKey?:string}|undefined;
+      if(pending?.scopeKey===scopeKey)this.database.saveEntity("usage-read-state",run.id,json({...record,state:"unknown",reasonCode:"USAGE_SOURCE_CHANGED",completedAt:this.now().toISOString()}));
+      return false;
+    };
+    const promise=Promise.resolve().then(async()=>{
+      try{
+        if(!current())return;
+        const usage=await adapter.usage!(run.sessionId);
+        if(!current())return;
+        this.recordProfileResource(run.profileId,run.sessionId,usage);
+        const complete=this.recordProfileUsage(run,usage);
+        // Keep the specific admission failure; a generic partial result must not hide an event conflict.
+        if(!complete&&(this.database.getEntity("usage-error",run.id) as {status?:string}|undefined)?.status!=="unknown")this.database.saveEntity("usage-error",run.id,{runId:run.id,profileId:run.profileId,status:"unknown",reasonCode:Array.isArray(usage.observations)&&usage.observations.length?"USAGE_PARTIAL":"USAGE_NOT_REPORTED",observedAt:this.now().toISOString()});
+        this.database.saveEntity("usage-read-state",run.id,json({...record,state:complete?"complete":"unknown",completedAt:this.now().toISOString(),...(complete?{lastSuccessAt:this.now().toISOString(),lastSuccessfulScopeKey:scopeKey}:{}),nextAttemptAt:new Date(this.now().getTime()+backoffDelayMs(readAttempts,1_000,5*60_000)).toISOString()}));
+      }catch(error){
+        if(!current())return;
+        const previousError=this.database.getEntity("usage-error",run.id) as {status?:string;reasonCode?:string}|undefined;
+        if(previousError?.status!=="unknown"||!["USAGE_INVALID","USAGE_EVENT_CONFLICT","USAGE_SOURCE_CHANGED"].includes(previousError.reasonCode??""))this.database.saveEntity("usage-error",run.id,{runId:run.id,profileId:run.profileId,status:"unknown",reasonCode:error instanceof UsageObservationError?error.code:"USAGE_UNAVAILABLE",observedAt:this.now().toISOString()});
+        this.database.saveEntity("usage-read-state",run.id,json({...record,state:"unknown",completedAt:this.now().toISOString(),nextAttemptAt:new Date(this.now().getTime()+backoffDelayMs(readAttempts,1_000,5*60_000)).toISOString()}));
+      }
+    }).finally(()=>{this.usageReads.delete(run.id);});
+    this.usageReads.set(run.id,{runId:run.id,profileId:run.profileId,promise});void promise.catch(error=>{if(!this.usageReadClosed)this.app.log.warn({error:redactValue(error),runId:run.id},"Usage persistence failed");});
+  }
+
+  private recordProfileUsage(run:Readonly<Run>,usage:Record<string,unknown>):boolean {
+    // Both callers recheck this exact Run after the read; keep that context without scanning history.
+    const {profileId,sessionId}=run;
+    const recorded=usage.observations!==undefined?this.saveUsageObservations(usage.observations,{profileId,runId:run.id,sessionId,generation:run.generation}):false;
+    const reportedTokens = usage.tokens as { input?: unknown; output?: unknown; cachedInput?: unknown } | undefined;
+    if (reportedTokens && Number.isSafeInteger(reportedTokens.input) && Number.isSafeInteger(reportedTokens.output) && Number(reportedTokens.input) >= 0 && Number(reportedTokens.output) >= 0) {
+      const tokens = { input: Number(reportedTokens.input), output: Number(reportedTokens.output), ...(Number.isSafeInteger(reportedTokens.cachedInput) && Number(reportedTokens.cachedInput) >= 0 && Number(reportedTokens.cachedInput) <= Number(reportedTokens.input) ? { cachedInput: Number(reportedTokens.cachedInput) } : {}) };
+      this.database.saveEntity("run-telemetry", run.id, json({ tokens, tokenScope: "latest-turn", telemetryAt: this.now().toISOString() }));
+    }
+    const relevant=recorded&&Array.isArray(usage.observations)?usage.observations.filter(value=>value&&["turn","run","session"].includes(value.scope)):[];
+    return Boolean(relevant.length&&relevant.every(value=>value.completeness==="complete"));
   }
 
   private async captureProfileResource(profileId: string, adapter: AgentAdapter, sessionId: string): Promise<ResourceSnapshot | undefined> {
-    if (!adapter.usage) return undefined;
-    const usage = await adapter.usage(sessionId);
+    if (!adapter.usage||this.usageReadClosed) return undefined;
+    const session=this.database.getEntity<JsonValue>("adapter-session",sessionId) as unknown as AdapterSession|undefined;
+    const run=session?this.database.getEntity<JsonValue>("run",session.runId) as unknown as Run|undefined:undefined;
+    const scope=run?this.usageSourceScope(run,adapter):undefined;if(!run||!scope)return undefined;
+    const signal=this.usageShutdown.signal;let cancel:()=>void=()=>{};
+    const closed=new Promise<never>((_,reject)=>{cancel=()=>reject(new AdapterContractError("USAGE_READ_CLOSED","Usage read admission is closed"));signal.addEventListener("abort",cancel,{once:true});if(signal.aborted)cancel();});
+    let usage:Record<string,unknown>;
+    try{usage=await Promise.race([adapter.usage(sessionId),closed]);}finally{signal.removeEventListener("abort",cancel);}
+    if(this.usageReadClosed||this.usageSourceScope(run,adapter)!==scope)return undefined;
+    this.recordProfileUsage(run,usage);
+    return this.recordProfileResource(profileId,sessionId,usage);
+  }
+
+  private recordProfileResource(profileId:string,sessionId:string,usage:Record<string,unknown>):ResourceSnapshot|undefined {
     const state = typeof usage.state === "string" && RESOURCE_STATES.includes(usage.state as ResourceState)
       ? usage.state as ResourceState
       : undefined;
@@ -978,12 +2005,13 @@ export class ControllerService {
     const snapshot: ResourceSnapshot = {
       profileId,
       state,
-      ...(typeof usage.reason === "string" ? { reason: usage.reason } : {}),
+      ...(typeof usage.reason === "string" ? { reason: String(redactValue(usage.reason)) } : {}),
       ...(typeof usage.resetsAt === "string" ? { resetsAt: usage.resetsAt } : {}),
       source: reportedSource ?? (usage.source === "error" ? "error" : "session"),
       confidence: usage.confidence === "high" || usage.confidence === "medium" ? usage.confidence : "low",
-      checkedAt: new Date().toISOString(),
+      checkedAt:(()=>{const session=this.database.getEntity<JsonValue>("adapter-session",sessionId) as unknown as AdapterSession|undefined,candidate=[usage.checkedAt,usage.observedAt,...(["event","error","session"].includes(String(usage.source))?[session?.updatedAt]:[])].find(value=>typeof value==="string"&&Number.isFinite(Date.parse(value)));return typeof candidate==="string"?new Date(candidate).toISOString():new Date().toISOString();})(),
     };
+    if(snapshot.state==="UNKNOWN")return snapshot;
     this.database.saveEntity("resource-signal", `${profileId}:${snapshot.source}`, json(snapshot), snapshot.checkedAt);
     const assessment = this.resourceRegistry.record(snapshot);
     const effective: ResourceSnapshot = {
@@ -1016,6 +2044,7 @@ export class ControllerService {
       .sort((left, right) => (right.lastActivityAt ?? right.startedAt ?? "").localeCompare(left.lastActivityAt ?? left.startedAt ?? ""))[0];
     if (!run) return undefined;
     const snapshot = await this.captureProfileResource(profileId, adapter, run.sessionId);
+    if(this.usageReadClosed)return undefined;
     if (!snapshot) return undefined;
     const scheduled = this.resourceProbes.list().find((entry) => entry.profileId === profileId);
     if (scheduled?.status === "PROBING") {
@@ -1027,25 +2056,49 @@ export class ControllerService {
     return snapshot;
   }
 
+  private canRetryDeadLetter(entry:{source:string;sourceId:string}):boolean{return entry.source==="outbox"||entry.source==="inbox"&&entry.sourceId.startsWith(`${MESSAGING_INBOX_KIND}:`);}
+  private connectorConfigurationFingerprint(id:string):string{const config=this.configuration.current().config,connector=config.connectors.find(entry=>entry.id===id)??{id,compatibility:config.integrations};return contentHash({connector,credentials:this.credentialContext.fingerprint(connector)});}
+  private diagnosticsSnapshot(){
+    const current=this.configuration.current(),now=this.now(),runs=this.database.listEntities<JsonValue>("run") as unknown as Run[];
+    const profiles=current.config.agentProfiles.map(profile=>{const view=this.profileConsoleView(profile.id),signals=this.resourceRegistry.signalsFor(profile.id).sort((a,b)=>Date.parse(b.checkedAt)-Date.parse(a.checkedAt));if(view.resources.status==="unknown"&&signals[0]&&Date.parse(signals[0].checkedAt)+this.resourceRegistry.maxSignalAgeMs<now.getTime())view.resources={status:"stale",observedAt:signals[0].checkedAt,source:signals[0].source,reasonCode:"RESOURCE_EVIDENCE_EXPIRED"};return view;});
+    const publications=(this.database.listEntities<JsonValue>("task-publication") as unknown as PublicationRecord[]).flatMap(publication=>publication.receipt?[{id:publication.preview.publicationId,state:publication.receipt.state}]:[]);
+    const deliveries=this.database.listCanonicalTasks<JsonValue>().flatMap(task=>this.database.listDeliveryEvidence<JsonValue>((task.document as unknown as Task).id)) as unknown as DeliveryEvidence[];
+    return buildDiagnostics({now:now.toISOString(),revision:current.revision,lifecycle:this.lifecycle.state,profiles,runners:current.config.runners.map(runner=>({id:runner.id,connected:runner.mode==="embedded"?this.embeddedRunner?.runner.id===runner.id:this.remoteRunnerServer.isConnected(runner.id)})),connectors:this.connectors.list().map(connector=>{const saved=this.database.getEntity<JsonValue>("connector-health",connector.instance.id) as {health?:string;checkedAt?:string;contextFingerprint?:string}|undefined;return {id:connector.instance.id,health:saved?saved.contextFingerprint===this.connectorConfigurationFingerprint(connector.instance.id)?saved.health??"UNKNOWN":"CONTEXT_CHANGED":"UNKNOWN",...(saved?.checkedAt?{updatedAt:saved.checkedAt}:{})};}),runs,publications,deliveries,deadLetters:this.database.listDeadLetters<JsonValue>().map(entry=>({id:entry.id,canRetry:this.canRetryDeadLetter(entry),createdAt:entry.createdAt}))});
+  }
+  private systemImpact(){
+    const memory=process.memoryUsage();let databaseBytes:number|null=null;try{databaseBytes=statSync(join(this.options.dataDirectory,"dispatcher.sqlite")).size;}catch{/* A missing/unreadable file is unknown, not measured zero. */}
+    return {rssBytes:memory.rss,heapUsedBytes:memory.heapUsed,runnerCount:this.runners.list().length,activeLocalProcesses:null,databaseBytes,dashboardClients:this.dashboardClients,llmCallsLastHour:null,llmCallsSinceStart:this.llm.snapshot().calls,llmCallScope:{basis:"generate-attempts",includesExplicitProbes:false,reset:"controller-instance",startedAt:new Date(this.startedAt).toISOString()}};
+  }
+  private async probeConnector(id:string){
+    const connector=this.connectors.get(id);if(!connector)throw new ConfigPlanError("CONNECTOR_NOT_FOUND","Configured connector is unavailable");
+    const config=this.configuration.current().config;this.credentialContext.assertAvailable(config.connectors.find(entry=>entry.id===id)??config.integrations);
+    const contextFingerprint=this.connectorConfigurationFingerprint(id),probe=await connector.probe();
+    if(contextFingerprint!==this.connectorConfigurationFingerprint(id))throw new ConfigPlanError("CONNECTOR_CONTEXT_CHANGED","Connector configuration changed during the health check");
+    const current=this.connectors.get(id);if(!current)throw new ConfigPlanError("CONNECTOR_CONTEXT_CHANGED","Connector registration changed during the health check");current.instance.health=probe.health;current.instance.updatedAt=probe.checkedAt;
+    this.database.saveEntity("connector-health",id,json({...redactValue(probe) as object,contextFingerprint}),probe.checkedAt);this.fleetEvents.publish("connector.changed",id,redactValue(probe));
+    if(probe.health==="AUTH_REQUIRED")await this.notifyOperationalAttention({key:id,state:"CONNECTOR_AUTH",subject:`Connector authentication required: ${connector.instance.displayName}`,body:probe.message??"Open Integrations to repair credentials."});
+    return probe;
+  }
+
   private async runDueResourceProbes(): Promise<void> {
-    if (this.resourceProbeRunning) return;
+    if (this.resourceProbeRunning||this.usageReadClosed) return;
     this.resourceProbeRunning = true;
     try {
       for (const due of this.resourceProbes.due()) {
         this.database.saveEntity("resource-probe-schedule", due.profileId, json(due), due.lastProbeAt ?? due.nextProbeAt);
         try {
           const result = await this.probeProfileResource(due.profileId);
+          if(this.usageReadClosed)return;
           if (!result) {
             const unavailable: ResourceSnapshot = { profileId: due.profileId, state: "UNKNOWN", reason: "Provider did not return a resource probe", source: "probe", confidence: "low", checkedAt: new Date().toISOString() };
-            this.resourceRegistry.record(unavailable);
-            this.database.saveEntity("resource-signal", `${due.profileId}:probe`, json(unavailable), unavailable.checkedAt);
+            this.database.saveEntity("resource-probe-error",due.profileId,{profileId:due.profileId,status:"unknown",reasonCode:"RESOURCE_NOT_REPORTED",observedAt:unavailable.checkedAt});
             const completed = this.resourceProbes.complete(due.profileId, unavailable);
             this.database.saveEntity("resource-probe-schedule", due.profileId, json(completed), completed.lastProbeAt ?? completed.nextProbeAt);
           }
         } catch (error) {
-          const failed: ResourceSnapshot = { profileId: due.profileId, state: "PROVIDER_DOWN", reason: error instanceof Error ? error.message : "Resource probe failed", source: "probe", confidence: "medium", checkedAt: new Date().toISOString() };
-          this.resourceRegistry.record(failed);
-          this.database.saveEntity("resource-signal", `${due.profileId}:probe`, json(failed), failed.checkedAt);
+          if(this.usageReadClosed)return;
+          const failed: ResourceSnapshot = { profileId: due.profileId, state: "UNKNOWN", reason: "Resource read is unavailable", source: "probe", confidence: "low", checkedAt: new Date().toISOString() };
+          this.database.saveEntity("resource-probe-error",due.profileId,{profileId:due.profileId,status:"unknown",reasonCode:error instanceof AdapterContractError?error.code:"RESOURCE_READ_UNAVAILABLE",observedAt:failed.checkedAt});
           const completed = this.resourceProbes.complete(due.profileId, failed);
           this.database.saveEntity("resource-probe-schedule", due.profileId, json(completed), completed.lastProbeAt ?? completed.nextProbeAt);
         }
@@ -1084,21 +2137,12 @@ export class ControllerService {
         continue;
       }
       try {
-        await adapter.resume(run.sessionId);
+        await this.resumeCanonicalRun(run, { actorId: "resource-monitor", commandId: decision.idempotencyKey, recoveryReason: decision.reason });
       } catch (error) {
         const reason = `Same-session resume failed: ${error instanceof Error ? error.message : "unknown error"}; controlled reroute requires operator approval`;
         this.database.saveEntity("resource-recovery", decision.idempotencyKey, json({ runId: run.id, profileId, action: "REROUTE_REQUIRED", reason, revokeLeaseId: run.leaseId, recordedAt: new Date().toISOString() }));
         outcomes.push({ runId: run.id, action: "REROUTE_REQUIRED", reason });
         continue;
-      }
-      assertRunTransition(run.state, "ACTIVE");
-      run.state = "ACTIVE";
-      run.recoveryReason = decision.reason;
-      run.lastActivityAt = new Date().toISOString();
-      delete run.resourceBlockReason;
-      this.database.saveEntity("run", run.id, json(run), run.lastActivityAt);
-      if (taskRecord && task?.state === "WAITING_RESOURCE") {
-        this.tasks.execute({ id: decision.idempotencyKey, taskId: run.taskId, baseRevision: taskRecord.revision, actor: "resource-monitor", command: { type: "task.transition", state: "RUNNING" } });
       }
       this.database.saveEntity("resource-recovery", decision.idempotencyKey, json({ ...decision, runId: run.id, profileId, assessment, recoveredAt: run.lastActivityAt }));
       this.attentionNotifications.recover(run.taskId);
@@ -1108,6 +2152,209 @@ export class ControllerService {
       outcomes.push({ runId: run.id, action: decision.action, reason: decision.reason });
     }
     return outcomes;
+  }
+
+  private async resumeCanonicalRun(run: Run, context: { actorId: string; commandId: string; recoveryReason?: string }): Promise<Run> {
+    if(this.pendingConsoleInputs.has(run.sessionId))throw new InputReceiptError("INPUT_PENDING","Native input is already pending");
+    const fence=this.nativeInteractions.fenceFor(run,context.commandId);
+    return this.nativeInteractions.withMutationLane(run.sessionId,async()=>{
+    const adapter = this.agentAdapters.get(run.profileId);
+    if (!adapter) throw new AdapterContractError("PROFILE_NOT_FOUND", "The original profile is unavailable");
+    const state = run.state, taskRecord = this.database.getCanonicalTask<JsonValue>(run.taskId), binding = this.runConversation(run);
+    const authority = { runId: run.id, generation: run.generation, leaseId: run.leaseId, lastActivityAt: run.lastActivityAt };
+    const input: RunInputIdentity = { inputId: `resume-${contentHash(context.commandId)}`, actorId: context.actorId, runId: run.id, profileId: run.profileId, sessionId: run.sessionId, generation: run.generation, authorityHash: contentHash(authority), payloadHash: contentHash({ operation: "resume", authority, taskRevision: taskRecord?.revision }) };
+    let reserved = false, sent = false;
+    const assertAuthority = (): void => {
+      this.runInputs.assertAvailable(input,reserved?input:undefined);
+      this.nativeInteractions.assertInteraction({id:context.actorId,roles:["operator"],profileId:run.profileId},"resume",fence);
+      this.assertRunSelectionRequirement(run,adapter);
+      const current = this.database.getEntity<JsonValue>("run", run.id) as unknown as Run | undefined;
+      const task = this.database.getCanonicalTask<JsonValue>(run.taskId);
+      if (this.cancelledRunIds.has(run.id) || this.pendingSessionCancellations.has(run.sessionId) || !current || current.state !== state || current.generation !== authority.generation || current.leaseId !== authority.leaseId || current.lastActivityAt !== authority.lastActivityAt || current.sessionId !== input.sessionId || current.profileId !== input.profileId || !task || task.revision !== taskRecord?.revision || (task.document as unknown as Task).currentRunId !== run.id || !["RUNNING", "WAITING_USER", "WAITING_RESOURCE"].includes((task.document as unknown as Task).state)) throw new ConnectorError("CONFLICT", "Run authority changed before continuation", { retryable: false });
+      this.resolveProfileExecutionContext(run.profileId, undefined, "resume");
+      this.restoreLeaseAuthority(current);
+      try { this.leaseAuthority.fence(current.id, current.leaseId, current.generation, "user-input", this.now().toISOString()); }
+      finally { this.persistLatestLeaseAudit(current.id); }
+      if (binding) {
+        const latest = this.database.getEntity<JsonValue>("messaging-conversation", binding.id) as unknown as ConversationBinding | undefined;
+        if (!latest || latest.revision !== binding.revision || latest.runId !== run.id || latest.generation !== run.generation) throw new ConnectorError("CONFLICT", "Conversation changed before continuation", { retryable: false });
+      }
+    };
+    if (this.pendingConsoleInputs.has(run.sessionId)) throw new InputReceiptError("INPUT_PENDING", "Native input is already pending");
+    this.runInputs.assertAvailable(input);
+    assertAuthority();
+    this.pendingConsoleInputs.add(run.sessionId);
+    try {
+      await this.validateRunSelection(run);
+      assertAuthority();
+      this.runInputs.reserve(input); reserved = true;
+      sent = true;
+      const session = await adapter.resume(run.sessionId,assertAuthority);
+      try {
+        assertAuthority();
+        if (session.id !== input.sessionId || session.runId !== run.id || ["CANCELLED", "FAILED"].includes(session.state)) throw new AdapterContractError("SESSION_DETACHED", "Native response did not confirm the original continuation");
+      } catch (error) {
+        try { await this.cleanupStaleInput(run,fence); }
+        catch (cleanupError) { this.app.log.warn({ error: redactValue(cleanupError), runId: run.id }, "stale resume cleanup failed"); }
+        throw error;
+      }
+      this.database.transaction(() => {
+        assertAuthority();
+        assertRunTransition(state, "ACTIVE"); run.state = "ACTIVE"; run.lastActivityAt = this.now().toISOString();
+        delete run.resourceBlockReason; delete run.recoveryState; delete run.recoveryReason;
+        if (context.recoveryReason) run.recoveryReason = context.recoveryReason;
+        this.saveAdvancedRun(run, state);
+        if (binding?.state === "WAITING_USER") this.conversations.resume(binding.id, { expectedRevision: binding.revision, generation: run.generation });
+        const task = this.database.getCanonicalTask<JsonValue>(run.taskId)!;
+        if (["WAITING_USER", "WAITING_RESOURCE"].includes((task.document as unknown as Task).state)) this.tasks.execute({ id: context.commandId, taskId: run.taskId, baseRevision: task.revision, actor: context.actorId, command: { type: "task.transition", state: "RUNNING" } });
+        this.runInputs.finish(input, "ACCEPTED");
+      });
+      this.nativeInteractions.acknowledgeSettledMutationOutcome(run.sessionId);
+      this.attentionNotifications.recover(run.taskId);
+      this.fleetEvents.publish("run.changed", run.id, { id: run.id, state: run.state, lastActivityAt: run.lastActivityAt });
+      return run;
+    } catch (error) {
+      if(error instanceof AdapterAdmissionError)sent=false;
+      if(!sent)this.nativeInteractions.acknowledgeSettledMutationOutcome(run.sessionId);
+      if (reserved) {
+        let receipt;
+        try { receipt = this.runInputs.finish(input, sent ? "OUTCOME_UNKNOWN" : "REJECTED"); }
+        catch (recordError) { this.app.log.warn({ error: redactValue(recordError), runId: run.id }, "resume receipt remains unconfirmed"); }
+        if (sent && receipt?.state !== "ACCEPTED") {
+          this.markRemoteUnavailable(run.id, "Native resume outcome is unconfirmed; inspect the original session", "NATIVE_OUTCOME_UNKNOWN", run);
+          throw new InputReceiptError("INPUT_OUTCOME_UNKNOWN", "Native resume outcome is unconfirmed; inspect the original session before continuing");
+        }
+      }
+      throw error;
+    } finally { this.runInputs.release(input); this.pendingConsoleInputs.delete(input.sessionId); }
+    });
+  }
+
+  private assertRunInteraction(run:Run,operation:ControllerInteractionOperation):void {
+    this.nativeInteractions.assertInteraction({id:"run-worker",roles:["operator"],profileId:run.profileId},operation,this.nativeInteractions.fenceFor(run,`run:${run.id}:${operation}`));
+  }
+  private async cleanupStaleInput(run:Run,fence:MutationFence):Promise<void> {
+    const decision=this.nativeInteractions.authorizeInteraction({id:"input-cleanup",roles:["operator"],profileId:run.profileId},"cleanup-input",fence);
+    if(decision.allowed)await this.agentAdapters.get(run.profileId)?.cancel(fence.sessionId,()=>this.nativeInteractions.assertInteraction({id:"input-cleanup",roles:["operator"],profileId:run.profileId},"cleanup-input",fence));
+  }
+
+  private reserveLocalStart(run:Run,contract:TaskContract,adapter:AgentAdapter,actorId:string,repositoryId:string):LocalStartAdmission {
+    const fingerprint=this.resolveProfileExecutionContext(run.profileId,repositoryId,"start").fingerprint;
+    const command=this.nativeInteractions.reserveNativeStart({run,actorId,resumable:adapter.manifest.capabilities.resume,backendId:run.executionSelection!.backendId,configRevision:run.executionSelection!.configRevision,semantics:{controllerStartVersion:1,runnerMode:"embedded",contractHash:contentHash(contract)}});
+    const admit=this.nativeInteractions.nativeStartAdmission(command.id);
+    return {fence:structuredClone(command.fence),adapter,beforeSend:()=>{
+      this.rhizaJobs.assertTask(run.taskId);
+      if(this.cancelledRunIds.has(run.id))throw new InteractionGuardError("STALE_RUN_AUTHORITY");
+      if(this.configuration.current().revision!==run.executionSelection!.configRevision||this.resolveProfileExecutionContext(run.profileId,repositoryId,"start").fingerprint!==fingerprint||this.agentAdapters.get(run.profileId)!==adapter)throw new InteractionGuardError("EXECUTION_CONTEXT_DRIFT");
+      const currentRequirement=publicationInteraction(this.configuration.current().config,adapter,run.profileId,run.executionSelection!.interactionRequirement,run.executionSelection!.backendId,run.executionSelection!.contextFingerprint);
+      if(contentHash(currentRequirement)!==contentHash(run.executionSelection!.interactionRequirement))throw new PublicationError("SELECTION_CHANGED",409,"Native interaction requirement changed before startup");
+      admit();
+    },settled:outcome=>{this.nativeInteractions.settleNativeStart(command.id,outcome);},assertProjection:()=>this.nativeInteractions.assertNativeStartProjection(command.id)};
+  }
+
+  private assertManagedCodexInput(profileId:string,input:Pick<CodexStartInput,"executionRef"|"workspacePath"|"executionSelection"|"commandId">):void {
+    if(!input.executionRef||!input.executionSelection||!input.commandId)throw new InteractionGuardError("EXECUTION_CONTEXT_DRIFT");
+    this.assertManagedNativeInput(profileId,{providerId:"codex",backendId:"codex-app-server"},{executionRef:input.executionRef,workspacePath:input.workspacePath,executionSelection:input.executionSelection,commandId:input.commandId});
+  }
+
+  private assertManagedOpenCodeInput(profileId:string,input:CliStartInput):void {
+    const identity=input.nativeInput;
+    if(!input.executionRef||!identity||identity.version!==1||identity.profileId!==profileId||identity.backendId!=="opencode-server-v2"||!identity.executionSelection||!identity.commandId)throw new InteractionGuardError("EXECUTION_CONTEXT_DRIFT");
+    const run=this.assertManagedNativeInput(profileId,{providerId:"opencode",backendId:"opencode-server-v2"},{executionRef:input.executionRef,workspacePath:input.workspacePath,executionSelection:identity.executionSelection,commandId:identity.commandId});
+    if(identity.runId!==run.id||identity.sessionId!==run.sessionId)throw new InteractionGuardError("EXECUTION_CONTEXT_DRIFT");
+  }
+
+  private assertManagedDevinInput(profileId:string,input:CliStartInput):void {
+    const identity=input.nativeInput;
+    if(!input.executionRef||!identity||identity.version!==1||identity.profileId!==profileId||identity.backendId!=="devin-local-acp"||!identity.executionSelection||!identity.commandId)throw new InteractionGuardError("EXECUTION_CONTEXT_DRIFT");
+    const run=this.assertManagedNativeInput(profileId,{providerId:"devin-local",backendId:"devin-local-acp"},{executionRef:input.executionRef,workspacePath:input.workspacePath,executionSelection:identity.executionSelection,commandId:identity.commandId});
+    if(identity.runId!==run.id||identity.sessionId!==run.sessionId)throw new InteractionGuardError("EXECUTION_CONTEXT_DRIFT");
+  }
+
+  private assertManagedNativeInput(profileId:string,owner:{providerId:"codex";backendId:"codex-app-server"}|{providerId:"opencode";backendId:"opencode-server-v2"}|{providerId:"devin-local";backendId:"devin-local-acp"},input:{executionRef:ExecutionContextRef;workspacePath:string;executionSelection:ExecutionSelection;commandId:string}):Run {
+    const run=this.assertManagedNativeStoreInput(profileId,owner,input);
+    try{this.fenceNativeSpawn(run.id,profileId);}catch{throw new InteractionGuardError("EXECUTION_CONTEXT_DRIFT");}
+    return run;
+  }
+
+  private assertManagedNativeStoreInput(profileId:string,owner:{providerId:"codex";backendId:"codex-app-server"}|{providerId:"opencode";backendId:"opencode-server-v2"}|{providerId:"devin-local";backendId:"devin-local-acp"}|{providerId:"copilot";backendId:"copilot-rpc"},input:{executionRef:ExecutionContextRef;workspacePath:string;executionSelection:ExecutionSelection;commandId:string}):Run {
+    const ref=input.executionRef,workspace=this.workspaces.get(input.workspacePath);
+    if(this.stopping||!isExecutionContextRef(ref)||ref.kind!=="managed-worktree"||this.embeddedRunner?.runner.id!==ref.runnerId||!workspace)throw new InteractionGuardError("EXECUTION_CONTEXT_DRIFT");
+    const run=this.database.getEntity<JsonValue>("run",workspace.runId) as unknown as Run|undefined;
+    const task=run?this.database.getCanonicalTask<JsonValue>(run.taskId)?.document as unknown as Task|undefined:undefined;
+    const session=run?this.database.getEntity<JsonValue>("adapter-session",run.sessionId) as unknown as AdapterSession|undefined:undefined;
+    if(!run||!session||run.profileId!==profileId||run.providerId!==owner.providerId||run.runnerId!==ref.runnerId||isTerminalRunState(run.state)||task?.currentRunId!==run.id||!isDeepStrictEqual(run.executionRef,ref)||!isDeepStrictEqual(run.executionSelection,input.executionSelection)||!isDeepStrictEqual(session.executionSelection,run.executionSelection)||!isDeepStrictEqual(session.executionRef,ref)||session.id!==run.sessionId||session.runId!==run.id||session.profileId!==profileId||session.backendId!==owner.backendId||!input.commandId||session.nativeInvocationId!==input.commandId||!isDeepStrictEqual(session.execution,{generation:run.generation,attempt:run.attempt,leaseId:run.leaseId})||run.worktree!==input.workspacePath||ref.workspaceId!==run.id||workspace.repositoryId!==ref.repositoryId||workspace.branch!==ref.branch||workspace.baseRevision!==ref.baseRevision)throw new InteractionGuardError("EXECUTION_CONTEXT_DRIFT");
+    return run;
+  }
+
+  private assertManagedCopilotCurrent(profileId:string,runtime:CopilotExecutionRuntime,adapter:AgentAdapter,input:CliStartInput,expectedBinding:NativeBinding|undefined):void {
+    const identity=input.nativeInput,ref=input.executionRef;
+    if(!identity||!ref||identity.version!==1||identity.profileId!==profileId||identity.backendId!=="copilot-rpc"||!identity.executionSelection||!identity.commandId)throw new InteractionGuardError("EXECUTION_CONTEXT_DRIFT");
+    // Admission and clock callbacks can reenter. They precede the final direct
+    // canonical permission + persisted identity decision; no callback follows it.
+    this.fenceNativeSpawn(identity.runId,profileId);
+    const now=this.now().getTime();
+    this.database.transaction(()=>{
+      if(this.copilotRuntimes.get(profileId)!==runtime||this.agentAdapters.get(profileId)!==adapter||this.nativeRuntimeAdapters.get(runtime)!==adapter)throw new InteractionGuardError("EXECUTION_CONTEXT_DRIFT");
+      const run=this.assertManagedNativeStoreInput(profileId,{providerId:"copilot",backendId:"copilot-rpc"},{executionRef:ref,workspacePath:input.workspacePath,executionSelection:identity.executionSelection!,commandId:identity.commandId});
+      const session=this.database.getEntity<JsonValue>("adapter-session",run.sessionId) as unknown as AdapterSession;
+      const canonical=this.database.getEntity<JsonValue>("session",run.sessionId) as unknown as {id:string;profileId:string;providerId:string;executionRef?:ExecutionContextRef}|undefined;
+      const task=this.database.getCanonicalTask<JsonValue>(run.taskId),store=new InteractionStore(this.database),control=store.control(run.sessionId),start=store.command(`native-start:${run.id}`),lease=this.leaseAuthority.current(run.id);
+      const controlRow=this.database.handle.prepare("SELECT session_id,active_run_id,epoch,revision,state FROM session_controls WHERE session_id=?").get(run.sessionId) as {session_id:string;active_run_id:string;epoch:number;revision:number;state:string}|undefined;
+      const observer=this.database.getEntity<JsonValue>("native-observer-authority",`${run.sessionId}:${identity.commandId}`) as unknown as {sessionId:string;runId:string;profileId:string;backendId:string;invocationId:string;generation:number;attempt:number;leaseId:string;controlEpoch:number;controlRevision:number}|undefined;
+      if(identity.runId!==run.id||identity.sessionId!==run.sessionId||this.cancelledRunIds.has(run.id)||run.revokedLeaseIds?.includes(run.leaseId)||!task||["DONE","FAILED","CANCELLED"].includes((task.document as {state:string}).state)||!canonical||canonical.id!==run.sessionId||canonical.profileId!==profileId||canonical.providerId!=="copilot"||!isDeepStrictEqual(canonical.executionRef,ref)||this.database.getConfigState()?.revision!==run.executionSelection?.configRevision||session.workspacePath!==input.workspacePath||!["STARTING","RUNNING"].includes(session.state)||session.nativeIdentityIssue||!session.nativeBinding&&session.state!=="STARTING"||!lease||lease.runnerId!==run.runnerId||lease.leaseId!==run.leaseId||lease.generation!==run.generation||lease.revokedAt||!Number.isFinite(now)||!Number.isFinite(Date.parse(lease.expiresAt))||Date.parse(lease.expiresAt)<=now||run.leaseExpiresAt&&(!Number.isFinite(Date.parse(run.leaseExpiresAt))||Date.parse(run.leaseExpiresAt)<=now))throw new InteractionGuardError("STALE_RUN_AUTHORITY");
+      if(!observer||observer.sessionId!==run.sessionId||observer.runId!==run.id||observer.profileId!==profileId||observer.backendId!=="copilot-rpc"||observer.invocationId!==identity.commandId||observer.generation!==run.generation||observer.attempt!==run.attempt||observer.leaseId!==run.leaseId||!control||!controlRow||controlRow.session_id!==control.sessionId||controlRow.active_run_id!==control.activeRunId||controlRow.epoch!==control.epoch||controlRow.revision!==control.revision||controlRow.state!==control.state||control.sessionId!==run.sessionId||control.activeRunId!==run.id||control.state!=="AUTOMATED"||control.epoch!==observer.controlEpoch||control.revision!==observer.controlRevision||!start||start.id!==`native-start:${run.id}`||start.fence.commandId!==start.id||start.type!=="start"||start.profileId!==profileId||start.backendId!=="copilot-rpc"||!["SENDING","ACKNOWLEDGED"].includes(start.state)||start.fence.runId!==run.id||start.fence.sessionId!==run.sessionId||start.fence.expectedCurrentRunId!==run.id||start.fence.expectedTaskRevision!==task.revision||start.fence.expectedControlEpoch!==control.epoch||start.fence.expectedControlRevision!==control.revision||start.fence.generation!==run.generation||start.fence.leaseId!==run.leaseId||start.configRevision!==run.executionSelection?.configRevision)throw new InteractionGuardError("STALE_CONTROL_REVISION");
+      // Undefined permits the durable onBinding transition before the runtime's
+      // bindingPersisted flag advances. A bound expectation must match both stores.
+      if(expectedBinding!==undefined){
+        const expected={version:1,product:"copilot",region:"global",profileId,backendId:"copilot-rpc",runnerId:run.runnerId,nativeStoreRef:expectedBinding.nativeStoreRef,nativeSessionId:expectedBinding.nativeSessionId,identityState:"bound",executionRefId:ref.id};
+        if(!isDeepStrictEqual(expectedBinding,expected)||session.providerSessionId!==expectedBinding.nativeSessionId||!isDeepStrictEqual(session.nativeBinding,expectedBinding)||!isDeepStrictEqual(store.binding(run.sessionId),expectedBinding))throw new InteractionGuardError("NATIVE_IDENTITY_CHANGED");
+      }
+    });
+  }
+
+  private assertManagedPiInput(profileId:string,input:CliStartInput):void {
+    const ref=input.executionRef,identity=input.nativeInput;
+    if(this.stopping||!isExecutionContextRef(ref)||ref.kind!=="managed-worktree"||this.embeddedRunner?.runner.id!==ref.runnerId||!identity)throw new InteractionGuardError("EXECUTION_CONTEXT_DRIFT");
+    const run=this.database.getEntity<JsonValue>("run",identity.runId) as unknown as Run|undefined,workspace=this.workspaces.get(input.workspacePath);
+    const task=run?this.database.getCanonicalTask<JsonValue>(run.taskId)?.document as unknown as Task|undefined:undefined;
+    const session=this.database.getEntity<JsonValue>("adapter-session",identity.sessionId) as unknown as AdapterSession|undefined;
+    if(!run||!session||run.profileId!==profileId||run.providerId!=="pi"||run.runnerId!==ref.runnerId||run.sessionId!==identity.sessionId||identity.backendId!=="pi-rpc"||isTerminalRunState(run.state)||task?.currentRunId!==run.id||!isDeepStrictEqual(run.executionRef,ref)||!isDeepStrictEqual(run.executionSelection,identity.executionSelection)||!isDeepStrictEqual(session.execution,{generation:run.generation,attempt:run.attempt,leaseId:run.leaseId})||run.worktree!==input.workspacePath||!workspace||workspace.runId!==run.id||ref.workspaceId!==run.id||workspace.repositoryId!==ref.repositoryId||workspace.branch!==ref.branch||workspace.baseRevision!==ref.baseRevision)throw new InteractionGuardError("EXECUTION_CONTEXT_DRIFT");
+    this.fenceNativeSpawn(run.id,profileId);
+  }
+
+  private persistedNativeBinding(profileId:string,nativeSessionId:string):NativeBinding|undefined {
+    const rows=this.database.handle.prepare("SELECT document_json FROM entities WHERE kind='adapter-session' AND json_extract(document_json,'$.profileId')=? AND json_extract(document_json,'$.nativeBinding.nativeSessionId')=? LIMIT 2").all(profileId,nativeSessionId) as Array<{document_json:string}>;
+    if(rows.length!==1)return;
+    const session=JSON.parse(rows[0]!.document_json) as AdapterSession,binding=new InteractionStore(this.database).binding(session.id);
+    return binding&&isDeepStrictEqual(binding,session.nativeBinding)?binding:undefined;
+  }
+
+  private async cleanupStaleStart(run:Run,admission:LocalStartAdmission):Promise<void> {
+    const {fence,adapter}=admission,principal={id:"start-cleanup",roles:["operator"],profileId:run.profileId};
+    if(!(adapter instanceof CodexAdapter||adapter instanceof QoderAdapter||adapter instanceof StructuredCliAdapter||adapter instanceof GenericCliAdapter))return;
+    if(!this.nativeInteractions.authorizeInteraction(principal,"cleanup-start",fence).allowed)return;
+    await this.nativeInteractions.withMutationLane(fence.sessionId,async()=>{
+      const assertAuthority=()=>this.nativeInteractions.assertInteraction(principal,"cleanup-start",fence);
+      assertAuthority();
+      const session=this.database.getEntity<JsonValue>("adapter-session",fence.sessionId) as unknown as AdapterSession|undefined;
+      if(!session||this.sessionStopUncertain(session)||this.sessionStopState(session)==="confirmed"||(await adapter.diagnostics?.(fence.sessionId))?.attached!==true)return;
+      assertAuthority();
+      this.uncertainSessionStops.add(session.id);
+      this.saveSessionStop(session,"requested",{version:1,actorId:principal.id,operation:"cleanup-start",fence,requestedAt:this.now().toISOString()});
+      try{
+        let admitted=false;
+        const stopped=await adapter.cancel(fence.sessionId,()=>{assertAdapterWriteAdmission(assertAuthority);admitted=true;});
+        if(!admitted)throw new AdapterContractError("NATIVE_CAPABILITY_UNVERIFIED","Stop backend omitted final admission");
+        if(stopped.id!==fence.sessionId||stopped.runId!==fence.runId||!["CANCELLED","COMPLETED","FAILED"].includes(stopped.state))throw new AdapterContractError("CANCELLATION_UNCONFIRMED","Original startup process termination is unconfirmed");
+        assertAuthority();this.saveSessionStop(stopped,"confirmed");this.uncertainSessionStops.delete(session.id);
+        this.nativeInteractions.acknowledgeSettledMutationOutcome(fence.sessionId);
+      }catch(error){
+        if(error instanceof AdapterAdmissionError){this.uncertainSessionStops.delete(session.id);this.saveSessionStop(session,"none");this.nativeInteractions.acknowledgeSettledMutationOutcome(fence.sessionId);}
+        else try{this.saveSessionStop(session,"unconfirmed");}catch{/* Retain the in-memory uncertainty fence. */}
+        throw error;
+      }
+    });
   }
 
   private async notifyResourceRecovery(run: Run, idempotencyKey: string): Promise<void> {
@@ -1123,37 +2370,467 @@ export class ControllerService {
     }
   }
 
+  private snapshotRefusal(code:string):never {throw new InteractionGuardError(code);}
+
+  private currentNativeSnapshot(runId:string):NativeSnapshotProof|undefined {
+    const pointer=this.database.getEntity<JsonValue>("run-snapshot-current",runId) as {id?:string}|undefined;
+    if(!pointer)return undefined;
+    const proof=pointer.id?this.database.getEntity<JsonValue>("run-snapshot-verification",pointer.id) as unknown as NativeSnapshotProof|undefined:undefined;
+    if(!proof
+      ||proof.format!=="native-snapshot-verification-v1"
+      ||proof.version!==1
+      ||proof.id!==pointer.id
+      ||proof.runId!==runId
+      ||!proof.basis
+      ||!proof.snapshot
+      ||!proof.preparation
+      ||!Array.isArray(proof.preparation.commands)
+      ||!Array.isArray(proof.preparation.checks)
+      ||!Array.isArray(proof.verification)
+      ||!Array.isArray(proof.commandIds)
+      ||!Array.isArray(proof.checks)
+      ||proof.id!==contentHash(["native-snapshot-proof",runId,proof.basis.generation,proof.basis.controlEpoch,proof.snapshot.id]))this.snapshotRefusal("VERIFICATION_OUTCOME_UNKNOWN");
+    return proof;
+  }
+
+  /** An explicit action is authority only together with its actual committed return. */
+  private nativeSnapshotReturn(run:Run,allowedStates:readonly NativeSnapshotReturnAction["state"][]):NativeSnapshotReturn {
+    const store=new InteractionStore(this.database),control=store.control(run.sessionId),binding=store.binding(run.sessionId);
+    if(!control||control.sessionId!==run.sessionId||control.activeRunId!==run.id||control.state!=="AUTOMATED"||!binding)this.snapshotRefusal("NATIVE_RECLAIM_ACTION_MISMATCH");
+    const rows=this.database.handle.prepare("SELECT id,document_json FROM entities WHERE kind='native-reclaim-action' AND CASE WHEN json_valid(document_json) THEN json_extract(document_json,'$.runId')=? AND json_extract(document_json,'$.controlEpoch')=? ELSE 1 END").all(run.id,control.epoch) as {id:string;document_json:string}[];
+    if(rows.length!==1)this.snapshotRefusal("NATIVE_RECLAIM_ACTION_MISMATCH");
+    const row=rows[0]!;let action:NativeSnapshotReturnAction|null;
+    try{action=JSON.parse(row.document_json) as NativeSnapshotReturnAction|null;}
+    catch(error){if(error instanceof SyntaxError)this.snapshotRefusal("NATIVE_RECLAIM_ACTION_MISMATCH");throw error;}
+    const returnedRow=this.database.handle.prepare("SELECT document_json FROM entities WHERE kind='native-reclaim' AND id=?").get(row.id) as {document_json:string}|undefined;
+    let returned:NativeSnapshotCommittedReturn|undefined;
+    try{returned=returnedRow?JSON.parse(returnedRow.document_json) as NativeSnapshotCommittedReturn:undefined;}
+    catch(error){if(error instanceof SyntaxError)this.snapshotRefusal("NATIVE_RECLAIM_ACTION_MISMATCH");throw error;}
+    const observation=store.observation(run.sessionId);
+    // commit.reportId confirms the original report; report itself is the fresh pre-commit reread.
+    if(!action||action.version!==1||action.commandId!==row.id||action.runId!==run.id||action.sessionId!==run.sessionId||action.controlEpoch!==control.epoch
+      ||typeof action.reportId!=="string"||!action.reportId||action.action!=="verify"||!allowedStates.includes(action.state)
+      ||!observation||action.observationRef!==observation.id
+      ||!returned||returned.version!==1||returned.commandId!==row.id||returned.phase!=="committed"
+      ||returned.commit?.action!=="verify"||returned.commit.reportId!==action.reportId
+      ||returned.commit.fence?.runId!==run.id||returned.commit.fence.sessionId!==run.sessionId
+      ||returned.commit.fence.generation!==run.generation||returned.commit.fence.leaseId!==run.leaseId
+      ||!isDeepStrictEqual(returned.binding,binding)||!isDeepStrictEqual(returned.commit.control,control)
+      ||returned.report?.ready!==true||typeof returned.report.id!=="string"||!returned.report.id||returned.report.observation?.id!==action.observationRef)this.snapshotRefusal("NATIVE_RECLAIM_ACTION_MISMATCH");
+    const frozen=this.database.getEntity<JsonValue>("native-drift-policy",run.id) as unknown as NativeSnapshotReturn["frozen"]|undefined;
+    if(!returned.driftPolicy||!frozen||!isDeepStrictEqual(returned.driftPolicy,frozen.policy))this.snapshotRefusal("NATIVE_DRIFT_POLICY_CHANGED");
+    return {id:row.id,action,returned,frozen};
+  }
+
+  /** Verification-specific physical consistency checks; generic native reads retain their contracts. */
+  private nativeSnapshotContext(run:Run,state:"VERIFYING"|"DELIVERING",verifiedBasis?:NativeSnapshotBasis,completion?:{run:Run;task:Task}):{basis:NativeSnapshotBasis;source:CandidateSource;preparation:SnapshotPreparation;verification:VerificationCommand[]} {
+    return this.database.transaction(()=>{
+      this.nativeInteractions.assertPriorMutationOutcomesSettled(run.sessionId);
+      const before=this.nativeSnapshotReturn(run,["authorized","consumed"]);
+      this.fenceDelivery(run,state==="VERIFYING"?"verify":"complete",completion!==undefined);
+      const returned=this.nativeSnapshotReturn(run,["consumed"]);
+      if(returned.id!==before.id||!isDeepStrictEqual(returned.action,{...before.action,state:"consumed"})||!isDeepStrictEqual(returned.returned,before.returned))this.snapshotRefusal("NATIVE_RECLAIM_ACTION_MISMATCH");
+      if(!isDeepStrictEqual(returned.frozen,before.frozen))this.snapshotRefusal("NATIVE_DRIFT_POLICY_CHANGED");
+      this.nativeInteractions.assertPriorMutationOutcomesSettled(run.sessionId);
+    const current=this.database.getEntity<JsonValue>("run",run.id) as unknown as Run,stored=this.database.getCanonicalTask<JsonValue>(run.taskId),task=stored?.document as unknown as Task|undefined;
+    if(!stored||!task||task.id!==run.taskId||task.currentRunId!==run.id||task.revision!==stored.revision)this.snapshotRefusal("LOCAL_REVIEW_CONTEXT_CHANGED");
+    if(completion){
+      const prior=completion.task;
+      if(state!=="DELIVERING"||current.state!=="COMPLETE"||!isDeepStrictEqual(current,completion.run)
+        ||task.state!=="REVIEW"||typeof prior.revision!=="number"||stored.revision!==prior.revision+1
+        ||!isDeepStrictEqual({...task,state:prior.state,revision:prior.revision,updatedAt:prior.updatedAt},prior))this.snapshotRefusal("LOCAL_REVIEW_CONTEXT_CHANGED");
+    }else if(current.state!==state||task.state!=="VERIFYING")this.snapshotRefusal("LOCAL_REVIEW_CONTEXT_CHANGED");
+    const contract=this.database.getEntity<JsonValue>("run-contract",run.id) as unknown as TaskContract|undefined,currentContract=this.database.getTaskContract<JsonValue>(run.taskId);
+    if(!contract||contract.revision!==current.contractRevision||!isDeepStrictEqual(json(contract),currentContract))this.snapshotRefusal("LOCAL_REVIEW_CONTEXT_CHANGED");
+    const config=this.configuration.current(),repository=config.config.repositories.find(r=>r.id===(contract.workspace?.repositoryId??contract.delivery.repository)),profile=config.config.agentProfiles.find(p=>p.id===current.profileId),runner=config.config.runners.find(r=>r.id===current.runnerId);
+    if(!repository||!profile||profile.runnerId!==current.runnerId||runner?.mode!=="embedded"||!current.worktree||!current.branch)this.snapshotRefusal("VERIFICATION_ENVIRONMENT_UNAVAILABLE");
+    const frozen=this.database.getEntity<JsonValue>("run-verification-config",run.id) as unknown as VerificationCommand[]|undefined,marker=this.database.getEntity<JsonValue>("run-snapshot-verification-config",run.id);
+    if(!Array.isArray(frozen)||marker===undefined)this.snapshotRefusal("VERIFICATION_ENVIRONMENT_UNAVAILABLE");
+    if(!isDeepStrictEqual(frozen,repository.verificationCommands))this.snapshotRefusal("LOCAL_REVIEW_CONTEXT_CHANGED");
+    const selection=resolveSnapshotVerification({marker,currentRepository:repository,frozenCommands:frozen,selectedIds:contract.verification,requirePreparationProfile:true});
+    if(selection.state==="unavailable")this.snapshotRefusal(selection.code);
+    const store=new InteractionStore(this.database),control=store.control(run.sessionId),binding=store.binding(run.sessionId),session=this.database.getEntity<JsonValue>("session",run.sessionId) as unknown as Session|undefined,adapter=this.database.getEntity<JsonValue>("adapter-session",run.sessionId) as unknown as AdapterSession|undefined;
+    const controlRow=this.database.handle.prepare("SELECT * FROM session_controls WHERE session_id=?").get(run.sessionId);
+    if(!control
+      ||!controlRow
+      ||control.state!=="AUTOMATED"
+      ||control.exclusion==="none"
+      ||control.activeRunId!==run.id
+      ||control.sessionId!==run.sessionId
+      ||controlRow.session_id!==control.sessionId
+      ||controlRow.active_run_id!==control.activeRunId
+      ||controlRow.epoch!==control.epoch
+      ||controlRow.revision!==control.revision
+      ||controlRow.state!==control.state
+      ||!isDeepStrictEqual(JSON.parse(String(controlRow.document_json)),control))this.snapshotRefusal("NATIVE_CONTROL_CHANGED");
+    const bindingRow=this.database.handle.prepare("SELECT * FROM native_bindings WHERE session_id=?").get(run.sessionId);
+    if(!binding
+      ||!session
+      ||!adapter
+      ||!bindingRow
+      ||binding.identityState!=="bound"
+      ||!isDeepStrictEqual(normalizeNativeBinding(session,adapter,current),{state:"bound",binding})
+      ||!isDeepStrictEqual(session.nativeBinding,binding)
+      ||!isDeepStrictEqual(adapter.nativeBinding,binding)
+      ||!isDeepStrictEqual(session.executionRef,current.executionRef)
+      ||!isDeepStrictEqual(adapter.executionRef,current.executionRef)
+      ||adapter.workspacePath!==current.worktree
+      ||adapter.execution?.generation!==current.generation
+      ||adapter.execution?.leaseId!==current.leaseId
+      ||adapter.execution?.attempt!==current.attempt
+      ||!adapter.nativeInvocationId
+      ||bindingRow.session_id!==session.id
+      ||bindingRow.binding_key!==nativeBindingKey(binding)
+      ||bindingRow.profile_id!==current.profileId
+      ||bindingRow.execution_ref_id!==current.executionRef?.id)this.snapshotRefusal("NATIVE_IDENTITY_CHANGED");
+    // Reclaim promotes the checkpoint atomically; its immutable read row retains the RECONCILING epoch.
+    const checkpoint=this.database.handle.prepare("SELECT * FROM native_observation_checkpoints WHERE session_id=?").get(run.sessionId),observationRow=checkpoint?this.database.handle.prepare("SELECT * FROM native_observations WHERE id=?").get(String(checkpoint.observation_id)):undefined,observation=store.observation(run.sessionId),events=this.database.getEntity<JsonValue>("native-event-checkpoint",run.sessionId) as unknown as NativeEventCheckpoint|undefined;
+    const o=observation as NativeObservation|undefined;
+    if(!checkpoint
+      ||!observationRow
+      ||!o
+      ||!o.read
+      ||checkpoint.session_id!==run.sessionId
+      ||checkpoint.observation_id!==o.id
+      ||observationRow.id!==o.id
+      ||observationRow.session_id!==run.sessionId
+      ||checkpoint.control_epoch!==control.epoch
+      ||observationRow.observer_generation!==checkpoint.observer_generation
+      ||observationRow.observer_sequence!==checkpoint.observer_sequence
+      ||observationRow.control_epoch!==control.epoch-1&&observationRow.control_epoch!==control.epoch
+      ||o.read.observerGeneration!==checkpoint.observer_generation
+      ||o.read.sequence!==checkpoint.observer_sequence
+      ||o.read.requestId!==o.id
+      ||o.read.readability!=="readable"
+      ||!isDeepStrictEqual(JSON.parse(String(observationRow.document_json)),o)
+      ||o.nativeSessionId!==binding.nativeSessionId
+      ||o.nativeThreadId!==binding.nativeThreadId
+      ||o.executionRefId!==binding.executionRefId
+      ||o.state!=="idle"
+      ||o.activeTurnId
+      ||o.pendingTools!=="none"
+      ||o.pendingApprovals!=="none"
+      ||!Number.isFinite(Date.parse(o.observedAt))
+      ||!events
+      ||events.needsSnapshot
+      ||events.needsHistory
+      ||!isDeepStrictEqual(events.binding,binding)
+      ||events.scopeFingerprint!==o.scopeFingerprint
+      ||events.observationId!==o.id
+      ||events.observerGeneration!==o.read.observerGeneration
+      ||events.sequence!==o.read.sequence
+      ||events.observerEpoch!==o.read.observerEpoch)this.snapshotRefusal("NATIVE_STATE_UNKNOWN");
+    const invalidation=this.database.getEntity<JsonValue>("native-verification-invalidation",run.id) as {version?:number;runId?:string;sessionId?:string;controlEpoch?:number;observationRef?:string;code?:string}|undefined;
+    if(verifiedBasis?invalidation!==undefined:!invalidation
+      ||invalidation.version!==1
+      ||invalidation.runId!==current.id
+      ||invalidation.sessionId!==current.sessionId
+      ||invalidation.controlEpoch!==control.epoch
+      ||invalidation.observationRef!==o.id
+      ||invalidation.code!=="NATIVE_REVERIFICATION_REQUIRED")this.snapshotRefusal("NATIVE_REVERIFICATION_REQUIRED");
+    const basis:NativeSnapshotBasis={runId:current.id,
+      taskId:current.taskId,
+      sessionId:current.sessionId,
+      generation:current.generation,
+      leaseId:current.leaseId,
+      taskRevision:completion?.task.revision??stored.revision,
+      controlEpoch:control.epoch,
+      controlRevision:control.revision,
+      configRevision:config.revision,
+      contractHash:contentHash({contract,currentContract,task:completion?.task??task}),
+      repositoryHash:contentHash(repository),
+      profileHash:contentHash(profile),
+      executionHash:contentHash({attempt:current.attempt,
+      profileId:current.profileId,
+      providerId:current.providerId,
+      runnerId:current.runnerId,
+      sessionId:current.sessionId,
+      worktree:current.worktree,
+      branch:current.branch,
+      executionRef:current.executionRef,
+      executionSelection:current.executionSelection,
+      model:current.model,
+      modelSelection:(current as Run&{modelSelection?:unknown}).modelSelection,
+      contractRevision:current.contractRevision}),
+      policyHash:contentHash({scope:"native-return-policy-v1",frozen:returned.frozen,
+      configured:profile.nativeInteraction,returned:returned.returned,action:returned.action}),
+      controlHash:contentHash(controlRow),
+      bindingHash:contentHash({bindingRow,
+      session:{id:session.id,
+      profileId:session.profileId,
+      providerId:session.providerId,
+      executionRef:session.executionRef,
+      nativeBinding:session.nativeBinding},
+      adapter:{id:adapter.id,
+      runId:adapter.runId,
+      profileId:adapter.profileId,
+      backendId:adapter.backendId,
+      workspacePath:adapter.workspacePath,
+      executionRef:adapter.executionRef,
+      execution:adapter.execution,
+      nativeInvocationId:adapter.nativeInvocationId,
+      nativeBinding:adapter.nativeBinding}}),
+      observationHash:contentHash({checkpoint,observationRow,events}),
+      frozenVerificationHash:contentHash({frozen,marker}),
+      invalidationHash:verifiedBasis?.invalidationHash??contentHash(invalidation)};
+    this.nativeInteractions.assertPriorMutationOutcomesSettled(run.sessionId);
+    return {basis,source:{repositoryId:repository.id,worktree:current.worktree,branch:current.branch,scopePaths:[...contract.scope],repositoryScopePaths:[...repository.scopePaths]},preparation:selection.preparation!,verification:selection.verification};
+    });
+  }
+
+  private assertNativeSnapshotBasis(run:Run,proof:NativeSnapshotProof,state:"VERIFYING"|"DELIVERING",completion?:{run:Run;task:Task}):void {
+    const context=this.nativeSnapshotContext(run,state,proof.state==="VERIFIED"?proof.basis:undefined,completion);
+    // The persisted source is never allowed to choose a filesystem before current registration agrees.
+    const persisted=this.currentNativeSnapshot(run.id),expected=proof.state==="CAPTURED"?{...proof,preparation:{...proof.preparation,checks:[]},checks:[]}:proof;
+    if(!isDeepStrictEqual(persisted,expected)
+      ||!isDeepStrictEqual(context.basis,proof.basis)
+      ||!isDeepStrictEqual(context.source,proof.snapshot.source)
+      ||!isDeepStrictEqual(context.preparation,{profileHash:proof.preparation.profileHash,commands:proof.preparation.commands})
+      ||!isDeepStrictEqual(context.verification,proof.verification)
+      ||this.currentNativeSnapshot(run.id)?.id!==proof.id)this.snapshotRefusal("LOCAL_REVIEW_CONTEXT_CHANGED");
+  }
+
+  private async assertNativeSnapshot(run:Run,proof:NativeSnapshotProof,state:"VERIFYING"|"DELIVERING"):Promise<void> {
+    this.assertNativeSnapshotBasis(run,proof,state);
+    await this.verificationSnapshots.assertCandidateAuthority(proof.snapshot,()=>this.assertNativeSnapshotBasis(run,proof,state));
+  }
+
+  private validSnapshotResult(result:VerificationResult|undefined,command:Pick<VerificationCommand,"id"|"required">):result is VerificationResult {
+    return Boolean(result
+        &&result.commandId===command.id
+        &&result.required===command.required
+        &&["passed","failed","timeout"].includes(result.status)
+        &&(result.exitCode===null||Number.isSafeInteger(result.exitCode))
+        &&(result.status!=="passed"||result.exitCode===0)
+        &&Number.isFinite(result.durationMs)
+        &&result.durationMs>=0
+        &&typeof result.output==="string"
+        &&typeof result.truncated==="boolean");
+  }
+
+  private snapshotReceiptsSettled(runId:string):boolean {
+    const rows=this.database.handle.prepare("SELECT id,document_json FROM entities WHERE kind='run-verification-command'").all() as {id:string;document_json:string}[];
+    return rows.every(row=>{
+      const value=JSON.parse(row.document_json) as AutomaticVerificationCommand|null;
+      if(value?.runId!==runId&&value?.fence?.runId!==runId)return true;
+      if(!value
+      ||value.version!==1
+      ||value.id!==row.id
+      ||value.runId!==runId
+      ||!Number.isSafeInteger(value.generation)
+      ||value.generation<1
+      ||typeof value.commandId!=="string"
+      ||!value.commandId
+      ||typeof value.semanticsHash!=="string"
+      ||!value.semanticsHash
+      ||value.state!=="SETTLED"
+      ||!value.fence
+      ||value.fence.runId!==runId
+      ||value.fence.generation!==value.generation)return false;
+      const result=value.result,fence=value.fence,scope=value.snapshotScope;
+      if(!result
+      ||typeof result.required!=="boolean"
+      ||!this.validSnapshotResult(result,{id:value.commandId,required:result.required})
+      ||![fence.sessionId,fence.commandId,fence.leaseId,fence.expectedCurrentRunId].every(v=>typeof v==="string"&&v.length>0)
+      ||![fence.expectedTaskRevision,fence.expectedControlRevision,fence.expectedControlEpoch].every(v=>Number.isSafeInteger(v)&&v>=0))return false;
+      return scope===undefined||Boolean(scope.version===1
+        &&typeof scope.proofId==="string"
+        &&scope.proofId.length>0
+        &&typeof scope.snapshotId==="string"
+        &&scope.snapshotId.length>0
+        &&["preparation","verification"].includes(scope.phase)
+        &&Number.isSafeInteger(scope.index)
+        &&scope.index>=0
+        &&typeof scope.basisHash==="string"
+        &&scope.basisHash.length>0);
+    });
+  }
+
+  private freshSnapshotReturn(run:Run,previous:NativeSnapshotProof,basis:NativeSnapshotBasis):boolean {
+    if(basis.controlEpoch<=previous.basis.controlEpoch)return false;
+    const control=new InteractionStore(this.database).control(run.sessionId);
+    const storedRows=this.database.handle.prepare("SELECT document_json FROM entities WHERE kind='native-reclaim' ORDER BY updated_at DESC").all() as {document_json:string}[];
+    let rows:Array<{version:number;commandId:string;phase:string;binding:NativeBinding;report?:{observation?:NativeObservation};commit?:{action:string;control:unknown}}>;
+    try{rows=storedRows.map(row=>JSON.parse(row.document_json)) as typeof rows;}
+    catch(error){if(error instanceof SyntaxError)this.snapshotRefusal("NATIVE_RECLAIM_ACTION_MISMATCH");throw error;}
+    return rows.some(record=>{
+      const action=this.database.getEntity<JsonValue>("native-reclaim-action",record.commandId) as {runId?:string;sessionId?:string;controlEpoch?:number;action?:string;state?:string}|undefined;
+      return record.version===1
+        &&record.phase==="committed"
+        &&record.commit?.action==="verify"
+        &&isDeepStrictEqual(record.binding,new InteractionStore(this.database).binding(run.sessionId))
+        &&isDeepStrictEqual(record.commit.control,control)
+        &&record.report?.observation?.id===(this.database.getEntity<JsonValue>("native-verification-invalidation",run.id) as {observationRef?:string}|undefined)?.observationRef
+        &&action?.runId===run.id
+        &&action.sessionId===run.sessionId
+        &&action.controlEpoch===basis.controlEpoch
+        &&action.action==="verify"
+        &&["authorized","consumed"].includes(action.state??"")
+        &&Boolean(this.database.handle.prepare("SELECT 1 FROM control_audit WHERE session_id=? AND json_extract(document_json,'$.state')='HUMAN' AND json_extract(document_json,'$.newEpoch')>? AND json_extract(document_json,'$.newEpoch')<?").get(run.sessionId,previous.basis.controlEpoch,basis.controlEpoch));
+    });
+  }
+
+  private qualifiedNativeProof(proof:NativeSnapshotProof|undefined):boolean {
+    if(!proof||!proof.preparation||!Array.isArray(proof.preparation.commands)||!Array.isArray(proof.verification))return false;
+    const commands=[...proof.preparation.commands,...proof.verification];
+    return proof.state==="VERIFIED"
+        &&Boolean(proof.verifiedAt)
+        &&Array.isArray(proof.checks)
+        &&proof.checks.length===commands.length
+        &&isDeepStrictEqual(proof.commandIds,commands.map(c=>c.id))
+        &&proof.checks.every((check,index)=>this.validSnapshotResult(check,commands[index]!)
+        &&(!check.required||check.status==="passed"))
+        &&preparationEvidenceQualifies({preparation:proof.preparation,evidence:proof.preparation,checks:proof.checks,commandIds:proof.commandIds,verification:proof.verification});
+  }
+
+  private async verifyNativeSnapshot(run:Run,contract:TaskContract):Promise<void> {
+    let proof:NativeSnapshotProof|undefined,unknown=false,accepting=false;
+    try{
+      if(!this.snapshotReceiptsSettled(run.id))this.snapshotRefusal("VERIFICATION_OUTCOME_UNKNOWN");
+      const context=this.nativeSnapshotContext(run,"VERIFYING"),prior=this.currentNativeSnapshot(run.id);
+      if(prior&&prior.basis.controlEpoch===context.basis.controlEpoch){
+        if(prior.state!=="CAPTURED")this.snapshotRefusal(prior.reasonCode??"VERIFICATION_OUTCOME_UNKNOWN");
+        // A prior private qualification remains history; this attempt cannot adopt or relabel it.
+        if(prior.basis.policyHash!==context.basis.policyHash)this.snapshotRefusal("LOCAL_REVIEW_CONTEXT_CHANGED");
+        proof=prior;await this.assertNativeSnapshot(run,proof,"VERIFYING");
+      }else{
+        if(prior&&(prior.state==="UNKNOWN"||prior.state==="FAILED"&&!this.freshSnapshotReturn(run,prior,context.basis)))this.snapshotRefusal(prior.reasonCode??"VERIFICATION_OUTCOME_UNKNOWN");
+        const snapshot=await this.verificationSnapshots.createDeliveryCandidate(context.source,()=>{if(!isDeepStrictEqual(this.nativeSnapshotContext(run,"VERIFYING").basis,context.basis))this.snapshotRefusal("LOCAL_REVIEW_CONTEXT_CHANGED");});
+        const id=contentHash(["native-snapshot-proof",run.id,run.generation,context.basis.controlEpoch,snapshot.id]);
+        proof={format:"native-snapshot-verification-v1",version:1,id,runId:run.id,basis:context.basis,snapshot,preparation:{...context.preparation,checks:[]},verification:context.verification,commandIds:[...context.preparation.commands,...context.verification].map(c=>c.id),checks:[],state:"CAPTURED"};
+        this.database.transaction(()=>{if(!isDeepStrictEqual(this.nativeSnapshotContext(run,"VERIFYING").basis,context.basis)
+      ||!this.snapshotReceiptsSettled(run.id))this.snapshotRefusal("LOCAL_REVIEW_CONTEXT_CHANGED");this.database.saveEntity("run-snapshot-verification",id,json(proof));this.database.saveEntity("run-snapshot-current",run.id,{id});});
+      }
+      const captured=proof,registry=new VerificationRegistry(),controller=new AbortController(),commands=[...captured.preparation.commands,...captured.verification];for(const command of commands)registry.register(command);
+      captured.checks=[];captured.preparation.checks=[];
+      const work=(async()=>{
+        for(const [ordinal,command] of commands.entries()){
+          await this.assertNativeSnapshot(run,captured,"VERIFYING");if(controller.signal.aborted)this.snapshotRefusal("RUN_CANCELLED");
+          const phase:"preparation"|"verification"=ordinal<captured.preparation.commands.length?"preparation":"verification",index=phase==="preparation"?ordinal:ordinal-captured.preparation.commands.length;
+          const id=contentHash(["snapshot-verification",run.id,run.generation,captured.basis.controlEpoch,captured.snapshot.id,phase,index]),snapshotScope={version:1 as const,proofId:captured.id,snapshotId:captured.snapshot.id,phase,index,basisHash:contentHash(captured.basis)},fence=this.nativeInteractions.fenceFor(run,`verify:${id}`),semanticsHash=contentHash({contract,command,snapshotScope,snapshot:captured.snapshot});
+          const receipt:AutomaticVerificationCommand={version:1,id,runId:run.id,generation:run.generation,commandId:command.id,fence,semanticsHash,snapshotScope,state:"SENDING"};
+          const previous=this.database.getEntity<JsonValue>("run-verification-command",id) as unknown as AutomaticVerificationCommand|undefined;let result:VerificationResult;
+          if(previous){if(previous.state!=="SETTLED"
+      ||!this.validSnapshotResult(previous.result,command)
+      ||!isDeepStrictEqual({...previous,state:"SENDING",result:undefined},{...receipt,result:undefined}))this.snapshotRefusal("VERIFICATION_OUTCOME_UNKNOWN");result=previous.result;}
+          else{
+            this.database.transaction(()=>{this.assertNativeSnapshotBasis(run,captured,"VERIFYING");if(!this.snapshotReceiptsSettled(run.id))this.snapshotRefusal("VERIFICATION_OUTCOME_UNKNOWN");this.database.saveEntity("run-verification-command",id,json(receipt));});
+            unknown=true;
+            try{const actual=await registry.run(command.id,captured.snapshot.path,controller.signal);result={...actual,output:redactNativeText(String(redactValue(actual.output)))};
+              // An occurred result is a fact under the original send identity, even after authority drift.
+              this.database.transaction(()=>{if(!isDeepStrictEqual(this.database.getEntity("run-verification-command",id),json(receipt)))this.snapshotRefusal("VERIFICATION_OUTCOME_UNKNOWN");this.database.saveEntity("run-verification-command",id,json({...receipt,state:"SETTLED",result}));});unknown=false;
+            }catch(error){
+              this.database.transaction(()=>{if(isDeepStrictEqual(this.database.getEntity("run-verification-command",id),json(receipt)))this.database.saveEntity("run-verification-command",id,json({...receipt,state:"UNKNOWN"}));});
+              throw error;
+            }
+          }
+          captured.checks.push(result);if(phase==="preparation")captured.preparation.checks.push(result);
+          await this.assertNativeSnapshot(run,captured,"VERIFYING");if(controller.signal.aborted)this.snapshotRefusal("RUN_CANCELLED");
+          if(phase==="preparation"&&(result.status!=="passed"||result.exitCode!==0))this.snapshotRefusal("SNAPSHOT_PREPARATION_FAILED");
+        }
+      })();
+      this.localCommands.set(run.id,{controller,settled:work});try{await work;}finally{if(this.localCommands.get(run.id)?.controller===controller)this.localCommands.delete(run.id);}
+      if(captured.checks.some(c=>c.required&&c.status!=="passed"))this.snapshotRefusal("REQUIRED_VERIFICATION_FAILED");
+      const verified:NativeSnapshotProof={...captured,state:"VERIFIED",verifiedAt:this.now().toISOString()};if(!this.qualifiedNativeProof(verified))this.snapshotRefusal("SNAPSHOT_PREPARATION_REQUIRED");
+      await this.assertNativeSnapshot(run,captured,"VERIFYING");accepting=true;
+      this.database.transaction(()=>{
+        this.assertNativeSnapshotBasis(run,captured,"VERIFYING");
+        this.database.saveEntity("run-snapshot-verification",captured.id,json(verified));
+        const advanced:Run={...run,state:"DELIVERING",verification:{state:"PASSED",commands:[...contract.verification],summary:captured.checks.map(c=>`${c.commandId}:${c.status}`).join(", ")}};
+        assertRunTransition(run.state,"DELIVERING");this.saveAdvancedRun(advanced,"VERIFYING");
+        if(contentHash(this.database.getEntity("native-verification-invalidation",run.id))!==captured.basis.invalidationHash)this.snapshotRefusal("NATIVE_REVERIFICATION_REQUIRED");
+        const deleted=this.database.handle.prepare("DELETE FROM entities WHERE kind='native-verification-invalidation' AND id=?").run(run.id);if(deleted.changes!==1)this.snapshotRefusal("NATIVE_REVERIFICATION_REQUIRED");
+        this.assertNativeSnapshotBasis(advanced,verified,"DELIVERING");
+        Object.assign(run,advanced);
+      });
+    }catch(error){
+      if(proof&&!accepting){proof.state=unknown?"UNKNOWN":"FAILED";proof.reasonCode=unknown?"VERIFICATION_OUTCOME_UNKNOWN":error instanceof AdapterContractError
+      ||error instanceof InteractionGuardError
+      ||error instanceof WorkspacePolicyError?error.code:"NATIVE_SNAPSHOT_VERIFICATION_FAILED";this.database.saveEntity("run-snapshot-verification",proof.id,json(proof));}
+      if(!unknown&&this.snapshotReceiptsSettled(run.id))this.nativeInteractions.acknowledgeSettledMutationOutcome(run.sessionId);
+      throw error;
+    }
+  }
+
+
+  private saveAdvancedRun(run: Run, expectedState: Run["state"]): void {
+    if(run.state==="COMPLETE")this.rhizaJobs.assertCandidate(run);
+    if(this.nativeInteractions.hasAuthorityContext(run.sessionId))this.assertRunInteraction(run,"advance");
+    const current = this.database.getEntity<JsonValue>("run", run.id) as unknown as Run | undefined;
+    if (this.cancelledRunIds.has(run.id) || !current || current.generation !== run.generation || current.leaseId !== run.leaseId || current.state !== expectedState) throw new ConnectorError("CONFLICT", "Run changed while advancement was awaiting work", { retryable: false });
+    // Heartbeats can renew the same generation while verification or SCM awaits.
+    if (current.leaseExpiresAt) run.leaseExpiresAt = current.leaseExpiresAt;
+    this.database.saveEntity("run", run.id, json(run));
+  }
+
+  private reenterNativeSnapshot(run:Run,contract:TaskContract):Run {
+    try{
+      if(this.agentAdapters.get(run.profileId) instanceof RemoteNativeAdapter)this.snapshotRefusal("VERIFICATION_ENVIRONMENT_UNAVAILABLE");
+      return this.database.transaction(()=>{
+        const current=this.database.getEntity<JsonValue>("run",run.id),store=new InteractionStore(this.database),control=store.control(run.sessionId);
+        const invalidation=this.database.getEntity<JsonValue>("native-verification-invalidation",run.id) as {version?:number;runId?:string;sessionId?:string;controlEpoch?:number;observationRef?:string;code?:string}|undefined;
+        if(!isDeepStrictEqual(current,json(run))||run.state!=="DELIVERING"||run.verification.state!=="PASSED")this.snapshotRefusal("LOCAL_REVIEW_CONTEXT_CHANGED");
+        if(!control||!invalidation||invalidation.version!==1||invalidation.runId!==run.id||invalidation.sessionId!==run.sessionId||invalidation.controlEpoch!==control.epoch||invalidation.code!=="NATIVE_REVERIFICATION_REQUIRED"||typeof invalidation.observationRef!=="string"||!invalidation.observationRef)this.snapshotRefusal("NATIVE_REVERIFICATION_REQUIRED");
+        const returned=this.nativeSnapshotReturn(run,["authorized"]);
+        if(!this.snapshotReceiptsSettled(run.id))this.snapshotRefusal("VERIFICATION_OUTCOME_UNKNOWN");
+        const previous=this.currentNativeSnapshot(run.id);
+        assertRunTransition(run.state,"VERIFYING");
+        const advanced:Run={...run,state:"VERIFYING",verification:{state:"PENDING",commands:[...contract.verification]}};
+        this.saveAdvancedRun(advanced,"DELIVERING");
+        // The existing owner consumes the action and checks all live authority inside this transaction.
+        const context=this.nativeSnapshotContext(advanced,"VERIFYING");
+        const consumed=this.nativeSnapshotReturn(advanced,["consumed"]);
+        if(consumed.id!==returned.id||!isDeepStrictEqual(consumed.action,{...returned.action,state:"consumed"})
+          ||!isDeepStrictEqual(consumed.returned,returned.returned))this.snapshotRefusal("NATIVE_RECLAIM_ACTION_MISMATCH");
+        if(!previous||!this.freshSnapshotReturn(advanced,previous,context.basis))this.snapshotRefusal("NATIVE_RECLAIM_ACTION_MISMATCH");
+        if(!isDeepStrictEqual(consumed.frozen,returned.frozen))this.snapshotRefusal("NATIVE_DRIFT_POLICY_CHANGED");
+        this.nativeInteractions.assertPriorMutationOutcomesSettled(run.sessionId);
+        return advanced;
+      });
+    }catch(error){
+      // Reentry has no child or native send. Never settle any earlier uncertain receipt.
+      if(this.snapshotReceiptsSettled(run.id))this.nativeInteractions.acknowledgeSettledMutationOutcome(run.sessionId);
+      throw error;
+    }
+  }
+
   private async advanceRun(runId: string): Promise<{ waiting: boolean; run: Run; task: Task; deliveries: JsonValue[] }> {
     const storedRun = this.database.getEntity<JsonValue>("run", runId);
     if (!storedRun) throw new ConnectorError("PERMANENT", `Unknown run ${runId}`);
     const run = storedRun as unknown as Run;
     const storedTask = this.database.getCanonicalTask<JsonValue>(run.taskId);
-    const contract = this.database.getTaskContract<JsonValue>(run.taskId) as unknown as TaskContract | undefined;
+    const contract = (this.database.getEntity<JsonValue>("run-contract",run.id) ?? this.database.getTaskContract<JsonValue>(run.taskId)) as unknown as TaskContract | undefined;
     if (!storedTask || !contract) throw new ConnectorError("PERMANENT", `Run ${runId} has no canonical task contract`);
     if (run.state === "COMPLETE") {
       return { waiting: false, run, task: storedTask.document as unknown as Task, deliveries: this.database.listDeliveryEvidence<JsonValue>(run.taskId) };
     }
 
+    this.assertRunInteraction(run,"advance");
     if (run.state === "ACTIVE") {
       const adapter = this.agentAdapters.get(run.profileId);
       if (!adapter) throw new ConnectorError("PERMANENT", `Profile ${run.profileId} is unavailable`);
       const session = await adapter.status(run.sessionId);
+      if(session.providerSessionId)run.providerSessionId=session.providerSessionId;
+      this.kickRunUsage(run);
+      const resource=session.executionResource?this.recordProfileResource(run.profileId,run.sessionId,session.executionResource):undefined;
       if (session.state === "RUNNING" || session.state === "STARTING") {
         return { waiting: true, run, task: storedTask.document as unknown as Task, deliveries: [] };
       }
       if (session.state === "PAUSED") {
         assertRunTransition(run.state, "WAITING_USER");
         run.state = "WAITING_USER";
-        run.activitySummary = "Waiting for user input";
+        run.activitySummary = (await adapter.result(run.sessionId)).summary || "Waiting for user input";
         run.lastActivityAt = new Date().toISOString();
-        this.database.saveEntity("run", run.id, json(run));
+        this.saveAdvancedRun(run, "ACTIVE");
         const current = this.database.getCanonicalTask<JsonValue>(run.taskId)!;
         if ((current.document as unknown as Task).state === "RUNNING") {
-          this.tasks.execute({ id: `run:${run.id}:waiting-user`, taskId: run.taskId, baseRevision: current.revision, actor: "run-worker", command: { type: "task.transition", state: "WAITING_USER" } });
+          this.tasks.execute({ id: `run:${run.id}:${run.generation}:waiting-user:${current.revision}`, taskId: run.taskId, baseRevision: current.revision, actor: "run-worker", command: { type: "task.transition", state: "WAITING_USER" } });
+          this.nativeInteractions.acknowledgeTaskRevision(run);
         }
         return { waiting: true, run, task: this.database.getCanonicalTask<JsonValue>(run.taskId)!.document as unknown as Task, deliveries: [] };
       }
-      const resource = await this.captureProfileResource(run.profileId, adapter, run.sessionId);
+      const telemetry = this.database.getEntity<JsonValue>("run-telemetry", run.id) as unknown as Pick<Run, "tokens" | "tokenScope" | "telemetryAt"> | undefined;
+      if (telemetry) Object.assign(run, telemetry);
       if (resource && !["AVAILABLE", "LOW", "UNKNOWN"].includes(resource.state)) {
         const pausedSession = await adapter.status(run.sessionId);
         assertRunTransition(run.state, "RESOURCE_BLOCKED");
@@ -1161,23 +2838,26 @@ export class ControllerService {
         run.resourceBlockReason = resource.reason ?? resource.state;
         if (pausedSession.providerSessionId) run.providerSessionId = pausedSession.providerSessionId;
         run.resumePolicy = pausedSession.providerSessionId || adapter.manifest.capabilities.resume ? "same-session" : "controlled-reroute";
-        this.database.saveEntity("run", run.id, json(run));
+        this.saveAdvancedRun(run, "ACTIVE");
         const current = this.database.getCanonicalTask<JsonValue>(run.taskId)!;
         if ((current.document as unknown as Task).state === "RUNNING") {
           this.tasks.execute({ id: `run:${run.id}:resource-blocked`, taskId: run.taskId, baseRevision: current.revision, actor: "run-worker", command: { type: "task.transition", state: "WAITING_RESOURCE" } });
+          this.nativeInteractions.acknowledgeTaskRevision(run);
         }
         return { waiting: true, run, task: this.database.getCanonicalTask<JsonValue>(run.taskId)!.document as unknown as Task, deliveries: [] };
       }
       if (session.state !== "COMPLETED") {
         assertRunTransition(run.state, "FAILED");
         run.state = "FAILED";
-        run.failureReason = `Agent session ${session.state.toLowerCase()}`;
+        run.failureReason = String(redactValue((await adapter.result(run.sessionId)).summary || `Agent session ${session.state.toLowerCase()}`));
         run.endedAt = new Date().toISOString();
-        this.database.saveEntity("run", run.id, json(run));
+        this.saveAdvancedRun(run, "ACTIVE");
         const current = this.database.getCanonicalTask<JsonValue>(run.taskId)!;
         if ((current.document as unknown as Task).state === "RUNNING") {
           this.tasks.execute({ id: `run:${run.id}:failed`, taskId: run.taskId, baseRevision: current.revision, actor: "run-worker", command: { type: "task.transition", state: "FAILED" } });
+          this.nativeInteractions.acknowledgeTaskRevision(run);
         }
+        if(adapter instanceof RemoteNativeAdapter)await this.finalizeRemoteRun(run);
         return { waiting: false, run, task: this.database.getCanonicalTask<JsonValue>(run.taskId)!.document as unknown as Task, deliveries: [] };
       }
       const result = await adapter.result(run.sessionId);
@@ -1185,10 +2865,11 @@ export class ControllerService {
       run.state = "VERIFYING";
       run.activitySummary = result.summary;
       run.lastActivityAt = new Date().toISOString();
-      this.database.saveEntity("run", run.id, json(run));
+      this.saveAdvancedRun(run, "ACTIVE");
       const current = this.database.getCanonicalTask<JsonValue>(run.taskId)!;
       if ((current.document as unknown as Task).state === "RUNNING") {
         this.tasks.execute({ id: `run:${run.id}:verifying`, taskId: run.taskId, baseRevision: current.revision, actor: "run-worker", command: { type: "task.transition", state: "VERIFYING" } });
+        this.nativeInteractions.acknowledgeTaskRevision(run);
       }
     }
 
@@ -1196,23 +2877,82 @@ export class ControllerService {
       return { waiting: true, run, task: storedTask.document as unknown as Task, deliveries: [] };
     }
 
+    if(run.state==="DELIVERING"&&this.database.getEntity("native-verification-invalidation",run.id))Object.assign(run,this.reenterNativeSnapshot(run,contract));
+    if(run.state==="VERIFYING"&&this.nativeInteractions.requiresDeliverySnapshot(run)){
+      if(this.agentAdapters.get(run.profileId) instanceof RemoteNativeAdapter){this.nativeInteractions.acknowledgeSettledMutationOutcome(run.sessionId);this.snapshotRefusal("VERIFICATION_ENVIRONMENT_UNAVAILABLE");}
+      await this.verifyNativeSnapshot(run,contract);
+    }
     if (run.state === "VERIFYING") {
-      const repositoryId = contract.delivery.repository;
+      const repositoryId = contract.workspace?.repositoryId ?? contract.delivery.repository;
       const repository = this.configuration.current().config.repositories.find((entry) => entry.id === repositoryId);
-      if (!repository || !run.worktree) throw new ConnectorError("PERMANENT", "Run repository or worktree is unavailable");
-      const verification = new VerificationRegistry();
-      for (const command of repository.verificationCommands) verification.register(command);
+      const frozen=this.database.getEntity<JsonValue>("run-verification-config",run.id) as unknown as RepositoryConfig["verificationCommands"]|undefined;
+      if ((!repository && !frozen) || !run.worktree) throw new ConnectorError("PERMANENT", "Frozen verification or worktree is unavailable");
       const summaries: string[] = [];
       let blocked = false;
-      for (const commandId of contract.verification) {
-        try {
-          const result = await verification.run(commandId, run.worktree);
-          summaries.push(`${commandId}:${result.status}`);
-          if (result.required && result.status !== "passed") blocked = true;
-        } catch {
-          summaries.push(`${commandId}:unregistered`);
-          blocked = true;
+      const verificationJob=this.rhizaJobs.executionJob(run);
+      if (this.agentAdapters.get(run.profileId) instanceof RemoteNativeAdapter) {
+        if(verificationJob)throw new AdapterContractError("VERIFICATION_PROVENANCE_UNAVAILABLE","Remote source verification is not qualified for RHIZA artifacts");
+        this.fenceDelivery(run,"verify");
+        const results = await this.remoteRequest(run.runnerId,{type:"native.run_verify",runId:run.id},run,`native-verify:${run.id}:${run.generation}`);
+        this.fenceDelivery(run,"verify");
+        const commands=frozen??repository!.verificationCommands;
+        if(!Array.isArray(results)||results.length!==contract.verification.length)throw new AdapterContractError("REMOTE_RESULT_INVALID","Owning Runner returned an incomplete verification receipt");
+        for(const [index,result] of results.entries()) {
+          const command=commands.find(command=>command.id===contract.verification[index]);
+          if(!command||!result||typeof result!=="object"||result.commandId!==command.id||result.required!==command.required||!["passed","failed","timeout"].includes(result.status)||result.status==="passed"&&result.exitCode!==0||result.exitCode!==null&&!Number.isSafeInteger(result.exitCode)||typeof result.durationMs!=="number"||!Number.isFinite(result.durationMs)||result.durationMs<0||typeof result.output!=="string"||result.output.length>command.outputLimitBytes||typeof result.truncated!=="boolean")throw new AdapterContractError("REMOTE_RESULT_INVALID","Owning Runner verification evidence differs from the frozen commands");
+          summaries.push(`${command.id}:${result.status}`);if(command.required&&result.status!=="passed")blocked=true;
         }
+        this.database.saveEntity("remote-verification",run.id,json(redactValue(results)));
+      } else {
+        const verification = new VerificationRegistry();
+        for (const command of frozen ?? repository!.verificationCommands) verification.register(command);
+        const controller = new AbortController();
+        const settled = (async () => {
+          const source=verificationJob?await this.verificationSources.captureSource({repositoryId:repositoryId!,worktree:run.worktree!,branch:run.branch!,scopePaths:[...contract.scope],repositoryScopePaths:[...repository!.scopePaths]},()=>this.fenceDelivery(run,"verify")):undefined;
+          for (const [index,commandId] of contract.verification.entries()) {
+            this.fenceDelivery(run, "verify");
+            const command=verification.list().find(command=>command.id===commandId);
+            if(!command){summaries.push(`${commandId}:unregistered`);blocked=true;continue;}
+            const id=contentHash(["automatic-verification",run.id,run.generation,index]);
+            const fence=this.nativeInteractions.fenceFor(run,`verify:${id}`),semanticsHash=contentHash({contract,command,...(source?{sourceTree:source.tree,targetHash:verificationJob!.request.targetHash}:{})});
+            const prior=this.database.getEntity<JsonValue>("run-verification-command",id) as unknown as AutomaticVerificationCommand|undefined;
+            const receipt:AutomaticVerificationCommand=prior??{version:1,id,runId:run.id,generation:run.generation,commandId,fence,semanticsHash,state:"SENDING"};
+            let result:Awaited<ReturnType<VerificationRegistry["run"]>>;
+            try {
+              if(prior){
+                if(prior.state!=="SETTLED"||!prior.result||prior.semanticsHash!==semanticsHash||!isDeepStrictEqual(prior.fence,fence))throw new AdapterContractError("VERIFICATION_OUTCOME_UNKNOWN","Original verification must be reconciled before another invocation");
+                result=prior.result;
+              }else{
+                // Commit the send identity before spawning; missing acknowledgement never permits replay.
+                this.database.transaction(()=>{this.fenceDelivery(run,"verify");this.database.saveEntity("run-verification-command",id,json(receipt));});
+                result=await verification.run(commandId,run.worktree!,controller.signal);
+                if(controller.signal.aborted)throw new AdapterContractError("RUN_CANCELLED","Verification stopped after cancellation");
+                this.database.transaction(()=>{
+                  this.fenceDelivery(run,"verify");
+                  this.nativeInteractions.assertInteraction({id:"run-worker",roles:["operator"],profileId:run.profileId},"verify",receipt.fence);
+                  this.database.saveEntity("run-verification-command",id,json({...receipt,state:"SETTLED",result:redactValue(result)}));
+                });
+              }
+            }
+            catch (error) {
+              this.database.saveEntity("run-verification-command",id,json({...receipt,state:"UNKNOWN"}));
+              this.markRemoteUnavailable(run.id,"Automatic verification outcome or authority is unconfirmed; inspect the original invocation","VERIFICATION_OUTCOME_UNKNOWN",run);
+              throw error;
+            }
+            if (controller.signal.aborted) throw new AdapterContractError("RUN_CANCELLED", "Verification stopped after cancellation");
+            this.fenceDelivery(run,"verify");
+            summaries.push(`${commandId}:${result.status}`);
+            if (result.required && result.status !== "passed") blocked = true;
+          }
+          if(source&&!blocked){
+            await this.verificationSources.assertSource(source,()=>this.fenceDelivery(run,"verify"));
+            this.database.transaction(()=>{this.fenceDelivery(run,"verify");new RhizaVerificationStore(this.database).recordSource({version:1,jobId:verificationJob!.jobId,runId:run.id,runGeneration:run.generation,sessionId:run.sessionId,leaseId:run.leaseId,targetHash:verificationJob!.request.targetHash,tree:source.tree,commandIds:[...contract.verification],commandsDigest:contentHash(contract.verification.map(id=>verification.list().find(command=>command.id===id))),verifiedAt:this.now().toISOString()});});
+          }
+        })();
+        this.localCommands.set(run.id, { controller, settled });
+        try { await settled; }
+        finally { if (this.localCommands.get(run.id)?.controller === controller) this.localCommands.delete(run.id); }
+
       }
       run.verification = { state: blocked ? "FAILED" : "PASSED", commands: [...contract.verification], summary: summaries.join(", ") };
       if (blocked) {
@@ -1220,19 +2960,100 @@ export class ControllerService {
         run.state = "FAILED";
         run.failureReason = "Required verification failed";
         run.endedAt = new Date().toISOString();
-        this.database.saveEntity("run", run.id, json(run));
+        this.saveAdvancedRun(run, "VERIFYING");
         const current = this.database.getCanonicalTask<JsonValue>(run.taskId)!;
         if ((current.document as unknown as Task).state === "VERIFYING") {
           this.tasks.execute({ id: `run:${run.id}:verification-failed`, taskId: run.taskId, baseRevision: current.revision, actor: "run-worker", command: { type: "task.transition", state: "FAILED" } });
+          this.nativeInteractions.acknowledgeTaskRevision(run);
         }
+        if(this.agentAdapters.get(run.profileId) instanceof RemoteNativeAdapter)await this.finalizeRemoteRun(run);
         return { waiting: false, run, task: this.database.getCanonicalTask<JsonValue>(run.taskId)!.document as unknown as Task, deliveries: [] };
       }
       assertRunTransition(run.state, "DELIVERING");
       run.state = "DELIVERING";
-      this.database.saveEntity("run", run.id, json(run));
+      this.saveAdvancedRun(run, "VERIFYING");
     }
 
     if (run.state !== "DELIVERING" || !run.worktree || !run.branch) throw new ConnectorError("CONFLICT", `Run ${run.id} is not ready for delivery`);
+    let snapshotProof:NativeSnapshotProof|undefined;
+    if(this.nativeInteractions.requiresDeliverySnapshot(run)){
+      try{
+        snapshotProof=this.currentNativeSnapshot(run.id);
+        if(!snapshotProof||!this.qualifiedNativeProof(snapshotProof))this.snapshotRefusal("VERIFIED_CANDIDATE_REQUIRED");
+        if(contract.delivery.type==="none")await this.assertNativeSnapshot(run,snapshotProof,"DELIVERING");
+        else{
+          this.assertNativeSnapshotBasis(run,snapshotProof,"DELIVERING");
+          if(!["commit","pull-request"].includes(contract.delivery.type)||this.agentAdapters.get(run.profileId) instanceof RemoteNativeAdapter)this.snapshotRefusal("VERIFIED_DELIVERY_UNAVAILABLE");
+          // The strict owner performs retained/source checks at actual observation and send boundaries.
+        }
+      }catch(error){
+        // This preflight cannot send native delivery. Prior uncertain commands stay barriers.
+        if(this.snapshotReceiptsSettled(run.id))this.nativeInteractions.acknowledgeSettledMutationOutcome(run.sessionId);
+        throw error;
+      }
+    }
+    if(contract.delivery.type==="pull-request"){
+      if(contract.delivery.scmConnectorId||this.database.getEntity("run-delivery-selection",run.id))return this.deliverExplicitPr(run,contract,snapshotProof);
+      if(snapshotProof)this.snapshotRefusal("VERIFIED_DELIVERY_UNAVAILABLE");
+      if(!this.options.gitTransport)throw new ConnectorError("CONFLICT","Legacy delivery has no frozen owning target; review and dispatch a new Run",{retryable:false,operation:"delivery"});
+    }
+    if(contract.delivery.type==="none"||contract.delivery.type==="commit") {
+      const remote=this.agentAdapters.get(run.profileId) instanceof RemoteNativeAdapter;
+      let snapshotCommitInput:LocalSnapshotCommitInput|undefined;
+      try {
+        const workspace=remote?this.database.getEntity<JsonValue>("workspace-handle",run.id) as unknown as WorkspaceHandle|undefined:this.workspaces.get(run.worktree);
+        if(!workspace)throw new WorkspacePolicyError("WORKSPACE_UNAVAILABLE","Managed worktree requires restoration or inspection");
+        const strictCommit=snapshotProof&&contract.delivery.type==="commit"&&!remote;
+        if(snapshotProof&&!strictCommit)await this.assertNativeSnapshot(run,snapshotProof,"DELIVERING");
+        // The strict owner supplies its fully qualified manifest, including observed-commit recovery.
+        const resultFiles=strictCommit?[]:remote?await this.remoteRequest(run.runnerId,{type:"native.run_files",runId:run.id},run):await this.workspaces.resultFiles(workspace);
+        if(!Array.isArray(resultFiles)||resultFiles.length>5000||resultFiles.some(file=>typeof file!=="string"||file.length>4000||/^[/\\]|^[a-z]:/i.test(file)||file.split(/[\\/]/).some(segment=>segment===".."||segment===".git"))||new Set(resultFiles).size!==resultFiles.length)throw new AdapterContractError("REMOTE_RESULT_INVALID","Owning Runner returned an invalid change manifest");
+        if(snapshotProof&&!strictCommit)await this.assertNativeSnapshot(run,snapshotProof,"DELIVERING");
+        let files=resultFiles as string[];if(remote)assertPublicationScope(files,workspace.scopePaths);
+        let commit:Awaited<ReturnType<LocalGitDelivery["commit"]>>|undefined;
+        if(contract.delivery.type==="commit"){
+          if(remote){
+            this.fenceDelivery(run,"commit");
+            commit=remoteCommitResult(await this.remoteRequest(run.runnerId,{type:"native.run_commit",runId:run.id},run,`native-commit:${run.id}:${run.generation}`),{runId:run.id,generation:run.generation,branch:workspace.branch});
+            this.fenceDelivery(run,"commit");assertPublicationScope(commit.files,workspace.scopePaths);files=commit.files;
+          }else{
+            const controller=new AbortController();
+            if(snapshotProof){
+              const captured=snapshotProof;
+              snapshotCommitInput=this.nativeSnapshotCommitInput(run,captured,workspace,contract.goal,controller.signal,"commit");
+            }
+            const settled=(async()=>{commit=snapshotCommitInput?await this.localGitDelivery.commitSnapshot(snapshotCommitInput):await this.localGitDelivery.commit({runId:run.id,generation:run.generation,leaseId:run.leaseId,workspace,message:commitMessage(contract.goal),assertAuthority:()=>this.fenceDelivery(run,"commit"),signal:controller.signal});})();
+            this.localCommands.set(run.id,{controller,settled});try{await settled;files=commit!.files;}finally{if(this.localCommands.get(run.id)?.controller===controller)this.localCommands.delete(run.id);}
+          }
+        }
+        const result={version:1,runId:run.id,taskId:run.taskId,runnerId:run.runnerId,generation:run.generation,deliveryType:contract.delivery.type,...(commit?{commit}:{}),worktree:run.worktree,branch:run.branch,baseCommit:workspace.baseRevision,files,verification:run.verification,summary:run.activitySummary??"",createdAt:this.now().toISOString()};
+        if(remote){this.fenceDelivery(run,"complete");await this.finalizeRemoteRun(run);}
+        this.database.transaction(()=>{
+          this.fenceDelivery(run,"complete");
+          if(snapshotProof){this.assertNativeSnapshotBasis(run,snapshotProof,"DELIVERING");if(!this.qualifiedNativeProof(this.currentNativeSnapshot(run.id)!))this.snapshotRefusal("VERIFIED_CANDIDATE_REQUIRED");}
+          const current=this.database.getCanonicalTask<JsonValue>(run.taskId)!;
+          const task=current.document as unknown as Task;
+          if(task.currentRunId!==run.id||task.state!=="VERIFYING")throw new ConnectorError("CONFLICT","Task authority changed before local completion");
+          assertRunTransition(run.state,"COMPLETE");run.state="COMPLETE";run.endedAt=this.now().toISOString();
+          this.saveAdvancedRun(run,"DELIVERING");
+          const completedSnapshotRun=snapshotProof&&commit?structuredClone(run):undefined;
+          this.database.saveEntity("run-result",run.id,json(result));
+          this.tasks.execute({id:`run:${run.id}:review`,taskId:run.taskId,baseRevision:current.revision,actor:"run-worker",command:{type:"task.transition",state:"REVIEW"}});
+          this.nativeInteractions.acknowledgeTaskRevision(run);
+          if(snapshotProof&&completedSnapshotRun)this.assertNativeSnapshotBasis(run,snapshotProof,"DELIVERING",{run:completedSnapshotRun,task});
+        });
+        this.fleetEvents.publish("run.changed",run.id,{id:run.id,state:run.state});
+        return {waiting:false,run,task:this.database.getCanonicalTask<JsonValue>(run.taskId)!.document as unknown as Task,deliveries:[]};
+      } catch (error) {
+        // Only a factual no-send or fully observed commit settles this lane on metadata failure.
+        // Unknown strict outcomes and earlier foreign native markers remain barriers.
+        if (snapshotProof && !remote && this.snapshotReceiptsSettled(run.id)
+          && (contract.delivery.type === "none" || snapshotCommitInput && this.localGitDelivery.snapshotCommitOutcome(snapshotCommitInput)!=="unknown")) {
+          this.nativeInteractions.acknowledgeSettledMutationOutcome(run.sessionId);
+        }
+        throw error;
+      }
+    }
     const repositoryId = contract.delivery.repository;
     const repositoryParts = repositoryId?.split("/") ?? [];
     if (repositoryParts.length !== 2) throw new ConnectorError("PERMANENT", "GitHub delivery repository must use owner/name");
@@ -1257,14 +3078,16 @@ export class ControllerService {
     run.state = "COMPLETE";
     run.endedAt = new Date().toISOString();
     if (pullRequest?.url) run.prUrl = pullRequest.url;
-    this.database.saveEntity("run", run.id, json(run));
+    this.saveAdvancedRun(run, "DELIVERING");
     let current = this.database.getCanonicalTask<JsonValue>(run.taskId)!;
     if ((current.document as unknown as Task).state === "VERIFYING") {
       this.tasks.execute({ id: `run:${run.id}:review`, taskId: run.taskId, baseRevision: current.revision, actor: "run-worker", command: { type: "task.transition", state: "REVIEW" } });
+      this.nativeInteractions.acknowledgeTaskRevision(run);
       current = this.database.getCanonicalTask<JsonValue>(run.taskId)!;
     }
     if (pullRequest?.url) {
       this.tasks.execute({ id: `run:${run.id}:delivery-comment`, taskId: run.taskId, baseRevision: current.revision, actor: "run-worker", command: { type: "task.comment", body: `Pull request ready: ${pullRequest.url}` } });
+      this.nativeInteractions.acknowledgeTaskRevision(run);
     }
     await this.drainProjections();
     return {
@@ -1275,12 +3098,911 @@ export class ControllerService {
     };
   }
 
+  private nativeSnapshotCommitInput(run:Run,proof:NativeSnapshotProof,workspace:WorkspaceHandle,goal:string,signal:AbortSignal,operation:"commit"|"push"):LocalSnapshotCommitInput{
+    return {runId:run.id,generation:run.generation,leaseId:run.leaseId,workspace,message:commitMessage(goal),signal,
+      proof:{id:proof.id,hash:contentHash(proof)},candidate:proof.snapshot,
+      assertAuthority:()=>{this.assertNativeSnapshotBasis(run,proof,"DELIVERING");this.fenceDelivery(run,operation);},
+      assertSource:()=>this.assertNativeSnapshot(run,proof,"DELIVERING"),
+      assertSnapshot:async()=>{this.assertNativeSnapshotBasis(run,proof,"DELIVERING");await this.verificationSnapshots.assertSnapshot(proof.snapshot);this.assertNativeSnapshotBasis(run,proof,"DELIVERING");}};
+  }
+  private async deliverExplicitPr(run:Run,contract:TaskContract,snapshotProof?:NativeSnapshotProof):Promise<AdvanceResult>{
+    let snapshotPushInput:LocalSnapshotPushInput|undefined;
+    try{
+    const authority=(operation:"verify"|"commit"|"branch"|"push"|"pull-request"|"complete")=>{if(snapshotProof)this.assertNativeSnapshotBasis(run,snapshotProof,"DELIVERING");this.fenceDelivery(run,operation);};
+    const selected=this.database.getEntity<JsonValue>("run-delivery-selection",run.id) as unknown as ScmDeliverySelection|undefined;
+    if(!selected||contract.delivery.scmConnectorId&&selected.scmConnectorId!==contract.delivery.scmConnectorId||selected.repository!==contract.delivery.repository?.toLowerCase()||selected.baseBranch!==(contract.delivery.baseBranch??"main"))throw new ConnectorError("CONFLICT","Run has no matching reviewed SCM delivery selection",{retryable:false,operation:"delivery"});
+    authority("push");const remote=this.agentAdapters.get(run.profileId) instanceof RemoteNativeAdapter,workspace=remote?this.database.getEntity<JsonValue>("workspace-handle",run.id) as unknown as WorkspaceHandle|undefined:this.workspaces.get(run.worktree!);
+    if(!workspace)throw new WorkspacePolicyError("WORKSPACE_UNAVAILABLE","Managed delivery workspace is unavailable");
+    const external=this.rhizaJobs.executionJob(run),verification=external?new RhizaVerificationStore(this.database).get(run.id,run.generation,"source"):undefined;
+    if(external){
+      if(snapshotProof&&verification?.tree!==snapshotProof.snapshot.tree)throw new AdapterContractError("VERIFICATION_PROVENANCE_UNAVAILABLE","Native snapshot delivery requires matching frozen source verification provenance");
+      const commands=this.database.getEntity<JsonValue>("run-verification-config",run.id) as unknown as RepositoryConfig["verificationCommands"]|undefined;
+      if(remote||!verification||verification.jobId!==external.jobId||verification.sessionId!==run.sessionId||verification.leaseId!==run.leaseId||verification.targetHash!==external.request.targetHash||!isDeepStrictEqual(verification.commandIds,contract.verification)||!commands||verification.commandsDigest!==contentHash(contract.verification.map(id=>commands.find(command=>command.id===id))))throw new AdapterContractError("VERIFICATION_PROVENANCE_UNAVAILABLE","PR delivery requires the frozen content-bound verification receipt");
+    }
+    let git:RunGitDelivery;
+    if(remote)git=remotePushResult(await this.remoteRequest(run.runnerId,{type:"native.run_push",runId:run.id},run,`native-push:${run.id}:${run.generation}`),{runId:run.id,generation:run.generation,branch:workspace.branch,target:selected.target});
+    else{
+      const controller=new AbortController(),input={runId:run.id,generation:run.generation,leaseId:run.leaseId,workspace,message:commitMessage(contract.goal),...(verification?{verifiedTree:verification.tree}:{}),signal:controller.signal,assertAuthority:()=>authority("push")};
+      if(snapshotProof)snapshotPushInput={...this.nativeSnapshotCommitInput(run,snapshotProof,workspace,contract.goal,controller.signal,"push"),target:selected.target};
+      const operation=(async()=>{
+        if(snapshotPushInput)return this.localGitDelivery.pushSnapshot(snapshotPushInput);
+        const push=await this.localGitDelivery.push({...input,target:selected.target}),commit=await this.localGitDelivery.commit(input);return {version:1 as const,commit,push};
+      })();
+      const settled=operation.then(()=>undefined);void settled.catch(()=>undefined);this.localCommands.set(run.id,{controller,settled});
+      try{git=await operation;}finally{if(this.localCommands.get(run.id)?.controller===controller)this.localCommands.delete(run.id);}
+    }
+    authority("push");assertPublicationScope(git.commit.files,workspace.scopePaths);
+    if(external)this.database.transaction(()=>{authority("push");new RhizaVerificationStore(this.database).bindCommit(run.id,run.generation,git.commit);});
+    const previous=this.database.getEntity<JsonValue>("run-result",run.id) as {createdAt?:string}|undefined;
+    const result={version:1,runId:run.id,taskId:run.taskId,runnerId:run.runnerId,generation:run.generation,deliveryType:"pull-request",deliveryState:"pushed",commit:git.commit,push:git.push,worktree:run.worktree,branch:run.branch,baseCommit:workspace.baseRevision,files:git.commit.files,verification:run.verification,summary:run.activitySummary??"",createdAt:previous?.createdAt??this.now().toISOString()};
+    this.database.transaction(()=>{authority("push");this.database.saveEntity("run-result",run.id,json(result));});this.fleetEvents.publish("run.changed",run.id,{id:run.id,state:run.state});
+    const scm=this.connectors.get<ScmAdapter>(selected.scmConnectorId);if(!scm)throw new ConnectorError("CONFLICT","Selected SCM connector is unavailable",{retryable:false});
+    const bridge:ScmAdapter={definition:scm.definition,instance:scm.instance,probe:()=>scm.probe(),ensureBranch:async(_repository,branch)=>{authority("branch");if(branch!==workspace.branch)throw new ConnectorError("CONFLICT","Managed delivery branch changed",{retryable:false});},push:async()=>{authority("push");return {commit:git.push.commit};},createOrGetPullRequest:request=>scm.createOrGetPullRequest(request),getCiStatus:(repository,ref,signal)=>scm.getCiStatus(repository,ref,signal)};
+    const controller=new AbortController(),parts=selected.repository.split("/");
+    const api=Promise.resolve().then(()=>new DeliveryService(this.database).deliver(bridge,{idempotencyKey:`delivery:${run.id}:${run.generation}`,taskId:run.taskId,run,currentGeneration:run.generation,currentLeaseId:run.leaseId,repository:{owner:parts[0]!,name:parts[1]!},headBranch:workspace.branch,baseBranch:selected.baseBranch,title:contract.goal,body:`Verified by Agent Dispatcher run ${run.id}.`,verification:run.verification,expectedHeadCommit:git.push.commit,signal:controller.signal,assertAuthority:operation=>authority(operation)}));
+    // Git has already drained its owned process group. This slot waits for HTTP
+    // cancellation; an uncertain provider write remains in the durable PR intent.
+    const settled=api.then(()=>undefined,error=>{if(!controller.signal.aborted)throw error;});void settled.catch(()=>undefined);this.localCommands.set(run.id,{controller,settled});
+    let delivery:Awaited<typeof api>;try{delivery=await api;}finally{if(this.localCommands.get(run.id)?.controller===controller)this.localCommands.delete(run.id);}
+    const pr=delivery.evidence.find(evidence=>evidence.kind==="pull-request");
+    if(!pr?.url)throw new ConnectorError("CONFLICT","Selected SCM did not confirm a PR receipt",{retryable:false});
+    const prUrl=pr.url;
+    if(remote){authority("complete");await this.finalizeRemoteRun(run);}
+    if(snapshotPushInput)await this.localGitDelivery.commitSnapshot(snapshotPushInput);
+    this.database.transaction(()=>{
+      authority("complete");const current=this.database.getCanonicalTask<JsonValue>(run.taskId)!,task=current.document as unknown as Task;
+      if(snapshotProof)this.assertNativeSnapshotBasis(run,snapshotProof,"DELIVERING");
+      assertRunTransition(run.state,"COMPLETE");run.state="COMPLETE";run.endedAt=this.now().toISOString();run.prUrl=prUrl;
+      this.saveAdvancedRun(run,"DELIVERING");const completedSnapshotRun=snapshotProof?structuredClone(run):undefined;
+      this.database.saveEntity("run-result",run.id,json({...result,deliveryState:"complete",prUrl}));
+      this.tasks.execute({id:`run:${run.id}:review`,taskId:run.taskId,baseRevision:current.revision,actor:"run-worker",command:{type:"task.transition",state:"REVIEW"}});
+      if(snapshotProof&&completedSnapshotRun){this.nativeInteractions.acknowledgeTaskRevision(run);this.assertNativeSnapshotBasis(run,snapshotProof,"DELIVERING",{run:completedSnapshotRun,task});}
+    });
+    this.fleetEvents.publish("run.changed",run.id,{id:run.id,state:run.state});return {waiting:false,run,task:this.database.getCanonicalTask<JsonValue>(run.taskId)!.document as unknown as Task,deliveries:this.database.listDeliveryEvidence<JsonValue>(run.taskId)};
+    }catch(error){
+      if(snapshotProof&&this.snapshotReceiptsSettled(run.id)&&(!snapshotPushInput||this.localGitDelivery.snapshotCommitOutcome(snapshotPushInput)!=="unknown"&&this.localGitDelivery.snapshotPushOutcome(snapshotPushInput)!=="unknown"))this.nativeInteractions.acknowledgeSettledMutationOutcome(run.sessionId);
+      throw error;
+    }
+  }
+
+  private standaloneTrialSessions(): AdapterSession[] {
+    const runs = this.database.listEntities<JsonValue>("run") as unknown as Run[];
+    const canonicalSessions = new Set(runs.map(run => run.sessionId)), canonicalProfiles = new Map(runs.map(run => [run.id, run.profileId]));
+    return (this.database.listEntities<JsonValue>("adapter-session") as unknown as AdapterSession[]).filter(session => !canonicalSessions.has(session.id) && !(canonicalProfiles.has(session.runId) && canonicalProfiles.get(session.runId) === session.profileId) && (["STARTING", "RUNNING", "PAUSED"].includes(session.state)||this.sessionStopUncertain(session)));
+  }
+  private async refreshChangingTrialSessions(before: DispatcherConfig, after: DispatcherConfig): Promise<void> {
+    const changing = before.agentProfiles.filter(profile => {
+      const next = after.agentProfiles.find(candidate => candidate.id === profile.id);
+      const previousRunner = before.runners.find(runner => runner.id === profile.runnerId), nextRunner = after.runners.find(runner => runner.id === next?.runnerId);
+      return !isDeepStrictEqual(profile, next) || previousRunner?.mode !== nextRunner?.mode || previousRunner?.credentialRef !== nextRunner?.credentialRef;
+    }).map(profile => profile.id);
+    await this.refreshLocalTrialSessions(changing);
+  }
+  private async refreshLocalTrialSessions(profileIds?: string[]): Promise<void> {
+    await runBounded(this.standaloneTrialSessions().filter(session => !profileIds || profileIds.includes(session.profileId ?? "")), 4, async session => {
+      const adapter = this.agentAdapters.get(session.profileId ?? "");
+      // These status calls read attached local handles; never poll an HTTP/remote provider here.
+      if (adapter instanceof CodexAdapter || adapter instanceof StructuredCliAdapter || adapter instanceof QoderAdapter || adapter instanceof GenericCliAdapter) await adapter.status(session.id);
+    });
+  }
+  private activeExecutionCount(runnerId: string): number {
+    const config = this.configuration.current().config;
+    const canonical = (this.database.listEntities<JsonValue>("run") as unknown as Run[]).filter(run => run.runnerId === runnerId && !isTerminalRunState(run.state)).length;
+    const standalone = this.standaloneTrialSessions().filter(session => !this.trialReservations.has(session.runId) && config.agentProfiles.some(profile => profile.id === session.profileId && profile.runnerId === runnerId)).length;
+    return canonical + standalone + [...this.trialReservations.values()].filter(reservation => reservation.runnerId === runnerId).length;
+  }
+  private dispatchCandidates(profileId?:string):DispatchCandidate[] {
+    return this.configuration.current().config.agentProfiles.filter(p=>!profileId||p.id===profileId).flatMap(profile=>{
+      const runner=this.runners.list().find(r=>r.id===profile.runnerId),adapter=this.agentAdapters.get(profile.id);
+      if(!runner||!adapter)return [];
+      const remote=adapter instanceof RemoteNativeAdapter&&this.remoteRunnerServer.isConnected(runner.id)&&runner.capabilities.includes(NATIVE_EXECUTION_CAPABILITY)&&this.remoteRunnerServer.profileInventory(runner.id).includes(profile.id);
+      const configuredCapacity=this.configuration.current().config.runners.find(configured=>configured.id===runner.id)?.capacity??0;
+      return [{runnerId:runner.id,runnerTags:runner.capabilities,capacity:(runner.id===this.embeddedRunner?.runner.id||remote) && ["ONLINE","DEGRADED"].includes(runner.state)?Math.min(runner.capacity,configuredCapacity):0,activeRuns:this.activeExecutionCount(runner.id),providerId:profile.provider,profileId:profile.id,resourceState:this.profileResourceState(profile.id),capabilities:[...new Set([...manifestCapabilities(adapter.manifest),...runner.capabilities])],adapter}];
+    });
+  }
+  private readonly catalogReads=new Map<string,Promise<AccountModelCatalog>>();
+  private readonly nativeCatalogReads=new Set<Promise<AccountModelCatalog>>();
+  private readonly nativeCatalogProfiles=new Map<Promise<AccountModelCatalog>,string>();
+  private readonly catalogCleanupUnknownProfiles=new Set<string>();
+  private readonly catalogShutdown=new AbortController();
+  private catalogCleanupUnknown=false;
+  private async ownedCatalogRead(profileId:string,read:()=>Promise<AccountModelCatalog>):Promise<AccountModelCatalog>{
+    const signal=this.catalogShutdown.signal;
+    if(signal.aborted)throw new PublicationError("CATALOG_CLOSED",409,"Native catalog admission is closed");
+    const operation=Promise.resolve().then(read);this.nativeCatalogReads.add(operation);this.nativeCatalogProfiles.set(operation,profileId);
+    void operation.then(()=>{this.nativeCatalogReads.delete(operation);this.nativeCatalogProfiles.delete(operation);},error=>{
+      this.nativeCatalogReads.delete(operation);this.nativeCatalogProfiles.delete(operation);
+      if(error instanceof AdapterContractError&&["MODEL_CATALOG_CLEANUP_UNKNOWN","NATIVE_CATALOG_CLEANUP_UNKNOWN"].includes(error.code)){this.catalogCleanupUnknown=true;this.catalogCleanupUnknownProfiles.add(profileId);}
+    });
+    let cancel:()=>void=()=>undefined;
+    const closed=new Promise<never>((_,reject)=>{cancel=()=>reject(new PublicationError("CATALOG_CLOSED",409,"Native catalog admission is closed"));signal.addEventListener("abort",cancel,{once:true});if(signal.aborted)cancel();});
+    try{return await Promise.race([operation,closed]);}finally{signal.removeEventListener("abort",cancel);}
+  }
+  private async drainCatalogReads():Promise<void>{
+    this.catalogShutdown.abort();let timer:ReturnType<typeof setTimeout>|undefined;
+    try{
+      const drained=await Promise.race([Promise.allSettled([...this.nativeCatalogReads]).then(()=>true),new Promise<boolean>(resolve=>{timer=setTimeout(()=>resolve(false),3000);})]);
+      const prior=this.database.getEntity<JsonValue>("catalog-lifecycle","shutdown") as {state?:string}|undefined;
+      if(!drained||this.catalogCleanupUnknown||prior?.state==="unknown"){
+        this.database.saveEntity("catalog-lifecycle","shutdown",{state:"unknown",pendingReads:this.nativeCatalogReads.size,observedAt:this.now().toISOString(),reasonCode:"CATALOG_CLEANUP_UNKNOWN"});
+        this.app.log.warn({pendingReads:this.nativeCatalogReads.size},"Native catalog cleanup remains unconfirmed");
+        throw new AdapterContractError("NATIVE_RUNTIME_CLEANUP_UNKNOWN","Native catalog cleanup remains unconfirmed; preserve the database for reconciliation");
+      }
+    }finally{if(timer)clearTimeout(timer);}
+  }
+
+  private async remoteRequest(runnerId:string,payload:CommandPayload,run?:Run,messageId?:string):Promise<unknown> {
+    const configured=this.configuration.current().config.runners.find(runner=>runner.id===runnerId&&runner.mode==="remote"),runner=this.runners.list().find(runner=>runner.id===runnerId);
+    if(!configured||!runner||!["ONLINE","DEGRADED","DRAINING"].includes(runner.state)||!runner.capabilities.includes(NATIVE_EXECUTION_CAPABILITY)||!this.remoteRunnerServer.isConnected(runnerId))throw new AdapterContractError("REMOTE_EXECUTION_UNAVAILABLE","Owning Runner is offline or has no qualified native execution capability");
+    if(requiresNativeGitDelivery(payload)&&!runner.capabilities.includes(NATIVE_GIT_DELIVERY_CAPABILITY))throw new AdapterContractError("REMOTE_DELIVERY_UNAVAILABLE","Owning Runner must advertise native Git delivery support");
+    if(requiresNativeModelPricing(payload)&&!runner.capabilities.includes(NATIVE_MODEL_PRICING_CAPABILITY))throw new AdapterContractError("REMOTE_PRICING_UNAVAILABLE","Owning Runner must preserve frozen native model pricing");
+    if(payload.type==="native.account_quota"&&!runner.capabilities.includes(NATIVE_ACCOUNT_QUOTA_CAPABILITY))throw new AdapterContractError("REMOTE_QUOTA_UNAVAILABLE","Owning Runner has no qualified account quota projection");
+    const credential = this.runnerCredentialContext(runnerId);
+    if (!credential.usable) throw new AdapterContractError("REMOTE_CREDENTIAL_CHANGED", "Owning Runner authorization is revoked");
+    const response=await this.remoteRunnerServer.sendCommand(runnerId,payload,{...(run?{leaseId:run.leaseId,generation:run.generation,...(run.leaseExpiresAt?{leaseExpiresAt:run.leaseExpiresAt}:{})}:{}),...(messageId?{messageId}:{})});
+    const currentCredential = this.runnerCredentialContext(runnerId);
+    if (!currentCredential.usable || currentCredential.fingerprint !== credential.fingerprint) throw new AdapterContractError("REMOTE_CREDENTIAL_CHANGED", "Owning Runner authorization changed during the operation");
+    if(response.payload.type==="rpc.error")throw new AdapterContractError(response.payload.code,"Owning Runner rejected the native operation");
+    return response.payload.result;
+  }
+  private async finalizeRemoteRun(run:Run):Promise<void> {
+    const result=await this.remoteRequest(run.runnerId,{type:"native.run_finalize",runId:run.id},run,`native-finalize:${run.id}:${run.generation}`) as {runId?:unknown;settledAt?:unknown}|undefined;
+    if(!result||result.runId!==run.id||typeof result.settledAt!=="string"||!Number.isFinite(Date.parse(result.settledAt)))throw new AdapterContractError("REMOTE_RESULT_INVALID","Owning Runner did not confirm execution finalization");
+  }
+  private canCancelRhizaRun(run:Run):boolean {
+    const adapter=this.agentAdapters.get(run.profileId),session=this.database.getEntity<JsonValue>("adapter-session",run.sessionId) as unknown as AdapterSession|undefined;
+    return Boolean(adapter&&!(adapter instanceof RemoteNativeAdapter)&&!run.executionRef&&!session?.nativeBinding&&!this.database.handle.prepare("SELECT 1 FROM native_bindings WHERE session_id=?").get(run.sessionId)&&adapter.manifest.backends.find(backend=>backend.id===run.executionSelection?.backendId)?.capabilities.includes("cancel"));
+  }
+  private canInputRhizaRun(run:Run,admission=true):boolean {
+    const adapter=this.agentAdapters.get(run.profileId),session=this.database.getEntity<JsonValue>("adapter-session",run.sessionId) as unknown as AdapterSession|undefined,backend=adapter?.manifest.backends.find(backend=>backend.id===run.executionSelection?.backendId);
+    return Boolean(this.canCancelRhizaRun(run)&&adapter?.manifest.capabilities.resume&&backend?.capabilities.includes("send")&&backend.capabilities.includes("resume")&&session?.id===run.sessionId&&session.runId===run.id&&session.profileId===run.profileId&&session.backendId===run.executionSelection?.backendId&&(admission?session.state==="PAUSED":["PAUSED","STARTING","RUNNING","COMPLETED"].includes(session.state))&&session.providerSessionId&&session.providerSessionId===run.providerSessionId&&session.execution?.generation===run.generation&&session.execution.leaseId===run.leaseId);
+  }
+  private cancelRunExecution(run:Run,principal:InteractionPrincipal={id:"operator",roles:["operator"],profileId:run.profileId},externalGuard?:()=>void):Promise<Run> {
+    externalGuard?.();
+    if (isTerminalRunState(run.state)) return Promise.resolve(run);
+    const authority={principal:structuredClone(principal),fence:this.nativeInteractions.fenceFor(run,`cancel:${run.id}:${run.generation}`)};
+    if(!run.sessionId.startsWith("unstarted:"))this.nativeInteractions.assertCancellation(authority.principal,authority.fence);
+    this.runReroutes.get(run.id)?.abort();
+    const pending = this.runCancellations.get(run.id);
+    if (pending) return pending;
+    this.cancelledRunIds.add(run.id);
+    const cancellation = Promise.resolve().then(() => this.stopRunExecution(run,"CANCELLED",authority,externalGuard)).finally(() => { this.runCancellations.delete(run.id); });
+    this.runCancellations.set(run.id, cancellation);
+    return cancellation;
+  }
+  private async stopRunExecution(run:Run, terminalState: "CANCELLED" | "SUPERSEDED" = "CANCELLED",authority?:{principal:InteractionPrincipal;fence:MutationFence},externalGuard?:()=>void):Promise<Run> {
+    externalGuard?.();
+    const latest = this.database.getEntity<JsonValue>("run", run.id) as unknown as Run | undefined;
+    if(!latest||latest.generation!==run.generation||latest.leaseId!==run.leaseId)throw new InteractionGuardError("STALE_RUN_AUTHORITY");
+    if (isTerminalRunState(latest.state)) return latest;
+    const remote=this.configuration.current().config.runners.some(runner=>runner.id===run.runnerId&&runner.mode==="remote");
+    if(!remote&&run.sessionId.startsWith("unstarted:")){
+      // Preserve the existing startup projection only for one exact legacy owner.
+      const sessions=(this.database.listEntities<JsonValue>("adapter-session") as unknown as AdapterSession[]).filter(session=>session.runId===run.id&&session.profileId===run.profileId);
+      const task=this.database.getCanonicalTask<JsonValue>(run.taskId);
+      if(sessions.length!==1||latest.sessionId!==run.sessionId||(task?.document as unknown as Task)?.currentRunId!==run.id||authority&&task?.revision!==authority.fence.expectedTaskRevision)throw new AdapterContractError("SESSION_DETACHED","Native startup session identity is unconfirmed");
+      const session=sessions[0]!;
+      if(session.nativeBinding||run.executionRef||session.execution&&(session.execution.generation!==run.generation||session.execution.leaseId!==run.leaseId))throw new InteractionGuardError("NATIVE_IDENTITY_CHANGED");
+      latest.sessionId=session.id;if(session.providerSessionId)latest.providerSessionId=session.providerSessionId;
+      this.database.saveEntity("run",latest.id,json(latest));run=latest;
+      authority={principal:authority?.principal??{id:"operator",roles:["operator"],profileId:run.profileId},fence:this.nativeInteractions.fenceFor(run,`cancel:${run.id}:${run.generation}`)};
+    }
+    const principal=authority?.principal??{id:"operator",roles:["operator"],profileId:run.profileId};
+    const fence=authority?.fence??this.nativeInteractions.fenceFor(run,`cancel:${run.id}:${run.generation}`);
+    const assertAuthority=()=>{externalGuard?.();this.nativeInteractions.assertCancellation(principal,fence);};
+    assertAuthority();
+    const session=this.database.getEntity<JsonValue>("adapter-session",run.sessionId) as unknown as AdapterSession|undefined;
+    if(!remote&&(run.executionRef||session?.nativeBinding||this.database.handle.prepare("SELECT 1 FROM native_bindings WHERE session_id=?").get(run.sessionId)))throw new InteractionGuardError("NATIVE_CAPABILITY_UNVERIFIED");
+    if(session&&this.sessionStopUncertain(session))throw new AdapterContractError("CANCELLATION_UNCONFIRMED","Previous native stop needs reconciliation before retry");
+    if(!remote&&terminalState==="CANCELLED"&&(latest.state==="STARTING"||latest.state==="RUNNER_UNAVAILABLE"&&latest.recoveryState==="STARTING")&&this.nativeInteractions.startForRun(run.id)?.state==="RESERVED"){
+      // This is an atomic Core decision with no native I/O or lane wait.
+      const cancelled=this.database.transaction(()=>{
+        assertAuthority();
+        if(!this.nativeInteractions.cancelReservedStart(latest))throw new InteractionGuardError("NATIVE_START_OUTCOME_UNKNOWN");
+        this.restoreLeaseAuthority(latest);this.leaseAuthority.revoke(latest.id,latest.leaseId,latest.generation,"Native startup cancelled before sending",this.now().toISOString());this.persistLatestLeaseAudit(latest.id);
+        const current=this.database.getEntity<JsonValue>("run",latest.id) as unknown as Run;
+        assertRunTransition(current.state,"CANCELLED");current.state="CANCELLED";current.endedAt=this.now().toISOString();delete current.recoveryState;delete current.recoveryReason;current.activitySummary="Native startup cancelled before sending";this.database.saveEntity("run",current.id,json(current));
+        const task=this.database.getCanonicalTask<JsonValue>(current.taskId)!;
+        this.tasks.execute({id:`cancel-unsent:${current.id}:${current.generation}`,taskId:current.taskId,baseRevision:task.revision,actor:principal.id,command:{type:"task.transition",state:"CANCELLED"}});
+        this.nativeInteractions.recordUnsentCancellation(principal,fence);
+        if(session)this.saveSessionStop({...session,state:"CANCELLED"},"confirmed",{version:1,actorId:principal.id,operation:"cancel",fence,requestedAt:this.now().toISOString()});
+        this.saveStartupReceipts(current);
+        return current;
+      });
+      this.cancelledRunIds.delete(cancelled.id);this.fleetEvents.publish("run.changed",cancelled.id,{id:cancelled.id,state:cancelled.state});return cancelled;
+    }
+    this.restoreLeaseAuthority(run);
+    this.leaseAuthority.revoke(run.id,run.leaseId,run.generation,"Cancelled by operator",this.now().toISOString());
+    this.persistLatestLeaseAudit(run.id);
+    const localCommand = this.localCommands.get(run.id), advancing = this.runAdvances.get(run.id);
+    localCommand?.controller.abort();
+    this.markRemoteUnavailable(run.id, "Cancellation requested; waiting for owned execution to stop", "NATIVE_OUTCOME_UNKNOWN", run);
+    fence.expectedTaskRevision=this.database.getCanonicalTask<JsonValue>(run.taskId)!.revision;
+    this.nativeInteractions.acknowledgeTaskRevision(run);
+    return this.nativeInteractions.withMutationLane(run.sessionId,async()=>{
+      assertAuthority();this.nativeInteractions.assertInteraction(principal,"cancel",fence);
+      if(session){this.uncertainSessionStops.add(session.id);this.saveSessionStop(session,"requested",{version:1,actorId:principal.id,operation:"cancel",fence,requestedAt:this.now().toISOString()});}
+      try{
+        if(remote){
+          assertAuthority();
+          const stopped=await this.remoteRequest(run.runnerId,{type:"lease.revoke",leaseId:run.leaseId,generation:run.generation,reason:"Cancelled by operator"},run,`native-cancel-lease:${run.id}:${run.generation}`) as {runId?:unknown;leaseId?:unknown;generation?:unknown;revokedAt?:unknown}|undefined;
+          if(!stopped||stopped.runId!==run.id||stopped.leaseId!==run.leaseId||stopped.generation!==run.generation||typeof stopped.revokedAt!=="string"||!Number.isFinite(Date.parse(stopped.revokedAt)))throw new AdapterContractError("REMOTE_RESULT_INVALID","Owning Runner did not confirm cancellation");
+        }else{
+          const adapter=this.agentAdapters.get(run.profileId);if(!adapter)throw new AdapterContractError("SESSION_DETACHED","Native backend is unavailable");
+          let admitted=false;
+          const beforeStop=()=>{assertAdapterWriteAdmission(()=>{assertAuthority();if(this.agentAdapters.get(run.profileId)!==adapter)throw new InteractionGuardError("SESSION_OWNER_MISMATCH");});admitted=true;};
+          const stopped=await adapter.cancel(run.sessionId,beforeStop);
+          if(!admitted)throw new AdapterContractError("NATIVE_CAPABILITY_UNVERIFIED","Stop backend omitted final admission");
+          if(stopped.id!==run.sessionId||stopped.runId!==run.id||!["CANCELLED","COMPLETED","FAILED"].includes(stopped.state))throw new AdapterContractError("SESSION_DETACHED","Native termination is unconfirmed");
+          assertAuthority();if(session){this.saveSessionStop(stopped,"confirmed");this.uncertainSessionStops.delete(session.id);}
+        }
+        await localCommand?.settled.catch(error=>{if(!(error instanceof AdapterContractError&&error.code==="RUN_CANCELLED")&&!(error instanceof LocalGitDeliveryError&&error.code==="COMMIT_ABORTED"))throw error;});
+        await advancing?.catch(()=>undefined);
+        assertAuthority();
+        if(remote&&session){this.saveSessionStop({...session,state:"CANCELLED"},"confirmed");this.uncertainSessionStops.delete(session.id);}
+        const current=this.database.getEntity<JsonValue>("run",run.id) as unknown as Run;
+        this.database.transaction(()=>{
+          assertAuthority();
+          const settledState=terminalState==="SUPERSEDED"&&!this.runReroutes.get(run.id)?.signal.aborted?"SUPERSEDED":"CANCELLED";
+          assertRunTransition(current.state,settledState);current.state=settledState;current.endedAt=this.now().toISOString();delete current.recoveryState;delete current.recoveryReason;
+          this.database.saveEntity("run",current.id,json(current));
+          if(settledState==="CANCELLED"){
+            const task=this.database.getCanonicalTask<JsonValue>(current.taskId)!;
+            this.tasks.execute({id:`cancel-task:${current.id}:${current.generation}`,taskId:current.taskId,baseRevision:task.revision,actor:principal.id,command:{type:"task.transition",state:"CANCELLED"}});
+            this.nativeInteractions.acknowledgeTaskRevision(current);
+          }
+          for(const value of this.database.listEntities<JsonValue>("task-publication")){const publication=value as unknown as PublicationRecord;if(publication.receipt?.runId===current.id)this.publications.markOutcome(publication.owner,publication.preview.publicationId,current);}
+        });
+        this.nativeInteractions.acknowledgeSettledMutationOutcome(run.sessionId);
+        this.fleetEvents.publish("run.changed",current.id,{id:current.id,state:current.state});this.cancelledRunIds.delete(current.id);return current;
+      }catch(error){
+        if(error instanceof AdapterAdmissionError){if(session){this.uncertainSessionStops.delete(session.id);this.saveSessionStop(session,"none");}this.nativeInteractions.acknowledgeSettledMutationOutcome(run.sessionId);}
+        else if(session&&this.sessionStopState(session)!=="confirmed")try{this.saveSessionStop(session,"unconfirmed");}catch{/* Retain the in-memory uncertainty fence. */}
+        this.markRemoteUnavailable(run.id,"Cancellation has fenced authority; inspect the original execution before continuing","NATIVE_OUTCOME_UNKNOWN",run);throw error;
+      }
+    });
+  }
+  private async inspectRepository(plan:Parameters<WorkspaceManager["inspect"]>[0]):Promise<{baseCommit:string;root:string}> {
+    const config=this.configuration.current().config,repository=config.repositories.find(repository=>repository.id===plan.repositoryId);
+    if(!repository)throw new PublicationError("REPOSITORY_NOT_FOUND",404,"Repository is not registered");
+    const owner=repositoryRunnerId(config,repository);
+    if(!config.runners.some(runner=>runner.id===owner&&runner.mode==="remote"))return this.workspaces.inspect(plan);
+    const inspected=await this.remoteRequest(owner,{type:"native.repository",...plan}) as {baseCommit?:unknown;root?:unknown;registeredRoot?:unknown;verificationCommands?:unknown};
+    if(!inspected||typeof inspected.baseCommit!=="string"||!/^[a-f0-9]{40,64}$/i.test(inspected.baseCommit)||typeof inspected.root!=="string"||inspected.root.length>4000||inspected.registeredRoot!==repository.root||contentHash(inspected.verificationCommands)!==contentHash(repository.verificationCommands))throw new PublicationError("REMOTE_REPOSITORY_MISMATCH",409,"Owning Runner repository or verification registration differs; review both registrations");
+    return {baseCommit:inspected.baseCommit,root:inspected.root};
+  }
+  private async repositoryContext(id:string):Promise<RepositoryConsoleContext>{
+    const snapshot=this.configuration.current(),repository=snapshot.config.repositories.find(repository=>repository.id===id);
+    if(!repository)throw new PublicationError("REPOSITORY_NOT_FOUND",404,"Choose a registered repository");
+    const runnerId=repositoryRunnerId(snapshot.config,repository),remote=snapshot.config.runners.some(runner=>runner.id===runnerId&&runner.mode==="remote");
+    let git:RepositoryConsoleContext["git"];
+    try{const inspected=await this.inspectRepository({repositoryId:id,baseRef:repository.defaultBaseRef,scopePaths:repository.scopePaths});git={state:"valid",baseRef:repository.defaultBaseRef,baseCommit:inspected.baseCommit};}
+    catch(error){git={state:remote?"unavailable":"invalid",baseRef:repository.defaultBaseRef,reasonCode:error instanceof AdapterContractError?error.code:error instanceof WorkspacePolicyError?error.code:"REPOSITORY_INSPECTION_FAILED"};}
+    if(snapshot.revision!==this.configuration.current().revision)throw new PublicationError("SELECTION_CHANGED",409,"Repository registration changed while reading context");
+    const available=git.state==="valid",action={allowed:available,requiresConfirmation:false,...(!available?{reasonCode:git.reasonCode}:{})};
+    return {repositoryId:id,projectId:`local:${id}`,runnerId,runnerBindingSource:repository.runnerId?"explicit":"legacy-local",configRevision:snapshot.revision,git,scopePaths:[...repository.scopePaths],verificationCommands:repository.verificationCommands.map(command=>({id:command.id,required:command.required})),actions:{publish:{...action,requiresConfirmation:true},refs:action}};
+  }
+  private async repositoryRefs(id:string,offset:number,limit:number):Promise<RepositoryRefs>{
+    const snapshot=this.configuration.current(),repository=snapshot.config.repositories.find(repository=>repository.id===id);
+    if(!repository)throw new PublicationError("REPOSITORY_NOT_FOUND",404,"Choose a registered repository");
+    const runnerId=repositoryRunnerId(snapshot.config,repository),remote=snapshot.config.runners.some(runner=>runner.id===runnerId&&runner.mode==="remote");
+    let refs:RepositoryRefs;
+    try{refs=remote?remoteRepositoryRefs(await this.remoteRequest(runnerId,{type:"native.repository_refs",repositoryId:id,offset,limit}),offset,limit):await this.workspaces.refs(id,offset,limit);}
+    catch(error){throw new PublicationError(error instanceof AdapterContractError?error.code:error instanceof WorkspacePolicyError?error.code:"REPOSITORY_REFS_UNAVAILABLE",409,"Repository references could not be read on the owning Runner");}
+    if(snapshot.revision!==this.configuration.current().revision)throw new PublicationError("SELECTION_CHANGED",409,"Repository registration changed while reading references");
+    return refs;
+  }
+  private remoteWorkspace(value:unknown,plan:Parameters<WorkspaceManager["create"]>[0],reviewed?:WorkspaceHandle):WorkspaceHandle {
+    const handle=value as WorkspaceHandle|undefined;
+    const identity=(entry:typeof plan)=>({repositoryId:entry.repositoryId,taskId:entry.taskId,runId:entry.runId,attempt:entry.attempt,baseRef:entry.baseRef,scopePaths:entry.scopePaths,baseCommit:entry.baseCommit,targetBranch:entry.targetBranch});
+    if(!handle||contentHash(identity(handle))!==contentHash(identity(plan))||typeof handle.path!=="string"||!handle.path||handle.path.length>4000||typeof handle.repositoryRoot!=="string"||typeof handle.branch!=="string"||!handle.branch||!Number.isFinite(Date.parse(handle.createdAt))||typeof handle.baseRevision!=="string"||!/^[a-f0-9]{40,64}$/i.test(handle.baseRevision)||plan.baseCommit&&handle.baseRevision!==plan.baseCommit||reviewed&&["path","branch","baseRevision","repositoryRoot"].some(key=>handle[key as keyof WorkspaceHandle]!==reviewed[key as keyof WorkspaceHandle]))throw new AdapterContractError(reviewed?"COMMAND_OUTCOME_UNKNOWN":"REMOTE_RESULT_INVALID","Owning Runner workspace identity does not match its approved plan");
+    return structuredClone(handle);
+  }
+  private resolveProfileExecutionContext(profileId:string,repositoryId:string|undefined,purpose:Parameters<typeof resolveProfileExecutionContext>[3]) {
+    const context=resolveProfileExecutionContext(this.configuration.current(),profileId,repositoryId,purpose);
+    // The owning remote Runner has its own native credentials and catalog fingerprint.
+    const credentials=context.runner.mode==="remote"?{credentialRef:context.runner.credentialRef}:context.profile;
+    if(purpose!=="probe")this.credentialContext.assertAvailable(credentials);
+    return {...context,fingerprint:contentHash({context:context.fingerprint,credentials:this.credentialContext.fingerprint(credentials)})};
+  }
+  private assertLocalDraftProbe(runnerId?:string):void{
+    if(!runnerId)return;const runner=this.configuration.current().config.runners.find(runner=>runner.id===runnerId);
+    if(!runner)throw new ConfigPlanError("RUNNER_NOT_FOUND","Choose a configured Runner");
+    if(runner.mode==="remote")throw new ConfigPlanError("REMOTE_DRAFT_PROBE_UNAVAILABLE","Apply this account and its owning Runner registration before testing remotely");
+  }
+  private async executeProfileProbe(context:ReturnType<typeof resolveProfileExecutionContext>):Promise<unknown>{
+    const profile=context.profile;
+    if(context.runner.mode==="remote")return this.remoteRequest(context.runnerId,{type:"native.profile_probe",profileId:profile.id,...(context.repository?{repositoryId:context.repository.id}:{})});
+    if(this.options.profileProbeExecutor)return this.options.profileProbeExecutor(profile,context.repository);
+    const resolveCredential=(reference:string)=>this.secrets.resolve(reference,{principal:"controller",purpose:"provider"});
+    if(profile.provider==="codex"||profile.provider==="cursor"||profile.provider==="kiro"||isNativeCliProvider(profile.provider))return probeNativeProfile(profile,resolveCredential,context.repository?{workspacePath:context.repository.root}:{});
+      if (profile.provider === "qoder") return probeQoderProfile({
+        id: profile.id,
+        alias: profile.alias,
+        ...(stringSetting(profile.settings?.executable) ? { executable: stringSetting(profile.settings?.executable)! } : {}),
+        ...(stringSetting(profile.settings?.configDir) ? { configDir: stringSetting(profile.settings?.configDir)! } : {}),
+        ...(stringSetting(profile.settings?.model) ? { model: stringSetting(profile.settings?.model)! } : {}),
+      },context.repository?{workspacePath:context.repository.root}:{});
+      if (profile.provider === "devin" && profile.credentialRef && stringSetting(profile.settings?.organizationId)) {
+        const devinProfile: DevinProfileConfig = { id: profile.id, alias: profile.alias, organizationId: stringSetting(profile.settings?.organizationId)!, credentialRef: profile.credentialRef, ...(stringSetting(profile.settings?.apiBase) ? { apiBase: stringSetting(profile.settings?.apiBase)! } : {}), ...(typeof profile.settings?.maxSessionAcu === "number" ? { maxSessionAcu: profile.settings.maxSessionAcu } : {}), ...(stringSetting(profile.settings?.createAsUserId) ? { createAsUserId: stringSetting(profile.settings?.createAsUserId)! } : {}) };
+        const backend = this.options.devinBackendFactory?.(devinProfile);
+        if (backend) { const health = await backend.health(); return { authenticated: health.ok, apiVersion: "v3", ...(health.diagnostic ? { diagnostic: health.diagnostic } : {}) }; }
+        return probeDevinProfile(devinProfile, resolveCredential, this.options.integrationFetch as typeof fetch | undefined);
+      }
+      if (profile.provider === "workbuddy" || profile.provider === "codebuddy") {
+        const local = localServiceProfile({ id: profile.id, alias: profile.alias, provider: profile.provider, ...(profile.credentialRef ? { credentialRef: profile.credentialRef } : {}), ...(stringSetting(profile.settings?.baseUrl) ? { baseUrl: stringSetting(profile.settings?.baseUrl)! } : {}), ...(stringSetting(profile.settings?.healthPath) ? { healthPath: stringSetting(profile.settings?.healthPath)! } : {}), ...(stringSetting(profile.settings?.startPath) ? { startPath: stringSetting(profile.settings?.startPath)! } : {}), ...(stringSetting(profile.settings?.statusPath) ? { statusPath: stringSetting(profile.settings?.statusPath)! } : {}), ...(stringSetting(profile.settings?.inputPath) ? { inputPath: stringSetting(profile.settings?.inputPath)! } : {}), ...(stringSetting(profile.settings?.cancelPath) ? { cancelPath: stringSetting(profile.settings?.cancelPath)! } : {}), ...(stringSetting(profile.settings?.resourcePath) ? { resourcePath: stringSetting(profile.settings?.resourcePath)! } : {}) });
+        if (local) return probeLocalService(local, resolveCredential, this.options.integrationFetch as typeof fetch | undefined);
+      }
+      if (profile.provider === "generic-cli" && stringSetting(profile.settings?.executable) && stringArraySetting(profile.settings?.args)) return probeGenericCli({ file: stringSetting(profile.settings?.executable)!, args: stringArraySetting(profile.settings?.args)!, ...(profile.settings?.mode === "pty" || profile.settings?.mode === "headless" ? { mode: profile.settings.mode } : {}) });
+    throw new ConfigPlanError("PROFILE_UNSUPPORTED","Configured account has no qualified probe");
+  }
+  private async probeConfiguredProfile(profileId:string,repositoryId?:string){
+    const context=this.resolveProfileExecutionContext(profileId,repositoryId,"probe");
+    this.credentialContext.assertAvailable(context.runner.mode==="remote"?{credentialRef:context.runner.credentialRef}:context.profile);
+    const evidence=await this.profileProbes.run(context,()=>this.executeProfileProbe(context),()=>{try{return this.resolveProfileExecutionContext(profileId,repositoryId,"probe").fingerprint;}catch{return "removed";}});
+    this.fleetEvents.publish("profile.changed",profileId,{id:profileId,evidence});
+    return {evidence,source:context.runner.mode==="remote"?"owning-runner":"local-native",authenticated:evidence.authentication.status==="ready",authentication:evidence.authentication.status==="ready"?"ready":evidence.authentication.status==="missing"?"missing":"unknown",...(["ready","missing"].includes(evidence.installation.status)?{installed:evidence.installation.status==="ready"}:{}),...(["ready","failed"].includes(evidence.compatibility.status)?{compatible:evidence.compatibility.status==="ready"}:{}),...(evidence.nativeVersion?{version:evidence.nativeVersion}:{}),...(context.profile.provider==="devin"?{apiVersion:"v3"}:{}),profile:this.profileConsoleView(profileId)};
+  }
+  private profileConsoleView(profileId:string):ProfileConsoleView&{provider:string;state:string;capabilities:string[];resourceState:ResourceState}{
+    const context=this.resolveProfileExecutionContext(profileId,undefined,"probe"),profile=context.profile,manifest=manifestForProvider(profile.provider),adapter=this.agentAdapters.get(profile.id),last=this.profileProbes.latest(profileId),resource=this.resourceRegistry.assess(profile.id,this.now());
+    let probeContext=context;if(last?.repositoryId)try{probeContext=this.resolveProfileExecutionContext(profileId,last.repositoryId,"probe");}catch{/* Removed repository evidence remains stale. */}
+    const probe=this.profileProbes.current(probeContext);
+    const unknown={status:"unknown" as const,reasonCode:"NATIVE_PROBE_REQUIRED"},installation=probe?.installation??unknown,compatibility=probe?.compatibility??unknown,authentication=probe?.authentication??unknown;
+    const enabled=profile.enabled!==false,remote=context.runner.mode==="remote",online=remote?this.remoteRunnerServer.isConnected(context.runnerId)&&Boolean(this.runners.list().find(runner=>runner.id===context.runnerId)?.capabilities.includes(NATIVE_EXECUTION_CAPABILITY)):Boolean(this.embeddedRunner),registered=!remote||this.remoteRunnerServer.profileInventory(context.runnerId).includes(profileId);
+    const supportedProbe=Boolean(manifest?.probes.length)&&profile.provider!=="generic-mock",available=enabled&&Boolean(adapter)&&online&&registered&&["AVAILABLE","LOW","UNKNOWN"].includes(resource.state),verified=[installation,compatibility,authentication].every(evidence=>evidence.status==="ready");
+    const model=stringSetting(profile.settings?.model);
+    return {id:profile.id,alias:profile.alias,providerId:profile.provider,provider:profile.provider,adapterId:manifest?.id??profile.provider,runnerId:profile.runnerId,dispatchEnabled:enabled,configRevision:context.configRevision,state:!enabled?"DISABLED":adapter?"CONFIGURED":"UNAVAILABLE",resourceState:resource.state,capabilities:manifest?manifestCapabilities(manifest):[],installation,compatibility,authentication,interaction:profileInteractionView(profile,adapter?.manifest??manifest,loadProfileEvidence()),
+      resources:{status:["AVAILABLE","LOW"].includes(resource.state)?"ready":resource.state==="UNKNOWN"?"unknown":"failed",reasonCode:resource.state,source:"resource-registry",...(resource.evidence.length?{observedAt:resource.checkedAt}:{})},
+      ...(model?{defaultModel:{id:model}}:{}),configuration:{complete:registered,missingFields:registered?[]:["owningRunnerRegistration"]},executionSupport:!manifest||profile.provider==="generic-mock"?"unsupported":available&&verified?remote?"remote-ready":"local-ready":"unverified",
+      actions:{test:{allowed:supportedProbe&&(!remote||online&&registered&&enabled),requiresConfirmation:false,...(!supportedProbe?{reasonCode:"PROFILE_UNSUPPORTED",message:"This adapter has no qualified native probe"}:remote&&(!online||!registered||!enabled)?{reasonCode:"REMOTE_EXECUTION_UNAVAILABLE",message:"Apply and connect the owning Runner registration before probing"}:{})},publish:{allowed:available,requiresConfirmation:true,...(!available?{reasonCode:!enabled?"PROFILE_DISABLED":"EXECUTION_UNAVAILABLE"}:{})}},
+      limitations:["Native login and CLI evidence describe the last check; external account switches or upgrades require another check","A native catalog does not prove model access or cost"]};
+  }
+
+  private rhizaTargetFacts(repositoryId: string, profileId: string): RhizaTargetFacts {
+    const snapshot = this.configuration.current(), profile = snapshot.config.agentProfiles.find(profile => profile.id === profileId)!;
+    const adapter = this.agentAdapters.get(profileId), repository = snapshot.config.repositories.find(repository => repository.id === repositoryId)!;
+    const initial: RhizaTargetFacts = { executorRef: `dispatcher:${snapshot.config.controller.id}`, runnerId: profile.runnerId, profileId, harnessId: profile.provider,
+      backendId: adapter?.manifest.backends[0]?.id ?? "unavailable", profileRevision: rhizaDigest(profile), adapterVersion: "unavailable", ready: false, evidenceCapabilities: [] };
+    try {
+      const context = this.resolveProfileExecutionContext(profileId, repositoryId, "catalog"), profileContext = this.resolveProfileExecutionContext(profileId, undefined, "catalog");
+      const adapterVersion = rhizaAdapterBuildVersion(), probe = this.profileProbes.current(context);
+      const stored = this.database.getEntity<JsonValue>("model-catalog", contentHash({ profileId, repositoryId })) as unknown as { format?: string; scopeRef?: string; catalog?: AccountModelCatalog; repositoryIdentity?: RhizaTargetFacts["repositoryIdentity"] } | undefined;
+      const scopeRef = contentHash({ profileId, repositoryId, configRevision: snapshot.revision, contextFingerprint: context.fingerprint, workspacePath: repository.root });
+      const repositoryIdentity = context.runner.mode === "embedded" ? rhizaRepositoryIdentity(repository.root) : undefined;
+      const catalog = stored?.format === "account-model-catalog-cache-v1" && stored.scopeRef === scopeRef && repositoryIdentity && rhizaDigest(stored.repositoryIdentity ?? null) === rhizaDigest(repositoryIdentity) ? stored.catalog : undefined;
+      const ready = context.runner.mode === "embedded" && this.embeddedRunner?.runner.id === profile.runnerId && profile.enabled !== false && adapter?.supportsExecutionSelection === true
+        && adapter.manifest.backends.some(backend => backend.id === catalog?.backendId) && !!probe?.nativeVersion && [probe.installation, probe.compatibility, probe.authentication].every(evidence => evidence.status === "ready");
+      return { ...initial, adapterVersion, profileRevision: rhizaDigest({ contextFingerprint: profileContext.fingerprint, adapterVersion }), ready,
+        ...(probe?.nativeVersion ? { cliVersion: probe.nativeVersion } : {}), ...(repositoryIdentity ? { repositoryIdentity } : {}), ...(catalog ? { catalog, backendId: catalog.backendId } : {}) };
+    } catch { return initial; }
+  }
+
+  private async modelCatalog(profileId:string,repositoryId:string,reason:ModelCatalogContext["reason"]="open",workspacePath?:string):Promise<AccountModelCatalog> {
+    if(this.stopping)throw new PublicationError("CATALOG_CLOSED",409,"Native catalog admission is closed");
+    const snapshot=this.configuration.current();const profile=snapshot.config.agentProfiles.find(p=>p.id===profileId),repository=snapshot.config.repositories.find(r=>r.id===repositoryId);
+    if(!profile||!repository)throw new PublicationError("CATALOG_CONTEXT_REQUIRED",400,"Choose a registered account and repository");
+    const context:ModelCatalogContext={profileId,runnerId:profile.runnerId,repositoryId,executionContextRef:contentHash({repositoryId,root:repository.root}),reason};
+    const fallback=(code:string,message:string):AccountModelCatalog=>({profileId,runnerId:profile.runnerId,providerId:profile.provider,backendId:this.agentAdapters.get(profileId)?.manifest.backends[0]?.id??"unsupported",contextFingerprint:contentHash({profile,repositoryId,root:repository.root}),revision:"unverified",fetchedAt:this.now().toISOString(),freshness:"unverified",source:"native-rpc",selectionSupport:this.agentAdapters.get(profileId)?.supportsExecutionSelection?"native-default-only":"unsupported",entries:[],failure:{code,message}});
+    if(profile.enabled===false)return fallback("PROFILE_DISABLED","Account is disabled");
+    if(repositoryRunnerId(snapshot.config,repository)!==profile.runnerId)return fallback("RUNNER_REPOSITORY_MISMATCH","Account and repository belong to different Runners");
+    const remote=snapshot.config.runners.some(runner=>runner.id===profile.runnerId&&runner.mode==="remote");
+    if(!remote&&profile.runnerId!==this.embeddedRunner?.runner.id)return fallback("REMOTE_EXECUTION_UNAVAILABLE","Owning local Runner is unavailable");
+    const repositoryIdentity = remote ? undefined : rhizaRepositoryIdentity(repository.root);
+    const applied=this.resolveProfileExecutionContext(profileId,repositoryId,"catalog");
+    if(!remote)context.executionContextRef=contentHash({repository:context.executionContextRef,context:applied.fingerprint});
+    const adapter=this.agentAdapters.get(applied.profileId);
+    if(!remote&&!adapter?.modelCatalog)return fallback("MODEL_CATALOG_UNSUPPORTED","This native adapter does not expose a model catalog");
+    const key=contentHash({profileId,repositoryId});
+    const scopeRef=contentHash({profileId,repositoryId,configRevision:snapshot.revision,contextFingerprint:applied.fingerprint,workspacePath:workspacePath??repository.root});
+    const readKey=contentHash({scopeRef,reason});
+    const pending=this.catalogReads.get(readKey);
+    if(pending)return structuredClone(await pending);
+    const operation=(async()=>{
+    const previous=this.database.getEntity<JsonValue>("model-catalog",key) as unknown as {format?:string;scopeRef?:string;catalog?:AccountModelCatalog}|undefined;
+    let catalog:AccountModelCatalog;
+    try {
+      const run=remote&&workspacePath?this.database.listEntities<JsonValue>("run").map(value=>value as unknown as Run).find(run=>run.profileId===profileId&&run.worktree===workspacePath&&!isTerminalRunState(run.state)):undefined;
+      if(remote&&workspacePath&&!run)throw new AdapterContractError("RUN_CONTEXT_UNAVAILABLE","Remote worktree does not have matching canonical Run authority");
+      catalog=await this.ownedCatalogRead(profileId,()=>remote?this.remoteRequest(profile.runnerId,{type:"native.model_catalog",profileId,repositoryId,reason,...(run?{runId:run.id}:{})},run).then(value=>remoteCatalog(value,{profileId,runnerId:profile.runnerId,providerId:profile.provider})):adapter!.modelCatalog!({...context,workspacePath:workspacePath??repository.root,signal:this.catalogShutdown.signal}));
+      if(catalog.profileId!==profileId||catalog.runnerId!==profile.runnerId||catalog.providerId!==profile.provider||!adapter?.manifest.backends.some(backend=>backend.id===catalog.backendId))throw new AdapterContractError("NATIVE_CONTEXT_CHANGED","Native catalog returned a different account or backend context");
+    }
+    catch (error) {
+      if(error instanceof AdapterContractError&&["MODEL_CATALOG_CLEANUP_UNKNOWN","NATIVE_CATALOG_CLEANUP_UNKNOWN"].includes(error.code))this.catalogCleanupUnknown=true;
+      catalog=error instanceof AdapterContractError&&(remote||error.code==="REMOTE_RESULT_INVALID")?fallback(error.code,error.message):error instanceof AdapterContractError && error.code==="NATIVE_VERSION_UNSUPPORTED" ? {...fallback(error.code,"Installed native version does not support the qualified catalog interface"),selectionSupport:"unsupported"} : error instanceof AdapterContractError && error.code==="NATIVE_CONTEXT_CHANGED" ? fallback(error.code,"Native account or configuration changed during the query; refresh before reviewing") : fallback("NATIVE_CATALOG_UNAVAILABLE","Native catalog could not be read; explicit selection is unavailable");
+    }
+    if(this.stopping)throw new PublicationError("CATALOG_CLOSED",409,"Native catalog admission is closed");
+    if(this.configuration.current().revision!==snapshot.revision)throw new PublicationError("SELECTION_CHANGED",409,"Configuration changed during native catalog query");
+    if(this.resolveProfileExecutionContext(profileId,repositoryId,"catalog").fingerprint!==applied.fingerprint)throw new PublicationError("SELECTION_CHANGED",409,"Account credentials or native context changed during the catalog query");
+    // Keep one latest UI snapshot per account/repository. Worktree preflight
+    // reads stay fresh and do not fill storage with per-Run model inventories.
+    if(catalog.failure?.code==="NATIVE_CATALOG_UNAVAILABLE"&&previous?.format==="account-model-catalog-cache-v1"&&previous.scopeRef===scopeRef&&previous.catalog){
+      catalog={...structuredClone(previous.catalog),freshness:"native-cache",selectionSupport:catalog.selectionSupport,failure:catalog.failure};
+    }
+    if((reason==="open"||reason==="manual-refresh")&&catalog.freshness==="native-fresh"&&!catalog.failure){
+      const directoryStable = repositoryIdentity && rhizaDigest(repositoryIdentity) === rhizaDigest(rhizaRepositoryIdentity(repository.root) ?? null);
+      this.database.saveEntity("model-catalog",key,json({format:"account-model-catalog-cache-v1",scopeRef,catalog,...(directoryStable?{repositoryIdentity}:{})}));
+    }
+    return catalog;
+    })();
+    this.catalogReads.set(readKey,operation);
+    try{return structuredClone(await operation);}finally{if(this.catalogReads.get(readKey)===operation)this.catalogReads.delete(readKey);}
+  }
+  private async prepareScmDelivery(draft:Pick<PublishDraftV1,"delivery">,repository:RepositoryConfig):Promise<ScmDeliverySelection>{
+    const snapshot=this.configuration.current(),delivery=draft.delivery;
+    if(delivery.type!=="pull-request"||!delivery.scmConnectorId||!delivery.targetRepository||!delivery.baseBranch)throw new PublicationError("SCM_SELECTION_REQUIRED",400,"Select an SCM connector, target repository and base branch explicitly");
+    const configured=snapshot.config.connectors.find(connector=>connector.id===delivery.scmConnectorId),adapter=this.connectors.get(delivery.scmConnectorId) as ScmAdapter|undefined;
+    if(!configured?.enabled||configured.kind!=="scm"||configured.definitionId!=="scm.github"||!adapter?.inspectDeliveryRepository)throw new PublicationError("SCM_UNAVAILABLE",409,"Selected SCM connector does not expose qualified PR preflight");
+    this.credentialContext.assertAvailable(configured);const contextFingerprint=this.connectorConfigurationFingerprint(configured.id),owner=repositoryRunnerId(snapshot.config,repository),remote=snapshot.config.runners.some(runner=>runner.id===owner&&runner.mode==="remote");
+    const target=remote?remoteDeliveryTarget(await this.remoteRequest(owner,{type:"native.repository_delivery",repositoryId:repository.id})):await this.workspaces.deliveryTarget(repository.id);
+    if(target.repository!==delivery.targetRepository.toLowerCase())throw new PublicationError("SCM_TARGET_MISMATCH",409,"PR repository does not match the owning origin");
+    const parts=target.repository.split("/");let inspection:Awaited<ReturnType<NonNullable<ScmAdapter["inspectDeliveryRepository"]>>>;
+    try{inspection=await adapter.inspectDeliveryRepository({owner:parts[0]!,name:parts[1]!},delivery.baseBranch);}catch(error){throw new PublicationError(error instanceof ConnectorError&&error.code==="AUTH"?"SCM_AUTH_UNAVAILABLE":"SCM_PREFLIGHT_UNAVAILABLE",409,"Selected SCM repository, base branch or write access could not be qualified");}
+    if(inspection.host!==target.host||inspection.repository!==target.repository||inspection.baseBranch!==delivery.baseBranch)throw new PublicationError("SCM_TARGET_MISMATCH",409,"SCM host or repository does not match the owning origin");
+    if(this.configuration.current().revision!==snapshot.revision||this.connectorConfigurationFingerprint(configured.id)!==contextFingerprint)throw new PublicationError("SELECTION_CHANGED",409,"SCM context changed during preflight");
+    return {version:1,scmConnectorId:configured.id,repository:target.repository,baseBranch:delivery.baseBranch,target,contextFingerprint,configRevision:snapshot.revision,reviewedAt:this.now().toISOString()};
+  }
+
+  private async preparePublication(draft:PublishDraftV1,repository:RepositoryConfig,_workspacePath?:string,context?:{owner:string;reviewed?:ExecutionSelection}):Promise<ExecutionSelection> {
+    await this.refreshLocalTrialSessions();
+    const snapshot=this.configuration.current();const profile=snapshot.config.agentProfiles.find(p=>p.id===draft.execution.profileId);
+    if(!profile)throw new PublicationError("PROFILE_REQUIRED",409,"Choose a configured native account");
+    if(repositoryRunnerId(snapshot.config,repository)!==profile.runnerId)throw new PublicationError("RUNNER_REPOSITORY_MISMATCH",409,"Account and repository belong to different Runners");
+    if(profile.runnerId!==this.embeddedRunner?.runner.id&&!(this.agentAdapters.get(profile.id) instanceof RemoteNativeAdapter))throw new PublicationError("REMOTE_EXECUTION_UNAVAILABLE",409,"Owning Runner has no qualified native execution backend");
+    if(draft.delivery.type!=="none"&&this.agentAdapters.get(profile.id) instanceof RemoteNativeAdapter&&!this.runners.list().find(runner=>runner.id===profile.runnerId)?.capabilities.includes(NATIVE_GIT_DELIVERY_CAPABILITY))throw new PublicationError("REMOTE_DELIVERY_UNAVAILABLE",409,"Update the owning Runner to support explicit Git delivery");
+    const catalog=await this.modelCatalog(profile.id,repository.id,_workspacePath?"before-start":"preflight",_workspacePath);
+    if(catalog.selectionSupport==="unsupported")throw new PublicationError("NATIVE_SELECTION_UNSUPPORTED",409,"This native backend does not expose qualified per-run model selection");
+    if(catalog.failure?.code==="NATIVE_AUTH_REQUIRED"||catalog.failure?.code==="PROFILE_DISABLED"||catalog.failure?.code==="NATIVE_CONTEXT_CHANGED")throw new PublicationError(catalog.failure.code,409,catalog.failure.message);
+    const automatic=draft.execution.selectionMode==="policy-auto";
+    const requestedSource=draft.execution.selectionSource;
+    if(requestedSource==="account-default"&&(automatic||draft.execution.selectionType!=="explicit-model"||!draft.execution.nativeModelId||draft.execution.nativeModelId!==stringSetting(profile.settings?.model)))throw new PublicationError("ACCOUNT_DEFAULT_CHANGED",409,"The reviewed account default changed; select and review it again");
+    if(requestedSource&&requestedSource!=="account-default"&&requestedSource!==(automatic?"policy":draft.execution.selectionType==="explicit-model"?"explicit":"native-default"))throw new PublicationError("INVALID_SELECTION_SOURCE",400,"Selection source does not match the requested model choice");
+    let routingDecision:ExecutionSelection["routingDecision"];
+    if(automatic){
+      if(!context)throw new PublicationError("ROUTING_REVIEW_REQUIRED",409,"Automatic dispatch requires an authenticated routing review");
+      if(draft.execution.selectionType||draft.execution.nativeModelId||Object.keys(draft.execution.nativeParameters??{}).length)throw new PublicationError("INVALID_AUTO_SELECTION",400,"Automatic routing cannot accept manual model parameters");
+      if(context.reviewed){
+        if(!context.reviewed.routingDecision)throw new PublicationError("ROUTING_REVIEW_REQUIRED",409,"Routing decision is required");
+        routingDecision=context.reviewed.routingDecision;this.modelRouting.revalidate(context.owner,draft,snapshot.revision,catalog,routingDecision);
+      }else routingDecision=await this.modelRouting.preview(context.owner,draft,snapshot.config,snapshot.revision,catalog);
+      if(this.configuration.current().revision!==snapshot.revision)throw new PublicationError("ROUTING_DECISION_STALE",409,"Configuration changed during task classification");
+      if(routingDecision.status!=="ready")throw new PublicationError(routingDecision.error!.code,409,routingDecision.error!.message,routingDecision);
+    }
+    const explicit=automatic||draft.execution.selectionType==="explicit-model";
+    let nativeParameters:ExecutionSelection["nativeParameters"]={};
+    if(automatic)nativeParameters={...routingDecision!.target!.nativeParameters};
+    else if(explicit){
+      if(catalog.freshness!=="native-fresh"||catalog.selectionSupport!=="explicit")throw new PublicationError("CATALOG_UNAVAILABLE",409,"A fresh native catalog is required for explicit selection");
+      if(catalog.revision!==draft.execution.catalogRevision||catalog.contextFingerprint!==draft.execution.contextFingerprint)throw new PublicationError("SELECTION_CHANGED",409,"Model catalog or account/project context changed; review again");
+      const entry=catalog.entries.find(e=>e.id===draft.execution.nativeModelId);
+      if(!entry?.selectable||entry.access==="denied")throw new PublicationError("MODEL_UNAVAILABLE",409,"Selected native model is not selectable");
+      if(entry.access==="unconfirmed"&&!draft.execution.allowUnconfirmedModelAccess)throw new PublicationError("MODEL_ACCESS_UNCONFIRMED",409,"Acknowledge that native catalog listing does not prove account access");
+      for(const [key,value] of Object.entries(draft.execution.nativeParameters??{}))if(!entry.parameterOptions[key]?.includes(value))throw new PublicationError("INVALID_NATIVE_PARAMETERS",400,"Native parameter is not supported by the selected model");
+      nativeParameters={...draft.execution.nativeParameters};
+    }else if(Object.keys(draft.execution.nativeParameters??{}).length)throw new PublicationError("INVALID_NATIVE_PARAMETERS",400,"Native defaults do not accept model parameters");
+    const candidates=this.dispatchCandidates(profile.id);
+    if(_workspacePath)for(const candidate of candidates) candidate.activeRuns-=this.database.listEntities<JsonValue>("run").filter(v=>{const r=v as unknown as Run;return r.worktree===_workspacePath&&r.state==="STARTING"&&r.profileId===candidate.profileId;}).length;
+    const decision=routeDeterministically({capabilities:["code","git"]},candidates);
+    if(!decision.selected)throw new PublicationError("EXECUTION_UNAVAILABLE",409,decision.explanation);
+    const backendId=decision.selected.adapter.manifest.backends[0]!.id;
+    const requiresInteraction=draft.execution.interactionRequirement!==undefined||Boolean(profile.nativeInteraction&&profile.nativeInteraction.mode!=="compatible");
+    if(requiresInteraction&&decision.selected.adapter instanceof RemoteNativeAdapter)throw new PublicationError("REMOTE_INTERACTION_UNAVAILABLE",409,"Owning Runner has no qualified interaction-requirement admission");
+    if(requiresInteraction&&catalog.backendId!==backendId)throw new PublicationError("EXECUTION_CONTEXT_DRIFT",409,"Actual model catalog backend changed; review the native requirement again");
+    const interactionRequirement=publicationInteraction(snapshot.config,decision.selected.adapter,profile.id,draft.execution.interactionRequirement,backendId,catalog.contextFingerprint);
+    const requestedModel=explicit?automatic?routingDecision!.target!.modelId:draft.execution.nativeModelId!:undefined;
+    const price=requestedModel&&catalog.backendId===backendId?admitCatalogPricing(catalog,requestedModel,nativeParameters,this.now().toISOString()):undefined;
+    if(price?.status==="available"&&this.agentAdapters.get(profile.id) instanceof RemoteNativeAdapter&&!this.runners.list().find(runner=>runner.id===profile.runnerId)?.capabilities.includes(NATIVE_MODEL_PRICING_CAPABILITY))throw new PublicationError("REMOTE_PRICING_UNAVAILABLE",409,"Update the owning Runner before reviewing a priced native selection");
+    const pricingSnapshot=price?.status==="available"?context?.reviewed?.pricingSnapshot&&samePricingTerms(context.reviewed.pricingSnapshot,price.snapshot)?structuredClone(context.reviewed.pricingSnapshot):price.snapshot:undefined;
+    return {version:1,mode:automatic?"policy-auto":"manual",source:automatic?"policy":explicit?requestedSource==="account-default"?"account-default":"explicit":"native-default",selectionType:explicit?"explicit-model":"native-default",...(requestedModel?{requestedModel,catalogRevision:catalog.revision}:{}),profileId:profile.id,runnerId:profile.runnerId,providerId:profile.provider,backendId,nativeParameters,...(interactionRequirement?{interactionRequirement}:{}),...(routingDecision?{routingDecision}:{}),...(pricingSnapshot?{pricingSnapshot}:{}),contextFingerprint:catalog.contextFingerprint,configRevision:snapshot.revision,selectedAt:this.now().toISOString()};
+  }
+
+  private compileLegacyRunSelection(run:Run,repositoryId:string,adapter:AgentAdapter):ExecutionSelection {
+    const scope=this.resolveProfileExecutionContext(run.profileId,repositoryId,"start");
+    const defaults=adapter.legacyInvocationDefaults?.();
+    const backendId=defaults?.backendId??(adapter.manifest.backends.length===1?adapter.manifest.backends[0]!.id:undefined);
+    if(!backendId||!adapter.manifest.backends.some(backend=>backend.id===backendId))throw new PublicationError("NATIVE_BACKEND_UNAVAILABLE",409,"The owning adapter has no unambiguous legacy execution backend");
+    const interactionRequirement=publicationInteraction(this.configuration.current().config,adapter,run.profileId,undefined,backendId,scope.fingerprint);
+    return {version:1,mode:"legacy",source:"legacy-config",profileId:run.profileId,runnerId:run.runnerId,providerId:run.providerId,backendId,...(interactionRequirement?{interactionRequirement}:{}),selectionType:defaults?.model?"explicit-model":"native-default",...(defaults?.model?{requestedModel:defaults.model}:{}),nativeParameters:{},contextFingerprint:scope.fingerprint,configRevision:scope.configRevision,selectedAt:this.now().toISOString()};
+  }
+
+  private assertRunSelectionRequirement(run:Run,adapter:AgentAdapter):void {
+    if(!run.executionSelection?.interactionRequirement)return;
+    const current=this.database.getEntity<JsonValue>("run",run.id) as unknown as Run|undefined;
+    if(this.agentAdapters.get(run.profileId)!==adapter||!current||contentHash(current.executionSelection)!==contentHash(run.executionSelection))throw new PublicationError("SELECTION_CHANGED",409,"Frozen native interaction requirement changed");
+    assertFrozenInteractionRequirement(run.executionSelection,adapter);
+  }
+  private async validateRunSelection(run:Run):Promise<void> {
+    const registeredContract=(this.database.getEntity<JsonValue>("run-contract",run.id)??this.database.getTaskContract<JsonValue>(run.taskId)) as unknown as TaskContract|undefined;
+    this.resolveProfileExecutionContext(run.profileId,registeredContract?.workspace?.repositoryId,"resume");
+    if(!run.executionSelection)return;
+    if(run.recoveryReason==="NATIVE_OUTCOME_UNKNOWN")throw new PublicationError("NATIVE_OUTCOME_UNKNOWN",409,"Inspect the original native process before continuing");
+    const selection=run.executionSelection;
+    const adapter=this.agentAdapters.get(run.profileId);if(!adapter)throw new PublicationError("PROFILE_UNAVAILABLE",409,"Original account adapter is unavailable");
+    assertFrozenInteractionRequirement(selection,adapter);
+    const contract=this.database.getEntity<JsonValue>("run-contract",run.id) as unknown as TaskContract|undefined;
+    if(!contract?.workspace||!run.worktree)throw new PublicationError("RUN_CONTEXT_UNAVAILABLE",409,"Frozen run context is unavailable");
+    if(selection.mode==="legacy"){
+      if(selection.source!=="legacy-config"||this.resolveProfileExecutionContext(run.profileId,contract.workspace.repositoryId,"resume").fingerprint!==selection.contextFingerprint)throw new PublicationError("SELECTION_CHANGED",409,"Legacy invocation context changed; review the original Run before continuing");
+      const current=this.database.getEntity<JsonValue>("run",run.id) as unknown as Run|undefined;
+      if(!current||current.state!==run.state||current.generation!==run.generation||current.leaseId!==run.leaseId||current.sessionId!==run.sessionId||contentHash(current.executionSelection)!==contentHash(selection))throw new PublicationError("RUN_CHANGED",409,"Run authority changed before continuation");
+      return;
+    }
+    const catalog=await this.modelCatalog(run.profileId,contract.workspace.repositoryId,"before-start",run.worktree);
+    if(catalog.failure?.code==="NATIVE_AUTH_REQUIRED"||catalog.runnerId!==selection.runnerId||catalog.contextFingerprint!==selection.contextFingerprint)throw new PublicationError("SELECTION_CHANGED",409,"Native account or project context changed before continuation");
+    if(selection.selectionType==="explicit-model"&&(catalog.freshness!=="native-fresh"||catalog.revision!==selection.catalogRevision))throw new PublicationError("SELECTION_CHANGED",409,"Native model catalog changed before continuation");
+    if(selection.pricingSnapshot){
+      const price=selection.requestedModel&&catalog.backendId===selection.backendId?admitCatalogPricing(catalog,selection.requestedModel,selection.nativeParameters,this.now().toISOString()):undefined;
+      if(price?.status!=="available"||!samePricingTerms(selection.pricingSnapshot,price.snapshot))throw new PublicationError("SELECTION_CHANGED",409,"Reviewed native price changed or is unavailable before continuation");
+    }
+    const current=this.database.getEntity<JsonValue>("run",run.id) as unknown as Run|undefined;
+    if(!current||current.state!==run.state||current.generation!==run.generation||current.leaseId!==run.leaseId||current.sessionId!==run.sessionId)throw new PublicationError("RUN_CHANGED",409,"Run authority changed before continuation");
+  }
+
+  private dispatchTask(taskId: string, body: TaskDispatchBody, idempotencyKey?: string, publication?: PublicationRecord): Promise<TaskDispatchResult> {
+    const external=this.database.getEntity<JsonValue>("task-rhiza-binding",taskId) as {jobId:string}|undefined;
+    if(external&&publication?.rhizaJobId!==external.jobId)return Promise.reject(new PublicationError("TARGET_AUTHORITY_CHANGED",409,"External jobs require a new RHIZA attempt and approval"));
+    const dispatch = this.dispatchQueue.then(() => this.performDispatchTask(taskId, body, idempotencyKey, publication));
+    this.dispatchQueue = dispatch.then(() => undefined, () => undefined);
+    return dispatch;
+  }
+
+  private async performDispatchTask(taskId: string, body: TaskDispatchBody, idempotencyKey?: string, publication?: PublicationRecord): Promise<TaskDispatchResult> {
+    const external=this.database.getEntity<JsonValue>("task-rhiza-binding",taskId) as {jobId:string}|undefined;
+    if(external&&publication?.rhizaJobId!==external.jobId)throw new PublicationError("TARGET_AUTHORITY_CHANGED",409,"External jobs require a new RHIZA attempt and approval");
+    if(publication)this.rhizaJobs.assertPublication(publication);
+    const existing = idempotencyKey ? this.database.getEntity<JsonValue>("task-dispatch", idempotencyKey) : undefined;
+    if (existing) {
+      const result = existing as unknown as TaskDispatchResult;
+      const current = this.database.getEntity<JsonValue>("run", result.run.id) as unknown as Run | undefined;
+      return current?.generation === result.run.generation ? { ...result, run: current } : result;
+    }
+    await this.refreshLocalTrialSessions();
+    const stored = this.database.getCanonicalTask<JsonValue>(taskId);
+    const contract = this.database.getTaskContract<JsonValue>(taskId) as unknown as TaskContract | undefined;
+    if (!stored || !contract) throw new TaskDispatchError("TASK_NOT_FOUND", 404, `Unknown task or contract ${taskId}`);
+    if(publication&&(contentHash(contract)!==contentHash(publication.contract)||publication.taskBinding&&stored.revision!==publication.taskBinding.taskRevision+(publication.taskBinding.specification?1:0)))throw new PublicationError("TASK_CHANGED",409,"Task contract changed after publication approval");
+    if ((stored.document as unknown as Task).state !== "READY") throw new TaskDispatchError("TASK_NOT_READY", 409, `Task ${taskId} is not dispatchable from ${(stored.document as unknown as Task).state}; READY is required`);
+    if (body?.profileId && !this.agentAdapters.has(body.profileId)) throw new TaskDispatchError("PROFILE_NOT_FOUND", 404, `Unknown profile ${body.profileId}`);
+    if ((this.database.getEntity<JsonValue>("task-archive", taskId) as { archivedAt?: string } | undefined)?.archivedAt) throw new TaskDispatchError("TASK_ARCHIVED", 409, "Restore the task before dispatch");
+    if(contract.workspace && body.repositoryId && body.repositoryId!==contract.workspace.repositoryId)throw new PublicationError("REPOSITORY_MISMATCH",409,"Task workspace is bound to another repository");
+    const repositoryId = contract.workspace?.repositoryId ?? body?.repositoryId ?? contract.delivery.repository;
+    const repositoryConfig = this.configuration.current().config.repositories.find(entry=>entry.id===repositoryId);
+    if (!repositoryId || !repositoryConfig) throw new TaskDispatchError("REPOSITORY_UNAVAILABLE",409,"Task repository is not registered");
+    if(contract.workspace)assertPublicationScope(contract.scope,repositoryConfig.scopePaths);
+    if(!publication&&contract.workspace){
+      const intent=this.database.getEntity<JsonValue>("task-execution-intent",taskId) as unknown as {publicationId:string;execution:PublishDraftV1["execution"]}|undefined;
+      if(intent){
+        const original=this.database.getEntity<JsonValue>("task-publication",intent.publicationId) as unknown as PublicationRecord|undefined;
+        if(!original)throw new PublicationError("PUBLICATION_NOT_FOUND",409,"Task publication context is unavailable");
+        const execution=body.execution??intent.execution;
+        if(intent.execution.selectionMode==="policy-auto"&&execution.selectionMode==="manual"&&execution.selectionType!=="explicit-model")throw new PublicationError("MANUAL_SELECTION_REQUIRED",409,"Overriding automatic routing requires a complete explicit native model selection");
+        if(execution.selectionMode!=="manual")throw new PublicationError("ROUTING_REVIEW_REQUIRED",409,"Automatic routing requires a fresh publication review before dispatch");
+        if(!body.execution&&execution.selectionType==="explicit-model"&&body.profileId&&body.profileId!==execution.profileId)throw new PublicationError("SELECTION_CHANGED",409,"Changing the account requires a fresh explicit model selection");
+        const profileId=body.profileId??execution.profileId;
+        const draft:PublishDraftV1={...original.draft,startMode:"dispatch",execution:{...execution,...(profileId?{profileId}:{})}};
+        const selection=await this.preparePublication(draft,repositoryConfig);
+        publication={...original,draft,selection,repository:repositoryConfig,configRevision:this.configuration.current().revision};
+        body={...body,profileId:selection.profileId};
+      }
+    }
+    if(publication && this.configuration.current().revision!==publication.configRevision)throw new PublicationError("SELECTION_CHANGED",409,"Configuration changed before dispatch");
+    const repositoryRunner=repositoryRunnerId(this.configuration.current().config,repositoryConfig),remote=this.configuration.current().config.runners.some(runner=>runner.id===repositoryRunner&&runner.mode==="remote");
+    if(body.profileId&&this.configuration.current().config.agentProfiles.find(profile=>profile.id===body.profileId)?.runnerId!==repositoryRunner)throw new PublicationError("RUNNER_REPOSITORY_MISMATCH",409,"Account and repository belong to different Runners");
+    if(remote&&!publication?.selection)throw new PublicationError("REMOTE_SELECTION_REQUIRED",409,"Remote dispatch requires a reviewed native execution selection");
+    let reviewedDelivery=publication?.deliverySelection;
+    if(contract.delivery.type==="pull-request"&&!contract.delivery.scmConnectorId&&!this.options.gitTransport){
+      const scm=this.connectors.list().find(connector=>connector.instance.kind==="scm"&&connector.definition.id==="scm.github");
+      if(!scm)throw new PublicationError("SCM_UNAVAILABLE",409,"A configured GitHub connector is required before legacy delivery can start");
+      reviewedDelivery=await this.prepareScmDelivery({delivery:{type:"pull-request",scmConnectorId:scm.instance.id,targetRepository:contract.delivery.repository??"",baseBranch:contract.delivery.baseBranch??"main"}},repositoryConfig);
+    }
+    if(contract.delivery.type==="pull-request"&&contract.delivery.scmConnectorId&&(!reviewedDelivery||reviewedDelivery.scmConnectorId!==contract.delivery.scmConnectorId||reviewedDelivery.repository!==contract.delivery.repository||reviewedDelivery.baseBranch!==contract.delivery.baseBranch))throw new PublicationError("SCM_REVIEW_REQUIRED",409,"Review the explicit SCM delivery before dispatch");
+    if(remote&&contract.delivery.type==="pull-request"&&!reviewedDelivery)throw new PublicationError("REMOTE_DELIVERY_UNAVAILABLE",409,"Remote PR delivery requires a reviewed owning target");
+    const scheduler = new CanonicalScheduler(() => this.dispatchCandidates(body?.profileId).filter(candidate=>candidate.runnerId===repositoryRunner));
+    const runId = randomUUID();
+    const baseCommit=contract.workspace?.baseCommit??publication?.baseCommit;
+    const workspacePlan = {
+      repositoryId,
+      taskId: taskId,
+      runId,
+      attempt: 1,
+      baseRef: contract.workspace?.baseRef ?? body?.baseRef ?? contract.delivery.baseBranch ?? repositoryConfig.defaultBaseRef,
+      scopePaths: contract.workspace ? contract.scope : repositoryConfig.scopePaths,
+      ...(baseCommit ? {baseCommit}:{}),
+      ...(contract.workspace?.targetBranch ? {targetBranch:contract.workspace.targetBranch}:{}),
+    };
+    this.database.saveEntity("workspace-intent",runId,json({...workspacePlan,state:remote?"PLANNED":"CREATING",runnerId:repositoryRunner}));
+    const workspace=remote?this.remoteWorkspace(await this.remoteRequest(repositoryRunner,{type:"native.workspace_plan",profileId:publication!.selection!.profileId,plan:workspacePlan}),workspacePlan):await this.workspaces.create(workspacePlan);
+    if(!remote)this.database.transaction(()=>{this.database.saveEntity("workspace-handle",runId,json(workspace));this.database.saveEntity("workspace-intent",runId,json({...workspacePlan,state:"CREATED",path:workspace.path}));});
+    const runContract:TaskContract={...contract,workspace:{...contract.workspace,repositoryId,baseRef:workspace.baseRef,baseCommit:workspace.baseRevision}};
+    let dispatched: Awaited<ReturnType<CanonicalScheduler["dispatch"]>>;
+    let localStart:LocalStartAdmission|undefined;
+    this.dispatchingRuns.add(runId);
+    try {
+      dispatched = await scheduler.dispatch({
+        ...(!remote?{
+          onRunStartSending:(run:Run)=>{
+            if(!localStart||localStart.fence.runId!==run.id)throw new InteractionGuardError("STALE_RUN_AUTHORITY");
+            localStart.beforeSend();
+          },
+          onRunStartSettled:(_run:Run,outcome:AdapterStartOutcome)=>{localStart!.settled(outcome);},
+        }:{}),
+        task: stored.document as unknown as Task,
+        taskRevision: stored.revision,
+        contract:runContract,
+        requirements: {
+          capabilities: ["code", "git", ...(body?.capabilities ?? [])],
+          ...(body?.runnerTags?.length ? { runnerTags: body.runnerTags } : {}),
+          ...(body?.providerIds?.length ? { providerIds: body.providerIds } : {}),
+        },
+        workspacePath: workspace.path,
+        ...(publication?.selection ? {executionSelection:publication.selection}:{}),
+        beforeStart:async()=>{
+          if(publication)this.rhizaJobs.assertPublication(publication);
+          if(publication&&contentHash(this.database.getTaskContract(taskId))!==contentHash(publication.contract))throw new PublicationError("TASK_CHANGED",409,"Task contract changed before native startup");
+          if(reviewedDelivery){const current=await this.prepareScmDelivery({delivery:{type:"pull-request",scmConnectorId:reviewedDelivery.scmConnectorId,targetRepository:reviewedDelivery.repository,baseBranch:reviewedDelivery.baseBranch}},repositoryConfig);if(contentHash({...current,reviewedAt:undefined})!==contentHash({...reviewedDelivery,reviewedAt:undefined}))throw new PublicationError("SELECTION_CHANGED",409,"SCM target or context changed before native start");}
+          if(remote){
+            const reserved=this.database.getEntity<JsonValue>("run",runId) as unknown as Run|undefined;
+            if(!reserved||reserved.state!=="STARTING")throw new PublicationError("RUN_CHANGED",409,"Remote workspace requires a reserved canonical Run");
+            this.database.saveEntity("workspace-intent",runId,json({...workspacePlan,state:"CREATING",runnerId:repositoryRunner}));
+            let prepared:unknown;
+            try{prepared=await this.remoteRequest(repositoryRunner,{type:"native.workspace_prepare",runId,profileId:reserved.profileId,plan:workspacePlan,verificationCommandIds:contract.verification,...(contract.delivery.type==="commit"?{delivery:{type:"commit" as const,message:commitMessage(contract.goal)}}:contract.delivery.type==="pull-request"&&reviewedDelivery?{delivery:{type:"pull-request" as const,message:commitMessage(contract.goal),target:reviewedDelivery.target}}:{})},reserved,`native-prepare:${runId}:${reserved.generation}`);}
+            catch(error){if(error instanceof AdapterContractError)throw error;throw new AdapterContractError("COMMAND_OUTCOME_UNKNOWN","Remote workspace preparation response is unconfirmed");}
+            const actual=this.remoteWorkspace(prepared,workspacePlan,workspace);
+            this.database.transaction(()=>{this.database.saveEntity("workspace-handle",runId,json({...actual,runnerId:repositoryRunner}));this.database.saveEntity("workspace-intent",runId,json({...workspacePlan,state:"CREATED",path:actual.path,runnerId:repositoryRunner}));});
+          }else for(const scope of workspace.scopePaths)await this.workspaces.assertPathAllowed(workspace,scope);
+          if(publication?.selection){
+            const selection=await this.preparePublication(publication.draft,repositoryConfig,workspace.path,{owner:publication.owner,reviewed:publication.selection});
+            if(contentHash({...selection,selectedAt:undefined})!==contentHash({...publication.selection,selectedAt:undefined}))throw new PublicationError("SELECTION_CHANGED",409,"Selection changed before native startup");
+            if(this.configuration.current().revision!==publication.configRevision)throw new PublicationError("SELECTION_CHANGED",409,"Configuration changed before native startup");
+          }
+          const selectionRun=this.database.getEntity<JsonValue>("run",runId) as unknown as Run|undefined;
+          if(publication)this.rhizaJobs.assertPublication(publication);
+          if(selectionRun?.executionSelection?.mode==="legacy")await this.validateRunSelection(selectionRun);
+          const reserved=this.database.getEntity<JsonValue>("run",runId) as unknown as Run|undefined;
+          const currentTask=this.database.getCanonicalTask<JsonValue>(taskId)?.document as unknown as Task|undefined;
+          if(reserved?.state!=="STARTING"||currentTask?.state!=="QUEUED"||currentTask.currentRunId!==runId)throw new PublicationError("RUN_CHANGED",409,"Task or run changed during preflight");
+        },
+        runId,
+        onRunStarting: (run, decision) => {
+          if(!run.executionSelection)run.executionSelection=this.compileLegacyRunSelection(run,repositoryId,decision.selected!.adapter);
+          if(!remote&&decision.selected!.adapter.supportsExecutionRef)run.executionRef={version:1,id:`execution:${run.id}`,kind:"managed-worktree",runnerId:run.runnerId,repositoryId,workspaceId:run.id,pathRef:`workspace:${run.id}`,branch:workspace.branch,baseRevision:workspace.baseRevision};
+          const selectedModel = this.configuration.current().config.agentProfiles.find((profile) => profile.id === run.profileId)?.settings?.model;
+          if(publication?.selection?.requestedModel)run.model={id:publication.selection.requestedModel,source:"selection"};
+          if (!publication?.selection && typeof selectedModel === "string") run.model = { id: selectedModel, source: "configuration" };
+          run.branch = workspace.branch;
+          run.leaseExpiresAt = new Date(this.now().getTime() + 15 * 60_000).toISOString();
+          this.database.transaction(() => {
+            if ((this.database.getEntity<JsonValue>("task-archive", taskId) as { archivedAt?: string } | undefined)?.archivedAt) throw new TaskDispatchError("TASK_ARCHIVED", 409, "Restore the task before dispatch");
+            const current = this.database.getCanonicalTask<JsonValue>(taskId);
+            const currentContract = this.database.getTaskContract<JsonValue>(taskId) as unknown as TaskContract | undefined;
+            if (!current || (current.document as unknown as Task).state !== "READY" || currentContract?.revision !== contract.revision) throw new TaskDispatchError("TASK_CHANGED", 409, "Task changed before dispatch reservation");
+            if(publication && this.configuration.current().revision!==publication.configRevision)throw new PublicationError("SELECTION_CHANGED",409,"Configuration changed during workspace creation");
+            this.database.saveEntity("run-contract",run.id,json(runContract));
+            if(reviewedDelivery)this.database.saveEntity("run-delivery-selection",run.id,json(reviewedDelivery));
+            this.database.saveEntity("run-verification-config",run.id,json(repositoryConfig.verificationCommands));
+            this.database.saveEntity("run-snapshot-verification-config",run.id,json({version:1,profile:structuredClone(repositoryConfig.snapshotVerification??null)}));
+            this.database.saveEntity("run", run.id, json(run));
+            if(publication)this.publications.markStarting(publication.owner,publication.preview.publicationId,run);
+            const bound = this.tasks.execute({ id: `dispatch:${run.id}:bound`, taskId, baseRevision: current.revision, actor: "scheduler", command: { type: "task.set-current-run", runId: run.id } });
+            this.tasks.execute({ id: `dispatch:${run.id}:queued`, taskId, baseRevision: bound.revision, actor: "scheduler", command: { type: "task.transition", state: "QUEUED" } });
+            if (idempotencyKey) this.database.saveEntity("task-dispatch", idempotencyKey, json({ run, routing: { explanation: decision.explanation, eligible: decision.eligible, rejected: decision.rejected } }));
+            if(!remote)localStart=this.reserveLocalStart(run,runContract,decision.selected!.adapter,publication?.owner??"scheduler",repositoryId);
+          });
+          this.restoreLeaseAuthority(run);
+        },
+      });
+    } catch (error) {
+      const pending=this.nativeStartSettlements.get(runId);this.nativeStartSettlements.delete(runId);pending?.reject(error);
+      if(!remote&&!this.database.getEntity("run",runId)){const cleanup = await this.workspaces.cleanupPlan(workspace);if (cleanup.safe) await this.workspaces.cleanup(cleanup);}
+      if (error instanceof TaskDispatchError || error instanceof ConnectorError) throw error;
+      throw new TaskDispatchError("DISPATCH_UNAVAILABLE", 409, error instanceof Error ? error.message : "Dispatch is unavailable");
+    }finally{this.dispatchingRuns.delete(runId);}
+    const reserved = this.database.getEntity<JsonValue>("run", dispatched.run.id) as unknown as Run | undefined;
+    if (reserved?.model) dispatched.run.model = reserved.model;
+    dispatched.run.branch = workspace.branch;
+    if (dispatched.run.failureReason) dispatched.run.failureReason = String(redactValue(dispatched.run.failureReason));
+    const result = { run: dispatched.run, routing: { explanation: dispatched.decision.explanation, eligible: dispatched.decision.eligible, rejected: dispatched.decision.rejected } };
+    try {
+      this.database.transaction(() => {
+        const current = this.database.getCanonicalTask<JsonValue>(taskId)!;
+        const task = current.document as unknown as Task;
+        if(localStart){if(current.revision!==localStart.fence.expectedTaskRevision)throw new TaskDispatchError("TASK_CHANGED",409,"Task revision changed during native startup");localStart.assertProjection();}
+        if (task.state !== "QUEUED" || task.currentRunId !== dispatched.run.id) throw new TaskDispatchError("TASK_CHANGED", 409, "Task changed during agent startup");
+        this.saveAdvancedRun(dispatched.run, "STARTING");
+        const state = dispatched.run.state === "FAILED" ? "FAILED" : dispatched.run.state==="RUNNER_UNAVAILABLE"?"WAITING_RESOURCE":"RUNNING";
+        this.tasks.execute({ id: `dispatch:${dispatched.run.id}:${state}`, taskId, baseRevision: current.revision, actor: "scheduler", command: { type: "task.transition", state } });
+        if(publication)this.publications.markOutcome(publication.owner,publication.preview.publicationId,dispatched.run);
+        if (idempotencyKey) this.database.saveEntity("task-dispatch", idempotencyKey, json(result));
+      });
+    } catch (error) {
+      const pending=this.nativeStartSettlements.get(dispatched.run.id);this.nativeStartSettlements.delete(dispatched.run.id);pending?.reject(error);
+      if(localStart){
+        const startFence=localStart.fence;
+        const current=this.database.getEntity<JsonValue>("run",dispatched.run.id) as unknown as Run|undefined;
+        if(current&&current.generation===startFence.generation&&current.leaseId===startFence.leaseId&&current.sessionId===startFence.sessionId&&!isTerminalRunState(current.state)){
+          // Project the recorded external outcome without acknowledging a concurrent Task edit.
+          current.state=dispatched.run.state==="FAILED"?"FAILED":"RUNNER_UNAVAILABLE";current.resumePolicy="manual";current.failureReason=dispatched.run.failureReason??"Native startup authority changed; inspect the original execution";
+          if(current.state==="FAILED")current.endedAt=this.now().toISOString();else current.recoveryReason="NATIVE_OUTCOME_UNKNOWN";
+          this.database.saveEntity("run",current.id,json(current));
+          if(current.state!=="FAILED")try{await this.cleanupStaleStart(current,localStart);}catch(cleanupError){this.app.log.warn({error:redactValue(cleanupError),runId:current.id},"Guarded startup cleanup is unconfirmed");}
+        }
+      }else{
+        if (!dispatched.run.sessionId.startsWith("unstarted:")) {
+          try { await this.agentAdapters.get(dispatched.run.profileId)?.cancel(dispatched.run.sessionId); }
+          catch (cleanupError) { this.app.log.warn({ error: redactValue(cleanupError), runId: dispatched.run.id }, "dispatch cleanup failed"); }
+        }
+        await this.failRun(dispatched.run, "Task or run authority changed during agent startup");
+      }
+      throw error;
+    }
+    const pendingStart=this.nativeStartSettlements.get(dispatched.run.id);this.nativeStartSettlements.delete(dispatched.run.id);
+    if(dispatched.run.state==="ACTIVE")pendingStart?.resolve();else pendingStart?.reject(new InteractionGuardError("NATIVE_START_OUTCOME_UNKNOWN"));
+    this.fleetEvents.publish("run.changed", dispatched.run.id, { id: dispatched.run.id, taskId: dispatched.run.taskId, state: dispatched.run.state });
+    if(remote&&dispatched.run.state==="FAILED")try{await this.remoteRequest(repositoryRunner,{type:"lease.revoke",leaseId:dispatched.run.leaseId,generation:dispatched.run.generation,reason:"Canonical startup failed"},dispatched.run);}catch(error){this.app.log.warn({runId,error:redactValue(error)},"remote failed-start lease cleanup is unconfirmed");}
+    return result;
+  }
+
+  private rerouteRun(runId: string, profileId: string, context: { actorId: string; workflowId: string }): Promise<{ supersededRunId: string; run: Run }> {
+    const run=this.database.getEntity<JsonValue>("run",runId) as unknown as Run|undefined;
+    if(run&&this.database.getEntity("task-rhiza-binding",run.taskId))return Promise.reject(new PublicationError("TARGET_AUTHORITY_CHANGED",409,"External jobs require a new RHIZA attempt and approval"));
+    const authority=run?{principal:{id:context.actorId,roles:["operator"],profileId:run.profileId},fence:this.nativeInteractions.fenceFor(run,`reroute:${contentHash(context)}`)}:undefined;
+    const result = this.dispatchQueue.then(() => this.performReroute(runId, profileId, context,authority));
+    this.dispatchQueue = result.then(() => undefined, () => undefined);
+    return result;
+  }
+
+  private async performReroute(runId: string, profileId: string, context: { actorId: string; workflowId: string },authority:{principal:InteractionPrincipal;fence:MutationFence}|undefined): Promise<{ supersededRunId: string; run: Run }> {
+    const originalRun=this.database.getEntity<JsonValue>("run",runId) as unknown as Run|undefined;
+    if(originalRun&&this.database.getEntity("task-rhiza-binding",originalRun.taskId))throw new PublicationError("TARGET_AUTHORITY_CHANGED",409,"External jobs require a new RHIZA attempt and approval");
+    const receiptId = contentHash(context), receipt = this.database.getEntity<JsonValue>("run-reroute", receiptId) as { previousRunId: string; profileId: string; runId: string } | undefined;
+    if (receipt) {
+      if (receipt.previousRunId !== runId || receipt.profileId !== profileId) throw new SemanticPolicyError("INVALID_INPUT", "Reroute identity already belongs to another replacement");
+      const run = this.database.getEntity<JsonValue>("run", receipt.runId) as unknown as Run | undefined;
+      if (!run) throw new SemanticPolicyError("INVALID_INPUT", "Reserved replacement requires operator inspection");
+      return { supersededRunId: runId, run };
+    }
+    if(!authority)throw new SemanticPolicyError("INVALID_INPUT","Original reroute authority is unavailable");
+    const assertReroute=()=>{
+      this.nativeInteractions.assertInteraction(authority.principal,"reroute",authority.fence);
+      const current=this.database.getEntity<JsonValue>("run",runId) as unknown as Run|undefined;
+      const targetPolicy=this.configuration.current().config.agentProfiles.find(p=>p.id===profileId)?.nativeInteraction;
+      if(current?.executionSelection?.interactionRequirement!==undefined||targetPolicy&&targetPolicy.mode!=="compatible")throw new PublicationError("INTERACTION_REVIEW_REQUIRED",409,"原生交互要求需要重新审阅发布，不能直接重路由。");
+    };
+    assertReroute();await this.refreshLocalTrialSessions();assertReroute();
+    const run = this.database.getEntity<JsonValue>("run", runId) as unknown as Run | undefined;
+    const snapshot = this.configuration.current(), profile = snapshot.config.agentProfiles.find(entry => entry.id === profileId), adapter = this.agentAdapters.get(profileId);
+    const previousAdapter = run ? this.agentAdapters.get(run.profileId) : undefined;
+    const workspace = run?.worktree ? this.workspaces.get(run.worktree) : undefined;
+    const contract = this.database.getEntity<JsonValue>("run-contract", runId) as unknown as TaskContract | undefined;
+    const verification = this.database.getEntity<JsonValue>("run-verification-config", runId) as unknown as RepositoryConfig["verificationCommands"] | undefined;
+    const snapshotVerification = this.database.getEntity<JsonValue>("run-snapshot-verification-config", runId);
+    const delivery = this.database.getEntity<JsonValue>("run-delivery-selection", runId) as unknown as ScmDeliverySelection | undefined;
+    const repository = workspace ? snapshot.config.repositories.find(entry => entry.id === workspace.repositoryId) : undefined;
+    if (!run || !["ACTIVE", "WAITING_USER", "RESOURCE_BLOCKED", "SUSPECTED_STALL"].includes(run.state) || run.executionSelection&&run.executionSelection.mode!=="legacy" || !profile || !adapter || !previousAdapter || !workspace || workspace.runId !== run.id || workspace.taskId !== run.taskId || !contract || !Array.isArray(verification) || !repository) throw new SemanticPolicyError("INVALID_INPUT", "Legacy reroute requires a current Run with frozen context and an owned worktree; otherwise review a new publication");
+    if (profile.runnerId !== run.runnerId || previousAdapter instanceof RemoteNativeAdapter || adapter instanceof RemoteNativeAdapter) throw new SemanticPolicyError("INVALID_INPUT", "Rerouting across Runner authority requires a new reviewed publication");
+    if (run.recoveryReason === "NATIVE_OUTCOME_UNKNOWN" || this.runCancellations.has(run.id) || this.pendingConsoleInputs.has(run.sessionId)) throw new SemanticPolicyError("INVALID_INPUT", "Pending or uncertain native execution must settle before reroute");
+    if (contract.delivery.type === "pull-request" && !delivery && !this.options.gitTransport) throw new SemanticPolicyError("INVALID_INPUT", "The original Run has no frozen SCM target; review a new publication");
+    const requirements = { capabilities: run.requiredCapabilities ?? ["code", "git"] };
+    this.resolveProfileExecutionContext(profileId, repository.id, "start");
+    const admission = routeDeterministically(requirements, this.dispatchCandidates(profileId).filter(candidate => candidate.runnerId === run.runnerId).map(candidate => ({ ...candidate, activeRuns: Math.max(0, candidate.activeRuns - 1) })));
+    if (!admission.selected) throw new SemanticPolicyError("INVALID_INPUT", admission.explanation);
+    const controller = new AbortController(); this.runReroutes.set(run.id, controller);
+    this.pendingProfileStarts.set(profileId, (this.pendingProfileStarts.get(profileId) ?? 0) + 1);
+    let replacementId: string | undefined;
+    const assertTaskOwner = (stopped: boolean): void => {
+      const current = this.database.getEntity<JsonValue>("run", run.id) as unknown as Run | undefined;
+      const taskRecord=this.database.getCanonicalTask<JsonValue>(run.taskId),task=taskRecord?.document as unknown as Task|undefined;
+      if(stopped)this.nativeInteractions.assertStoppedReroute(authority.principal,authority.fence);else assertReroute();
+      if (controller.signal.aborted || this.configuration.current().revision !== snapshot.revision || !current || current.generation !== run.generation || current.leaseId !== run.leaseId || current.state !== (stopped ? "SUPERSEDED" : run.state) || task?.currentRunId !== run.id || !["RUNNING", "WAITING_USER", "WAITING_RESOURCE"].includes(task.state)) throw new SemanticPolicyError("INVALID_INPUT", "Task or execution authority changed during reroute");
+      this.resolveProfileExecutionContext(profileId, repository.id, "start");
+    };
+    const checkDelivery = async (): Promise<void> => {
+      if (!delivery) return;
+      const current = await this.prepareScmDelivery({ delivery: { type: "pull-request", scmConnectorId: delivery.scmConnectorId, targetRepository: delivery.repository, baseBranch: delivery.baseBranch } }, repository);
+      if (contentHash({ ...current, configRevision: undefined, reviewedAt: undefined }) !== contentHash({ ...delivery, configRevision: undefined, reviewedAt: undefined })) throw new SemanticPolicyError("INVALID_INPUT", "The frozen SCM target changed before reroute");
+    };
+    try {
+      await checkDelivery(); assertTaskOwner(false);
+      this.runInputs.assertAvailable({ runId: run.id, sessionId: run.sessionId, generation: run.generation, authorityHash: contentHash({ runId: run.id, generation: run.generation, leaseId: run.leaseId, lastActivityAt: run.lastActivityAt }) });
+      this.cancelledRunIds.add(run.id);
+      const stopping = Promise.resolve().then(() => this.stopRunExecution(run, "SUPERSEDED",authority)).finally(() => { this.runCancellations.delete(run.id); });
+      this.runCancellations.set(run.id, stopping);
+      const stopped = await stopping; assertTaskOwner(true);
+      await this.workspaces.restore(workspace); assertTaskOwner(true);
+      const task = this.database.getCanonicalTask<JsonValue>(run.taskId)!;
+      const scheduler = new CanonicalScheduler(() => this.dispatchCandidates(profileId).filter(candidate => candidate.runnerId === run.runnerId));
+      replacementId = randomUUID(); let reservedRevision: number | undefined, replacementStart:LocalStartAdmission|undefined;
+      const dispatched = await scheduler.dispatch({
+        onRunStartSending:()=>{if(controller.signal.aborted||!replacementStart)throw new InteractionGuardError("STALE_RUN_AUTHORITY");replacementStart.beforeSend();},
+        onRunStartSettled:(_run,outcome)=>{replacementStart!.settled(outcome);},
+        task: task.document as unknown as Task, taskRevision: task.revision, contract, requirements, workspacePath: workspace.path, runId: replacementId, replacement: stopped,
+        onRunStarting: (replacement,decision) => {
+          assertTaskOwner(true);
+          replacement.executionSelection=this.compileLegacyRunSelection(replacement,repository.id,decision.selected!.adapter);
+          if(decision.selected!.adapter.supportsExecutionRef)replacement.executionRef={version:1,id:`execution:${replacement.id}`,kind:"managed-worktree",runnerId:replacement.runnerId,repositoryId:repository.id,workspaceId:replacement.id,pathRef:`workspace:${replacement.id}`,branch:workspace.branch,baseRevision:workspace.baseRevision};
+          replacement.branch = workspace.branch; replacement.leaseExpiresAt = new Date(this.now().getTime() + 15 * 60_000).toISOString();
+          replacement.revokedLeaseIds = [...new Set([...(run.revokedLeaseIds ?? []), run.leaseId])];
+          if (typeof profile.settings?.model === "string") replacement.model = { id: profile.settings.model, source: "configuration" };
+          const handle = { ...workspace, runId: replacement.id, attempt: replacement.attempt };
+          this.database.transaction(() => {
+            this.database.saveEntity("run", replacement.id, json(replacement));
+            this.database.saveEntity("run-contract", replacement.id, json(contract));
+            this.database.saveEntity("run-verification-config", replacement.id, json(verification));
+            if (snapshotVerification !== undefined) this.database.saveEntity("run-snapshot-verification-config", replacement.id, json(snapshotVerification));
+            if (delivery) this.database.saveEntity("run-delivery-selection", replacement.id, json(delivery));
+            this.database.saveEntity("workspace-handle", replacement.id, json(handle));
+            this.database.saveEntity("workspace-transfer", run.id, json({ previousRunId: run.id, runId: replacement.id, taskId: run.taskId, path: workspace.path, transferredAt: this.now().toISOString() }));
+            const current = this.database.getCanonicalTask<JsonValue>(run.taskId)!;
+            reservedRevision = this.tasks.execute({ id: `reroute:${replacement.id}:bind`, taskId: run.taskId, baseRevision: current.revision, actor: context.actorId, command: { type: "task.set-current-run", runId: replacement.id } }).revision;
+            this.database.saveEntity("run-reroute", receiptId, json({ previousRunId: run.id, profileId, runId: replacement.id }));
+            replacementStart=this.reserveLocalStart(replacement,contract,decision.selected!.adapter,context.actorId,repository.id);
+          });
+          this.restoreLeaseAuthority(replacement); this.dispatchingRuns.add(replacement.id);
+        },
+        beforeStart: async () => {
+          const handle = this.database.getEntity<JsonValue>("workspace-handle", replacementId!) as unknown as WorkspaceHandle;
+          await this.workspaces.restore(handle);
+          for (const scope of handle.scopePaths) await this.workspaces.assertPathAllowed(handle, scope);
+          await checkDelivery();
+          const current = this.database.getEntity<JsonValue>("run", replacementId!) as unknown as Run | undefined, currentTask = this.database.getCanonicalTask<JsonValue>(run.taskId);
+          if (controller.signal.aborted || this.configuration.current().revision !== snapshot.revision || current?.state !== "STARTING" || currentTask?.revision !== reservedRevision || (currentTask?.document as unknown as Task)?.currentRunId !== replacementId) throw new SemanticPolicyError("INVALID_INPUT", "Replacement authority changed before native startup");
+          this.fenceNativeSpawn(replacementId!, profileId);
+        },
+      });
+      try {
+        this.database.transaction(() => {
+          const current = this.database.getCanonicalTask<JsonValue>(run.taskId)!, task = current.document as unknown as Task;
+          if (controller.signal.aborted || task.currentRunId !== dispatched.run.id || current.revision !== reservedRevision) throw new SemanticPolicyError("INVALID_INPUT", "Task authority changed during replacement startup");
+          replacementStart!.assertProjection();
+          this.saveAdvancedRun(dispatched.run, "STARTING");
+          const nextState = dispatched.run.state === "FAILED" ? "FAILED" : dispatched.run.state === "ACTIVE" ? "RUNNING" : undefined;
+          if (nextState && task.state !== nextState) this.tasks.execute({ id: `reroute:${dispatched.run.id}:${nextState}`, taskId: run.taskId, baseRevision: current.revision, actor: context.actorId, command: { type: "task.transition", state: nextState } });
+        });
+      } catch (error) {
+        if(replacementStart)try{await this.cleanupStaleStart(dispatched.run,replacementStart);}catch(cleanupError){this.app.log.warn({error:redactValue(cleanupError),runId:dispatched.run.id},"stale reroute cleanup is unconfirmed");}
+        this.dispatchingRuns.delete(dispatched.run.id);
+        this.markRemoteUnavailable(dispatched.run.id, "Replacement startup authority changed; inspect the original native process", "NATIVE_OUTCOME_UNKNOWN", dispatched.run);
+        throw error;
+      }
+      this.fleetEvents.publish("run.changed", dispatched.run.id, { id: dispatched.run.id, state: dispatched.run.state });
+      return { supersededRunId: run.id, run: dispatched.run };
+    } finally {
+      if (replacementId) this.dispatchingRuns.delete(replacementId);
+      this.runReroutes.delete(run.id);
+      const pending = (this.pendingProfileStarts.get(profileId) ?? 1) - 1;
+      if (pending) this.pendingProfileStarts.set(profileId, pending); else this.pendingProfileStarts.delete(profileId);
+    }
+  }
+
   private registerSemanticTools(): void {
+    for(const operation of ["takeover","return","history"] as const)this.semanticTools.register({
+      name:`run.${operation}`,description:operation==="history"?"Read bounded native history without changing control":"Request native control handoff without sending a prompt",
+      risk:operation==="history"?"read":"privileged",...(operation!=="history"?{requiredRoles:["operator"]}:{}),
+      input:{required:["target"],properties:{target:"string",settlePolicy:"string",fence:"object"},additionalProperties:false},
+      execute:async({target,settlePolicy,fence},context)=>{
+        const run=this.database.getEntity<JsonValue>("run",String(target)) as unknown as Run|undefined;if(!run)throw new SemanticPolicyError("INVALID_INPUT","Unknown run");
+        const authority=this.nativeWorkflowFence(run,context.workflowId,context.principal,fence,operation!=="history");
+        if(operation==="history"){
+          const page=await this.nativeHistoryService(run).readNativeHistory({...context.principal,profileId:run.profileId},run.sessionId,{limit:50});
+          this.nativeWorkflowFence(run,context.workflowId,context.principal,fence,false);
+          return {source:"native",page};
+        }
+        const receipt=operation==="takeover"?this.nativeInteractions.requestHandoff({principal:context.principal,fence:authority,settlePolicy:settlePolicy===undefined?"wait":settlePolicy as "wait"|"interrupt"}):this.nativeInteractions.requestReclaim({principal:context.principal,fence:authority});
+        this.fleetEvents.publish("run.changed",run.id,{id:run.id});
+        return {receipt,control:new InteractionStore(this.database).control(run.sessionId),requiresReconciliation:true};
+      },
+    });
+
+    this.semanticTools.register({
+      name: "task.dispatch", description: "Dispatch a READY task to a configured agent profile", risk: "privileged", requiredRoles: ["operator"],
+      input: { required: ["target"], properties: { target: "string", profileId: "string" }, additionalProperties: false },
+      execute: async ({ target, profileId }, context) => this.dispatchTask(String(target), typeof profileId === "string" ? { profileId } : {}, `semantic:${context.workflowId}`),
+    });
     this.semanticTools.register({
       name: "agent.discover", description: "Discover an installed agent provider", risk: "read", input: { required: ["provider", "alias"], properties: { provider: "string", alias: "string", executable: "string", configDir: "string", codexHome: "string", model: "string" }, additionalProperties: false },
       execute: async (arguments_) => {
         const provider = String(arguments_.provider).toLocaleLowerCase();
         const alias = String(arguments_.alias);
+        if (isNativeCliProvider(provider)) return probeNativeCliProfile(provider, { id: alias.toLocaleLowerCase(), alias, ...(typeof arguments_.configDir === "string" ? {configDir:arguments_.configDir}:{}), ...(typeof arguments_.executable === "string" ? { executable: arguments_.executable } : {}), ...(typeof arguments_.model === "string" ? { model: arguments_.model } : {}) });
         if (provider === "qoder") return probeQoderProfile({ id: alias.toLocaleLowerCase(), alias, ...(typeof arguments_.executable === "string" ? { executable: arguments_.executable } : {}), ...(typeof arguments_.configDir === "string" ? { configDir: arguments_.configDir } : {}), ...(typeof arguments_.model === "string" ? { model: arguments_.model } : {}) });
         if (provider === "codex" && typeof arguments_.codexHome === "string") return probeCodexProfile({ id: alias.toLocaleLowerCase(), alias, codexHome: arguments_.codexHome, ...(typeof arguments_.executable === "string" ? { executable: arguments_.executable } : {}), ...(typeof arguments_.model === "string" ? { model: arguments_.model } : {}) });
         throw new SemanticPolicyError("INVALID_INPUT", `Unsupported discovery provider ${provider}`);
@@ -1288,14 +4010,7 @@ export class ControllerService {
     });
     this.semanticTools.register({
       name: "agent.test_profile", description: "Test a configured agent profile", risk: "read", input: { required: ["target"], properties: { target: "string" }, additionalProperties: false },
-      execute: async ({ target }) => {
-        const profile = this.configuration.current().config.agentProfiles.find((entry) => entry.id === String(target));
-        if (!profile) throw new SemanticPolicyError("INVALID_INPUT", `Unknown profile ${String(target)}`);
-        if (profile.provider === "qoder") return probeQoderProfile({ id: profile.id, alias: profile.alias, ...(stringSetting(profile.settings?.executable) ? { executable: stringSetting(profile.settings?.executable)! } : {}), ...(stringSetting(profile.settings?.configDir) ? { configDir: stringSetting(profile.settings?.configDir)! } : {}), ...(stringSetting(profile.settings?.model) ? { model: stringSetting(profile.settings?.model)! } : {}) });
-        const codexHome = stringSetting(profile.settings?.codexHome);
-        if (profile.provider === "codex" && codexHome) return probeCodexProfile({ id: profile.id, alias: profile.alias, codexHome, ...(stringSetting(profile.settings?.executable) ? { executable: stringSetting(profile.settings?.executable)! } : {}), ...(stringSetting(profile.settings?.model) ? { model: stringSetting(profile.settings?.model)! } : {}) });
-        throw new SemanticPolicyError("INVALID_INPUT", `Profile ${profile.id} cannot be probed`);
-      },
+      execute:async({target})=>this.probeConfiguredProfile(String(target)),
     });
     this.semanticTools.register({
       name: "fleet.list", description: "Read the current fleet snapshot", risk: "read", input: { additionalProperties: false },
@@ -1326,15 +4041,10 @@ export class ControllerService {
         const task = stored.document as unknown as Task;
         if (task.state === "DONE" || task.state === "FAILED") throw new SemanticPolicyError("INVALID_INPUT", `Task ${taskId} cannot be cancelled from ${task.state}`);
         const run = task.currentRunId ? this.database.getEntity<JsonValue>("run", task.currentRunId) as unknown as Run | undefined : undefined;
-        if (run && !isTerminalRunState(run.state)) {
-          await this.agentAdapters.get(run.profileId)?.cancel(run.sessionId);
-          assertRunTransition(run.state, "CANCELLED");
-          run.state = "CANCELLED";
-          run.endedAt = new Date().toISOString();
-          this.database.saveEntity("run", run.id, json(run));
-          this.fleetEvents.publish("run.changed", run.id, { id: run.id, state: run.state });
-        }
-        if (task.state !== "CANCELLED") this.tasks.execute({ id: `semantic:${context.workflowId}`, taskId, baseRevision: stored.revision, actor: context.principal.id, command: { type: "task.transition", state: "CANCELLED" } });
+        if (run && !isTerminalRunState(run.state)) await this.cancelRunExecution(run,context.principal);
+        const current=this.database.getCanonicalTask<JsonValue>(taskId),latest=current?.document as unknown as Task|undefined;
+        if(!current||!latest||latest.currentRunId!==task.currentRunId)throw new SemanticPolicyError("INVALID_INPUT","Task authority changed during cancellation");
+        if (latest.state !== "CANCELLED") this.tasks.execute({ id: `semantic:${context.workflowId}`, taskId, baseRevision: current.revision, actor: context.principal.id, command: { type: "task.transition", state: "CANCELLED" } });
         return { taskId, state: "CANCELLED", runId: run?.id };
       },
     });
@@ -1356,18 +4066,10 @@ export class ControllerService {
         const runId = String(target);
         const run = this.database.getEntity<JsonValue>("run", runId) as unknown as Run | undefined;
         if (!run) throw new SemanticPolicyError("INVALID_INPUT", `Unknown run ${runId}`);
-        if (!isTerminalRunState(run.state)) {
-          await this.agentAdapters.get(run.profileId)?.cancel(run.sessionId);
-          assertRunTransition(run.state, "CANCELLED");
-          run.state = "CANCELLED";
-          run.endedAt = new Date().toISOString();
-          this.database.saveEntity("run", run.id, json(run));
-          const stored = this.database.getCanonicalTask<JsonValue>(run.taskId);
-          const task = stored?.document as unknown as Task | undefined;
-          if (stored && task && !["DONE", "FAILED", "CANCELLED"].includes(task.state)) this.tasks.execute({ id: `semantic:${context.workflowId}`, taskId: run.taskId, baseRevision: stored.revision, actor: context.principal.id, command: { type: "task.transition", state: "CANCELLED" } });
-          this.fleetEvents.publish("run.changed", run.id, { id: run.id, state: run.state });
-        }
-        return run;
+        const cancelled=await this.cancelRunExecution(run,context.principal);
+        const stored = this.database.getCanonicalTask<JsonValue>(run.taskId),task = stored?.document as unknown as Task | undefined;
+        if (cancelled.state==="CANCELLED"&&stored && task?.currentRunId===run.id && !["DONE", "FAILED", "CANCELLED"].includes(task.state)) this.tasks.execute({ id: `semantic:${context.workflowId}`, taskId: run.taskId, baseRevision: stored.revision, actor: context.principal.id, command: { type: "task.transition", state: "CANCELLED" } });
+        return cancelled;
       },
     });
     this.semanticTools.register({
@@ -1378,17 +4080,29 @@ export class ControllerService {
         if (!run || run.state !== "ACTIVE") throw new SemanticPolicyError("INVALID_INPUT", `Run ${runId} is not active`);
         const adapter = this.agentAdapters.get(run.profileId);
         if (!adapter) throw new SemanticPolicyError("INVALID_INPUT", `Profile ${run.profileId} is unavailable`);
-        await adapter.pause(run.sessionId);
-        assertRunTransition(run.state, "WAITING_USER");
-        run.state = "WAITING_USER";
-        run.activitySummary = "Paused by operator";
-        run.lastActivityAt = new Date().toISOString();
-        this.database.saveEntity("run", run.id, json(run));
-        const stored = this.database.getCanonicalTask<JsonValue>(run.taskId);
-        const task = stored?.document as unknown as Task | undefined;
-        if (stored && task?.state === "RUNNING") this.tasks.execute({ id: `semantic:${context.workflowId}`, taskId: run.taskId, baseRevision: stored.revision, actor: context.principal.id, command: { type: "task.transition", state: "WAITING_USER" } });
-        this.fleetEvents.publish("run.changed", run.id, { id: run.id, state: run.state, lastActivityAt: run.lastActivityAt });
-        return run;
+        const principal=structuredClone(context.principal),fence=this.nativeInteractions.fenceFor(run,`pause:${run.id}:${context.workflowId}`);
+        this.nativeInteractions.assertInteraction(principal,"pause",fence);
+        return this.nativeInteractions.withMutationLane(run.sessionId,async()=>{
+          const assertAuthority=()=>{this.nativeInteractions.assertInteraction(principal,"pause",fence);if(this.agentAdapters.get(run.profileId)!==adapter)throw new InteractionGuardError("SESSION_OWNER_MISMATCH");};
+          assertAuthority();let sent=false;
+          try{
+            const session=await adapter.pause(run.sessionId,()=>{assertAdapterWriteAdmission(assertAuthority);sent=true;});
+            if(!sent||session.id!==run.sessionId||session.runId!==run.id||session.state!=="PAUSED")throw new AdapterContractError("NATIVE_OUTCOME_UNKNOWN","Pause acknowledgement is unconfirmed");
+            assertAuthority();
+            const current=this.database.getEntity<JsonValue>("run",run.id) as unknown as Run;
+            this.database.transaction(()=>{
+              assertAuthority();assertRunTransition(current.state,"WAITING_USER");current.state="WAITING_USER";current.activitySummary="Paused by operator";current.lastActivityAt=this.now().toISOString();this.database.saveEntity("run",current.id,json(current));
+              const stored=this.database.getCanonicalTask<JsonValue>(run.taskId)!;
+              if((stored.document as unknown as Task).state==="RUNNING")this.tasks.execute({id:`semantic:${context.workflowId}`,taskId:run.taskId,baseRevision:stored.revision,actor:principal.id,command:{type:"task.transition",state:"WAITING_USER"}});
+              this.nativeInteractions.acknowledgeTaskRevision(current);
+            });
+            this.nativeInteractions.acknowledgeSettledMutationOutcome(run.sessionId);this.fleetEvents.publish("run.changed",current.id,{id:current.id,state:current.state,lastActivityAt:current.lastActivityAt});return current;
+          }catch(error){
+            if(error instanceof AdapterAdmissionError||!sent&&error instanceof AdapterContractError&&error.code==="UNSUPPORTED_CAPABILITY")this.nativeInteractions.acknowledgeSettledMutationOutcome(run.sessionId);
+            else this.markRemoteUnavailable(run.id,"Native pause is unconfirmed; inspect the original execution","NATIVE_OUTCOME_UNKNOWN",run);
+            throw error;
+          }
+        });
       },
     });
     this.semanticTools.register({
@@ -1397,62 +4111,14 @@ export class ControllerService {
         const runId = String(target);
         const run = this.database.getEntity<JsonValue>("run", runId) as unknown as Run | undefined;
         if (!run || !["WAITING_USER", "RESOURCE_BLOCKED", "RUNNER_UNAVAILABLE", "SUSPECTED_STALL"].includes(run.state)) throw new SemanticPolicyError("INVALID_INPUT", `Run ${runId} is not resumable`);
-        const adapter = this.agentAdapters.get(run.profileId);
-        if (!adapter) throw new SemanticPolicyError("INVALID_INPUT", `Profile ${run.profileId} is unavailable`);
-        await adapter.resume(run.sessionId);
-        assertRunTransition(run.state, "ACTIVE");
-        run.state = "ACTIVE";
-        run.lastActivityAt = new Date().toISOString();
-        this.database.saveEntity("run", run.id, json(run));
-        const stored = this.database.getCanonicalTask<JsonValue>(run.taskId);
-        const task = stored?.document as unknown as Task | undefined;
-        if (stored && task && ["WAITING_USER", "WAITING_RESOURCE"].includes(task.state)) this.tasks.execute({ id: `semantic:${context.workflowId}`, taskId: run.taskId, baseRevision: stored.revision, actor: context.principal.id, command: { type: "task.transition", state: "RUNNING" } });
-        this.fleetEvents.publish("run.changed", run.id, { id: run.id, state: run.state, lastActivityAt: run.lastActivityAt });
-        return run;
+        if(run.state==="RUNNER_UNAVAILABLE"&&this.configuration.current().config.runners.some(runner=>runner.id===run.runnerId&&runner.mode==="remote"))throw new SemanticPolicyError("INVALID_INPUT","Owning Runner must reconcile native ownership before resuming");
+        if(run.recoveryReason==="NATIVE_OUTCOME_UNKNOWN")throw new SemanticPolicyError("INVALID_INPUT","Native execution outcome is unknown; inspect the original session before resuming");
+        return this.resumeCanonicalRun(run, { actorId: context.principal.id, commandId: `semantic:${context.workflowId}` });
       },
     });
     this.semanticTools.register({
       name: "run.reroute", description: "Supersede a run with another configured profile", risk: "privileged", requiredRoles: ["operator"], input: { required: ["target", "profileId"], properties: { target: "string", profileId: "string" }, additionalProperties: false },
-      execute: async ({ target, profileId }, context) => {
-        const runId = String(target);
-        const nextProfileId = String(profileId);
-        const run = this.database.getEntity<JsonValue>("run", runId) as unknown as Run | undefined;
-        const profile = this.configuration.current().config.agentProfiles.find((entry) => entry.id === nextProfileId);
-        const nextAdapter = this.agentAdapters.get(nextProfileId);
-        const previousAdapter = run ? this.agentAdapters.get(run.profileId) : undefined;
-        const contract = run ? this.database.getTaskContract<JsonValue>(run.taskId) as unknown as TaskContract | undefined : undefined;
-        if (!run || isTerminalRunState(run.state) || !run.worktree || !profile || !nextAdapter || !previousAdapter || !contract) throw new SemanticPolicyError("INVALID_INPUT", `Run ${runId} cannot be rerouted to ${nextProfileId}`);
-        const capabilityAssessment = assessManifestCapabilities(nextAdapter.manifest, run.requiredCapabilities ?? ["code", "git"]);
-        if (!capabilityAssessment.supported) throw new SemanticPolicyError("INVALID_INPUT", capabilityAssessment.explanation);
-        const session = await nextAdapter.start({ runId: randomUUID(), workspacePath: run.worktree, prompt: contract.goal });
-        try { await previousAdapter.cancel(run.sessionId); }
-        catch (error) { await nextAdapter.cancel(session.id); throw error; }
-        assertRunTransition(run.state, "SUPERSEDED");
-        run.state = "SUPERSEDED";
-        run.endedAt = new Date().toISOString();
-        run.recoveryReason = `Delivery authority revoked for controlled reroute to ${nextProfileId}`;
-        this.database.saveEntity("run", run.id, json(run));
-        const now = new Date().toISOString();
-        this.restoreLeaseAuthority(run);
-        this.leaseAuthority.revoke(run.id, run.leaseId, run.generation, `controlled reroute to ${nextProfileId}`, now);
-        this.persistLatestLeaseAudit(run.id);
-        const rerouted: Run = { ...run, id: session.runId, runnerId: profile.runnerId, providerId: profile.provider, profileId: nextProfileId, sessionId: session.id, ...(session.providerSessionId ? { providerSessionId: session.providerSessionId } : {}), resumePolicy: session.providerSessionId || nextAdapter.manifest.capabilities.resume ? "same-session" : "controlled-reroute", state: "ACTIVE", attempt: run.attempt + 1, generation: run.generation + 1, leaseId: randomUUID(), leaseExpiresAt: new Date(Date.parse(now) + 15 * 60_000).toISOString(), revokedLeaseIds: [...(run.revokedLeaseIds ?? []), run.leaseId], startedAt: now, lastActivityAt: now, verification: { state: "PENDING", commands: [...contract.verification] } };
-        delete rerouted.endedAt;
-        delete rerouted.failureReason;
-        delete rerouted.resourceBlockReason;
-        rerouted.recoveryReason = `Controlled reroute from ${run.profileId}; prior lease ${run.leaseId} revoked`;
-        delete rerouted.activitySummary;
-        delete rerouted.prUrl;
-        this.database.saveEntity("run", rerouted.id, json(rerouted));
-        this.restoreLeaseAuthority(rerouted);
-        const stored = this.database.getCanonicalTask<JsonValue>(run.taskId);
-        if (!stored) throw new SemanticPolicyError("INVALID_INPUT", `Unknown task ${run.taskId}`);
-        const bound = this.tasks.execute({ id: `semantic:${context.workflowId}:bind`, taskId: run.taskId, baseRevision: stored.revision, actor: context.principal.id, command: { type: "task.set-current-run", runId: rerouted.id } });
-        if (["WAITING_USER", "WAITING_RESOURCE"].includes(bound.task.state)) this.tasks.execute({ id: `semantic:${context.workflowId}:running`, taskId: run.taskId, baseRevision: bound.revision, actor: context.principal.id, command: { type: "task.transition", state: "RUNNING" } });
-        this.fleetEvents.publish("run.changed", run.id, { id: run.id, state: run.state });
-        this.fleetEvents.publish("run.changed", rerouted.id, { id: rerouted.id, state: rerouted.state, profileId: rerouted.profileId });
-        return { supersededRunId: run.id, run: rerouted };
-      },
+      execute: async ({ target, profileId }, context) => this.rerouteRun(String(target), String(profileId), { actorId: context.principal.id, workflowId: context.workflowId }),
     });
     this.semanticTools.register({
       name: "profile.list", description: "List agent profiles", risk: "read", input: { additionalProperties: false },
@@ -1469,27 +4135,15 @@ export class ControllerService {
     this.semanticTools.register({
       name: "connector.test", description: "Probe a connector", risk: "write", input: { required: ["target"], properties: { target: "string" }, additionalProperties: false },
       execute: async ({ target }) => {
-        const connector = this.connectors.get(String(target));
-        if (!connector) throw new SemanticPolicyError("INVALID_INPUT", `Unknown connector ${String(target)}`);
-        const probe = await connector.probe();
-        connector.instance.health = probe.health;
-        connector.instance.updatedAt = probe.checkedAt;
-        this.database.saveEntity("connector-health", connector.instance.id, json(probe), probe.checkedAt);
-        this.fleetEvents.publish("connector.changed", connector.instance.id, probe);
-        return probe;
+        if (!this.connectors.get(String(target))) throw new SemanticPolicyError("INVALID_INPUT", `Unknown connector ${String(target)}`);
+        return this.probeConnector(String(target));
       },
     });
     this.semanticTools.register({
       name: "integration.test", description: "Probe an integration connector", risk: "write", input: { required: ["target"], properties: { target: "string" }, additionalProperties: false },
       execute: async ({ target }) => {
-        const connector = this.connectors.get(String(target));
-        if (!connector) throw new SemanticPolicyError("INVALID_INPUT", `Unknown connector ${String(target)}`);
-        const probe = await connector.probe();
-        connector.instance.health = probe.health;
-        connector.instance.updatedAt = probe.checkedAt;
-        this.database.saveEntity("connector-health", connector.instance.id, json(probe), probe.checkedAt);
-        this.fleetEvents.publish("connector.changed", connector.instance.id, probe);
-        return probe;
+        if (!this.connectors.get(String(target))) throw new SemanticPolicyError("INVALID_INPUT", `Unknown connector ${String(target)}`);
+        return this.probeConnector(String(target));
       },
     });
     this.semanticTools.register({
@@ -1498,29 +4152,27 @@ export class ControllerService {
     });
     this.semanticTools.register({
       name: "config.plan", description: "Build a ConfigPlan without applying it", risk: "write", input: { required: ["config"], properties: { config: "object" }, additionalProperties: false },
-      execute: async ({ config }, context) => this.configuration.buildPlan(config, context.principal.id, "assistant"),
+      execute: async ({ config }, context) => this.planConfiguration(config, context.principal.id, "assistant"),
     });
     this.semanticTools.register({
       name: "config.build_plan", description: "Build a ConfigPlan without applying it", risk: "write", input: { required: ["config"], properties: { config: "object" }, additionalProperties: false },
-      execute: async ({ config }, context) => this.configuration.buildPlan(config, context.principal.id, "assistant"),
+      execute: async ({ config }, context) => this.planConfiguration(config, context.principal.id, "assistant"),
     });
     this.semanticTools.register({
       name: "config.apply", description: "Apply a confirmed ConfigPlan", risk: "privileged", requiredRoles: ["admin"], input: { required: ["planId"], properties: { planId: "string" }, additionalProperties: false },
-      execute: async ({ planId }) => {
-        await assertRequiredSecretsAvailable(this.configuration.proposedConfig(String(planId)), this.secrets);
-        return this.configuration.applyPlan(String(planId), { confirmed: true });
+      execute: async ({ planId },context) => {
+        return this.applyConfigurationPlan(String(planId), { confirmed: true,actorId:context.principal.id });
       },
     });
     this.semanticTools.register({
       name: "config.apply_plan", description: "Apply a confirmed ConfigPlan", risk: "privileged", requiredRoles: ["admin"], input: { required: ["planId"], properties: { planId: "string" }, additionalProperties: false },
-      execute: async ({ planId }) => {
-        await assertRequiredSecretsAvailable(this.configuration.proposedConfig(String(planId)), this.secrets);
-        return this.configuration.applyPlan(String(planId), { confirmed: true });
+      execute: async ({ planId },context) => {
+        return this.applyConfigurationPlan(String(planId), { confirmed: true,actorId:context.principal.id });
       },
     });
     this.semanticTools.register({
       name: "config.rollback", description: "Rollback an applied ConfigPlan", risk: "privileged", requiredRoles: ["admin"], input: { required: ["planId"], properties: { planId: "string" }, additionalProperties: false },
-      execute: async ({ planId }) => this.configuration.rollbackPlan(String(planId)),
+      execute: async ({ planId }) => this.rollbackConfigurationPlan(String(planId)),
     });
     this.semanticTools.register({
       name: "secret.request", description: "Request secure input without reading a secret", risk: "write", input: { required: ["namespace", "name"], properties: { namespace: "string", name: "string" }, additionalProperties: false },
@@ -1528,10 +4180,19 @@ export class ControllerService {
     });
   }
 
+  private taskIdentifierAliases(taskId: string): string[] {
+    const task = this.database.getCanonicalTask<JsonValue>(taskId)?.document as unknown as Task | undefined;
+    const extensions = task?.platformExtensions;
+    return Object.values(extensions ?? {}).flatMap((extension) => {
+      const identifier = extension && typeof extension === "object" && !Array.isArray(extension) ? (extension as Record<string, unknown>).identifier : undefined;
+      return typeof identifier === "string" ? [identifier] : [];
+    });
+  }
+
   private semanticCandidates(): ResolvableEntity[] {
     const snapshot = this.fleetSnapshot();
     return [
-      ...snapshot.tasks.map((task) => ({ id: task.id, kind: "task" as const, label: task.title, aliases: task.externalRefs?.map((reference) => reference.externalId) ?? [] })),
+      ...snapshot.tasks.map((task) => ({ id: task.id, kind: "task" as const, label: task.title, aliases: [...(task.externalRefs?.map((reference) => reference.externalId) ?? []), ...this.taskIdentifierAliases(task.id)] })),
       ...snapshot.runs.map((run) => ({ id: run.id, kind: "run" as const, label: run.id })),
       ...snapshot.profiles.map((profile) => ({ id: profile.id, kind: "profile" as const, label: profile.alias, aliases: [`${profile.provider}:${profile.alias}`] })),
       ...snapshot.connectors.map((connector) => ({ id: connector.id, kind: "connector" as const, label: connector.displayName })),
@@ -1565,25 +4226,105 @@ export class ControllerService {
 
   private async notifyAttention(run: Run): Promise<void> {
     const state = run.state === "RESOURCE_BLOCKED" ? "WAITING_RESOURCE" : run.state === "COMPLETE" && run.prUrl ? "REVIEW_READY" : run.state;
-    if (!this.attentionNotifications.shouldNotify({ taskId: run.taskId, state, generation: run.generation })) return;
-    const idempotencyKey = `attention:${run.taskId}:${state}:${run.generation}`;
+    const binding = this.runConversation(run);
+    const attentionSubject = state === "WAITING_USER" ? `${run.taskId}:${binding?.revision ?? 1}` : run.taskId;
+    if (!this.attentionNotifications.shouldNotify({ taskId: attentionSubject, state, generation: run.generation })) return;
+    const idempotencyKey = `attention:${run.taskId}:${state}:${run.generation}${state === "WAITING_USER" ? `:${binding?.revision ?? 1}` : ""}`;
     if (this.database.getEntity<JsonValue>("attention-notification", idempotencyKey)) return;
-    const connector = this.connectors.list("messaging").find((entry) => this.messagingChannels.has(entry.instance.id)) as MessagingAdapter | undefined;
+    const connector = (binding ? this.connectors.get<MessagingAdapter>(binding.connectorInstanceId) : undefined)
+      ?? this.connectors.list("messaging").find((entry) => this.messagingChannels.has(entry.instance.id)) as MessagingAdapter | undefined;
     if (!connector) return;
-    const channel = this.messagingChannels.get(connector.instance.id)!;
+    const channel = binding?.conversationId ?? this.messagingChannels.get(connector.instance.id)!;
     const task = this.database.getCanonicalTask<JsonValue>(run.taskId)?.document as unknown as Task | undefined;
     const notification: Notification = {
       channel,
       subject: `${state}: ${task?.title ?? run.taskId}`,
-      body: run.prUrl ?? run.activitySummary ?? run.failureReason ?? run.resourceBlockReason ?? "Open the thread to inspect or respond.",
+      body: run.failureReason ?? run.resourceBlockReason ?? run.prUrl ?? run.activitySummary ?? "Open the thread to inspect or respond.",
       severity: state === "FAILED" ? "critical" : state === "REVIEW_READY" ? "info" : "warning",
       canonicalEntityId: run.taskId,
     };
-    const sent = await connector.send(notification, idempotencyKey);
+    const sent = binding && connector.reply
+      ? await connector.reply({ channel, threadId: binding.threadId, text: `${notification.subject}\n${notification.body}` }, idempotencyKey)
+      : await connector.send(notification, idempotencyKey);
     this.database.saveEntity("attention-notification", idempotencyKey, json({ idempotencyKey, taskId: run.taskId, state, generation: run.generation, externalMessageId: sent.externalMessageId, sentAt: new Date().toISOString() }));
     if (state === "WAITING_USER") {
-      this.conversations.bind({ connectorInstanceId: connector.instance.id, conversationId: channel, threadId: sent.externalMessageId, taskId: run.taskId, runId: run.id, sessionId: run.sessionId, generation: run.generation, state: "WAITING_USER" });
+      this.conversations.bind({ connectorInstanceId: connector.instance.id, conversationId: channel, threadId: binding?.threadId ?? sent.externalMessageId, taskId: run.taskId, runId: run.id, sessionId: run.sessionId, generation: run.generation, state: "WAITING_USER" });
     }
+  }
+
+  private async notifyDueAttention(): Promise<void> {
+    for (const value of this.database.listRunsMatching<JsonValue>([{states:["WAITING_USER","RESOURCE_BLOCKED","FAILED"]},{states:["COMPLETE"],hasPullRequest:true}])) {
+      const run = value as unknown as Run;
+      if (!["WAITING_USER", "RESOURCE_BLOCKED", "FAILED", "COMPLETE"].includes(run.state)) continue;
+      try {
+        if (run.state === "FAILED") {
+          const task = this.database.getCanonicalTask<JsonValue>(run.taskId);
+          if (task) this.tasks.execute({ id: `failure-comment:${run.id}:${run.generation}`, taskId: run.taskId, baseRevision: task.revision, actor: "run-worker", command: { type: "task.comment", body: `Run ${run.id} FAILED: ${run.failureReason ?? "Execution failed"}` } });
+        }
+        await this.notifyAttention(run);
+      }
+      catch (error) {
+        this.attentionNotifications.recover(run.taskId);
+        this.app.log.warn({ error: redactValue(error), runId: run.id }, "attention notification will retry");
+      }
+    }
+    await this.notifyNativeControlAttention();
+  }
+
+  private notifyNativeControlAttention():Promise<void> {
+    return this.nativeControlNotices.drain();
+  }
+
+  private nativeWorkflowFence(run:Run,workflowId:string,principal:InteractionPrincipal&{channel?:string},input:unknown,mutation:boolean):MutationFence {
+    if(principal.channel==="messaging")return this.nativeWorkflowAuthority.assert(workflowId,run,principal,mutation);
+    if(input!==undefined){
+      const fields=["runId","sessionId","commandId","generation","leaseId","expectedTaskRevision","expectedCurrentRunId","expectedControlRevision","expectedControlEpoch"];
+      if(!input||typeof input!=="object"||Array.isArray(input))throw new SemanticPolicyError("INVALID_INPUT","Capture the current full run authority before submitting");
+      const value=input as Record<string,unknown>;
+      if(Object.keys(value).some(key=>!fields.includes(key))||fields.some(key=>!Object.hasOwn(value,key))||value.runId!==run.id||value.sessionId!==run.sessionId||["commandId","leaseId","expectedCurrentRunId"].some(key=>typeof value[key]!=="string"||!(value[key] as string).trim()||(value[key] as string).length>512)||["generation","expectedTaskRevision","expectedControlRevision","expectedControlEpoch"].some(key=>!Number.isSafeInteger(value[key])||(value[key] as number)<0))throw new SemanticPolicyError("INVALID_INPUT","Capture the current full run authority before submitting");
+      return structuredClone(value) as unknown as MutationFence;
+    }
+    if(mutation)throw new SemanticPolicyError("INVALID_INPUT","Capture the current full run authority before submitting");
+    return this.nativeInteractions.fenceFor(run,workflowId);
+  }
+
+  private messagingWorkflowText(workflow: SemanticWorkflowRecord): string {
+    if(workflow.toolName==="run.history"&&workflow.state==="EXECUTED"){
+      const run=this.database.getEntity<JsonValue>("run",String(workflow.intent.arguments.target)) as unknown as Run|undefined;
+      if(!run)throw new ConnectorError("CONFLICT","Run authority is unavailable",{retryable:false});
+      this.nativeWorkflowFence(run,workflow.id,workflow.principal,workflow.intent.arguments.fence,false);
+      return `原生历史（只读；不接管会话）\n${JSON.stringify(redactNativePayload(workflow.result)).slice(0,2800)}`;
+    }
+    if(["run.takeover","run.return"].includes(workflow.toolName)&&workflow.state==="EXECUTED")return `原生控制请求已接受，仍需核对当前控制快照。打开应用或收到此回复不代表交接已完成。\n${JSON.stringify(redactNativePayload(workflow.result)).slice(0,2000)}`;
+    if (workflow.toolName === "task.dispatch" && workflow.state === "EXECUTED") {
+      const result = workflow.result as TaskDispatchResult;
+      return result.run.state === "FAILED" ? `Run ${result.run.id} FAILED: ${result.run.failureReason ?? "Agent could not start"}` : `Dispatched run ${result.run.id}.\n${result.routing.explanation}`;
+    }
+    return JSON.stringify(redactValue(workflow.result)).slice(0, 3_000);
+  }
+
+  private runConversation(run: Run): ConversationBinding | undefined {
+    return selectRunConversation(this.database,run);
+  }
+
+  private async executeMessagingWorkflow(workflow: SemanticWorkflowRecord): Promise<SemanticWorkflowRecord> {
+    const origin = this.database.getEntity<JsonValue>("messaging-workflow-origin", workflow.id) as unknown as { connectorInstanceId: string; conversationId: string; threadId: string } | undefined;
+    if (workflow.toolName === "task.dispatch" && workflow.state === "READY" && origin) {
+      const existing = this.database.getEntity<JsonValue>("messaging-conversation", `${origin.connectorInstanceId}:${origin.conversationId}:${origin.threadId}`);
+      if (existing) throw new ConnectorError("CONFLICT", "This thread already belongs to a run; dispatch in a new thread", { retryable: false, operation: "write" });
+    }
+    if (workflow.state === "READY") {
+      try { workflow = await this.semanticWorkflows.execute(workflow.id, workflow.revision); }
+      catch (error) {
+        if (!(error instanceof TaskDispatchError || error instanceof ConnectorError && error.code === "CONFLICT" || ["run.takeover","run.return","run.history"].includes(workflow.toolName) && ((error instanceof InteractionGuardError || error instanceof NativeHistoryError)&&error.code!=="FORBIDDEN"))) throw error;
+        workflow = this.semanticWorkflows.get(workflow.id)!;
+      }
+    }
+    if (workflow.toolName === "task.dispatch" && workflow.state === "EXECUTED" && origin) {
+      const run = (workflow.result as TaskDispatchResult).run;
+      this.conversations.bind({ ...origin, taskId: run.taskId, runId: run.id, sessionId: run.sessionId, generation: run.generation, state: this.runConversation(run)?.state ?? "ACTIVE" });
+    }
+    return workflow;
   }
 
   private async notifyOperationalAttention(input: { key: string; state: "SYNC_CONFLICT" | "CONNECTOR_AUTH" | "RUNNER_OFFLINE"; subject: string; body: string; canonicalEntityId?: string }): Promise<void> {
@@ -1598,6 +4339,26 @@ export class ControllerService {
     } catch (error) {
       this.app.log.warn({ error: redactValue(error), state: input.state, key: input.key }, "attention notification failed");
     }
+  }
+
+  private assertMessagingInputAuthority(run: Run, binding: ConversationBinding, expectedRevision: number): void {
+    this.assertRunInteraction(run,"continue");
+    const current = this.database.getEntity<JsonValue>("run", run.id) as unknown as Run | undefined;
+    const task = this.database.getCanonicalTask<JsonValue>(run.taskId)?.document as unknown as Task | undefined;
+    const conversation = this.database.getEntity<JsonValue>("messaging-conversation", binding.id) as unknown as ConversationBinding | undefined;
+    if (!current || !task || current.generation !== run.generation || current.leaseId !== run.leaseId || current.sessionId !== binding.sessionId || current.state !== "WAITING_USER" || task.currentRunId && task.currentRunId !== run.id || !conversation || conversation.revision !== expectedRevision || conversation.generation !== run.generation || conversation.state !== "WAITING_USER") throw new ConnectorError("CONFLICT", "Run or intervention authority changed", { retryable: false, operation: "write" });
+    this.restoreLeaseAuthority(current);
+    try { this.leaseAuthority.fence(run.id, run.leaseId, run.generation, "user-input", this.now().toISOString()); }
+    catch (error) {
+      if (error instanceof LeaseFenceError) throw new ConnectorError("CONFLICT", error.message, { retryable: false, operation: "write" });
+      throw error;
+    } finally { this.persistLatestLeaseAudit(run.id); }
+  }
+
+  private replyMessagingResume(adapter: MessagingAdapter, message: NormalizedMessage, runId: string): Promise<{ externalMessageId: string }> {
+    return adapter.reply
+      ? adapter.reply({ channel: message.conversationId, threadId: message.threadId, text: `Resumed run ${runId} in the existing agent session.` }, `resume:${message.idempotencyKey}`)
+      : adapter.send({ channel: message.conversationId, subject: "Run resumed", body: runId, severity: "info" }, `resume:${message.idempotencyKey}`);
   }
 
   private async handleMessagingMessage(adapter: MessagingAdapter, message: NormalizedMessage, options: { credentialRedacted?: boolean } = {}): Promise<{ externalMessageId: string }> {
@@ -1615,44 +4376,119 @@ export class ControllerService {
       try { action = JSON.parse(message.action.value ?? "{}") as typeof action; } catch { throw new ConnectorError("INVALID_EVENT", "Workflow approval payload is malformed", { retryable: false, operation: "ingress" }); }
       const workflow = action.workflowId ? this.semanticWorkflows.get(action.workflowId) : undefined;
       if (!workflow || action.expectedRevision === undefined || workflow.principal.id !== principal.principalId || workflow.principal.roles.some((role) => !principal.roles.includes(role))) throw new ConnectorError("AUTH", "Workflow approval is not authorized", { retryable: false, operation: "auth" });
-      const approved = this.semanticWorkflows.approve(workflow.id, action.expectedRevision);
-      const executed = await this.semanticWorkflows.execute(approved.id, approved.revision);
-      const text = JSON.stringify(redactValue(executed.result)).slice(0, 3_000);
+      const origin = this.database.getEntity<JsonValue>("messaging-workflow-origin", workflow.id) as unknown as { connectorInstanceId: string; conversationId: string; threadId: string } | undefined;
+      if (origin && (origin.connectorInstanceId !== adapter.instance.id || origin.conversationId !== message.conversationId || origin.threadId !== message.threadId)) throw new ConnectorError("AUTH", "Approve dispatch in its originating thread", { retryable: false, operation: "auth" });
+      if(["run.takeover","run.return","run.history"].includes(workflow.toolName)&&(message.action.generation!==undefined||message.action.controlEpoch!==undefined)){
+        const run=this.database.getEntity<JsonValue>("run",String(workflow.intent.arguments.target)) as unknown as Run|undefined;
+        const control=run?new InteractionStore(this.database).control(run.sessionId):undefined;
+        if(!run||message.action.generation!==undefined&&message.action.generation!==run.generation||message.action.controlEpoch!==undefined&&message.action.controlEpoch!==(control?.epoch??0))throw new ConnectorError("CONFLICT","Approval button belongs to obsolete run control",{retryable:false});
+      }
+      const approved = workflow.state === "EXECUTED" || workflow.state === "FAILED" || workflow.state === "READY" && workflow.revision === action.expectedRevision + 1
+        ? workflow : this.semanticWorkflows.approve(workflow.id, action.expectedRevision);
+      const executed = await this.executeMessagingWorkflow(approved);
+      const text = this.messagingWorkflowText(executed);
       return adapter.reply
         ? adapter.reply({ channel: message.conversationId, threadId: message.threadId, text }, `workflow-approval:${message.idempotencyKey}`)
         : adapter.send({ channel: message.conversationId, subject: "Workflow approved", body: text, severity: "info" }, `workflow-approval:${message.idempotencyKey}`);
     }
+    const resumeKey = `${adapter.instance.id}:${message.idempotencyKey}`;
+    const receipt = this.database.getEntity<JsonValue>("messaging-resume", resumeKey) as unknown as MessagingResumeReceipt | undefined;
+    if (receipt) {
+      this.messagingIdentity.authorize(adapter.instance.id, message.principalExternalId, "operator");
+      const current = this.database.getEntity<JsonValue>("run", receipt.runId) as unknown as Run | undefined;
+      const task=current?this.database.getCanonicalTask<JsonValue>(current.taskId)?.document as unknown as Task|undefined:undefined;
+      const control=current?new InteractionStore(this.database).control(current.sessionId):undefined;
+      if (receipt.principalId !== principal.principalId || receipt.connectorInstanceId !== adapter.instance.id || receipt.conversationId !== message.conversationId || receipt.threadId !== message.threadId || !current || current.generation !== receipt.generation || current.sessionId !== receipt.sessionId || task?.currentRunId!==current.id || control&&receipt.controlEpoch!==control.epoch || message.action?.controlEpoch!==undefined&&message.action.controlEpoch!==receipt.controlEpoch) return this.replyToMessage(adapter,message,"此回复属于已过期的干预。请在当前 Run 线程查看控制状态。",`stale:${message.idempotencyKey}`);
+      return this.replyMessagingResume(adapter, message, receipt.runId);
+    }
+    const workflowId = `messaging:${adapter.instance.id}:${message.idempotencyKey}`;
+    const existingWorkflow=this.semanticWorkflows.get(workflowId);
+    if(existingWorkflow){
+      const origin=this.database.getEntity<JsonValue>("messaging-workflow-origin",workflowId) as unknown as {connectorInstanceId:string;conversationId:string;threadId:string}|undefined;
+      if(existingWorkflow.principal.id!==principal.principalId||existingWorkflow.principal.roles.some(role=>!principal.roles.includes(role))||!origin||origin.connectorInstanceId!==adapter.instance.id||origin.conversationId!==message.conversationId||origin.threadId!==message.threadId)throw new ConnectorError("AUTH","Workflow replay is not authorized",{retryable:false});
+      return this.replyMessagingWorkflow(adapter,message,await this.executeMessagingWorkflow(existingWorkflow));
+    }
     const bindingId = `${adapter.instance.id}:${message.conversationId}:${message.threadId}`;
-    const binding = this.database.getEntity<JsonValue>("messaging-conversation", bindingId) as unknown as ConversationBinding | undefined;
-    if (binding?.state === "WAITING_USER" && binding.sessionId && binding.runId) {
+    let binding:ConversationBinding|undefined,boundRun:Run|undefined,control:ReturnType<InteractionStore["control"]>;
+    try{
+      binding=this.database.getEntity<JsonValue>("messaging-conversation",bindingId) as unknown as ConversationBinding|undefined;
+      boundRun=binding?.runId?this.database.getEntity<JsonValue>("run",binding.runId) as unknown as Run|undefined:undefined;
+      if(binding&&(!boundRun||!isDeepStrictEqual(this.runConversation(boundRun),binding)))return this.replyToMessage(adapter,message,"此线程的控制权限已过期。请在当前 Run 线程操作。",`stale:${message.idempotencyKey}`);
+      control=boundRun?new InteractionStore(this.database).control(boundRun.sessionId):undefined;
+    }catch(error){if(!(error instanceof ConnectorError||error instanceof SyntaxError))throw error;return this.replyToMessage(adapter,message,"此线程的控制权限未核验。请在当前 Run 线程操作。",`stale:${message.idempotencyKey}`);}
+    const fixed=parseFixedCommand(message.text);
+    const nativeCommand=fixed&&["run.takeover","run.return","run.history"].includes(fixed.action)?fixed:undefined;
+    const boundTask=boundRun?this.database.getCanonicalTask<JsonValue>(boundRun.taskId)?.document as unknown as Task|undefined:undefined;
+    if(binding&&(binding.state==="CLOSED"||!boundRun||boundRun.sessionId!==binding.sessionId||boundRun.generation!==binding.generation||boundTask?.currentRunId!==boundRun.id||binding.controlEpoch!==undefined&&binding.controlEpoch!==(control?.epoch??0)||message.action?.controlEpoch!==undefined&&message.action.controlEpoch!==(control?.epoch??0)||message.action?.generation!==undefined&&message.action.generation!==binding.generation||message.action?.expectedRevision!==undefined&&message.action.expectedRevision!==binding.revision))return this.replyToMessage(adapter,message,"此线程或按钮的控制权限已过期。请刷新当前 Run。",`stale:${message.idempotencyKey}`);
+    if(nativeCommand&&(!binding||!boundRun||nativeCommand.arguments.target!==boundRun.id))return this.replyToMessage(adapter,message,"请在目标 Run 的已绑定线程使用该命令。",`unbound:${message.idempotencyKey}`);
+    if(control&&control.state!=="AUTOMATED"&&!nativeCommand)return this.replyToMessage(adapter,message,"当前会话正在交接或由你手动控制。这条回复不会发送给 Agent；请使用原生入口，或明确请求交还。",`manual:${message.idempotencyKey}`);
+    if (!nativeCommand && binding?.state === "WAITING_USER" && binding.sessionId && binding.runId) {
       const expectedRevision = message.action?.expectedRevision ?? binding.revision;
       const generation = message.action?.generation ?? binding.generation;
-      this.conversations.resume(bindingId, { expectedRevision, generation });
       const run = this.database.getEntity<JsonValue>("run", binding.runId) as unknown as Run | undefined;
-      if (!run || run.generation !== generation || run.sessionId !== binding.sessionId) throw new ConnectorError("CONFLICT", "The referenced run is stale", { retryable: false, operation: "write" });
+      if (!run || run.generation !== generation || run.sessionId !== binding.sessionId || run.state !== "WAITING_USER") throw new ConnectorError("CONFLICT", "The referenced run is stale", { retryable: false, operation: "write" });
+      this.messagingIdentity.authorize(adapter.instance.id, message.principalExternalId, "operator");
+      if (binding.revision !== expectedRevision || binding.generation !== generation) throw new ConnectorError("CONFLICT", "Conversation binding is stale", { retryable: false, operation: "write" });
       const agent = this.agentAdapters.get(run.profileId);
       if (!agent) throw new ConnectorError("PERMANENT", "The run profile is unavailable", { retryable: false, operation: "write" });
-      await agent.send(binding.sessionId, message.text || "Continue with the approved action.");
-      if (run.state === "WAITING_USER") {
+      const fence=this.nativeInteractions.fenceFor(run,`messaging:${resumeKey}`);
+      return this.nativeInteractions.withMutationLane(run.sessionId,async()=>{
+      const assertAuthority=()=>{this.runInputs.assertAvailable(input,reserved?input:undefined);this.nativeInteractions.assertInteraction({id:principal.principalId,roles:principal.roles,profileId:run.profileId},"continue",fence);this.assertMessagingInputAuthority(run,binding,expectedRevision);this.assertRunSelectionRequirement(run,agent);};
+      const input:RunInputIdentity={inputId:`messaging-${contentHash(resumeKey)}`,actorId:principal.principalId,runId:run.id,profileId:run.profileId,sessionId:run.sessionId,generation:run.generation,authorityHash:contentHash({runId:run.id,generation:run.generation,leaseId:run.leaseId,lastActivityAt:run.lastActivityAt}),payloadHash:contentHash({message:message.text,bindingRevision:expectedRevision})};
+      let reserved=false,sent=false;
+      try{
+      assertAuthority();this.runInputs.assertAvailable(input);
+      this.assertMessagingInputAuthority(run, binding, expectedRevision);
+      await this.validateRunSelection(run);
+      assertAuthority();this.runInputs.reserve(input);reserved=true;sent=true;
+      await agent.send(run.sessionId, message.text || "Continue with the approved action.",assertAuthority);
+      try {
+        assertAuthority();
+      } catch (error) {
+        try { await this.cleanupStaleInput(run,fence); }
+        catch (cleanupError) { this.app.log.warn({ error: redactValue(cleanupError), runId: run.id }, "stale input session cleanup failed"); }
+        throw error;
+      }
+      this.database.transaction(() => {
+        assertAuthority();
         assertRunTransition(run.state, "ACTIVE");
         run.state = "ACTIVE";
         run.lastActivityAt = new Date().toISOString();
-        this.database.saveEntity("run", run.id, json(run));
-      }
-      return adapter.reply
-        ? adapter.reply({ channel: message.conversationId, threadId: message.threadId, text: `Resumed run ${run.id} in the existing agent session.` }, `resume:${message.idempotencyKey}`)
-        : adapter.send({ channel: message.conversationId, subject: "Run resumed", body: run.id, severity: "info" }, `resume:${message.idempotencyKey}`);
+        this.saveAdvancedRun(run, "WAITING_USER");
+        this.conversations.resume(bindingId, { expectedRevision, generation });
+        const task = this.database.getCanonicalTask<JsonValue>(run.taskId)!;
+        if ((task.document as unknown as Task).state === "WAITING_USER") this.tasks.execute({ id: `messaging-resume:${message.idempotencyKey}`, taskId: run.taskId, baseRevision: task.revision, actor: principal.principalId, command: { type: "task.transition", state: "RUNNING" } });
+        this.database.saveEntity("messaging-resume", resumeKey, json({ version: 1, runId: run.id, sessionId: run.sessionId, generation: run.generation, interventionRevision: expectedRevision, principalId: principal.principalId, connectorInstanceId: adapter.instance.id, conversationId: message.conversationId, threadId: message.threadId,...(control?{controlEpoch:control.epoch}:{}) } satisfies MessagingResumeReceipt));
+        this.runInputs.finish(input,"ACCEPTED");
+      });
+      this.attentionNotifications.recover(run.taskId);
+      this.nativeInteractions.acknowledgeSettledMutationOutcome(run.sessionId);
+      return this.replyMessagingResume(adapter, message, run.id);
+      }catch(error){
+        if(error instanceof AdapterAdmissionError)sent=false;
+        if(!sent)this.nativeInteractions.acknowledgeSettledMutationOutcome(run.sessionId);
+        if(reserved){
+          let receipt;try{receipt=this.runInputs.finish(input,sent?"OUTCOME_UNKNOWN":"REJECTED");}catch(recordError){this.app.log.warn({error:redactValue(recordError),runId:run.id},"messaging input receipt remains unconfirmed");}
+          if(sent&&receipt?.state!=="ACCEPTED"){this.markRemoteUnavailable(run.id,"Native messaging input outcome is unconfirmed; inspect the original session","NATIVE_OUTCOME_UNKNOWN",run);throw new InputReceiptError("INPUT_OUTCOME_UNKNOWN","Native input outcome is unconfirmed; inspect the original session before continuing");}
+        }
+        throw error;
+      }finally{this.runInputs.release(input);}
+      });
     }
-    const intent = await this.parseAssistantIntent(message.text);
-    let workflow = this.semanticWorkflows.plan({
-      id: randomUUID(),
-      intent,
-      principal: { id: principal.principalId, roles: principal.roles, channel: "messaging" },
-      candidates: this.semanticCandidates(),
-    });
-    if (workflow.state === "READY") workflow = await this.semanticWorkflows.execute(workflow.id, workflow.revision);
-    const text = workflow.state === "EXECUTED"
-      ? JSON.stringify(redactValue(workflow.result)).slice(0, 3_000)
+    const intent = fixed??await this.parseAssistantIntent(message.text);
+    if(nativeCommand&&binding&&boundRun){
+      try{this.nativeWorkflowAuthority.capture({workflowId,run:boundRun,binding,principal,message});}
+      catch(error){if(!(error instanceof ConnectorError&&error.code==="CONFLICT"))throw error;return this.replyToMessage(adapter,message,"此线程的控制权限已过期。请刷新当前 Run。",`stale:${message.idempotencyKey}`);}
+    }
+    let workflow = this.semanticWorkflows.plan({id:workflowId,intent,principal:{id:principal.principalId,roles:principal.roles,channel:"messaging"},candidates:this.semanticCandidates()});
+    this.database.saveEntity("messaging-workflow-origin", workflowId, json({ connectorInstanceId: adapter.instance.id, conversationId: message.conversationId, threadId: message.threadId }));
+    workflow = await this.executeMessagingWorkflow(workflow);
+    return this.replyMessagingWorkflow(adapter,message,workflow);
+  }
+
+  private replyMessagingWorkflow(adapter:MessagingAdapter,message:NormalizedMessage,workflow:SemanticWorkflowRecord):Promise<{externalMessageId:string}> {
+    const text = workflow.state === "EXECUTED" || workflow.state === "FAILED"
+      ? this.messagingWorkflowText(workflow)
       : workflow.state === "NEEDS_APPROVAL"
         ? `Approval required for ${workflow.toolName}. Open the Dashboard or use the bound approval action.`
         : workflow.questions.join(" ") || `Workflow state: ${workflow.state}`;
@@ -1701,18 +4537,25 @@ export class ControllerService {
   }
 
   private advanceRunExclusive(runId: string): Promise<AdvanceResult> {
+    if (this.cancelledRunIds.has(runId)) return Promise.reject(new AdapterContractError("RUN_CANCELLED", "Cancelled authority forbids further advancement"));
     const existing = this.runAdvances.get(runId);
     if (existing) return existing;
-    const advance = (async () => {
+    const run=this.database.getEntity<JsonValue>("run",runId) as unknown as Run|undefined;
+    if(!run)return Promise.reject(new ConnectorError("PERMANENT",`Unknown run ${runId}`));
+    const fence=this.nativeInteractions.fenceFor(run,`worker:${run.id}:${run.generation}`);
+    const advance = this.nativeInteractions.withMutationLane(run.sessionId,async () => {
+      if(run.state!=="COMPLETE")this.nativeInteractions.assertInteraction({id:"run-worker",roles:["operator"],profileId:run.profileId},"advance",fence);
       const advanced = await this.advanceRun(runId);
+      this.nativeInteractions.acknowledgeSettledMutationOutcome(run.sessionId);
       this.fleetEvents.publish("run.changed", advanced.run.id, { id: advanced.run.id, taskId: advanced.run.taskId, state: advanced.run.state, lastActivityAt: advanced.run.lastActivityAt });
       try {
         await this.notifyAttention(advanced.run);
       } catch (error) {
+        this.attentionNotifications.recover(advanced.run.taskId);
         this.app.log.error({ error: redactValue(error), runId: advanced.run.id }, "attention notification failed");
       }
       return advanced;
-    })().finally(() => {
+    }).finally(() => {
       this.runAdvances.delete(runId);
     });
     this.runAdvances.set(runId, advance);
@@ -1721,7 +4564,7 @@ export class ControllerService {
 
   private async advanceDueRuns(limit: number, baseDelayMs: number, maxDelayMs: number): Promise<void> {
     const now = this.now().getTime();
-    const due = this.database.listEntities<JsonValue>("run")
+    const due = this.database.listRunsMatching<JsonValue>([{states:[...ADVANCEABLE_RUN_STATES]}])
       .map((value) => value as unknown as Run)
       .filter((run) => ADVANCEABLE_RUN_STATES.has(run.state) && !this.runAdvances.has(run.id) && (this.runRetries.get(run.id)?.nextAttemptAt ?? 0) <= now);
     await runBounded(due, limit, async (run) => {
@@ -1734,6 +4577,88 @@ export class ControllerService {
         this.app.log.warn({ error: redactValue(error), runId: run.id, failures }, "background run advancement failed");
       }
     });
+  }
+
+  private assertCurrentDeliveryRun(run: Run): void {
+    const current = this.database.getEntity<JsonValue>("run", run.id) as unknown as Run | undefined;
+    const task = this.database.getCanonicalTask<JsonValue>(run.taskId)?.document as unknown as Task | undefined;
+    if (!current || !task || current.state !== "COMPLETE" || current.generation !== run.generation || current.leaseId !== run.leaseId || task.currentRunId && task.currentRunId !== run.id) throw new ConnectorError("CONFLICT", "Delivery feedback belongs to an obsolete run", { retryable: false, operation: "read" });
+  }
+
+  private async reconcileDeliveryRuns(limit: number): Promise<void> {
+    const now = this.now();
+    const due = this.database.listRunsMatching<JsonValue>([{states:["COMPLETE"],hasPullRequest:true}]).map((value) => value as unknown as Run).filter((run) => {
+      if (run.state !== "COMPLETE" || !run.prUrl) return false;
+      const monitor = this.database.getEntity<JsonValue>("delivery-monitor", `${run.id}:${run.generation}`) as unknown as { nextAttemptAt: string } | undefined;
+      return !monitor || Date.parse(monitor.nextAttemptAt) <= now.getTime();
+    });
+    await runBounded(due, limit, async (run) => {
+      const id = `${run.id}:${run.generation}`;
+      try {
+        this.assertCurrentDeliveryRun(run);
+        const contract = (this.database.getEntity<JsonValue>("run-contract",run.id)??this.database.getTaskContract<JsonValue>(run.taskId)) as unknown as TaskContract | undefined;
+        const [owner, name] = contract?.delivery.repository?.split("/") ?? [];
+        if (!owner || !name) return;
+        const evidence = this.database.listDeliveryEvidence<JsonValue>(run.taskId) as unknown as Array<{ kind: string; runId: string; connectorInstanceId: string }>;
+        const connectorId = evidence.find((item) => item.kind === "pull-request" && item.runId === run.id)?.connectorInstanceId;
+        const scm = connectorId ? this.connectors.get<ScmAdapter>(connectorId) : undefined;
+        if (!scm) return;
+        const reconciled = await new DeliveryService(this.database).reconcile(scm, { taskId: run.taskId, runId: run.id, generation: run.generation, repository: { owner, name }, assertCurrent: () => this.assertCurrentDeliveryRun(run) });
+        if (!reconciled) return;
+        const { pullRequest, ci } = reconciled;
+        const feedbackId = `delivery-feedback:${id}:${pullRequest.revision}:${ci.revision}`;
+        const ciLabel = ci.state === "READY" ? "CI_PASSED" : ci.state === "FAILED" ? "CI_FAILED" : "CI_PENDING";
+        const prLabel = pullRequest.state === "MERGED" ? "PR_MERGED" : pullRequest.state === "FAILED" ? "PR_CLOSED" : "PR_OPEN";
+        const body = `${ciLabel} / ${prLabel}: ${pullRequest.url ?? run.prUrl}\nCommit: ${ci.externalId}${ci.url ? `\nChecks: ${ci.url}` : ""}`;
+        this.database.transaction(() => {
+          this.assertCurrentDeliveryRun(run);
+          if (!this.database.getEntity("delivery-feedback", feedbackId)) {
+            const task = this.database.getCanonicalTask<JsonValue>(run.taskId)!;
+            this.tasks.execute({ id: feedbackId, taskId: run.taskId, baseRevision: task.revision, actor: "delivery-worker", command: { type: "task.comment", body } });
+            this.database.saveEntity("delivery-feedback", feedbackId, json({ version: 1, id: feedbackId, runId: run.id, generation: run.generation, body, severity: ci.state === "FAILED" || pullRequest.state === "FAILED" ? "critical" : "info", status: "PENDING", failures: 0, nextAttemptAt: now.toISOString() } satisfies DeliveryFeedback));
+          }
+          const doneOnCiPassed = this.configuration.current().config.connectors.find((connector) => connector.id === scm.instance.id)?.settings?.doneOnCiPassed === true;
+          const current = this.database.getCanonicalTask<JsonValue>(run.taskId)!;
+          if (doneOnCiPassed && ci.state === "READY" && pullRequest.state !== "FAILED" && (current.document as unknown as Task).state === "REVIEW") this.tasks.execute({ id: `${feedbackId}:done`, taskId: run.taskId, baseRevision: current.revision, actor: "delivery-worker", command: { type: "task.transition", state: "DONE" } });
+          this.database.saveEntity("delivery-monitor", id, json({ version: 1, nextAttemptAt: new Date(now.getTime() + 30_000).toISOString(), failures: 0 }));
+        });
+        this.fleetEvents.publish("task.changed", run.taskId, { id: run.taskId, ci: ci.state, pr: pullRequest.state });
+      } catch (error) {
+        const previous = this.database.getEntity<JsonValue>("delivery-monitor", id) as unknown as { failures?: number } | undefined;
+        const failures = (previous?.failures ?? 0) + 1;
+        this.database.saveEntity("delivery-monitor", id, json({ version: 1, failures, nextAttemptAt: new Date(now.getTime() + backoffDelayMs(failures, 1_000, 5 * 60_000)).toISOString() }));
+        this.app.log.warn({ error: redactValue(error), runId: run.id }, "delivery reconciliation will retry");
+      }
+    });
+  }
+
+  private async notifyDeliveryFeedback(): Promise<void> {
+    const now = this.now();
+    const due = (this.database.listEntities<JsonValue>("delivery-feedback") as unknown as DeliveryFeedback[])
+      .filter((feedback) => feedback.status === "PENDING" && Date.parse(feedback.nextAttemptAt) <= now.getTime()).slice(0, 10);
+    for (const feedback of due) {
+      const run = this.database.getEntity<JsonValue>("run", feedback.runId) as unknown as Run | undefined;
+      try {
+        if (!run || run.generation !== feedback.generation) throw new ConnectorError("CONFLICT", "Stale delivery notification", { retryable: false });
+        this.assertCurrentDeliveryRun(run);
+        const binding = this.runConversation(run);
+        const connector = (binding ? this.connectors.get<MessagingAdapter>(binding.connectorInstanceId) : undefined) ?? this.connectors.list("messaging").find((entry) => this.messagingChannels.has(entry.instance.id)) as MessagingAdapter | undefined;
+        if (!connector) continue;
+        const channel = binding?.conversationId ?? this.messagingChannels.get(connector.instance.id)!;
+        if (binding && connector.reply) await connector.reply({ channel, threadId: binding.threadId, text: feedback.body }, feedback.id);
+        else await connector.send({ channel, subject: "Delivery status", body: feedback.body, severity: feedback.severity, canonicalEntityId: run.taskId }, feedback.id);
+        feedback.status = "SENT";
+      } catch (error) {
+        if (error instanceof ConnectorError && error.code === "CONFLICT") feedback.status = "OBSOLETE";
+        else {
+          feedback.failures += 1;
+          const delay = error instanceof ConnectorError ? error.options.retryAfterMs : undefined;
+          feedback.nextAttemptAt = new Date(now.getTime() + (delay ?? backoffDelayMs(feedback.failures, 1_000, 5 * 60_000))).toISOString();
+          this.app.log.warn({ error: redactValue(error), runId: feedback.runId }, "delivery notification will retry");
+        }
+      }
+      this.database.saveEntity("delivery-feedback", feedback.id, json(feedback));
+    }
   }
 
   private async processMessagingInbox(limit: number): Promise<void> {
@@ -1798,16 +4723,152 @@ export class ControllerService {
       : adapter.send({ channel: message.conversationId, subject: "Dispatcher", body: text, severity: "warning" }, idempotencyKey);
   }
 
+  private runnerCredentialContext(runnerId: string): { usable: boolean; credentialRef?: string; fingerprint: string } {
+    const runner = this.configuration.current().config.runners.find(candidate => candidate.id === runnerId && candidate.mode === "remote");
+    const identity = this.database.getEntity<JsonValue>("runner-identity", runnerId) as { runnerId?: string; credentialRef?: string; revokedAt?: string; epoch?: string } | undefined;
+    const usable = Boolean(runner?.credentialRef && !this.revokedRunnerCredentials.has(runnerId) && (!identity || identity.runnerId === runnerId && identity.revokedAt === undefined && identity.credentialRef === runner.credentialRef));
+    return { usable, ...(runner?.credentialRef ? { credentialRef: runner.credentialRef } : {}), fingerprint: contentHash({ runnerId, credentialRef: runner?.credentialRef, identity }) };
+  }
+  private async withRunnerCredentialChange<T>(runnerId: string, change: () => Promise<T>): Promise<T> {
+    if (this.runnerCredentialOperations.has(runnerId)) throw new ConfigPlanError("RUNNER_CREDENTIAL_BUSY", "Another credential operation is still pending for this Runner");
+    this.runnerCredentialOperations.add(runnerId);
+    try { return await change(); } finally { this.runnerCredentialOperations.delete(runnerId); }
+  }
+  private sharedRunnerCredential(runnerId: string, reference: string): boolean {
+    return this.configuration.current().config.runners.some(runner => runner.id !== runnerId && runner.credentialRef === reference);
+  }
   private async revokeRunnerCredential(runnerId: string, credentialRef: string | undefined): Promise<void> {
-    this.enrollments.revoke(runnerId, this.now());
-    if (credentialRef && (await this.secrets.metadata(credentialRef)).exists) await this.secrets.delete(credentialRef);
+    // These fences precede every asynchronous secret-store operation, including failures.
+    this.revokedRunnerCredentials.add(runnerId);
     this.remoteRunnerServer.disconnect(runnerId, "credential revoked");
-    this.database.saveEntity("runner-identity", runnerId, json({ runnerId, ...(credentialRef ? { credentialRef } : {}), revokedAt: this.now().toISOString() }));
+    this.database.saveEntity("runner-identity", runnerId, json({ runnerId, ...(credentialRef ? { credentialRef } : {}), epoch: randomUUID(), revokedAt: this.now().toISOString() }));
+    this.enrollments.revoke(runnerId, this.now());
+    for(const value of this.database.listEntities<JsonValue>("run")){
+      const run=value as unknown as Run;if(run.runnerId!==runnerId||isTerminalRunState(run.state))continue;
+      this.restoreLeaseAuthority(run);this.leaseAuthority.revoke(run.id,run.leaseId,run.generation,"Runner credential revoked",this.now().toISOString());this.persistLatestLeaseAudit(run.id);
+      this.markRemoteUnavailable(run.id,"Runner credentials revoked; owning process termination requires confirmation","REMOTE_LEASE_INVALID",run);
+    }
+    // A shared value still belongs to other configured Runners; this Runner's identity remains revoked.
+    if (credentialRef && !this.sharedRunnerCredential(runnerId, credentialRef) && (await this.secrets.metadata(credentialRef)).exists) await this.secrets.delete(credentialRef);
+  }
+
+  private readonly modelRouting: ModelRoutingService;
+  private readonly publications: PublicationService;
+
+  private sessionInputIdentity(principal:InteractionPrincipal,params:{profileId:string;sessionId:string},body:{message:string;inputId?:string;authority?:RunInputAuthority},storedSession:AdapterSession){
+    const message=body.message;
+    const expected=body.authority;
+    const episode={runId:storedSession.runId,sessionId:params.sessionId,generation:expected?.generation??0,authorityHash:contentHash(expected?{runId:expected.runId,generation:expected.generation,leaseId:expected.leaseId,lastActivityAt:expected.lastActivityAt}:null)};
+    const inputId=body.inputId??(expected?`legacy-${contentHash({actor:principal.id,sessionId:storedSession.id,message,authority:expected})}`:undefined);
+    const input:RunInputIdentity|undefined=inputId?{...episode,inputId,actorId:principal.id,profileId:params.profileId,payloadHash:contentHash({message,authority:expected??null})}:undefined;
+    return {episode,inputId,input};
+  }
+  private async sendSessionInput(principal:InteractionPrincipal,params:{profileId:string;sessionId:string},body:{message?:string;inputId?:string;authority?:RunInputAuthority},external?:{input:RunInputIdentity;guard():void}):Promise<{statusCode:number;body:unknown}>{
+    const respond=(statusCode:number,body:unknown)=>({statusCode,body});
+    external?.guard();
+      if (typeof body?.message!=="string"||!body.message.trim()) return respond(400,{ code: "MESSAGE_REQUIRED" });
+      const message=body.message;
+      if(body.inputId!==undefined&&(typeof body.inputId!=="string"||!/^[-a-zA-Z0-9_]{8,128}$/.test(body.inputId)))return respond(400,{code:"INVALID_INPUT_ID"});
+      const storedSession = this.database.getEntity<JsonValue>("adapter-session", params.sessionId) as unknown as AdapterSession | undefined;
+      if (storedSession?.profileId !== params.profileId) return respond(404,{ code: "SESSION_NOT_FOUND" });
+      const {episode,inputId,input}=this.sessionInputIdentity(principal,params,{...body,message},storedSession);
+      const existing=input?this.runInputs.read(input):undefined;
+      const owned=Boolean(external&&input&&existing?.state==="RESERVED"&&isDeepStrictEqual(external.input,input));
+      if(external&&!owned)throw new InputReceiptError("INPUT_OUTCOME_UNKNOWN","Original external reservation cannot be adopted");
+      if(existing&&!owned){
+        if(existing.state!=="ACCEPTED")return respond(409,{code:existing.state==="RESERVED"?"INPUT_PENDING":existing.state==="REJECTED"?"INPUT_REJECTED":"INPUT_OUTCOME_UNKNOWN",receipt:existing,message:"Inspect the original session before submitting another input"});
+        return respond(200,{receipt:existing,repeated:true,event:{type:"session.message",sessionId:existing.sessionId,occurredAt:existing.acceptedAt,data:{acceptedCharacters:message.length}}});
+      }
+      const adapter = this.agentAdapters.get(params.profileId);
+      if (!adapter) return respond(404,{ code: "PROFILE_NOT_FOUND" });
+      const run = this.canonicalSession(storedSession);
+      const binding = run ? this.runConversation(run) : undefined;
+      if(this.pendingSessionCancellations.has(storedSession.id))return respond(409,{code:"SESSION_CANCELLED"});
+      if(this.pendingConsoleInputs.has(storedSession.id))return respond(409,{code:"INPUT_PENDING"});
+      const fence=run?this.nativeInteractions.fenceFor(run,`console:${inputId??randomUUID()}`):undefined;
+      return this.nativeInteractions.withMutationLane(storedSession.id,async()=>{
+      let reserved=owned,sent=false;
+      const assertAuthority = (): void => {
+        external?.guard();
+        this.runInputs.assertAvailable(episode,reserved?input:undefined);
+        if(this.pendingSessionCancellations.has(storedSession.id))throw new AdapterContractError("SESSION_CANCELLED","Session cancellation forbids further input");
+        if(run)this.nativeInteractions.assertInteraction(principal,"continue",fence!);
+        else {const decision=this.nativeInteractions.authorizeStandaloneInput(principal,storedSession.id);if(!decision.allowed)throw new InteractionGuardError(decision.code);}
+        this.resolveProfileExecutionContext(params.profileId,undefined,"resume");
+        if (!run) {
+          this.assertSessionContext(storedSession);
+          if(this.sessionStopState(storedSession)!=="none")throw new AdapterContractError("SESSION_CANCELLED","A requested stop forbids further input");
+          return;
+        }
+        this.assertRunSelectionRequirement(run,adapter);
+        const expected = body.authority;
+        const current = this.database.getEntity<JsonValue>("run", run.id) as unknown as Run | undefined;
+        const task = this.database.getCanonicalTask<JsonValue>(run.taskId);
+        if (!expected || expected.runId !== run.id || expected.generation !== current?.generation || expected.leaseId !== current?.leaseId || expected.lastActivityAt !== current?.lastActivityAt || expected.taskRevision !== task?.revision || current?.state !== "WAITING_USER" || current.profileId !== params.profileId || current.sessionId !== params.sessionId || (task?.document as unknown as Task)?.currentRunId !== run.id) throw new ConnectorError("CONFLICT", "Run or intervention authority changed; refresh before replying", { retryable: false, operation: "write" });
+        if (binding) this.assertMessagingInputAuthority(run, binding, binding.revision);
+        else {
+          this.restoreLeaseAuthority(current);
+          try { this.leaseAuthority.fence(current.id, current.leaseId, current.generation, "user-input", this.now().toISOString()); }
+          catch (error) { if (error instanceof LeaseFenceError) throw new ConnectorError("CONFLICT", error.message, { retryable: false, operation: "write" }); throw error; }
+          finally { this.persistLatestLeaseAudit(current.id); }
+        }
+      };
+      if (this.pendingSessionCancellations.has(params.sessionId)) return respond(409,{ code: "SESSION_CANCELLED" });
+      if (this.pendingConsoleInputs.has(params.sessionId)) return respond(409,{ code: "INPUT_PENDING" });
+      this.runInputs.assertAvailable(episode,owned?input:undefined);
+      assertAuthority();
+      this.pendingConsoleInputs.add(params.sessionId);
+      try {
+        if(run)await this.validateRunSelection(run);
+        assertAuthority();
+        if(input&&!owned){this.runInputs.reserve(input);reserved=true;}
+        sent=true;
+        const event = await adapter.send(params.sessionId,message,assertAuthority);
+        try { assertAuthority(); }
+        catch (error) {
+          try { if(run)await this.cleanupStaleInput(run,fence!);else await adapter.cancel(params.sessionId); }
+          catch (cleanupError) { this.app.log.warn({ error: redactValue(cleanupError), runId: run?.id }, "stale console input cleanup failed"); }
+          throw error;
+        }
+        if (run) {
+          this.database.transaction(() => {
+            assertAuthority();
+            assertRunTransition(run.state, "ACTIVE");
+            run.state = "ACTIVE";
+            run.lastActivityAt = this.now().toISOString();
+            this.saveAdvancedRun(run, "WAITING_USER");
+            if (binding) this.conversations.resume(binding.id, { expectedRevision: binding.revision, generation: run.generation });
+            const current = this.database.getCanonicalTask<JsonValue>(run.taskId)!;
+            if ((current.document as unknown as Task).state === "WAITING_USER") this.tasks.execute({ id: `run:${run.id}:user-input:${current.revision}`, taskId: run.taskId, baseRevision: current.revision, actor: "user", command: { type: "task.transition", state: "RUNNING" } });
+            if(input)this.runInputs.finish(input,"ACCEPTED");
+          });
+          this.attentionNotifications.recover(run.taskId);
+          this.fleetEvents.publish("run.changed", run.id, { id: run.id, state: run.state, lastActivityAt: run.lastActivityAt });
+        }
+        if(!run&&input)this.runInputs.finish(input,"ACCEPTED");
+        this.nativeInteractions.acknowledgeSettledMutationOutcome(storedSession.id);
+        return respond(200,{ event,...(input?{receipt:this.runInputs.read(input)}:{}) });
+      }catch(error){
+        if(error instanceof AdapterAdmissionError)sent=false;
+        if(!sent)this.nativeInteractions.acknowledgeSettledMutationOutcome(storedSession.id);
+        if(input&&reserved){
+          let receipt;
+          try{receipt=this.runInputs.finish(input,sent?"OUTCOME_UNKNOWN":"REJECTED");}
+          catch(recordError){this.app.log.warn({error:redactValue(recordError)},"input receipt remains unconfirmed");}
+          if(sent&&receipt?.state!=="ACCEPTED"){
+            if(run)this.markRemoteUnavailable(run.id,"Native input outcome is unconfirmed; inspect the original session","NATIVE_OUTCOME_UNKNOWN",run);
+            throw new InputReceiptError("INPUT_OUTCOME_UNKNOWN","Native input outcome is unconfirmed; inspect the original session before continuing");
+          }
+        }
+        throw error;
+      } finally { if(input)this.runInputs.release(input);this.pendingConsoleInputs.delete(params.sessionId); }
+      });
   }
 
   private registerRoutes(): void {
     this.app.addHook("onRequest", async (request, reply) => {
-      const decision = await this.controlAuth.evaluate({ method: request.method, url: request.url, headers: request.headers, ip: request.ip });
+      const decision = await this.controlAuth.evaluate({ method: request.method, url: request.url, headers: request.headers, ip: request.ip,
+        ...(request.routeOptions.url ? { routePath: request.routeOptions.url } : {}), protocol: request.protocol });
       if (decision.kind === "authenticated") this.requestPrincipals.set(request, decision.principal);
       if (decision.kind !== "rejected") return;
       if (decision.retryAfterSeconds) reply.header("retry-after", String(decision.retryAfterSeconds));
@@ -1819,7 +4880,7 @@ export class ControllerService {
       reply.header("referrer-policy", "no-referrer");
       reply.header("cross-origin-opener-policy", "same-origin");
       reply.header("content-security-policy", "frame-ancestors 'none'; base-uri 'self'; object-src 'none'");
-      if (request.url.startsWith("/api/") || request.url.startsWith("/auth/")) reply.header("cache-control", "no-store");
+      if (request.url.startsWith("/api/") || request.url.startsWith("/auth/") || isRhizaIngressPath(request.url)) reply.header("cache-control", "no-store");
       return payload;
     });
     this.app.addHook("preParsing", async (request, _reply, payload) => {
@@ -1831,6 +4892,26 @@ export class ControllerService {
       payload.pipe(copy);
       return copy;
     });
+
+    this.app.addSchema(rhizaV1Schema);
+    registerOrphanRoutes(this.app,this.options.dataDirectory,this.workspaces,()=>readRecoveryInventoryFromDatabase(this.database),this.agentProcesses);
+    const rhizaQuery = { type: "object", additionalProperties: false, properties: {} };
+    this.app.post<{ Body: RhizaSubmitRequestV1 }>(`${RHIZA_API_PREFIX}/jobs`, { bodyLimit: 256 * 1024, schema: { querystring: rhizaQuery, body: { $ref: `${rhizaV1Schema.$id}#/$defs/submitRequest` }, response: { 202: { $ref: `${rhizaV1Schema.$id}#/$defs/receipt` } } } }, async (request, reply) => reply.code(202).send(await this.rhizaJobs.submit(this.requestPrincipals.get(request), request.body)));
+    this.app.get<{ Params: { requestId: string } }>(`${RHIZA_API_PREFIX}/operations/by-key/:requestId`, { schema: { querystring: rhizaQuery, params: { type: "object", additionalProperties: false, required: ["requestId"], properties: { requestId: { type: "string", minLength: 1, maxLength: 200, pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]*$" } } }, response: { 200: { $ref: `${rhizaV1Schema.$id}#/$defs/receipt` } } } }, request => this.rhizaOperations.lookup(this.requestPrincipals.get(request), request.params.requestId));
+    const rhizaReadSchemas={snapshot:{$ref:`${rhizaV1Schema.$id}#/$defs/snapshot`},eventPage:{$ref:`${rhizaV1Schema.$id}#/$defs/eventPage`},artifacts:{$ref:`${rhizaV1Schema.$id}#/$defs/artifacts`}};
+    // Fastify's serializer cannot merge these conditional schemas. Reuse its
+    // validator without weakening the wire contract or reflecting private facts.
+    const rhizaRead=(request:FastifyRequest,definition:keyof typeof rhizaReadSchemas,value:unknown)=>{if(!request.compileValidationSchema(rhizaReadSchemas[definition])(value)){this.app.log.error({definition},"RHIZA read projection violates its wire contract");throw new RhizaIngressError("INTERNAL_ERROR",500,"Read projection is unavailable");}return value;};
+    const rhizaJobParams={type:"object",additionalProperties:false,required:["jobId"],properties:{jobId:{type:"string",minLength:1,maxLength:200,pattern:"^[A-Za-z0-9][A-Za-z0-9._:-]*$"}}};
+    this.app.get<{Params:{jobId:string}}>(`${RHIZA_API_PREFIX}/jobs/:jobId`,{schema:{querystring:rhizaQuery,params:rhizaJobParams}},request=>rhizaRead(request,"snapshot",this.rhizaViews.snapshot(this.requestPrincipals.get(request),request.params.jobId)));
+    this.app.post<{Params:{jobId:string};Body:RhizaCancellationRequestV1}>(`${RHIZA_API_PREFIX}/jobs/:jobId/cancellations`,{bodyLimit:16*1024,schema:{querystring:rhizaQuery,params:rhizaJobParams,body:{$ref:`${rhizaV1Schema.$id}#/$defs/cancellationRequest`},response:{202:{$ref:`${rhizaV1Schema.$id}#/$defs/controlReceipt`}}}},(request,reply)=>reply.code(202).send(this.rhizaCancellations.accept(this.requestPrincipals.get(request),request.params.jobId,request.body)));
+    this.app.post<{Params:{jobId:string};Body:RhizaInputRequestV1}>(`${RHIZA_API_PREFIX}/jobs/:jobId/inputs`,{bodyLimit:64*1024,schema:{querystring:rhizaQuery,params:rhizaJobParams,body:{$ref:`${rhizaV1Schema.$id}#/$defs/inputRequest`},response:{202:{$ref:`${rhizaV1Schema.$id}#/$defs/controlReceipt`}}}},(request,reply)=>reply.code(202).send(this.rhizaInputs.accept(this.requestPrincipals.get(request),request.params.jobId,request.body)));
+    this.app.get<{Params:{jobId:string}}>(`${RHIZA_API_PREFIX}/jobs/:jobId/artifacts`,{schema:{querystring:rhizaQuery,params:rhizaJobParams}},request=>rhizaRead(request,"artifacts",this.rhizaViews.artifactList(this.requestPrincipals.get(request),request.params.jobId)));
+    this.app.get<{Querystring:{cursor?:string;jobId?:string}}>(`${RHIZA_API_PREFIX}/events`,{schema:{querystring:{type:"object",additionalProperties:false,anyOf:[{required:["cursor"]},{required:["jobId"]}],properties:{cursor:{type:"string",minLength:1,maxLength:200},jobId:rhizaJobParams.properties.jobId}}}},request=>rhizaRead(request,"eventPage",this.rhizaViews.events(this.requestPrincipals.get(request),request.query)));
+    this.app.get(`${RHIZA_API_PREFIX}/capabilities`, { schema: { querystring: rhizaQuery } }, request => this.rhizaAuth.capabilities(this.requestPrincipals.get(request)));
+    this.app.post<{ Body: RhizaHandshakeRequestV1 }>(`${RHIZA_API_PREFIX}/handshakes`, { bodyLimit: 16 * 1024, schema: { querystring: rhizaQuery, body: { $ref: `${rhizaV1Schema.$id}#/$defs/handshakeRequest` } } }, request => this.rhizaAuth.handshake(this.requestPrincipals.get(request), request.body));
+    this.app.get<{ Querystring: { repositoryId: string } }>(`${RHIZA_API_PREFIX}/targets`, { schema: { querystring: { type: "object", additionalProperties: false, required: ["repositoryId"], properties: { repositoryId: { type: "string", minLength: 1, maxLength: 200, pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]*$" } } } } }, request => this.rhizaTargets.catalog(this.requestPrincipals.get(request), request.query.repositoryId));
+    this.app.post<{ Body: { workOrder: RhizaWorkOrderV1 } }>(`${RHIZA_API_PREFIX}/jobs/preflights`, { bodyLimit: 256 * 1024, schema: { querystring: rhizaQuery, body: { $ref: `${rhizaV1Schema.$id}#/$defs/preflightRequest` } } }, request => this.rhizaTargets.preflight(this.requestPrincipals.get(request), request.body.workOrder));
 
     this.app.get("/health", async () => ({
       status: this.lifecycle.state === "READY" && (!this.configuration.current().config.internalLlm.configured || this.llm.snapshot().state.mode === "ACTIVE")
@@ -1855,10 +4936,12 @@ export class ControllerService {
       return reply.redirect(`/config?secureInput=1&principal=${encodeURIComponent(verified.principalId)}`);
     });
 
-    this.app.post<{ Body: { token?: string; code?: string } }>("/auth/session", async (request, reply) => {
+    this.app.post<{ Body: { token?: string; code?: string; username?: string; password?: string } }>("/auth/session", async (request, reply) => {
       const token = typeof request.body?.token === "string" ? request.body.token : undefined;
       const code = typeof request.body?.code === "string" ? request.body.code : undefined;
-      const session = await this.controlAuth.createSession({ ...(token ? { token } : {}), ...(code ? { code } : {}) }, request.ip);
+      const username = typeof request.body?.username === "string" ? request.body.username : undefined;
+      const password = typeof request.body?.password === "string" ? request.body.password : undefined;
+      const session = await this.controlAuth.createSession({ ...(token ? { token } : {}), ...(code ? { code } : {}), ...(username ? { username } : {}), ...(password ? { password } : {}) }, request.ip);
       if (!session) return reply.code(401).send({ code: "AUTH_REJECTED", message: "Login credential is invalid or expired" });
       reply.header("set-cookie", this.controlAuth.sessionCookies(session, request.protocol === "https"));
       return reply.code(201).send({ principal: { id: OWNER_PRINCIPAL_ID, roles: [...OWNER_ROLES] }, csrfToken: session.csrfToken, expiresAt: session.expiresAt });
@@ -1871,6 +4954,12 @@ export class ControllerService {
     this.app.delete("/auth/session", async (request, reply) => {
       this.controlAuth.revokeSession(request.headers.cookie);
       reply.header("set-cookie", this.controlAuth.clearedCookies());
+      return reply.code(204).send();
+    });
+    this.app.post<{ Body: { password?: string } }>("/auth/owner-password", async (request, reply) => {
+      if (!validOwnerPassword(request.body?.password)) return reply.code(400).send({ code: "INVALID_OWNER_PASSWORD", message: "Password must contain 1 to 1024 characters" });
+      await this.secrets.put(OWNER_PASSWORD_REFERENCE, await hashOwnerPassword(request.body.password));
+      this.controlAuth.revokeAllSessions();
       return reply.code(204).send();
     });
     this.app.post("/auth/login-codes", async (_request, reply) => reply.code(201).send(this.issueDashboardLogin()));
@@ -1886,6 +4975,8 @@ export class ControllerService {
     this.app.post<{ Params: { id: string }; Body: { ttlMs?: number } }>("/api/runners/:id/enrollment", async (request, reply) => {
       const runner = this.configuration.current().config.runners.find((candidate) => candidate.id === request.params.id && candidate.mode === "remote");
       if (!runner) return reply.code(404).send({ code: "REMOTE_RUNNER_NOT_FOUND" });
+      if (this.runnerCredentialOperations.has(runner.id)) throw new ConfigPlanError("RUNNER_CREDENTIAL_BUSY", "A credential change is still pending");
+      if (runner.credentialRef && this.sharedRunnerCredential(runner.id, runner.credentialRef)) return reply.code(409).send({ code: "SHARED_RUNNER_CREDENTIAL", message: "Configure a dedicated credential reference before enrollment" });
       const issued = this.enrollments.issue(runner.id, request.body?.ttlMs, this.now());
       return reply.code(201).send({ runnerId: runner.id, token: issued.token, expiresAt: issued.record.expiresAt });
     });
@@ -1893,50 +4984,54 @@ export class ControllerService {
       if (!request.body?.runnerId || !request.body.token) return reply.code(400).send({ code: "ENROLLMENT_INPUT_REQUIRED" });
       const runner = this.configuration.current().config.runners.find((candidate) => candidate.id === request.body!.runnerId && candidate.mode === "remote");
       if (!runner?.credentialRef) return reply.code(404).send({ code: "REMOTE_RUNNER_NOT_FOUND" });
-      try {
-        this.enrollments.consume(runner.id, request.body.token, this.now());
-      } catch (error) {
-        this.controlAuth.recordFailure(request.ip);
-        return reply.code(401).send({ code: "ENROLLMENT_REJECTED", message: error instanceof Error ? error.message : "Enrollment rejected" });
-      }
-      const bearerToken = randomBytes(32).toString("base64url");
-      await this.secrets.put(runner.credentialRef, bearerToken);
-      this.database.saveEntity("runner-identity", runner.id, json({ runnerId: runner.id, credentialRef: runner.credentialRef, enrolledAt: this.now().toISOString() }));
-      return reply.code(201).send({ runnerId: runner.id, credentialRef: runner.credentialRef, bearerToken, protocolVersion: "1.2" });
+      const enrollmentToken = request.body.token, credentialRef = runner.credentialRef;
+      try { this.enrollments.consume(runner.id, enrollmentToken, this.now()); }
+      catch (error) { this.controlAuth.recordFailure(request.ip); return reply.code(401).send({ code: "ENROLLMENT_REJECTED", message: error instanceof Error ? error.message : "Enrollment rejected" }); }
+      if (this.sharedRunnerCredential(runner.id, credentialRef)) return reply.code(409).send({ code: "SHARED_RUNNER_CREDENTIAL", message: "Configure a dedicated credential reference before enrollment" });
+      const enrolled = await this.withRunnerCredentialChange(runner.id, async () => {
+        await this.revokeRunnerCredential(runner.id, credentialRef);
+        const bearerToken = randomBytes(32).toString("base64url");
+        await this.secrets.put(credentialRef, bearerToken);
+        this.database.saveEntity("runner-identity", runner.id, json({ runnerId: runner.id, credentialRef, epoch: randomUUID(), enrolledAt: this.now().toISOString() }));
+        this.revokedRunnerCredentials.delete(runner.id);
+        return { runnerId: runner.id, credentialRef, bearerToken, protocolVersion: "1.2" };
+      });
+      return reply.code(201).send(enrolled);
     });
     this.app.post<{ Params: { id: string } }>("/api/runners/:id/credential/revoke", async (request, reply) => {
       const runner = this.configuration.current().config.runners.find((candidate) => candidate.id === request.params.id && candidate.mode === "remote");
       if (!runner) return reply.code(404).send({ code: "REMOTE_RUNNER_NOT_FOUND" });
-      await this.revokeRunnerCredential(runner.id, runner.credentialRef);
-      return { runnerId: runner.id, revoked: true };
+      return this.withRunnerCredentialChange(runner.id, async () => {
+        await this.revokeRunnerCredential(runner.id, runner.credentialRef);
+        return { runnerId: runner.id, revoked: true };
+      });
     });
     this.app.post<{ Params: { id: string }; Body: { ttlMs?: number } }>("/api/runners/:id/credential/rotate", async (request, reply) => {
       const runner = this.configuration.current().config.runners.find((candidate) => candidate.id === request.params.id && candidate.mode === "remote");
       if (!runner) return reply.code(404).send({ code: "REMOTE_RUNNER_NOT_FOUND" });
-      await this.revokeRunnerCredential(runner.id, runner.credentialRef);
-      const issued = this.enrollments.issue(runner.id, request.body?.ttlMs, this.now());
+      if (runner.credentialRef && this.sharedRunnerCredential(runner.id, runner.credentialRef)) return reply.code(409).send({ code: "SHARED_RUNNER_CREDENTIAL", message: "Configure a dedicated credential reference before rotation" });
+      const issued = await this.withRunnerCredentialChange(runner.id, async () => {
+        await this.revokeRunnerCredential(runner.id, runner.credentialRef);
+        return this.enrollments.issue(runner.id, request.body?.ttlMs, this.now());
+      });
       return reply.code(201).send({ runnerId: runner.id, token: issued.token, expiresAt: issued.record.expiresAt });
     });
     this.app.get("/api/adapters/manifests", async () => ({ manifests: adapterManifests }));
     this.app.get("/api/adapters/compatibility", async () => ({ matrix: buildAdapterCompatibilityMatrix(adapterManifests) }));
     this.app.get("/api/agents/profiles", async () => ({
-      profiles: this.configuration.current().config.agentProfiles.map((profile) => {
-        const manifest = manifestForProvider(profile.provider);
-        return {
-          id: profile.id,
-          provider: profile.provider,
-          alias: profile.alias,
-          runnerId: profile.runnerId,
-          state: this.agentAdapters.has(profile.id) ? "CONFIGURED" : "UNAVAILABLE",
-          resourceState: this.profileResourceState(profile.id),
-          capabilities: manifest ? manifestCapabilities(manifest) : [],
-        };
-      }),
-      sessions: this.database.listEntities<JsonValue>("adapter-session").map((value) => {
-        const session = value as Record<string, JsonValue>;
-        return { id: session.id, runId: session.runId, profileId: session.profileId, state: session.state, updatedAt: session.updatedAt };
-      }),
+      revision: this.configuration.current().revision,
+      profiles:this.configuration.current().config.agentProfiles.map(profile=>this.profileConsoleView(profile.id)),
+      sessions: this.database.listEntities<JsonValue>("adapter-session").map(value=>this.sessionView(value as unknown as AdapterSession)),
     }));
+    this.app.get<{Params:{id:string}}>("/api/agents/profiles/:id",async(request,reply)=>{
+      if(!this.configuration.current().config.agentProfiles.some(profile=>profile.id===request.params.id))return reply.code(404).send({code:"PROFILE_NOT_FOUND"});return {profile:this.profileConsoleView(request.params.id)};
+    });
+    this.app.get<{Params:{id:string}}>("/api/agents/profiles/:id/quota",async(request,reply)=>{
+      if(!this.configuration.current().config.agentProfiles.some(profile=>profile.id===request.params.id))return reply.code(404).send({code:"PROFILE_NOT_FOUND"});return {quota:this.accountQuotas.state(request.params.id)};
+    });
+    this.app.post<{Params:{id:string};Body:Record<string,never>}>("/api/agents/profiles/:id/quota/refresh",{schema:{body:{type:"object",additionalProperties:false}}},async(request,reply)=>{
+      if(!this.configuration.current().config.agentProfiles.some(profile=>profile.id===request.params.id))return reply.code(404).send({code:"PROFILE_NOT_FOUND"});return {quota:await this.accountQuotas.refresh(request.params.id)};
+    });
     this.app.get("/api/resources", async () => ({
       resources: this.configuration.current().config.agentProfiles.map((profile) => {
         const assessment = this.resourceRegistry.assess(profile.id);
@@ -1959,6 +5054,7 @@ export class ControllerService {
     });
     this.app.post<{ Body: CodexProfileBody }>("/api/agents/codex/discover", async (request, reply) => {
       if (!request.body?.codexHome || !request.body.alias) return reply.code(400).send({ code: "CODEX_PROFILE_REQUIRED" });
+      this.assertLocalDraftProbe(request.body?.runnerId);
       return probeCodexProfile({
         id: request.body.id ?? "discovered-codex",
         alias: request.body.alias,
@@ -1976,6 +5072,7 @@ export class ControllerService {
       next.agentProfiles.push({
         id: body.id,
         provider: "codex",
+        ...(body.enabled !== undefined ? { enabled: body.enabled } : {}),
         alias: body.alias,
         runnerId: body.runnerId ?? "local",
         settings: {
@@ -1984,12 +5081,19 @@ export class ControllerService {
           ...(body.model ? { model: body.model } : {}),
         },
       });
-      const plan = this.configuration.buildPlan(next, "local-web", "web");
-      const applied = this.configuration.applyPlan(plan.id, { confirmed: true });
-      return reply.code(201).send({ profile: { id: body.id, provider: "codex", alias: body.alias, runnerId: body.runnerId ?? "local", state: "CONFIGURED" }, revision: applied.revision });
+      if (body.baseRevision !== undefined) {
+        if (!Number.isInteger(body.baseRevision)) return reply.code(400).send({code:"INVALID_CONFIG_REVISION"});
+        const actual=this.configuration.current().revision;
+        if(body.baseRevision!==actual) throw new RevisionConflictError(body.baseRevision,actual);
+      }
+      const plan = await this.planConfiguration(next, this.principalFor(request).id, "web");
+      if(body.previewOnly === true) return reply.code(201).send({plan:consoleConfigPlan(plan)});
+      const applied = await this.applyConfigurationPlan(plan.id, { confirmed: true });
+      return reply.code(201).send({ profile: { id: body.id, provider: "codex", alias: body.alias, runnerId: body.runnerId ?? "local", state: body.enabled === false ? "DISABLED" : "CONFIGURED" }, revision: applied.revision });
     });
     this.app.post<{ Body: QoderProfileBody }>("/api/agents/qoder/discover", async (request, reply) => {
       if (!request.body?.alias) return reply.code(400).send({ code: "QODER_PROFILE_REQUIRED" });
+      this.assertLocalDraftProbe(request.body?.runnerId);
       return probeQoderProfile({
         id: request.body.id ?? "discovered-qoder",
         alias: request.body.alias,
@@ -2003,31 +5107,44 @@ export class ControllerService {
       if (!body?.id || !body.alias) return reply.code(400).send({ code: "QODER_PROFILE_REQUIRED" });
       const current = this.configuration.current();
       if (current.config.agentProfiles.some((profile) => profile.id === body.id)) return reply.code(409).send({ code: "PROFILE_EXISTS" });
-      const discovery = await probeQoderProfile({ id: body.id, alias: body.alias, ...(body.executable ? { executable: body.executable } : {}), ...(body.configDir ? { configDir: body.configDir } : {}), ...(body.model ? { model: body.model } : {}) });
-      if (!discovery.selected) return reply.code(409).send({ code: "QODER_SELECTION_REQUIRED", candidates: discovery.candidates });
-      if (!discovery.selected.authenticated) return reply.code(409).send({ code: "QODER_AUTH_REQUIRED", candidate: discovery.selected });
+      if(body.previewOnly!==true)this.assertLocalDraftProbe(body.runnerId);
+      const discovery=body.previewOnly?undefined:await probeQoderProfile({id:body.id,alias:body.alias,...(body.executable?{executable:body.executable}:{}),...(body.configDir?{configDir:body.configDir}:{}),...(body.model?{model:body.model}:{})});
+      if(discovery&&!discovery.selected)return reply.code(409).send({code:"QODER_SELECTION_REQUIRED",candidates:discovery.candidates});
+      if(discovery&&!discovery.selected?.authenticated)return reply.code(409).send({code:"QODER_AUTH_REQUIRED",candidate:discovery.selected});
       const next = structuredClone(current.config);
       next.agentProfiles.push({
         id: body.id,
         provider: "qoder",
         alias: body.alias,
         runnerId: body.runnerId ?? "local",
-        settings: { executable: discovery.selected.executable, ...(body.configDir ? { configDir: body.configDir } : {}), ...(body.model ? { model: body.model } : {}) },
+        settings: { ...(discovery?.selected?{executable:discovery.selected.executable}:body.executable?{executable:body.executable}:{}), ...(body.configDir ? { configDir: body.configDir } : {}), ...(body.model ? { model: body.model } : {}) },
       });
-      const plan = this.configuration.buildPlan(next, "local-web", "web");
-      const applied = this.configuration.applyPlan(plan.id, { confirmed: true });
-      return reply.code(201).send({ profile: { id: body.id, provider: "qoder", alias: body.alias, runnerId: body.runnerId ?? "local", state: "CONFIGURED" }, discovery: discovery.selected, revision: applied.revision });
+      if (body.baseRevision !== undefined) {
+        if (!Number.isInteger(body.baseRevision)) return reply.code(400).send({code:"INVALID_CONFIG_REVISION"});
+        const actual=this.configuration.current().revision;
+        if(body.baseRevision!==actual) throw new RevisionConflictError(body.baseRevision,actual);
+      }
+      const plan = await this.planConfiguration(next, this.principalFor(request).id, "web");
+      if(body.previewOnly === true) return reply.code(201).send({plan:consoleConfigPlan(plan)});
+      const applied = await this.applyConfigurationPlan(plan.id, { confirmed: true });
+      return reply.code(201).send({ profile: { id: body.id, provider: "qoder", alias: body.alias, runnerId: body.runnerId ?? "local", state: "CONFIGURED" }, discovery: discovery?.selected, revision: applied.revision });
     });
     this.app.post<{ Params: { provider: string }; Body: EcosystemProfileBody }>("/api/agents/:provider/discover", async (request, reply) => {
       const body = request.body;
       if (!body?.alias) return reply.code(400).send({ code: "AGENT_PROFILE_REQUIRED" });
+      this.assertLocalDraftProbe(request.body?.runnerId);
+      if (isNativeCliProvider(request.params.provider)) return probeNativeCliProfile(request.params.provider, { id: body.id ?? `discovered-${request.params.provider}`, alias: body.alias, ...(body.configDir ? {configDir:body.configDir}:{}), ...(body.executable ? { executable: body.executable } : {}), ...(body.model ? { model: body.model } : {}) });
       const resolveCredential = (reference: string): Promise<string> => this.secrets.resolve(reference, { principal: "controller", purpose: "provider" });
       if (request.params.provider === "cursor" || request.params.provider === "kiro") {
         const profile: CliAgentProfile = { id: body.id ?? `discovered-${request.params.provider}`, alias: body.alias, ...(body.executable ? { executable: body.executable } : {}), ...(body.credentialRef ? { credentialRef: body.credentialRef } : {}), ...(body.model ? { model: body.model } : {}) };
         return request.params.provider === "cursor" ? probeCursorProfile(profile, resolveCredential) : probeKiroProfile(profile, resolveCredential);
       }
       if (request.params.provider === "devin") {
+        if (body.createAsUserId !== undefined && (typeof body.createAsUserId !== "string" || !body.createAsUserId.trim() || body.createAsUserId.length > 512 || /[\0\r\n]/.test(body.createAsUserId))) return reply.code(400).send({ code: "INVALID_DEVIN_ATTRIBUTION" });
+        if (body.maxSessionAcu !== undefined && (!Number.isSafeInteger(body.maxSessionAcu) || body.maxSessionAcu <= 0)) return reply.code(400).send({ code: "INVALID_DEVIN_ACU_LIMIT" });
+
         if (!body.organizationId || !body.credentialRef) return reply.code(400).send({ code: "DEVIN_PROFILE_REQUIRED" });
+        // Discovery checks credential health only; it does not create or attribute a session.
         return probeDevinProfile({ id: body.id ?? "discovered-devin", alias: body.alias, organizationId: body.organizationId, credentialRef: body.credentialRef, ...(body.apiBase ? { apiBase: body.apiBase } : {}), ...(body.maxSessionAcu ? { maxSessionAcu: body.maxSessionAcu } : {}) }, resolveCredential, this.options.integrationFetch as typeof fetch | undefined);
       }
       if (request.params.provider === "workbuddy-codebuddy") {
@@ -2041,6 +5158,28 @@ export class ControllerService {
       }
       return reply.code(404).send({ code: "ADAPTER_NOT_FOUND" });
     });
+    this.app.post<{Body:{id:string;alias:string;runnerId?:string;enabled?:boolean;executable:string;copilotHome:string;previewOnly?:boolean;baseRevision?:number}}>("/api/agents/copilot/profiles",{schema:{body:{type:"object",additionalProperties:false,required:["id","alias","executable","copilotHome"],properties:{id:{type:"string",minLength:1},alias:{type:"string",minLength:1},runnerId:{type:"string",minLength:1},enabled:{type:"boolean"},executable:{type:"string"},copilotHome:{type:"string"},previewOnly:{type:"boolean"},baseRevision:{type:"integer"}}}}},async(request,reply)=>{
+      const body=request.body,current=this.configuration.current();
+      if(body.baseRevision!==undefined&&body.baseRevision!==current.revision)throw new RevisionConflictError(body.baseRevision,current.revision);
+      if(current.config.agentProfiles.some(profile=>profile.id===body.id))return reply.code(409).send({code:"PROFILE_EXISTS"});
+      const next=structuredClone(current.config),runnerId=body.runnerId??"local";
+      next.agentProfiles.push({id:body.id,alias:body.alias,provider:"copilot",runnerId,...(body.enabled===undefined?{}:{enabled:body.enabled}),settings:{executable:body.executable,copilotHome:body.copilotHome},nativeInteraction:{mode:"compatible",backendId:"copilot-rpc",executionLocation:"managed-worktree"}});
+      const plan=await this.planConfiguration(next,this.principalFor(request).id,"web");
+      if(body.previewOnly===true)return reply.code(201).send({plan:consoleConfigPlan(plan)});
+      const applied=await this.applyConfigurationPlan(plan.id,{confirmed:true});
+      return reply.code(201).send({profile:{id:body.id,provider:"copilot",alias:body.alias,runnerId,state:body.enabled===false?"DISABLED":"CONFIGURED"},revision:applied.revision});
+    });
+    this.app.post<{Body:{id:string;alias:string;runnerId?:string;enabled?:boolean;executable:string;dataHome:string;configHome:string;previewOnly?:boolean;baseRevision?:number}}>("/api/agents/devin-local/profiles",{schema:{body:{type:"object",additionalProperties:false,required:["id","alias","executable","dataHome","configHome"],properties:{id:{type:"string",minLength:1},alias:{type:"string",minLength:1},runnerId:{type:"string",minLength:1},enabled:{type:"boolean"},executable:{type:"string"},dataHome:{type:"string"},configHome:{type:"string"},previewOnly:{type:"boolean"},baseRevision:{type:"integer"}}}}},async(request,reply)=>{
+      const body=request.body,current=this.configuration.current();
+      if(body.baseRevision!==undefined&&body.baseRevision!==current.revision)throw new RevisionConflictError(body.baseRevision,current.revision);
+      if(current.config.agentProfiles.some(profile=>profile.id===body.id))return reply.code(409).send({code:"PROFILE_EXISTS"});
+      const next=structuredClone(current.config),runnerId=body.runnerId??"local";
+      next.agentProfiles.push({id:body.id,alias:body.alias,provider:"devin-local",runnerId,...(body.enabled===undefined?{}:{enabled:body.enabled}),settings:{executable:body.executable,dataHome:body.dataHome,configHome:body.configHome},nativeInteraction:{mode:"compatible",backendId:"devin-local-acp",executionLocation:"managed-worktree"}});
+      const plan=await this.planConfiguration(next,this.principalFor(request).id,"web");
+      if(body.previewOnly===true)return reply.code(201).send({plan:consoleConfigPlan(plan)});
+      const applied=await this.applyConfigurationPlan(plan.id,{confirmed:true});
+      return reply.code(201).send({profile:{id:body.id,provider:"devin-local",alias:body.alias,runnerId,state:body.enabled===false?"DISABLED":"CONFIGURED"},revision:applied.revision});
+    });
     this.app.post<{ Params: { provider: string }; Body: EcosystemProfileBody }>("/api/agents/:provider/profiles", async (request, reply) => {
       const body = request.body;
       if (!body?.id || !body.alias) return reply.code(400).send({ code: "AGENT_PROFILE_REQUIRED" });
@@ -2049,11 +5188,22 @@ export class ControllerService {
       let provider = request.params.provider;
       let settings: Record<string, JsonValue>;
       let credentialRef = body.credentialRef;
-      if (provider === "cursor" || provider === "kiro") {
-        settings = { ...(body.executable ? { executable: body.executable } : {}), ...(body.model ? { model: body.model } : {}) };
+      if (isNativeCliProvider(provider)) {
+        if(body.previewOnly!==true)this.assertLocalDraftProbe(body.runnerId);
+        if (provider === "zcode" && body.model) return reply.code(400).send({ code: "NATIVE_MODEL_SETTINGS_REQUIRED", message: "Select ZCode models in its native client." });
+        if (body.approveTools !== undefined && (!["opencode", "grok", "antigravity"].includes(provider) || typeof body.approveTools !== "boolean")) return reply.code(400).send({ code: "INVALID_TOOL_APPROVAL" });
+        if (credentialRef && provider !== "grok") return reply.code(400).send({ code: "NATIVE_LOGIN_REQUIRED", message: "Use the harness's native provider login for this profile." });
+        const discovery=body.previewOnly?undefined:await probeNativeCliProfile(provider,{id:body.id,alias:body.alias,...(body.executable?{executable:body.executable}:{}),...(body.configDir?{configDir:body.configDir}:{}),...(body.model?{model:body.model}:{})});
+        if(discovery&&(!discovery.installed||!discovery.compatible))return reply.code(409).send({code:"CLI_INCOMPATIBLE",discovery});
+        settings={...(discovery?{executable:discovery.executable}:body.executable?{executable:body.executable}:{}),...(provider==="qoder-cn"&&body.configDir?{configDir:body.configDir}:{}),...(body.model?{model:body.model}:{}),...(body.approveTools!==undefined?{approveTools:body.approveTools}:{})};
+      } else if (provider === "cursor" || provider === "kiro") {
+        settings = { ...(body.executable ? { executable: body.executable } : {}), ...(body.model ? { model: body.model } : {}), ...(provider === "cursor" && body.approveTools !== undefined ? { approveTools: body.approveTools } : {}), ...(provider === "cursor" && body.trustWorkspace !== undefined ? { trustWorkspace: body.trustWorkspace } : {}) };
       } else if (provider === "devin") {
+        if (body.createAsUserId !== undefined && (typeof body.createAsUserId !== "string" || !body.createAsUserId.trim() || body.createAsUserId.length > 512 || /[\0\r\n]/.test(body.createAsUserId))) return reply.code(400).send({ code: "INVALID_DEVIN_ATTRIBUTION" });
+        if (body.maxSessionAcu !== undefined && (!Number.isSafeInteger(body.maxSessionAcu) || body.maxSessionAcu <= 0)) return reply.code(400).send({ code: "INVALID_DEVIN_ACU_LIMIT" });
+
         if (!body.organizationId || !credentialRef) return reply.code(400).send({ code: "DEVIN_PROFILE_REQUIRED" });
-        settings = { organizationId: body.organizationId, ...(body.apiBase ? { apiBase: body.apiBase } : {}), ...(body.maxSessionAcu ? { maxSessionAcu: body.maxSessionAcu } : {}) };
+        settings = { organizationId: body.organizationId, ...(body.apiBase ? { apiBase: body.apiBase } : {}), ...(body.maxSessionAcu ? { maxSessionAcu: body.maxSessionAcu } : {}), ...(body.createAsUserId ? { createAsUserId: body.createAsUserId } : {}) };
       } else if (provider === "workbuddy-codebuddy") {
         const local = localServiceProfile(body);
         if (!local) return reply.code(400).send({ code: "LOCAL_SERVICE_PROFILE_REQUIRED" });
@@ -2065,97 +5215,152 @@ export class ControllerService {
         credentialRef = undefined;
       } else return reply.code(404).send({ code: "ADAPTER_NOT_FOUND" });
       if (credentialRef && !(await this.secrets.metadata(credentialRef)).exists) return reply.code(409).send({ code: "SECRET_REFERENCE_MISSING" });
-      const next = structuredClone(current.config);
-      next.agentProfiles.push({ id: body.id, provider, alias: body.alias, runnerId: body.runnerId ?? "local", ...(credentialRef ? { credentialRef } : {}), settings });
-      const plan = this.configuration.buildPlan(next, "local-web", "web");
-      const applied = this.configuration.applyPlan(plan.id, { confirmed: true });
-      return reply.code(201).send({ profile: { id: body.id, provider, alias: body.alias, runnerId: body.runnerId ?? "local", state: this.agentAdapters.has(body.id) ? "CONFIGURED" : "UNAVAILABLE" }, revision: applied.revision });
+      const latest = this.configuration.current();
+      if (latest.config.agentProfiles.some((profile) => profile.id === body.id)) return reply.code(409).send({ code: "PROFILE_EXISTS" });
+      const next = structuredClone(latest.config);
+      next.agentProfiles.push({ id: body.id, provider, ...(body.enabled !== undefined ? { enabled: body.enabled } : {}), alias: body.alias, runnerId: body.runnerId ?? "local", ...(credentialRef ? { credentialRef } : {}), settings });
+      if (body.baseRevision !== undefined) {
+        if (!Number.isInteger(body.baseRevision)) return reply.code(400).send({code:"INVALID_CONFIG_REVISION"});
+        const actual=this.configuration.current().revision;
+        if(body.baseRevision!==actual) throw new RevisionConflictError(body.baseRevision,actual);
+      }
+      const plan = await this.planConfiguration(next, this.principalFor(request).id, "web");
+      if(body.previewOnly === true) return reply.code(201).send({plan:consoleConfigPlan(plan)});
+      const applied = await this.applyConfigurationPlan(plan.id, { confirmed: true });
+      return reply.code(201).send({ profile: { id: body.id, provider, alias: body.alias, runnerId: body.runnerId ?? "local", state: body.enabled === false ? "DISABLED" : this.agentAdapters.has(body.id) ? "CONFIGURED" : "UNAVAILABLE" }, revision: applied.revision });
     });
-    this.app.post<{ Params: { id: string } }>("/api/agents/profiles/:id/test", async (request, reply) => {
-      const profile = this.configuration.current().config.agentProfiles.find((entry) => entry.id === request.params.id);
-      const codexHome = stringSetting(profile?.settings?.codexHome);
+    this.app.post<{ Params: { id: string }; Body: { enabled: boolean;baseRevision?:number } }>("/api/agents/profiles/:id/enabled", async (request, reply) => {
+      if (typeof request.body?.enabled !== "boolean") return reply.code(400).send({ code: "INVALID_PROFILE_ACTIVATION" });
+      if(request.body.baseRevision!==undefined){if(!Number.isInteger(request.body.baseRevision))return reply.code(400).send({code:"INVALID_CONFIG_REVISION"});const actual=this.configuration.current().revision;if(request.body.baseRevision!==actual)throw new RevisionConflictError(request.body.baseRevision,actual);}
+      const next = structuredClone(this.configuration.current().config);
+      const profile = next.agentProfiles.find((entry) => entry.id === request.params.id);
       if (!profile) return reply.code(404).send({ code: "PROFILE_NOT_FOUND" });
-      if (profile.provider === "codex" && codexHome) return probeCodexProfile({
-        id: profile.id,
-        alias: profile.alias,
-        codexHome,
-        ...(stringSetting(profile.settings?.executable) ? { executable: stringSetting(profile.settings?.executable)! } : {}),
-        ...(stringSetting(profile.settings?.model) ? { model: stringSetting(profile.settings?.model)! } : {}),
-      });
-      if (profile.provider === "qoder") return probeQoderProfile({
-        id: profile.id,
-        alias: profile.alias,
-        ...(stringSetting(profile.settings?.executable) ? { executable: stringSetting(profile.settings?.executable)! } : {}),
-        ...(stringSetting(profile.settings?.configDir) ? { configDir: stringSetting(profile.settings?.configDir)! } : {}),
-        ...(stringSetting(profile.settings?.model) ? { model: stringSetting(profile.settings?.model)! } : {}),
-      });
-      const resolveCredential = (reference: string): Promise<string> => this.secrets.resolve(reference, { principal: "controller", purpose: "provider" });
-      if (profile.provider === "cursor" || profile.provider === "kiro") {
-        const cliProfile: CliAgentProfile = { id: profile.id, alias: profile.alias, ...(stringSetting(profile.settings?.executable) ? { executable: stringSetting(profile.settings?.executable)! } : {}), ...(profile.credentialRef ? { credentialRef: profile.credentialRef } : {}), ...(stringSetting(profile.settings?.model) ? { model: stringSetting(profile.settings?.model)! } : {}) };
-        return profile.provider === "cursor" ? probeCursorProfile(cliProfile, resolveCredential) : probeKiroProfile(cliProfile, resolveCredential);
-      }
-      if (profile.provider === "devin" && profile.credentialRef && stringSetting(profile.settings?.organizationId)) {
-        const devinProfile: DevinProfileConfig = { id: profile.id, alias: profile.alias, organizationId: stringSetting(profile.settings?.organizationId)!, credentialRef: profile.credentialRef, ...(stringSetting(profile.settings?.apiBase) ? { apiBase: stringSetting(profile.settings?.apiBase)! } : {}), ...(typeof profile.settings?.maxSessionAcu === "number" ? { maxSessionAcu: profile.settings.maxSessionAcu } : {}) };
-        const backend = this.options.devinBackendFactory?.(devinProfile);
-        if (backend) { const health = await backend.health(); return { authenticated: health.ok, apiVersion: "v3", ...(health.diagnostic ? { diagnostic: health.diagnostic } : {}) }; }
-        return probeDevinProfile(devinProfile, resolveCredential, this.options.integrationFetch as typeof fetch | undefined);
-      }
-      if (profile.provider === "workbuddy" || profile.provider === "codebuddy") {
-        const local = localServiceProfile({ id: profile.id, alias: profile.alias, provider: profile.provider, ...(profile.credentialRef ? { credentialRef: profile.credentialRef } : {}), ...(stringSetting(profile.settings?.baseUrl) ? { baseUrl: stringSetting(profile.settings?.baseUrl)! } : {}), ...(stringSetting(profile.settings?.healthPath) ? { healthPath: stringSetting(profile.settings?.healthPath)! } : {}), ...(stringSetting(profile.settings?.startPath) ? { startPath: stringSetting(profile.settings?.startPath)! } : {}), ...(stringSetting(profile.settings?.statusPath) ? { statusPath: stringSetting(profile.settings?.statusPath)! } : {}), ...(stringSetting(profile.settings?.inputPath) ? { inputPath: stringSetting(profile.settings?.inputPath)! } : {}), ...(stringSetting(profile.settings?.cancelPath) ? { cancelPath: stringSetting(profile.settings?.cancelPath)! } : {}), ...(stringSetting(profile.settings?.resourcePath) ? { resourcePath: stringSetting(profile.settings?.resourcePath)! } : {}) });
-        if (local) return probeLocalService(local, resolveCredential, this.options.integrationFetch as typeof fetch | undefined);
-      }
-      if (profile.provider === "generic-cli" && stringSetting(profile.settings?.executable) && stringArraySetting(profile.settings?.args)) return probeGenericCli({ file: stringSetting(profile.settings?.executable)!, args: stringArraySetting(profile.settings?.args)!, ...(profile.settings?.mode === "pty" || profile.settings?.mode === "headless" ? { mode: profile.settings.mode } : {}) });
-      return reply.code(409).send({ code: "PROFILE_UNSUPPORTED" });
+      profile.enabled = request.body.enabled;
+      const plan = await this.planConfiguration(next, this.principalFor(request).id, "web");
+      const applied = await this.applyConfigurationPlan(plan.id, { confirmed: true });
+      return { revision: applied.revision, profile: { id: profile.id, alias: profile.alias, enabled: profile.enabled } };
+    });
+    this.app.post<{ Params:{id:string};Body:{repositoryId?:string}|undefined }>("/api/agents/profiles/:id/test",async(request,reply)=>{
+      const profile=this.configuration.current().config.agentProfiles.find(profile=>profile.id===request.params.id);
+      if(!profile)return reply.code(404).send({code:"PROFILE_NOT_FOUND"});
+      if(profile.provider==="copilot")return reply.code(409).send({code:"PROFILE_UNSUPPORTED"});
+      return this.probeConfiguredProfile(request.params.id,request.body?.repositoryId);
     });
     this.app.post<{ Params: { id: string }; Body: CodexRunBody }>("/api/agents/profiles/:id/runs", async (request, reply) => {
-      if (!request.body?.workspacePath || !request.body.prompt) return reply.code(400).send({ code: "RUN_INPUT_REQUIRED" });
-      if (!this.workspaces.get(request.body.workspacePath)) return reply.code(400).send({ code: "UNMANAGED_WORKSPACE", message: "Agent runs must use a Dispatcher-managed worktree" });
-      const adapter = this.agentAdapters.get(request.params.id);
+      if (typeof request.body?.workspacePath !== "string" || typeof request.body.prompt !== "string" || !request.body.prompt.trim()) return reply.code(400).send({ code: "RUN_INPUT_REQUIRED" });
+      const workspace = this.workspaces.get(request.body.workspacePath);
+      if (!workspace) return reply.code(400).send({ code: "UNMANAGED_WORKSPACE", message: "Agent runs must use a Dispatcher-managed worktree" });
+      const profileId = request.params.id, snapshot = this.configuration.current();
+      const profile = snapshot.config.agentProfiles.find(candidate => candidate.id === profileId);
+      if (!profile || profile.enabled === false) return reply.code(404).send({ code: "PROFILE_NOT_FOUND" });
+      if (snapshot.config.runners.some(runner => runner.id === profile.runnerId && runner.mode === "remote")) return reply.code(409).send({ code: "CANONICAL_EXECUTION_REQUIRED", message: "Remote execution requires canonical task and lease authority" });
+      this.resolveProfileExecutionContext(profileId, workspace.repositoryId, "start");
+      const adapter = this.agentAdapters.get(profileId);
       if (!adapter) return reply.code(404).send({ code: "PROFILE_NOT_FOUND" });
-      const session = await adapter.start({ runId: randomUUID(), workspacePath: request.body.workspacePath, prompt: request.body.prompt });
-      return reply.code(201).send({ session: this.sessionView(session) });
+      if(profile.provider==="copilot")return reply.code(409).send({code:"NATIVE_SELECTION_UNSUPPORTED",message:"Copilot has no qualified standalone trial selection"});
+      this.pendingProfileStarts.set(profileId, (this.pendingProfileStarts.get(profileId) ?? 0) + 1);
+      const runId = randomUUID();
+      try {
+        await this.refreshLocalTrialSessions();
+        const current = this.resolveProfileExecutionContext(profileId, workspace.repositoryId, "start");
+        if (current.runner.id !== this.embeddedRunner?.runner.id) return reply.code(409).send({ code: "LOCAL_RUNNER_UNAVAILABLE" });
+        if (workspace.repositoryRoot && realpathSync(current.repository!.root) !== realpathSync(workspace.repositoryRoot)) return reply.code(409).send({ code: "WORKSPACE_CONTEXT_CHANGED" });
+        if ((this.database.listEntities<JsonValue>("run") as unknown as Run[]).some(run => run.worktree === workspace.path)) return reply.code(409).send({ code: "CANONICAL_WORKSPACE_OWNED", message: "Use the canonical task to continue this worktree" });
+        if ([...this.trialReservations.values()].some(reservation => reservation.workspacePath === workspace.path) || this.standaloneTrialSessions().some(session => session.workspacePath === workspace.path)) return reply.code(409).send({ code: "TRIAL_WORKSPACE_BUSY" });
+        const runtime = this.runners.list().find(runner => runner.id === current.runner.id);
+        const capacity = runtime && ["ONLINE", "DEGRADED"].includes(runtime.state) ? Math.min(current.runner.capacity, runtime.capacity) : 0;
+        if (this.activeExecutionCount(current.runner.id) >= capacity) return reply.code(409).send({ code: "RUNNER_CAPACITY_EXHAUSTED" });
+        this.trialReservations.set(runId, { runnerId: current.runner.id, workspacePath: workspace.path });
+        const session = await adapter.start({ runId, workspacePath: workspace.path, prompt: request.body.prompt });
+        return reply.code(201).send({ session: this.sessionView(session), canonical: false });
+      } finally {
+        this.trialReservations.delete(runId);
+        const pending = (this.pendingProfileStarts.get(profileId) ?? 1) - 1;
+        if (pending) this.pendingProfileStarts.set(profileId, pending);
+        else this.pendingProfileStarts.delete(profileId);
+      }
+    });
+    this.app.post<{Params:{id:string};Body:{confirmed:true}}>("/api/agents/profiles/:id/runtime/disconnect",{schema:{body:{type:"object",additionalProperties:false,required:["confirmed"],properties:{confirmed:{const:true}}}}},async request=>{
+      if(!this.principalFor(request).roles.includes("operator"))throw new PublicationError("FORBIDDEN",403,"Operator role required");return {receipts:await this.disconnectNativeRuntime(request.params.id)};
+    });
+    this.app.post<{ Params: { profileId: string; sessionId: string } }>("/api/agents/profiles/:profileId/sessions/:sessionId/cancel", async (request, reply) => {
+      const { profileId, sessionId } = request.params;
+      const stored = this.database.getEntity<JsonValue>("adapter-session", sessionId) as unknown as AdapterSession | undefined;
+      if (stored?.profileId !== profileId) return reply.code(404).send({ code: "SESSION_NOT_FOUND" });
+      if (this.canonicalSession(stored)) return reply.code(409).send({ code: "CANONICAL_EXECUTION_REQUIRED", message: "Cancel the canonical Run to revoke its lease and stop verification" });
+      const adapter = this.agentAdapters.get(profileId);
+      if (!adapter) return reply.code(404).send({ code: "PROFILE_NOT_FOUND" });
+      if(this.sessionStopState(stored)==="confirmed")return {session:this.sessionView(stored),canonical:false,repeated:true};
+      if(!adapter.manifest.backends.some(backend=>backend.capabilities.includes("cancel")))return reply.code(409).send({code:"UNSUPPORTED_CAPABILITY",message:"This backend has no qualified cancellation operation; inspect the native session"});
+      const localHandle=adapter instanceof CodexAdapter||adapter instanceof StructuredCliAdapter||adapter instanceof QoderAdapter||adapter instanceof GenericCliAdapter;
+      if(!localHandle)this.assertSessionContext(stored);
+      let pending = this.pendingSessionCancellations.get(sessionId);
+      if (!pending) {
+        this.uncertainSessionStops.add(sessionId);
+        this.saveSessionStop(stored,"requested");
+        pending = Promise.resolve().then(async()=>{
+          try{
+            if(localHandle&&(await adapter.diagnostics?.(sessionId))?.attached!==true)throw new AdapterContractError("SESSION_DETACHED","A detached local snapshot cannot confirm physical stop");
+            const stopped=await adapter.cancel(sessionId);
+            if(!["CANCELLED","COMPLETED","FAILED"].includes(stopped.state))throw new AdapterContractError("CANCELLATION_UNCONFIRMED","Native termination is not confirmed");
+            this.saveSessionStop(stopped,"confirmed");this.uncertainSessionStops.delete(sessionId);return stopped;
+          }catch(error){try{this.saveSessionStop(stored,"unconfirmed");}catch{/* The in-memory fence survives failed persistence. */}throw error;}
+        }).finally(() => { this.pendingSessionCancellations.delete(sessionId); });
+        this.pendingSessionCancellations.set(sessionId, pending);
+      }
+      return { session: this.sessionView(await pending), canonical: false };
+    });
+    this.app.get<{Params:{profileId:string;sessionId:string}}>("/api/agents/profiles/:profileId/sessions/:sessionId/requests",async(request,reply)=>{
+      const session=this.database.getEntity<JsonValue>("adapter-session",request.params.sessionId) as unknown as AdapterSession|undefined;
+      if(session?.profileId!==request.params.profileId)return reply.code(404).send({code:"SESSION_NOT_FOUND"});
+      const principal={...this.principalFor(request),profileId:request.params.profileId};
+      const requests=this.nativeInteractions.listNativeRequests(principal,request.params.sessionId);
+      const binding=new InteractionStore(this.database).binding(request.params.sessionId);
+      return {...this.nativeInteractions.nativeRequestAvailability(request.params.sessionId,binding?this.nativePort(binding):undefined),requests};
+    });
+    this.app.post<{Params:{profileId:string;sessionId:string;requestId:string};Body:{fence:MutationFence;choice:NativeResponse["response"]}}>("/api/agents/profiles/:profileId/sessions/:sessionId/requests/:requestId/respond",async(request,reply)=>{
+      const session=this.database.getEntity<JsonValue>("adapter-session",request.params.sessionId) as unknown as AdapterSession|undefined;
+      if(session?.profileId!==request.params.profileId)return reply.code(404).send({code:"SESSION_NOT_FOUND"});
+      if(!request.body?.fence||request.body.fence.sessionId!==request.params.sessionId||!request.body.choice)return reply.code(400).send({code:"INVALID_NATIVE_REQUEST_RESPONSE"});
+      const principal={...this.principalFor(request),profileId:request.params.profileId};
+      const store=new InteractionStore(this.database),existing=store.command(request.body.fence.commandId);
+      if(existing&&existing.state!=="RESERVED")return {receipt:await this.nativeInteractions.respondNativeRequest(principal,request.params.requestId,request.body.choice,request.body.fence)};
+      const binding=store.binding(request.params.sessionId),adapter=this.agentAdapters.get(request.params.profileId),port=binding?this.nativePort(binding):undefined;
+      const availability=this.nativeInteractions.nativeRequestAvailability(request.params.sessionId,port);
+      if(!availability.supported)return reply.code(409).send({code:availability.code});
+      return {receipt:await this.nativeInteractions.respondNativeRequest(principal,request.params.requestId,request.body.choice,request.body.fence,port,()=>{
+        if(!binding||!port||this.agentAdapters.get(request.params.profileId)!==adapter||this.nativePort(binding)!==port)throw new InteractionGuardError("NATIVE_REQUEST_CONNECTION_CHANGED");
+      })};
     });
     this.app.get<{ Params: { profileId: string; sessionId: string } }>("/api/agents/profiles/:profileId/sessions/:sessionId", async (request, reply) => {
+      const storedSession = this.database.getEntity<JsonValue>("adapter-session", request.params.sessionId) as unknown as AdapterSession | undefined;
+      if (storedSession?.profileId !== request.params.profileId) return reply.code(404).send({ code: "SESSION_NOT_FOUND" });
       const adapter = this.agentAdapters.get(request.params.profileId);
       if (!adapter) return reply.code(404).send({ code: "PROFILE_NOT_FOUND" });
-      return { session: this.sessionView(await adapter.status(request.params.sessionId)) };
-    });
-    this.app.post<{ Params: { profileId: string; sessionId: string }; Body: { message?: string } }>("/api/agents/profiles/:profileId/sessions/:sessionId/input", async (request, reply) => {
-      if (!request.body?.message) return reply.code(400).send({ code: "MESSAGE_REQUIRED" });
-      const adapter = this.agentAdapters.get(request.params.profileId);
-      if (!adapter) return reply.code(404).send({ code: "PROFILE_NOT_FOUND" });
-      const event = await adapter.send(request.params.sessionId, request.body.message);
-      const run = this.database.listEntities<JsonValue>("run")
-        .map((value) => value as unknown as Run)
-        .find((entry) => entry.sessionId === request.params.sessionId);
-      if (run?.state === "WAITING_USER") {
-        assertRunTransition(run.state, "ACTIVE");
-        run.state = "ACTIVE";
-        run.lastActivityAt = new Date().toISOString();
-        this.database.saveEntity("run", run.id, json(run));
-        this.fleetEvents.publish("run.changed", run.id, { id: run.id, state: run.state, lastActivityAt: run.lastActivityAt });
-        const current = this.database.getCanonicalTask<JsonValue>(run.taskId);
-        if (current && (current.document as unknown as Task).state === "WAITING_USER") {
-          this.tasks.execute({ id: `run:${run.id}:user-input`, taskId: run.taskId, baseRevision: current.revision, actor: "user", command: { type: "task.transition", state: "RUNNING" } });
-        }
+      if(!this.canonicalSession(storedSession)&&(this.sessionContextState(storedSession)!=="current"||this.pendingSessionCancellations.has(storedSession.id)))return {session:this.sessionView(storedSession)};
+      const localHandle=adapter instanceof CodexAdapter||adapter instanceof StructuredCliAdapter||adapter instanceof QoderAdapter||adapter instanceof GenericCliAdapter;
+      const attached=localHandle?(await adapter.diagnostics?.(storedSession.id))?.attached===true:false;
+      const session=await adapter.status(request.params.sessionId);
+      if(!this.canonicalSession(storedSession)){
+        this.assertSessionContext(storedSession);
+        if(this.sessionStopUncertain(storedSession)&&(!localHandle||attached)&&["CANCELLED","COMPLETED","FAILED"].includes(session.state)){this.saveSessionStop(session,"confirmed");this.uncertainSessionStops.delete(session.id);}
       }
-      return { event };
+      return { session: this.sessionView(session) };
+    });
+    this.app.get<{Params:{runId:string;inputId:string}}>("/api/runs/:runId/inputs/:inputId",async(request,reply)=>{
+      const receipt=this.runInputs.find(this.principalFor(request).id,request.params.inputId,request.params.runId);return receipt?{receipt}:reply.code(404).send({code:"INPUT_NOT_FOUND"});
+    });
+    this.app.post<{ Params: { profileId: string; sessionId: string }; Body: { message?: string; inputId?:string; authority?: { runId: string; generation: number; leaseId: string; taskRevision: number; lastActivityAt?: string } } }>("/api/agents/profiles/:profileId/sessions/:sessionId/input", async (request, reply) => {
+      const result=await this.sendSessionInput(this.principalFor(request),request.params,request.body);
+      return reply.code(result.statusCode).send(result.body);
     });
 
     this.app.get("/api/connectors", async () => ({ connectors: this.connectors.list().map((adapter) => ({ definition: adapter.definition, instance: adapter.instance })) }));
     this.app.post<{ Params: { id: string } }>("/api/connectors/:id/test", async (request, reply) => {
-      const connector = this.connectors.get(request.params.id);
-      if (!connector) return reply.code(404).send({ code: "CONNECTOR_NOT_FOUND" });
-      const probe = await connector.probe();
-      connector.instance.health = probe.health;
-      connector.instance.updatedAt = probe.checkedAt;
-      this.database.saveEntity("connector-health", connector.instance.id, json(probe), probe.checkedAt);
-      this.fleetEvents.publish("connector.changed", connector.instance.id, probe);
-      if (probe.health === "AUTH_REQUIRED") await this.notifyOperationalAttention({ key: connector.instance.id, state: "CONNECTOR_AUTH", subject: `Connector authentication required: ${connector.instance.displayName}`, body: probe.message ?? "Open Integrations to repair credentials." });
-      return { probe };
+      if(!this.connectors.get(request.params.id))return reply.code(404).send({code:"CONNECTOR_NOT_FOUND"});return {probe:redactValue(await this.probeConnector(request.params.id))};
     });
     this.app.post("/api/connectors/projections/drain", async () => this.drainProjections());
-    this.app.get("/api/connectors/dead-letters", async () => ({ deadLetters: this.database.listDeadLetters<JsonValue>() }));
+    this.app.get("/api/connectors/dead-letters", async () => ({ deadLetters: this.database.listDeadLetters<JsonValue>().map(entry=>({...entry,canRetry:this.canRetryDeadLetter(entry)})) }));
     this.app.post<{ Params: { id: string } }>("/api/connectors/dead-letters/:id/retry", async (request, reply) => {
       const deadLetter = this.database.listDeadLetters<JsonValue>().find((entry) => entry.id === request.params.id);
       const inboxPrefix = `${MESSAGING_INBOX_KIND}:`;
@@ -2272,80 +5477,166 @@ export class ControllerService {
       return { connectors: snapshot.connectors, cursor: snapshot.cursor };
     });
 
+    this.app.get<{Params:{id:string};Querystring:{repositoryId?:string}}>("/api/agents/profiles/:id/models",async request=>{
+      if(!request.query.repositoryId)throw new PublicationError("CATALOG_CONTEXT_REQUIRED",400,"repositoryId is required");
+      return this.modelCatalog(request.params.id,request.query.repositoryId,"open");
+    });
+    this.app.get<{Params:{id:string}}>("/api/model-routing/decisions/:id",async request=>this.modelRouting.read(this.principalFor(request).id,request.params.id));
+    this.app.post<{Body:PublishDraftV1;Querystring:{reanalyze?:string}}>("/api/model-routing/preview",{schema:{body:publishDraftSchema}},async request=>{
+      const principal=this.principalFor(request);if(!principal.roles.includes("operator"))throw new PublicationError("FORBIDDEN",403,"Operator role required");
+      const snapshot=this.configuration.current();const draft=request.body;
+      if(draft.execution.selectionMode!=="policy-auto")throw new PublicationError("INVALID_AUTO_SELECTION",400,"Routing preview requires automatic mode");
+      const catalog=await this.modelCatalog(draft.execution.profileId??"",draft.repositoryId,"preflight");
+      if(this.configuration.current().revision!==snapshot.revision)throw new PublicationError("SELECTION_CHANGED",409,"Configuration changed during routing preview");
+      const decision=await this.modelRouting.preview(principal.id,draft,snapshot.config,snapshot.revision,catalog,{forceAnalysis:request.query.reanalyze==="true"});
+      if(this.configuration.current().revision!==snapshot.revision)throw new PublicationError("ROUTING_DECISION_STALE",409,"Configuration changed during classification");
+      return decision;
+    });
+    this.app.post<{Body:{draft:PublishDraftV1;semantic?:boolean;policy?:NonNullable<DispatcherConfig["policies"]["modelRouting"]>}}>("/api/model-routing/test",{schema:{body:{type:"object",additionalProperties:false,required:["draft"],properties:{draft:publishDraftSchema,semantic:{type:"boolean"},policy:dispatcherConfigSchema.properties.policies.properties.modelRouting}}}},async request=>{
+      const principal=this.principalFor(request);if(!principal.roles.includes("operator"))throw new PublicationError("FORBIDDEN",403,"Operator role required");
+      const snapshot=this.configuration.current();const {draft,policy}=request.body;
+      // Draft rules use the same schema/reference validation as ConfigPlan and cannot authorize a Run.
+      if(policy){if(!principal.roles.includes("admin"))throw new PublicationError("FORBIDDEN",403,"Configuration editing permission required for draft policy trials");validateConfig({...snapshot.config,policies:{...snapshot.config.policies,modelRouting:policy}});}
+      const catalog=await this.modelCatalog(draft.execution.profileId??"",draft.repositoryId,"preflight");
+      if(this.configuration.current().revision!==snapshot.revision)throw new PublicationError("SELECTION_CHANGED",409,"Configuration changed during routing trial");
+      const decision=await this.modelRouting.preview(principal.id,draft,snapshot.config,snapshot.revision,catalog,{trial:true,keywordOnly:request.body.semantic!==true,forceSemantic:request.body.semantic===true,...(policy?{policy}:{})});
+      if(this.configuration.current().revision!==snapshot.revision)throw new PublicationError("ROUTING_DECISION_STALE",409,"Configuration changed during classification trial");
+      return {trial:true,source:policy?"draft":"applied",decision};
+    });
+    const localPickerRequest=(request:{ip:string})=>{
+      if(!["127.0.0.1","::1","::ffff:127.0.0.1"].includes(request.ip)||!this.principalFor(request).roles.includes("admin"))throw new ConfigPlanError("NATIVE_PICKER_UNAVAILABLE","Directory selection requires the local administrator's desktop console");
+    };
+    this.app.post<{Body:{purpose:"repository";runnerId?:string;repositoryId?:string}}>("/api/local/directory-selections",{schema:{body:{type:"object",additionalProperties:false,required:["purpose"],properties:{purpose:{const:"repository"},runnerId:{type:"string",minLength:1,maxLength:200},repositoryId:{type:"string",minLength:1,maxLength:200}}}}},async(request,reply)=>{
+      localPickerRequest(request);
+      const config=this.configuration.current().config,repository=request.body.repositoryId?config.repositories.find(repository=>repository.id===request.body.repositoryId):undefined;
+      if(request.body.repositoryId&&!repository)return reply.code(404).send({code:"REPOSITORY_NOT_FOUND"});
+      const runnerId=request.body.runnerId??(repository?repositoryRunnerId(config,repository):this.embeddedRunner?.runner.id);
+      if(!runnerId||runnerId!==this.embeddedRunner?.runner.id||repository&&repositoryRunnerId(config,repository)!==runnerId||!config.runners.some(runner=>runner.id===runnerId&&runner.mode==="embedded"))return reply.code(409).send({code:"NATIVE_PICKER_UNAVAILABLE",message:"Select a registered repository on the owning Runner; the Controller cannot open a remote device's dialog"});
+      return reply.code(201).send({selection:this.directorySelections.begin(runnerId)});
+    });
+    this.app.get<{Params:{id:string}}>("/api/local/directory-selections/:id",async(request,reply)=>{localPickerRequest(request);const selection=this.directorySelections.get(request.params.id);return selection?{selection}:reply.code(404).send({code:"DIRECTORY_SELECTION_NOT_FOUND"});});
+    this.app.delete<{Params:{id:string}}>("/api/local/directory-selections/:id",async(request,reply)=>{localPickerRequest(request);const selection=this.directorySelections.cancel(request.params.id);return selection?{selection}:reply.code(404).send({code:"DIRECTORY_SELECTION_NOT_FOUND"});});
+    this.app.get<{Params:{id:string}}>("/api/repositories/:id/context",async request=>this.repositoryContext(request.params.id));
+    this.app.get<{Params:{id:string};Querystring:{offset?:string;limit?:string}}>("/api/repositories/:id/refs",async(request,reply)=>{
+      const {offset="0",limit="50"}=request.query;
+      if(!/^\d+$/.test(offset)||!/^\d+$/.test(limit)||Number(offset)>10_000||Number(limit)<1||Number(limit)>100)return reply.code(400).send({code:"INVALID_REF_PAGE"});
+      return this.repositoryRefs(request.params.id,Number(offset),Number(limit));
+    });
+    this.app.get("/api/task-publications/capabilities", async () => ({ schemaVersion: 1, startModes: ["create-only","dispatch"], deliveryTypes: ["none","commit","pull-request"], selectionModes:["manual","policy-auto"], modelRouting:{classificationModes:["keyword","hybrid"],enabled:this.configuration.current().config.policies.modelRouting?.enabled===true}, projects: this.configuration.current().config.repositories.map(r => ({ id: `local:${r.id}`, repositoryId: r.id })) }));
+    this.app.post<{ Body: PublishDraftV1 }>("/api/task-publications/preview", { schema: { body: publishDraftSchema } }, async request => {
+      const principal = this.principalFor(request);
+      if (!principal.roles.includes("operator")) throw new PublicationError("FORBIDDEN", 403, "Operator role required");
+      return this.publications.preview(principal.id, request.body);
+    });
+    this.app.get<{ Params: { id: string } }>("/api/task-publications/:id", async request => this.publications.get(this.principalFor(request).id, request.params.id));
+    this.app.post<{ Params: { id: string }; Body: unknown }>("/api/task-publications/:id/commit", async request => {
+      const principal = this.principalFor(request);
+      if (!principal.roles.includes("operator")) throw new PublicationError("FORBIDDEN", 403, "Operator role required");
+      return this.publications.commit(principal.id, request.params.id, typeof request.headers["idempotency-key"] === "string" ? request.headers["idempotency-key"] : undefined, request.body);
+    });
+
     this.app.get("/api/tasks", async () => ({ tasks: this.database.listCanonicalTasks<JsonValue>() }));
-    this.app.get<{ Params: { id: string } }>("/api/tasks/:id", async (request, reply) => {
+    this.app.post<{ Params: { id: string }; Body: { archived: boolean; revision: number; archiveRevision: number } }>("/api/tasks/:id/archive", async (request, reply) => {
+      const body = request.body;
+      if (typeof body?.archived !== "boolean" || !Number.isInteger(body.revision) || !Number.isInteger(body.archiveRevision)) return reply.code(400).send({ code: "ARCHIVE_INPUT_REQUIRED" });
+      const outcome = this.database.transaction(() => {
+        const stored = this.database.getCanonicalTask<JsonValue>(request.params.id);
+        if (!stored) return { status: 404, code: "TASK_NOT_FOUND" };
+        const existing = this.database.getEntity<JsonValue>("task-archive", request.params.id) as { revision: number } | undefined;
+        if (stored.revision !== body.revision || (existing?.revision ?? 0) !== body.archiveRevision) return { status: 409, code: "TASK_CHANGED" };
+        const active = this.database.listEntities<JsonValue>("run").some((value) => {
+          const run = value as unknown as Run;
+          return run.taskId === request.params.id && !["COMPLETE", "FAILED", "CANCELLED", "SUPERSEDED"].includes(run.state);
+        });
+        if (body.archived && active) return { status: 409, code: "ACTIVE_RUN_CANNOT_ARCHIVE" };
+        const archive = { taskId: request.params.id, revision: body.archiveRevision + 1, actor: this.principalFor(request).id, updatedAt: this.now().toISOString(), ...(body.archived ? { archivedAt: this.now().toISOString() } : {}) };
+        this.database.saveEntity("task-archive", request.params.id, json(archive));
+        return { status: 200, archive };
+      });
+      if (outcome.status === 200) this.fleetEvents.publish("task.changed", request.params.id, { id: request.params.id });
+      return reply.code(outcome.status).send(outcome);
+    });
+    this.app.get<{ Params: { id: string }; Querystring:{runsOffset?:string;runsLimit?:string} }>("/api/tasks/:id", async (request, reply) => {
+      const paged=request.query.runsOffset!==undefined||request.query.runsLimit!==undefined,offset=Number(request.query.runsOffset??"0"),limit=Number(request.query.runsLimit??"20");
+      if(paged&&(!/^\d+$/.test(request.query.runsOffset??"0")||!/^\d+$/.test(request.query.runsLimit??"20")||!Number.isSafeInteger(offset)||offset<0||!Number.isSafeInteger(limit)||limit<1||limit>100||!Number.isSafeInteger(offset+limit)))return reply.code(400).send({code:"INVALID_RUN_PAGE"});
       const task = this.database.getCanonicalTask<JsonValue>(request.params.id);
       if (!task) return reply.code(404).send({ code: "TASK_NOT_FOUND" });
-      return { ...task, contract: this.database.getTaskContract<JsonValue>(request.params.id), deliveries: this.database.listDeliveryEvidence<JsonValue>(request.params.id) };
+      const history=paged?this.database.listTaskRunsPage<JsonValue>(request.params.id,offset,limit):undefined;
+      const document=task.document as unknown as Task,current=document.currentRunId?this.database.getEntity<JsonValue>("run",document.currentRunId) as unknown as Run|undefined:undefined;
+      const runPage=history?{offset:history.offset,limit:history.limit,total:history.total,hasActiveRun:history.hasActiveRun,...(history.nextOffset!==undefined?{nextOffset:history.nextOffset}:{})}:undefined;
+      return { ...task, contract: this.database.getTaskContract<JsonValue>(request.params.id), deliveries: this.database.listDeliveryEvidence<JsonValue>(request.params.id),
+        executionIntent:this.database.getEntity<JsonValue>("task-execution-intent",request.params.id),
+        publicationDraft:this.publications.draftForTask(this.principalFor(request).id,request.params.id),
+        archive: this.database.getEntity<JsonValue>("task-archive", request.params.id),
+        runs: history?.runs??this.database.listEntities<JsonValue>("run").filter(value => (value as unknown as Run).taskId === request.params.id),
+        ...(history?{runPage,...(current?.taskId===request.params.id&&current.id===document.currentRunId?{currentRun:current}:{})}:{}) };
+    });
+    this.app.post<{Params:{id:string};Body:{expectedRevision:number;execution:PublishDraftV1["execution"];draft?:PublishDraftV1}}>("/api/tasks/:id/publications/preview",{schema:{body:{type:"object",additionalProperties:false,required:["expectedRevision","execution"],properties:{expectedRevision:{type:"integer",minimum:1},execution:publishDraftSchema.properties.execution,draft:publishDraftSchema}}}},async request=>{
+      const principal=this.principalFor(request);if(!principal.roles.includes("operator"))throw new PublicationError("FORBIDDEN",403,"Operator role required");
+      return this.publications.previewTask(principal.id,request.params.id,request.body.expectedRevision,request.body.execution,request.body.draft);
     });
     this.app.post<{ Params: { id: string }; Body: TaskDispatchBody }>("/api/tasks/:id/dispatch", async (request, reply) => {
-      const stored = this.database.getCanonicalTask<JsonValue>(request.params.id);
-      const contract = this.database.getTaskContract<JsonValue>(request.params.id) as unknown as TaskContract | undefined;
-      if (!stored || !contract) return reply.code(404).send({ code: "TASK_NOT_FOUND" });
-      if (request.body?.profileId && !this.agentAdapters.has(request.body.profileId)) return reply.code(404).send({ code: "PROFILE_NOT_FOUND" });
-      const runners = new Map(this.runners.list().map((runner) => [runner.id, runner]));
-      const profiles = this.configuration.current().config.agentProfiles.filter((profile) => !request.body?.profileId || profile.id === request.body.profileId);
-      const repositoryId = request.body?.repositoryId ?? contract.delivery.repository;
-      const repositoryConfig = this.configuration.current().config.repositories.find((entry) => entry.id === repositoryId);
-      if (!repositoryId || !repositoryConfig) return reply.code(409).send({ code: "REPOSITORY_UNAVAILABLE", message: "The task repository is not registered" });
-      const activeRuns = this.database.listEntities<JsonValue>("run").map((value) => value as unknown as Run).filter((run) => run.state === "ACTIVE");
-      const scheduler = new CanonicalScheduler(() => profiles.flatMap((profile) => {
-        const runner = runners.get(profile.runnerId);
-        const adapter = this.agentAdapters.get(profile.id);
-        if (!runner || !adapter) return [];
-        return [{
-          runnerId: runner.id,
-          runnerTags: runner.capabilities,
-          capacity: runner.state === "ONLINE" || runner.state === "DEGRADED" ? runner.capacity : 0,
-          activeRuns: activeRuns.filter((run) => run.runnerId === runner.id).length,
-          providerId: profile.provider,
-          profileId: profile.id,
-          resourceState: this.profileResourceState(profile.id),
-          capabilities: [...new Set([...manifestCapabilities(adapter.manifest), ...runner.capabilities])],
-          adapter,
-        }];
-      }));
-      const runId = randomUUID();
-      const workspace = await this.workspaces.create({
-        repositoryId,
-        taskId: request.params.id,
-        runId,
-        attempt: 1,
-        baseRef: request.body?.baseRef ?? contract.delivery.baseBranch ?? repositoryConfig.defaultBaseRef,
-        scopePaths: repositoryConfig.scopePaths,
-      });
-      let dispatched: Awaited<ReturnType<CanonicalScheduler["dispatch"]>>;
-      try {
-        dispatched = await scheduler.dispatch({
-          task: stored.document as unknown as Task,
-          taskRevision: stored.revision,
-          contract,
-          requirements: {
-            capabilities: ["code", "git", ...(request.body?.capabilities ?? [])],
-            ...(request.body?.runnerTags?.length ? { runnerTags: request.body.runnerTags } : {}),
-            ...(request.body?.providerIds?.length ? { providerIds: request.body.providerIds } : {}),
-          },
-          workspacePath: workspace.path,
-          runId,
-        });
-      } catch (error) {
-        const cleanup = await this.workspaces.cleanupPlan(workspace);
-        if (cleanup.safe) await this.workspaces.cleanup(cleanup);
-        throw error;
-      }
-      dispatched.run.branch = workspace.branch;
-      dispatched.run.leaseExpiresAt = new Date(Date.now() + 15 * 60_000).toISOString();
-      this.database.saveEntity("run", dispatched.run.id, json(dispatched.run));
-      this.restoreLeaseAuthority(dispatched.run);
-      this.fleetEvents.publish("run.changed", dispatched.run.id, { id: dispatched.run.id, taskId: dispatched.run.taskId, state: dispatched.run.state });
-      const queued = this.tasks.execute({ id: `dispatch:${dispatched.run.id}:queued`, taskId: request.params.id, baseRevision: stored.revision, actor: "scheduler", command: { type: "task.transition", state: "QUEUED" } });
-      this.tasks.execute({ id: `dispatch:${dispatched.run.id}:running`, taskId: request.params.id, baseRevision: queued.revision, actor: "scheduler", command: { type: "task.transition", state: "RUNNING" } });
-      return reply.code(201).send({ run: dispatched.run, routing: { explanation: dispatched.decision.explanation, eligible: dispatched.decision.eligible, rejected: dispatched.decision.rejected } });
+      return reply.code(201).send(await this.dispatchTask(request.params.id, request.body ?? {}));
     });
     this.app.get<{ Params: { id: string } }>("/api/runs/:id", async (request, reply) => {
-      const run = this.database.getEntity<JsonValue>("run", request.params.id);
+      const run = this.database.getEntity<JsonValue>("run", request.params.id) as unknown as Run|undefined;
       if (!run) return reply.code(404).send({ code: "RUN_NOT_FOUND" });
-      return { run };
+      const store=new InteractionStore(this.database),contract=this.database.getEntity<JsonValue>("run-contract",run.id);
+      const hasSession=typeof run.sessionId==="string"&&run.sessionId.length>0;
+      try {
+        if(hasSession&&(store.binding(run.sessionId)||this.database.getEntity("session",run.sessionId)||this.database.getEntity("adapter-session",run.sessionId)))this.nativeInteractions.assertInteraction(this.principalFor(request),"collect",this.nativeInteractions.fenceFor(run,"native-summary-read"));
+        if(hasSession&&store.binding(run.sessionId))await this.refreshNativeObservation(run,this.principalFor(request));
+      } catch(error) {
+        if(!(error instanceof InteractionGuardError))throw error;
+        // A denied native read must not replace the frozen contract with the current Task contract.
+        return {run,contract,nativeSession:null,nativeSessionError:{code:"NATIVE_SUMMARY_UNAVAILABLE",status:error.code==="FORBIDDEN"?403:409}};
+      }
+      let capabilities:InteractionCapabilities|undefined;
+      try {
+        const binding=hasSession?store.binding(run.sessionId):undefined,port=binding?this.nativePort(binding):undefined;
+        if(port){
+          if(this.nativeRuntime(run.profileId))capabilities=port.capabilities();
+          else {const adapter=this.agentAdapters.get(run.profileId);if(adapter?.interaction===port)capabilities=readInteractionCapabilities(port);}
+        }
+      }catch{/* An invalid declaration cannot qualify any capability. */}
+      return {run,contract,nativeSession:nativeSessionView(this.database,run,capabilities,this.now())};
+    });
+    this.app.get<{Params:{id:string}}>("/api/runs/:id/control",async(request,reply)=>{
+      const run=this.database.getEntity<JsonValue>("run",request.params.id) as unknown as Run|undefined;
+      if(!run)return reply.code(404).send({code:"RUN_NOT_FOUND"});
+      const store=new InteractionStore(this.database),hasSession=typeof run.sessionId==="string"&&run.sessionId.length>0;
+      const fullFence=hasSession?this.nativeInteractions.fenceFor(run,"control-read"):undefined;
+      if(fullFence&&(store.binding(run.sessionId)||this.database.getEntity("session",run.sessionId)||this.database.getEntity("adapter-session",run.sessionId)))this.nativeInteractions.assertInteraction(this.principalFor(request),"collect",fullFence);
+      const view=nativeSessionView(this.database,run,undefined,this.now()),control=view.identity==="bound"&&hasSession?store.control(run.sessionId):undefined;
+      const fence=control&&fullFence?{runId:fullFence.runId,sessionId:fullFence.sessionId,generation:fullFence.generation,leaseId:fullFence.leaseId,expectedTaskRevision:fullFence.expectedTaskRevision,expectedCurrentRunId:fullFence.expectedCurrentRunId,expectedControlRevision:fullFence.expectedControlRevision,expectedControlEpoch:fullFence.expectedControlEpoch}:null;
+      // Capability metadata cannot stand in for the missing live release/reclaim coordinator.
+      return redactNativePayload({version:1,runId:run.id,profileId:run.profileId,generation:run.generation,attempt:run.attempt,control:control??null,fence,mutationAvailable:false,reasonCode:control?"NATIVE_CONTROL_COORDINATOR_UNAVAILABLE":"NATIVE_CONTROL_UNAVAILABLE"} satisfies NativeControlView);
+    });
+    this.app.get<{Params:{id:string};Querystring:{cursor?:string;limit?:string}}>("/api/runs/:id/history",async(request,reply)=>{
+      const principal=this.principalFor(request);
+      const query=request.query;
+      if(Object.keys(query).some(key=>!['cursor','limit'].includes(key))||query.limit!==undefined&&(typeof query.limit!=="string"||!/^\d{1,3}$/.test(query.limit)||Number(query.limit)<1)||query.cursor!==undefined&&typeof query.cursor!=="string")return reply.code(400).send({code:"INVALID_HISTORY_REQUEST"});
+      const run=this.database.getEntity<JsonValue>("run",request.params.id) as unknown as Run|undefined;
+      if(!run)return reply.code(404).send({code:"RUN_NOT_FOUND"});
+      return {source:"native",page:await this.nativeHistoryService(run).readNativeHistory({...principal,profileId:run.profileId},run.sessionId,{...(query.cursor!==undefined?{cursor:query.cursor}:{}),...(query.limit!==undefined?{limit:Number(query.limit)}:{})})};
+    });
+    this.app.get<{Params:{id:string}}>("/api/runs/:id/result",async(request,reply)=>{
+      const result=this.database.getEntity<JsonValue>("run-result",request.params.id);
+      return result?{result,...((result as {deliveryType?:string}).deliveryType==="none"?{review:await this.localResults.read(request.params.id)}:{})}:reply.code(404).send({code:"RUN_RESULT_UNAVAILABLE"});
+    });
+    const localAuthorityProperties={taskRevision:{type:"integer",minimum:1},generation:{type:"integer",minimum:1},leaseId:{type:"string",minLength:1,maxLength:200},controlEpoch:{type:"integer",minimum:0},controlRevision:{type:"integer",minimum:1},candidateId:{type:"string",pattern:"^[a-f0-9]{64}$"},idempotencyKey:{type:"string",minLength:1,maxLength:200},confirmed:{const:true}} as const;
+    const localBody={type:"object",additionalProperties:false,required:Object.keys(localAuthorityProperties),properties:localAuthorityProperties};
+    this.app.post<{Params:{id:string};Body:LocalVerificationRequest}>("/api/runs/:id/local-verification",{schema:{body:localBody}},async request=>{
+      const principal=this.principalFor(request);if(!principal.roles.includes("operator"))throw new PublicationError("FORBIDDEN",403,"Operator role required");
+      return {review:await this.localResults.verify(request.params.id,request.body,principal.id)};
+    });
+    this.app.post<{Params:{id:string};Body:{verificationId:string}}>("/api/runs/:id/local-verification/cancel",{schema:{body:{type:"object",additionalProperties:false,required:["verificationId"],properties:{verificationId:{type:"string",pattern:"^[a-f0-9]{64}$"}}}}},async request=>{
+      const principal=this.principalFor(request);if(!principal.roles.includes("operator"))throw new PublicationError("FORBIDDEN",403,"Operator role required");
+      return {review:await this.localResults.cancel(request.params.id,request.body.verificationId,principal.id)};
+    });
+    this.app.post<{Params:{id:string};Body:LocalAcceptanceRequest}>("/api/runs/:id/accept-local-result",{schema:{body:{...localBody,required:[...localBody.required,"verificationId"],properties:{...localAuthorityProperties,verificationId:{type:"string",pattern:"^[a-f0-9]{64}$"}}}}},async request=>{
+      const principal=this.principalFor(request);if(!principal.roles.includes("operator"))throw new PublicationError("FORBIDDEN",403,"Operator role required");
+      return this.localResults.accept(request.params.id,request.body,principal.id);
     });
     this.app.post<{ Params: { id: string } }>("/api/runs/:id/advance", async (request, reply) => {
       const run = this.database.getEntity<JsonValue>("run", request.params.id);
@@ -2353,19 +5644,20 @@ export class ControllerService {
       const advanced = await this.advanceRunExclusive(request.params.id);
       return reply.code(advanced.waiting ? 202 : 200).send(advanced);
     });
-    this.app.get("/api/system-impact", async () => {
-      const memory = process.memoryUsage();
-      const databasePath = join(this.options.dataDirectory, "dispatcher.sqlite");
-      return {
-        rssBytes: memory.rss,
-        heapUsedBytes: memory.heapUsed,
-        runnerCount: this.runners.list().length,
-        activeLocalProcesses: 0,
-        databaseBytes: existsSync(databasePath) ? statSync(databasePath).size : 0,
-        dashboardClients: this.dashboardClients,
-        llmCallsLastHour: this.llm.snapshot().calls,
-      };
+    this.app.get("/api/system-impact",async()=>this.systemImpact());
+    this.app.get("/api/diagnostics",async()=>this.diagnosticsSnapshot());
+    this.app.get("/api/diagnostics/checks",async()=>({checks:diagnosticChecks}));
+    this.app.get("/api/diagnostics/export",async()=>{const diagnostics=this.diagnosticsSnapshot(),measurements=this.systemImpact();return {schemaVersion:1,exportedAt:diagnostics.generatedAt,summary:diagnostics.summary,controllerReady:diagnostics.controllerReady,executionReadiness:diagnostics.executionReadiness,measurements};});
+    this.app.post<{Body:{checkId:string;entityId?:string;repositoryId?:string}}>("/api/diagnostics/checks",{schema:{body:{type:"object",additionalProperties:false,required:["checkId"],properties:{checkId:{type:"string",maxLength:100},entityId:{type:"string",maxLength:200},repositoryId:{type:"string",maxLength:200}}}}},async(request,reply)=>{
+      const check=diagnosticChecks.find(check=>check.id===request.body.checkId),id=request.body.entityId;
+      if(!check)return reply.code(400).send({code:"DIAGNOSTIC_CHECK_UNKNOWN"});if(check.entityRequired&&!id)return reply.code(400).send({code:"DIAGNOSTIC_ENTITY_REQUIRED"});
+      if(!check.entityRequired&&id!==undefined||request.body.repositoryId!==undefined&&check.id!=="profile.native")return reply.code(400).send({code:"DIAGNOSTIC_CONTEXT_INVALID"});
+      if(check.id==="profile.native"){if(!this.configuration.current().config.agentProfiles.some(profile=>profile.id===id))return reply.code(404).send({code:"PROFILE_NOT_FOUND"});const action=this.profileConsoleView(id!).actions.test;if(action?.allowed===false)return reply.code(409).send({code:"DIAGNOSTIC_CHECK_UNAVAILABLE",message:action.message??"This account has no available registered native check"});await this.probeConfiguredProfile(id!,request.body.repositoryId);}
+      if(check.id==="connector.health"){if(!this.connectors.get(id!))return reply.code(404).send({code:"CONNECTOR_NOT_FOUND"});await this.probeConnector(id!);}
+      if(check.id==="runner.connection"&&!this.configuration.current().config.runners.some(runner=>runner.id===id))return reply.code(404).send({code:"RUNNER_NOT_FOUND"});
+      return {checkId:check.id,cost:check.cost,completedAt:this.now().toISOString(),diagnostics:this.diagnosticsSnapshot()};
     });
+    this.app.get<{Querystring:{profileId?:string;runId?:string;sessionId?:string;from?:string;to?:string}}>("/api/usage",async request=>({...this.usageObservations.query(request.query),errors:this.database.listEntities<JsonValue>("usage-error").filter(value=>{const error=value as {profileId?:string;runId?:string;sessionId?:string;status?:string};return error.status==="unknown"&&(!request.query.profileId||error.profileId===request.query.profileId)&&(!request.query.runId||error.runId===request.query.runId)&&(!request.query.sessionId||error.sessionId===request.query.sessionId);})}));
 
     this.app.get("/api/llm", async () => {
       const current = this.configuration.current();
@@ -2375,9 +5667,9 @@ export class ControllerService {
       if (!request.body?.config) return reply.code(400).send({ code: "LLM_CONFIG_REQUIRED" });
       const current = this.configuration.current();
       const next: DispatcherConfig = { ...structuredClone(current.config), internalLlm: structuredClone(request.body.config) };
-      const plan = this.configuration.buildPlan(next, this.principalFor(request).id, "web");
+      const plan = await this.planConfiguration(next, this.principalFor(request).id, "web");
       await assertRequiredSecretsAvailable(next, this.secrets);
-      const applied = this.configuration.applyPlan(plan.id, { confirmed: request.body.confirmed ?? true });
+      const applied = await this.applyConfigurationPlan(plan.id, { confirmed: request.body.confirmed ?? true });
       return { plan, revision: applied.revision, config: applied.config.internalLlm, state: this.llm.snapshot().state };
     });
     this.app.post<{ Params: { profileId: string } }>("/api/llm/profiles/:profileId/test", async (request) => ({
@@ -2386,6 +5678,10 @@ export class ControllerService {
     this.app.post<{ Params: { role: LlmRole }; Body: LlmSwitchBody }>("/api/llm/roles/:role/switch", async (request, reply) => {
       if (!request.body?.profileId) return reply.code(400).send({ code: "LLM_PROFILE_REQUIRED" });
       return { state: await this.llm.switchProfile(request.params.role, request.body.profileId) };
+    });
+    this.app.post<{Params:{role:LlmRole}}>("/api/llm/roles/:role/reset", async(request,reply)=>{
+      if(!["command_parser","config_assistant","runtime_summarizer","error_classifier","task_classifier"].includes(request.params.role)) return reply.code(400).send({code:"LLM_ROLE_REQUIRED"});
+      return {state:this.llm.resetRole(request.params.role)};
     });
     this.app.post<{ Params: { role: LlmRole } }>("/api/llm/roles/:role/failback", async (request) => ({
       switched: await this.llm.attemptFailback(request.params.role),
@@ -2423,6 +5719,7 @@ export class ControllerService {
     });
 
     this.app.get<{ Querystring: { cursor?: string } }>("/api/events", async (request, reply) => {
+      if (this.stopping) return reply.code(503).send({ code: "CONTROLLER_STOPPING" });
       reply.hijack();
       const response = reply.raw;
       response.writeHead(200, {
@@ -2433,42 +5730,72 @@ export class ControllerService {
       this.dashboardClients += 1;
       const headerCursor = Number(request.headers["last-event-id"] ?? request.query.cursor ?? 0);
       const replay = this.fleetEvents.since(Number.isFinite(headerCursor) ? headerCursor : 0);
-      response.write(`event: ready\ndata: ${JSON.stringify({ connected: true, cursor: replay.cursor, reset: replay.reset })}\n\n`);
-      if (replay.reset) response.write(`event: fleet.reset\ndata: ${JSON.stringify({ snapshot: this.fleetSnapshot() })}\n\n`);
-      for (const event of replay.events) response.write(`id: ${event.cursor}\nevent: ${event.type}\ndata: ${JSON.stringify(redactValue(event.payload))}\n\n`);
-      const unsubscribe = this.fleetEvents.subscribe((event) => {
-        response.write(`id: ${event.cursor}\nevent: ${event.type}\ndata: ${JSON.stringify(redactValue(event.payload))}\n\n`);
-      });
-      const keepAlive = setInterval(() => response.write(": keep-alive\n\n"), 30_000);
-      keepAlive.unref();
-      request.raw.on("close", () => {
+      let closed = false; let unsubscribe: () => void = () => undefined;
+      let keepAlive: ReturnType<typeof setInterval> | undefined = undefined, deadline: ReturnType<typeof setTimeout> | undefined;
+      const close = () => {
+        if (closed) return;
+        closed = true;
         clearInterval(keepAlive);
         unsubscribe();
         this.dashboardClients = Math.max(0, this.dashboardClients - 1);
-      });
+        // Flush the already accepted buffer, never enqueue another frame. A slow
+        // peer cannot retain this response indefinitely or hold service shutdown.
+        response.end();
+        if (!response.destroyed) { deadline = setTimeout(() => response.destroy(), 2_000); deadline.unref(); }
+      };
+      const released = () => { close(); clearTimeout(deadline); this.dashboardStreamClosers.delete(close); };
+      this.dashboardStreamClosers.add(close);
+      response.once("close", released);
+      response.once("error", () => { close(); response.destroy(); });
+      const send = (frame: string): boolean => {
+        if (closed) return false;
+        try { if (!response.destroyed && !response.writableEnded && response.write(frame)) return true; }
+        catch { /* Transport failure does not escape into the event publisher. */ }
+        close(); return false;
+      };
+      if (!send(`event: ready\ndata: ${JSON.stringify({ connected: true, cursor: replay.cursor, reset: replay.reset })}\n\n`)) return;
+      if (replay.reset && !send(`event: fleet.reset\ndata: ${JSON.stringify({ snapshot: this.fleetSnapshot() })}\n\n`)) return;
+      for (const event of replay.events) if (!send(`id: ${event.cursor}\nevent: ${event.type}\ndata: ${JSON.stringify(redactValue(event.payload))}\n\n`)) return;
+      unsubscribe = this.fleetEvents.subscribe((event) => { send(`id: ${event.cursor}\nevent: ${event.type}\ndata: ${JSON.stringify(redactValue(event.payload))}\n\n`); });
+      keepAlive = setInterval(() => { send(": keep-alive\n\n"); }, 30_000); keepAlive.unref();
     });
 
-    this.app.get("/api/config", async () => this.configuration.current());
+    this.app.get<{Querystring:{view?:string}}>("/api/config", async (request,reply) => {if(request.query.view!==undefined&&request.query.view!=="console")return reply.code(400).send({code:"CONFIG_VIEW_INVALID"});const current=this.configuration.current();return request.query.view==="console"?{...current,...consoleConfig(current.config)}:current;});
+    this.app.get("/api/config/export",async()=>{const current=this.configuration.current();return {schemaVersion:1,revision:current.revision,exportedAt:this.now().toISOString(),...exportConsoleConfig(current.config)};});
     this.app.get("/api/config/schema", async () => ({ schema: dispatcherConfigSchema, uiSchema: dispatcherConfigUiSchema }));
     this.app.get("/api/config/audit", async () => ({ audit: this.database.listAudit() }));
-    this.app.post<{ Body: ConfigPlanBody }>("/api/config/plans", async (request, reply) => {
-      if (request.body?.config === undefined) return reply.code(400).send({ code: "CONFIG_REQUIRED" });
-      const plan = this.configuration.buildPlan(request.body.config, this.principalFor(request).id, "web");
-      return reply.code(201).send({ plan });
-    });
-    this.app.post<{ Params: { id: string }; Body: ApplyPlanBody }>("/api/config/plans/:id/apply", async (request) => {
-      const confirmed = request.body?.confirmed;
-      await assertRequiredSecretsAvailable(this.configuration.proposedConfig(request.params.id), this.secrets);
-      return this.configuration.applyPlan(request.params.id, confirmed === undefined ? {} : { confirmed });
-    });
-    this.app.post<{ Params: { id: string } }>("/api/config/plans/:id/rollback", async (request) =>
-      this.configuration.rollbackPlan(request.params.id),
-    );
 
-    this.app.get("/api/setup", async () => ({
-      state: this.database.getWizardState() ?? { step: 0, configRevision: this.configuration.current().revision, completed: false },
-      config: this.configuration.current(),
-    }));
+    this.app.get<{Params:{id:string}}>("/api/config/plans/:id",async(request,reply)=>{
+      const plan=this.configuration.getPlan(request.params.id);if(!plan)return reply.code(404).send({code:"CONFIG_PLAN_NOT_FOUND"});
+      return {plan:consoleConfigPlan(plan),currentRevision:this.configuration.current().revision,...(["APPLIED","ROLLED_BACK"].includes(plan.state)?{appliedRevision:plan.baseRevision+1}:{})};
+    });
+    this.app.post<{ Body: ConfigPlanBody }>("/api/config/plans", async (request, reply) => {
+      const body=request.body;if(!body||(body.config===undefined)===(body.edits===undefined))return reply.code(400).send({code:"CONFIG_INPUT_REQUIRED",message:"Provide exactly one of config or edits"});
+      if(body.edits!==undefined&&body.baseRevision===undefined)return reply.code(400).send({code:"CONFIG_REVISION_REQUIRED"});
+      if (body.baseRevision !== undefined) {
+        if(!Number.isInteger(body.baseRevision)) return reply.code(400).send({code:"INVALID_CONFIG_REVISION"});
+        const actual=this.configuration.current().revision;
+        if(body.baseRevision!==actual) throw new RevisionConflictError(body.baseRevision,actual);
+      }
+      const proposed=body.edits===undefined?body.config:applyConfigEdits(this.configuration.current().config,body.edits);
+      const plan = await this.planConfiguration(proposed, this.principalFor(request).id, "web",body.nativeModelDefault);
+      return reply.code(201).send({ plan:body.edits===undefined?plan:consoleConfigPlan(plan) });
+    });
+    this.app.post<{ Params: { id: string }; Body: ApplyPlanBody;Querystring:{view?:string} }>("/api/config/plans/:id/apply", async (request,reply) => {
+      if(request.query.view!==undefined&&request.query.view!=="console")return reply.code(400).send({code:"CONFIG_VIEW_INVALID"});
+      const before=this.configuration.getPlan(request.params.id),confirmed = request.body?.confirmed;
+      const applied=await this.applyConfigurationPlan(request.params.id, {...(confirmed===undefined?{}:{confirmed}),actorId:this.principalFor(request).id});
+      return {...applied,...(request.query.view==="console"?consoleConfig(applied.config):{}),planId:request.params.id,state:this.configuration.getPlan(request.params.id)?.state,currentRevision:applied.revision,...(before?{appliedRevision:before.baseRevision+1,repeated:before.state==="APPLIED"}:{})};
+    });
+    this.app.post<{ Params: { id: string };Querystring:{view?:string} }>("/api/config/plans/:id/rollback", async (request,reply) => {
+      if(request.query.view!==undefined&&request.query.view!=="console")return reply.code(400).send({code:"CONFIG_VIEW_INVALID"});
+      const result=await this.rollbackConfigurationPlan(request.params.id);return {...result,...(request.query.view==="console"?consoleConfig(result.config):{})};
+    });
+
+    this.app.get<{Querystring:{view?:string}}>("/api/setup", async (request,reply) => {
+      if(request.query.view!==undefined&&request.query.view!=="console")return reply.code(400).send({code:"CONFIG_VIEW_INVALID"});
+      const current=this.configuration.current();return {state:this.database.getWizardState()??{step:0,configRevision:current.revision,completed:false},config:request.query.view==="console"?{...current,...consoleConfig(current.config)}:current};
+    });
     this.app.post<{ Body: WizardBody }>("/api/setup", async (request, reply) => {
       const currentRevision = this.configuration.current().revision;
       const step = request.body?.step;
@@ -2488,14 +5815,21 @@ export class ControllerService {
       async (request, reply) => {
         if (!request.body?.value) return reply.code(400).send({ code: "SECRET_VALUE_REQUIRED" });
         const reference = `secret://${request.params.namespace}/${request.params.name}`;
-        const metadata = await this.secrets.put(reference, request.body.value);
+        if (this.configuration.current().config.runners.some(runner => runner.credentialRef === reference)) return reply.code(409).send({ code: "RUNNER_CREDENTIAL_MANAGED", message: "Use Runner enrollment or rotation to update this credential" });
+        this.assertCredentialChangeAllowed(reference);
+        const value=request.body.value;
+        const metadata = await this.credentialContext.change(reference,()=>this.secrets.put(reference, value));
         this.secretTestStates.delete(reference);
         return reply.code(201).send({ secret: this.secretView(metadata) });
       },
     );
     this.app.post<{ Params: { namespace: string; name: string } }>("/api/secrets/:namespace/:name/test", async (request) => {
       const reference = `secret://${request.params.namespace}/${request.params.name}`;
+      this.credentialContext.assertAvailable(reference);
+      const fingerprint=this.credentialContext.fingerprint(reference);
+      const assertCurrent=()=>{this.credentialContext.assertAvailable(reference);if(fingerprint!==this.credentialContext.fingerprint(reference))throw new ConfigPlanError("PROFILE_CONTEXT_CHANGED","Credential changed during its check; check again");};
       const metadata = await this.secrets.metadata(reference);
+      assertCurrent();
       const testedAt = new Date().toISOString();
       if (!metadata.exists) {
         this.secretTestStates.set(reference, { lastTestedAt: testedAt, lastTestStatus: "failed" });
@@ -2503,24 +5837,34 @@ export class ControllerService {
       }
       try {
         const ok = await this.secrets.test(reference, { principal: "controller", purpose: "test" });
+        assertCurrent();
         this.secretTestStates.set(reference, { lastTestedAt: testedAt, lastTestStatus: ok ? "ok" : "failed" });
         return { ok, secret: this.secretView(metadata) };
       } catch (error) {
+        assertCurrent();
         this.secretTestStates.set(reference, { lastTestedAt: testedAt, lastTestStatus: "failed" });
         throw error;
       }
     });
     this.app.delete<{ Params: { namespace: string; name: string } }>("/api/secrets/:namespace/:name", async (request, reply) => {
       const reference = `secret://${request.params.namespace}/${request.params.name}`;
-      if (requiredSecretReferences(this.configuration.current().config).includes(reference)) {
+      if (requiredSecretReferences(this.configuration.current().config).includes(reference) || this.configuration.current().config.runners.some(runner => runner.credentialRef === reference)) {
         return reply.code(409).send({ code: "SECRET_IN_USE", message: "Disable the configuration that uses this credential before deleting it" });
       }
-      await this.secrets.delete(reference);
+      this.assertCredentialChangeAllowed(reference);
+      await this.credentialContext.change(reference,()=>this.secrets.delete(reference));
       this.secretTestStates.delete(reference);
       return reply.code(204).send();
     });
 
-    this.app.setErrorHandler((error, _request, reply) => {
+    this.app.setErrorHandler((error, request, reply) => {
+      if (isRhizaIngressPath(request.url) || isRhizaIngressPath(request.routeOptions.url ?? "")) {
+        const invalid = error && typeof error === "object" && ("validation" in error || "statusCode" in error && [400, 413].includes(Number(error.statusCode)));
+        return reply.code(error instanceof RhizaIngressError ? error.statusCode : invalid ? 400 : 500).send({
+          code: error instanceof RhizaIngressError ? error.code : invalid ? "INVALID_REQUEST" : "INTERNAL_ERROR",
+          message: error instanceof RhizaIngressError ? error.message : invalid ? "The ingress request is invalid" : "Ingress operation failed",
+        });
+      }
       const secretStatus = error instanceof SecretStoreError
         ? error.code === "SECRET_ACCESS_DENIED"
           ? 403
@@ -2543,28 +5887,31 @@ export class ControllerService {
       const semanticStatus = error instanceof SemanticPolicyError
         ? error.code === "FORBIDDEN" ? 403 : error.code === "STALE_WORKFLOW" ? 409 : 400
         : undefined;
-      const status = error instanceof RevisionConflictError
+      const status = error instanceof NativeHistoryError?error.code==="FORBIDDEN"?403:error.code==="INVALID_HISTORY_REQUEST"?400:409:error instanceof InteractionGuardError?error.code==="FORBIDDEN"?403:409:error instanceof AdapterAdmissionError?409:error instanceof LocalGitDeliveryError?409:error instanceof UsageObservationError?400:error instanceof InputReceiptError||error instanceof AdapterContractError&&["SESSION_DETACHED","SESSION_CANCELLED","SESSION_BUSY","SESSION_CONTEXT_CHANGED","CANCELLATION_UNCONFIRMED"].includes(error.code)?409:error instanceof PublicationError ? error.statusCode : error instanceof TaskDispatchError ? error.statusCode : error instanceof RevisionConflictError
         ? 409
         : error instanceof LlmRuntimeError
-          ? error.code === "NO_AVAILABLE_PROFILE" ? 503 : 400
-        : error instanceof ConfigPlanError || error instanceof ConfigValidationError
+          ? error.code === "SELECTION_CHANGED" ? 409 : error.code === "NO_AVAILABLE_PROFILE" ? 503 : 400
+        : error instanceof ConfigPlanError && ["PROFILE_CONTEXT_CHANGED","CONNECTOR_CONTEXT_CHANGED","REMOTE_DRAFT_PROBE_UNAVAILABLE","RUNNER_CREDENTIAL_BUSY","CREDENTIAL_CHANGE_PENDING","CREDENTIAL_IN_USE","NATIVE_PICKER_UNAVAILABLE","NATIVE_PICKER_BUSY"].includes(error.code)?409:error instanceof ConfigPlanError || error instanceof ConfigValidationError
           ? 400
-          : semanticStatus ?? workspaceStatus ?? connectorStatus ?? secretStatus ?? 500;
-      const code = error instanceof RevisionConflictError || error instanceof ConfigPlanError || error instanceof SecretStoreError || error instanceof LlmRuntimeError || error instanceof ConnectorError || error instanceof WorkspacePolicyError || error instanceof SemanticPolicyError
+          : semanticStatus ?? workspaceStatus ?? connectorStatus ?? secretStatus ?? (error && typeof error === "object" && "validation" in error ? 400 : 500);
+      const code = error instanceof NativeHistoryError||error instanceof InteractionGuardError||error instanceof LocalGitDeliveryError||error instanceof UsageObservationError||error instanceof InputReceiptError||error instanceof AdapterContractError||error instanceof PublicationError || error instanceof TaskDispatchError || error instanceof RevisionConflictError || error instanceof ConfigPlanError || error instanceof SecretStoreError || error instanceof LlmRuntimeError || error instanceof ConnectorError || error instanceof WorkspacePolicyError || error instanceof SemanticPolicyError
         ? error.code
         : error instanceof ConfigValidationError
           ? error.code
         : "INTERNAL_ERROR";
       this.app.log.error({ error: redactValue(error) }, "request failed");
+      const publicationRoute=["/api/task-publications/preview","/api/tasks/:id/publications/preview"].includes(request.routeOptions.url??"");
+      const schemaFields=publicationRoute&&error&&typeof error==="object"&&"validation"in error?publicationValidationFields(error.validation):[];
+      const fieldErrors=error instanceof PublicationError?error.fieldErrors:schemaFields;
       const message = error instanceof Error ? error.message : "Request failed";
-      void reply.code(status).send({ code, message: status === 500 ? "Internal error" : message });
+      void reply.code(status).send({code:schemaFields.length?"INVALID_DRAFT":code,message:status===500?"Internal error":schemaFields.length?"Task draft contains invalid fields":message,...(fieldErrors?.length?{fieldErrors}:{})});
     });
 
-    const webRoot = this.options.webRoot ?? resolve(fileURLToPath(new URL("../../web/dist", import.meta.url)));
+    const webRoot = this.options.webRoot ?? dirname(fileURLToPath(import.meta.resolve("@dispatcher/web/index.html")));
     if (existsSync(webRoot)) {
-      void this.app.register(fastifyStatic, { root: webRoot, wildcard: false, maxAge: "1h", immutable: true });
+      void this.app.register(fastifyStatic, { root: webRoot, wildcard: false, maxAge: "1h", immutable: true, setHeaders: (response, path) => { if (path.endsWith("index.html")) response.header("Cache-Control", "no-cache"); } });
       this.app.setNotFoundHandler((request, reply) => {
-        if (request.url.startsWith("/api/") || request.url === "/health" || request.url === "/ready") {
+        if (request.url.startsWith("/api/") || request.url.startsWith("/assets/") || request.url === "/health" || request.url === "/ready") {
           return reply.code(404).send({ code: "NOT_FOUND" });
         }
         return reply.header("Cache-Control", "no-cache").sendFile("index.html", { maxAge: 0, immutable: false });
@@ -2581,7 +5928,32 @@ export class ControllerService {
     };
   }
 
-  private sessionView(session: AdapterSession): Pick<AdapterSession, "id" | "runId" | "profileId" | "state" | "createdAt" | "updatedAt"> {
+  private canonicalSession(session:AdapterSession):Run|undefined{return (this.database.listEntities<JsonValue>("run") as unknown as Run[]).find(run=>run.sessionId===session.id||run.id===session.runId&&run.profileId===session.profileId);}
+  private sessionStopState(session:AdapterSession):NativeSessionConsoleView["stopState"]{
+    const stored=this.database.getEntity<JsonValue>("adapter-session",session.id) as unknown as BoundSession|undefined;
+    const state=stored?.authority?.stopState??"none";return this.uncertainSessionStops.has(session.id)&&!["requested","unconfirmed"].includes(state)?"unconfirmed":state;
+  }
+  private sessionStopUncertain(session:AdapterSession):boolean{return ["requested","unconfirmed"].includes(this.sessionStopState(session));}
+  private sessionContextState(session:AdapterSession):NativeSessionConsoleView["contextState"]{
+    const stored=this.database.getEntity<JsonValue>("adapter-session",session.id) as unknown as BoundSession|undefined,authority=stored?.authority;
+    if(!authority||!session.profileId)return "unknown";
+    try{return this.resolveProfileExecutionContext(session.profileId,authority.repositoryId,"probe").fingerprint===authority.fingerprint?"current":"changed";}catch{return "changed";}
+  }
+  private assertSessionContext(session:AdapterSession):void{
+    if(this.sessionContextState(session)!=="current")throw new AdapterContractError("SESSION_CONTEXT_CHANGED","Original session account context is changed or unknown; inspect its saved history");
+    this.resolveProfileExecutionContext(session.profileId!,undefined,"resume");
+  }
+  private saveSessionStop(session:AdapterSession,stopState:NativeSessionConsoleView["stopState"],stopIntent?:SessionStopIntent):void{
+    const stored=this.database.getEntity<JsonValue>("adapter-session",session.id) as unknown as BoundSession|undefined;
+    if(!stored)throw new AdapterContractError("SESSION_NOT_FOUND","Session disappeared during stop");
+    const authority=stored.authority??{version:1 as const,fingerprint:"unknown"};
+    this.database.saveEntity("adapter-session",session.id,json({...stored,...(stopState==="confirmed"?session:{}),authority:{...authority,stopState,...(stopIntent?{stopIntent:structuredClone(stopIntent)}:{})}}));
+  }
+  private sessionView(session: AdapterSession): NativeSessionConsoleView {
+    const run=this.canonicalSession(session),contextState=this.sessionContextState(session),stopState=this.sessionStopState(session),adapter=this.agentAdapters.get(session.profileId??"");
+    const localHandle=adapter instanceof CodexAdapter||adapter instanceof StructuredCliAdapter||adapter instanceof QoderAdapter||adapter instanceof GenericCliAdapter;
+    const current=contextState==="current",standalone=!run&&Boolean(adapter);
+    const action=(allowed:boolean,reasonCode?:string)=>({allowed,requiresConfirmation:false,...(!allowed&&reasonCode?{reasonCode}:{})});
     return {
       id: session.id,
       runId: session.runId,
@@ -2589,6 +5961,8 @@ export class ControllerService {
       state: session.state,
       createdAt: session.createdAt,
       updatedAt: session.updatedAt,
+      canonical:Boolean(run),...(run?{taskId:run.taskId}:{}),contextState,stopState,
+      actions:{input:action(standalone&&current&&stopState==="none"&&session.state!=="CANCELLED","SESSION_CONTEXT_OR_STOP_REQUIRED"),cancel:{...action(standalone&&Boolean(adapter?.manifest.backends.some(backend=>backend.capabilities.includes("cancel")))&&(current||localHandle)&&stopState!=="confirmed","CANONICAL_OR_CONTEXT_REQUIRED"),requiresConfirmation:true},refresh:action(Boolean(adapter)&&(Boolean(run)||current),"SESSION_CONTEXT_CHANGED")},
     };
   }
 }

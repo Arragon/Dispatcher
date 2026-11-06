@@ -1,0 +1,118 @@
+{
+  "kind": "synthetic-old-private-rhiza16",
+  "producerCommit": "8dc16c063fbe23d63a1fa6821368e3e6df771cdd",
+  "producerCodeCommit": "675974139da6ea991504c2429bfdf43a303dd044",
+  "generation": "actual preserved old Controller/fixture plus createDispatcherBackup; no relabeled migration catalog",
+  "schemaVersion": 16,
+  "writerProtocol": 12,
+  "sourceSha256": "cf1dd9977193d81c18980604745c371999010282480f7f592c5525d8759177e0",
+  "sourceBytes": 417792,
+  "ledger": [
+    {
+      "version": 1,
+      "name": "core_entities_and_events"
+    },
+    {
+      "version": 2,
+      "name": "canonical_config"
+    },
+    {
+      "version": 3,
+      "name": "connector_canonical_store"
+    },
+    {
+      "version": 4,
+      "name": "native_session_interaction"
+    },
+    {
+      "version": 5,
+      "name": "minimum_writer_protocol"
+    },
+    {
+      "version": 6,
+      "name": "v3_native_convergence_writer_protocol"
+    },
+    {
+      "version": 7,
+      "name": "guarded_control_runtime_writer_protocol"
+    },
+    {
+      "version": 8,
+      "name": "guarded_controller_start_writer_protocol"
+    },
+    {
+      "version": 9,
+      "name": "automatic_verification_receipt_writer_protocol"
+    },
+    {
+      "version": 10,
+      "name": "rhiza_immutable_admission_writer_protocol"
+    },
+    {
+      "version": 11,
+      "name": "rhiza_canonical_job_authority_writer_protocol"
+    },
+    {
+      "version": 12,
+      "name": "native_model_evidence_writer_protocol"
+    },
+    {
+      "version": 13,
+      "name": "rhiza_durable_observation_writer_protocol"
+    },
+    {
+      "version": 14,
+      "name": "rhiza_external_control_writer_protocol"
+    },
+    {
+      "version": 15,
+      "name": "rhiza_external_input_writer_protocol"
+    },
+    {
+      "version": 16,
+      "name": "rhiza_explicit_reassignment_writer_protocol"
+    }
+  ],
+  "archiveManifest": {
+    "version": 1,
+    "databaseFile": "dispatcher.sqlite",
+    "capturedAt": "2026-10-24T13:13:20.337Z",
+    "schemaVersion": 16,
+    "sha256": "1f0b6978714b586b46f6ffa290c09ca8a638cec554057fa085f8031da4f9e0e2",
+    "bytes": 417792,
+    "inventory": {
+      "tasks": 1,
+      "runs": 0,
+      "sessions": 0,
+      "evidence": 0,
+      "pendingOutbox": 0,
+      "unresolvedCommands": 0
+    }
+  },
+  "archiveFiles": [
+    ".dispatcher-archive",
+    "dispatcher.sqlite",
+    "manifest.json"
+  ],
+  "compressed": {
+    "database.sqlite.gz": {
+      "bytes": 18078,
+      "sha256": "8b73e0d1de6c61bad41ed70ab8d989efc6c10394b970c35acde8fdc5f624b952"
+    },
+    "archive.sqlite.gz": {
+      "bytes": 18139,
+      "sha256": "d2152068e151abc036f21481d09d495a120b2fd6780a3986e31aa30938a4e74b"
+    }
+  },
+  "archiveMarker": ".dispatcher-archive",
+  "fixtureFiles": {
+    "archive-manifest.json": {
+      "sha256": "5daee7b2b9a04649573692ef542e5d5a051b29ac85c09ac7a050ef6d1320af3a",
+      "bytes": 367
+    },
+    "archive-marker.json": {
+      "sha256": "50208d78350a7a160dec59a82df1499b6ca7da33e54c5eb11c97e342118e68bb",
+      "bytes": 14
+    }
+  }
+}

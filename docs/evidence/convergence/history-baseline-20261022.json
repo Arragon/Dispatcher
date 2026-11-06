@@ -1,0 +1,440 @@
+{
+  "schemaVersion": 1,
+  "scenario": "history",
+  "startedAt": "2026-10-22T15:24:51.790Z",
+  "durationSeconds": 5,
+  "environment": {
+    "platform": "darwin",
+    "architecture": "arm64",
+    "kernel": "27.0.0",
+    "cpuModel": "Apple M6",
+    "availableCpus": 12,
+    "node": "v24.21.0",
+    "pid": 49798,
+    "runtimeKind": "qualified-release",
+    "sourceSha": "0d2cd42dcca1696dd43ac6c9503b80e00ee00655",
+    "sourceDirty": false,
+    "harnessSourceSha": "c027ea3eea49934d6ca8d6cc3afd7f491608b417",
+    "harnessSourceDirty": true,
+    "harnessScriptSha256": "71a50f6beca88cc4b3169fd60dd59cdb5c05b8e883615a12f2fcaa459bc036d4",
+    "measurementScriptSha256": "ddbf325b2f5747a2d59f3eb822a2a85ecffa67aa30ea629b33c7d7e384bf1c67",
+    "runtimeSelectorSha256": "3c578e840ececd62e8a6ebb353808bdb07385473217317bbf52cb7c56ea9d2e5",
+    "historyWorkloadSha256": "38ac8ccbb4ea6e85cd2aeea70cc3178a3f2623d4c4adda6db2217a0b3bb143b5",
+    "controllerEntrypointSha256": "348d2f0b2d4b344989b74a99588255bc44c15ee19a37b4421d2d606cfc8700e8",
+    "releaseDirectory": "/Users/wangdongxin/.local/share/dispatcher/releases/0d2cd42",
+    "releaseManifestSha256": "fde3f55a55e8ad1762a87f463482d4305437650445635ec249473fdb0d6e42fe",
+    "smokeScope": "isolated-package-fixture",
+    "runtimeIntegrity": {
+      "qualified": true,
+      "state": "verified"
+    }
+  },
+  "measurements": {
+    "sampleCount": 70,
+    "measuredSeconds": 7.8014287079999995,
+    "cpuAveragePercent": 91.64987936976223,
+    "rssMaximumBytes": 257835008,
+    "cpuBasis": "process-cumulative-time-delta-over-monotonic-window",
+    "samples": [
+      {
+        "rssBytes": 241270784,
+        "cpuSeconds": 0.88,
+        "observedAtMs": 2394.785958
+      },
+      {
+        "rssBytes": 241860608,
+        "cpuSeconds": 0.99,
+        "observedAtMs": 2509.535125
+      },
+      {
+        "rssBytes": 242057216,
+        "cpuSeconds": 1.09,
+        "observedAtMs": 2624.129375
+      },
+      {
+        "rssBytes": 242302976,
+        "cpuSeconds": 1.2,
+        "observedAtMs": 2737.583166
+      },
+      {
+        "rssBytes": 242499584,
+        "cpuSeconds": 1.3,
+        "observedAtMs": 2847.934
+      },
+      {
+        "rssBytes": 242532352,
+        "cpuSeconds": 1.41,
+        "observedAtMs": 2960.315
+      },
+      {
+        "rssBytes": 242712576,
+        "cpuSeconds": 1.51,
+        "observedAtMs": 3074.574625
+      },
+      {
+        "rssBytes": 242745344,
+        "cpuSeconds": 1.5899999999999999,
+        "observedAtMs": 3183.074708
+      },
+      {
+        "rssBytes": 242974720,
+        "cpuSeconds": 1.69,
+        "observedAtMs": 3287.566833
+      },
+      {
+        "rssBytes": 243040256,
+        "cpuSeconds": 1.8,
+        "observedAtMs": 3403.663958
+      },
+      {
+        "rssBytes": 243269632,
+        "cpuSeconds": 1.9,
+        "observedAtMs": 3512.973833
+      },
+      {
+        "rssBytes": 243318784,
+        "cpuSeconds": 2,
+        "observedAtMs": 3625.159041
+      },
+      {
+        "rssBytes": 243548160,
+        "cpuSeconds": 2.11,
+        "observedAtMs": 3733.535375
+      },
+      {
+        "rssBytes": 243630080,
+        "cpuSeconds": 2.21,
+        "observedAtMs": 3841.58025
+      },
+      {
+        "rssBytes": 243826688,
+        "cpuSeconds": 2.32,
+        "observedAtMs": 3955.055
+      },
+      {
+        "rssBytes": 243957760,
+        "cpuSeconds": 2.42,
+        "observedAtMs": 4064.94475
+      },
+      {
+        "rssBytes": 244154368,
+        "cpuSeconds": 2.52,
+        "observedAtMs": 4171.028166
+      },
+      {
+        "rssBytes": 244367360,
+        "cpuSeconds": 2.62,
+        "observedAtMs": 4281.319958
+      },
+      {
+        "rssBytes": 249544704,
+        "cpuSeconds": 2.77,
+        "observedAtMs": 4421.590125
+      },
+      {
+        "rssBytes": 249593856,
+        "cpuSeconds": 2.87,
+        "observedAtMs": 4525.587333
+      },
+      {
+        "rssBytes": 249741312,
+        "cpuSeconds": 2.96,
+        "observedAtMs": 4629.400458
+      },
+      {
+        "rssBytes": 249774080,
+        "cpuSeconds": 3.07,
+        "observedAtMs": 4739.50375
+      },
+      {
+        "rssBytes": 249839616,
+        "cpuSeconds": 3.17,
+        "observedAtMs": 4846.881875
+      },
+      {
+        "rssBytes": 249921536,
+        "cpuSeconds": 3.2800000000000002,
+        "observedAtMs": 4959.313541
+      },
+      {
+        "rssBytes": 250085376,
+        "cpuSeconds": 3.38,
+        "observedAtMs": 5070.358166
+      },
+      {
+        "rssBytes": 250101760,
+        "cpuSeconds": 3.48,
+        "observedAtMs": 5177.013666
+      },
+      {
+        "rssBytes": 250249216,
+        "cpuSeconds": 3.58,
+        "observedAtMs": 5279.339625
+      },
+      {
+        "rssBytes": 249266176,
+        "cpuSeconds": 3.68,
+        "observedAtMs": 5391.925458
+      },
+      {
+        "rssBytes": 249430016,
+        "cpuSeconds": 3.79,
+        "observedAtMs": 5501.145791
+      },
+      {
+        "rssBytes": 240877568,
+        "cpuSeconds": 3.88,
+        "observedAtMs": 5608.017291
+      },
+      {
+        "rssBytes": 230162432,
+        "cpuSeconds": 3.99,
+        "observedAtMs": 5724.687166
+      },
+      {
+        "rssBytes": 229687296,
+        "cpuSeconds": 4.1,
+        "observedAtMs": 5839.913916
+      },
+      {
+        "rssBytes": 219398144,
+        "cpuSeconds": 4.2,
+        "observedAtMs": 5955.957125
+      },
+      {
+        "rssBytes": 214908928,
+        "cpuSeconds": 4.31,
+        "observedAtMs": 6070.35
+      },
+      {
+        "rssBytes": 210288640,
+        "cpuSeconds": 4.42,
+        "observedAtMs": 6189.287291
+      },
+      {
+        "rssBytes": 204832768,
+        "cpuSeconds": 4.52,
+        "observedAtMs": 6310.442125
+      },
+      {
+        "rssBytes": 226246656,
+        "cpuSeconds": 4.71,
+        "observedAtMs": 6522.2115
+      },
+      {
+        "rssBytes": 226426880,
+        "cpuSeconds": 4.8100000000000005,
+        "observedAtMs": 6626.239083
+      },
+      {
+        "rssBytes": 226426880,
+        "cpuSeconds": 4.88,
+        "observedAtMs": 6743.759916
+      },
+      {
+        "rssBytes": 226426880,
+        "cpuSeconds": 4.98,
+        "observedAtMs": 6859.903833
+      },
+      {
+        "rssBytes": 223559680,
+        "cpuSeconds": 5.09,
+        "observedAtMs": 6979.137666
+      },
+      {
+        "rssBytes": 223248384,
+        "cpuSeconds": 5.18,
+        "observedAtMs": 7085.051791
+      },
+      {
+        "rssBytes": 223232000,
+        "cpuSeconds": 5.28,
+        "observedAtMs": 7194.386916
+      },
+      {
+        "rssBytes": 223232000,
+        "cpuSeconds": 5.38,
+        "observedAtMs": 7302.754625
+      },
+      {
+        "rssBytes": 223232000,
+        "cpuSeconds": 5.48,
+        "observedAtMs": 7409.370083
+      },
+      {
+        "rssBytes": 223232000,
+        "cpuSeconds": 5.59,
+        "observedAtMs": 7522.166458
+      },
+      {
+        "rssBytes": 223232000,
+        "cpuSeconds": 5.6899999999999995,
+        "observedAtMs": 7634.238458
+      },
+      {
+        "rssBytes": 223232000,
+        "cpuSeconds": 5.8,
+        "observedAtMs": 7747.365166
+      },
+      {
+        "rssBytes": 223232000,
+        "cpuSeconds": 5.91,
+        "observedAtMs": 7866.840791
+      },
+      {
+        "rssBytes": 223232000,
+        "cpuSeconds": 6.01,
+        "observedAtMs": 7979.684875
+      },
+      {
+        "rssBytes": 223232000,
+        "cpuSeconds": 6.11,
+        "observedAtMs": 8086.883
+      },
+      {
+        "rssBytes": 223068160,
+        "cpuSeconds": 6.21,
+        "observedAtMs": 8196.885458
+      },
+      {
+        "rssBytes": 222953472,
+        "cpuSeconds": 6.31,
+        "observedAtMs": 8306.017083
+      },
+      {
+        "rssBytes": 222953472,
+        "cpuSeconds": 6.4,
+        "observedAtMs": 8410.959333
+      },
+      {
+        "rssBytes": 257835008,
+        "cpuSeconds": 6.59,
+        "observedAtMs": 8600.199333
+      },
+      {
+        "rssBytes": 257835008,
+        "cpuSeconds": 6.6899999999999995,
+        "observedAtMs": 8718.84775
+      },
+      {
+        "rssBytes": 257835008,
+        "cpuSeconds": 6.8,
+        "observedAtMs": 8835.654125
+      },
+      {
+        "rssBytes": 257753088,
+        "cpuSeconds": 6.91,
+        "observedAtMs": 8956.408958
+      },
+      {
+        "rssBytes": 234012672,
+        "cpuSeconds": 7.01,
+        "observedAtMs": 9077.167166
+      },
+      {
+        "rssBytes": 232095744,
+        "cpuSeconds": 7.12,
+        "observedAtMs": 9188.90925
+      },
+      {
+        "rssBytes": 230506496,
+        "cpuSeconds": 7.2,
+        "observedAtMs": 9292.814833
+      },
+      {
+        "rssBytes": 230506496,
+        "cpuSeconds": 7.29,
+        "observedAtMs": 9396.33825
+      },
+      {
+        "rssBytes": 230506496,
+        "cpuSeconds": 7.39,
+        "observedAtMs": 9500.230083
+      },
+      {
+        "rssBytes": 230522880,
+        "cpuSeconds": 7.49,
+        "observedAtMs": 9604.78225
+      },
+      {
+        "rssBytes": 230522880,
+        "cpuSeconds": 7.59,
+        "observedAtMs": 9710.867625
+      },
+      {
+        "rssBytes": 230522880,
+        "cpuSeconds": 7.7,
+        "observedAtMs": 9830.609208
+      },
+      {
+        "rssBytes": 230555648,
+        "cpuSeconds": 7.8,
+        "observedAtMs": 9937.309125
+      },
+      {
+        "rssBytes": 230588416,
+        "cpuSeconds": 7.9,
+        "observedAtMs": 10046.345041
+      },
+      {
+        "rssBytes": 230604800,
+        "cpuSeconds": 8,
+        "observedAtMs": 10154.197375
+      },
+      {
+        "rssBytes": 230604800,
+        "cpuSeconds": 8.03,
+        "observedAtMs": 10196.214666
+      }
+    ],
+    "controllerReportedRssBytes": 230785024,
+    "databaseMainBytes": 4116480,
+    "databaseWalBytes": 53592,
+    "databaseShmBytes": 32768,
+    "databaseBytes": 4202840,
+    "logBytes": 156013,
+    "storageBasis": "sqlite-main-wal-shm-and-structured-log-files",
+    "databaseGrowthBytes": 0,
+    "logGrowthBytes": 155567,
+    "dashboardClients": 0,
+    "history": {
+      "synthetic": true,
+      "taskId": "benchmark-history",
+      "taskCount": 1,
+      "runCount": 10000,
+      "nativeWorkloadConfigured": false,
+      "pages": 500,
+      "runsVerified": 10000,
+      "pageSize": 20,
+      "maximumResponseBytes": 5952,
+      "latencyMs": {
+        "minimum": 9.449791999999889,
+        "p50": 14.164708000000246,
+        "p95": 19.43170899999859,
+        "p99": 33.93287500000042,
+        "maximum": 110.98599999999988
+      }
+    },
+    "controllerLlmCallsSinceStart": 0,
+    "controllerLlmCallScope": {
+      "basis": "generate-attempts",
+      "includesExplicitProbes": false,
+      "reset": "controller-instance",
+      "startedAt": "2026-10-22T15:24:52.531Z"
+    }
+  },
+  "targets": {
+    "idleCpuPercentBelow": 1,
+    "rssBytesBelow": 262144000
+  },
+  "assessment": "informational",
+  "limitations": [
+    "Synthetic terminal Run metadata and Controller API pagination only; no browser rendering, native/provider workload or formal P4 acceptance. Page latency and response bytes include scoped Task metadata.",
+    "Controller process CPU/RSS only; native descendants, event-loop lag, open handles, network, full browser history, synthetic SSE burst and 8-hour soak Gates are not measured here."
+  ],
+  "cleanup": {
+    "confirmed": true,
+    "exitCode": 0,
+    "signal": null
+  }
+}
