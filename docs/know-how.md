@@ -516,6 +516,11 @@
 
 ## Tooling details
 
+- A Codex account/model-directory read does not qualify the execution protocol.
+  Compare the installed CLI's stable and experimental generated schemas before
+  updating its exact app-server pin. Stored threads retain their original
+  `cliVersion`; a new CLI or cached directory cannot adopt an older binding.
+
 - Delivery evidence insertion is intentionally idempotent (`INSERT OR IGNORE`).
   Use `updateDeliveryEvidence` with its current revision for CI/PR changes;
   calling the insert method again silently retains the old evidence. No schema

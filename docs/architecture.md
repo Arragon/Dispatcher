@@ -1447,7 +1447,7 @@ claims and an inventory report never grant cleanup or signal authority.
 ## Internal Codex App Server contracts
 
 The preserved Codex stdio transport is internal to adapters and is pinned to
-0.166.0-alpha.5.1, checked against that installed CLI's generated schema. Root-only
+0.166.0-alpha.6, checked against that installed CLI's generated schema. Root-only
 bindings require the returned sessionId to equal thread.id; fork roots cannot be
 inferred from a thread id. Thread creation disables provider model fallback.
 Other installed versions and threads created by older versions remain rejected;

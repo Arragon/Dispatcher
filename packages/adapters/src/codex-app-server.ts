@@ -13,7 +13,7 @@ import {freezeExecutionSelection} from "./execution-selection.js";
 import {NativeRequestError,assertNativeRequestChoice,normalizeNativeRequest,type NativePendingRequest,type NativeRequestEvent,type NativeRequestHandle} from "./native-requests.js";
 import {readOwnedNativeVersion} from "./native-version-probe.js";
 
-export const codexAppServerProtocolVersion="0.166.0-alpha.5.1";
+export const codexAppServerProtocolVersion="0.166.0-alpha.6";
 export interface CodexAppServerScope {
   profileId:string;runnerId:string;nativeStoreRef:string;scopeFingerprint:string;executionRefId:string;
   executable:string;codexHome:string;workspacePath:string;

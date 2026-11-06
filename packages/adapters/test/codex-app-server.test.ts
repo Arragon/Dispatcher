@@ -17,7 +17,7 @@ afterAll(()=>{for(const path of roots)rmSync(path,{recursive:true,force:true});}
 const scope:CodexAppServerScope={profileId:"p",runnerId:"local",nativeStoreRef:"native-store:fixture",scopeFingerprint:"tuple",executionRefId:"exec-ref",codexHome:root,workspacePath:root,executable:"codex",approvalPolicy:"on-request",sandbox:"workspace-write"};
 const binding:NativeBinding={version:1,product:"codex",region:"global",profileId:"p",backendId:"codex-app-server",runnerId:"local",nativeStoreRef:"native-store:fixture",nativeSessionId:"thread-1",nativeThreadId:"thread-1",identityState:"bound",executionRefId:"exec-ref"};
 const sandbox={type:"workspaceWrite",writableRoots:[],networkAccess:false,excludeSlashTmp:false,excludeTmpdirEnvVar:false};
-const thread=(id="thread-1",status="idle")=>({id,sessionId:id,cliVersion:"0.166.0-alpha.5.1",createdAt:1,updatedAt:2,cwd:root,ephemeral:false,modelProvider:"openai",model:"test-model",reasoningEffort:"high",source:"appServer",status:{type:status},turns:[],preview:"",projectId:null,path:null});
+const thread=(id="thread-1",status="idle")=>({id,sessionId:id,cliVersion:"0.166.0-alpha.6",createdAt:1,updatedAt:2,cwd:root,ephemeral:false,modelProvider:"openai",model:"test-model",reasoningEffort:"high",source:"appServer",status:{type:status},turns:[],preview:"",projectId:null,path:null});
 class ProtocolFixture implements CodexRpcTransport {
   calls:Array<{method:string;params:Record<string,unknown>}>=[];
   handlers=new Map<string,(params:Record<string,unknown>)=>unknown|Promise<unknown>>();
@@ -27,7 +27,7 @@ class ProtocolFixture implements CodexRpcTransport {
     if(signal?.aborted)throw new adapters.AdapterContractError("CODEX_NATIVE_UNREACHABLE","aborted");
     this.calls.push({method,params:structuredClone(params)});
     const custom=this.handlers.get(method);if(custom)return custom(params);
-    if(method==="initialize")return {codexHome:root,platformFamily:"unix",platformOs:"macos",userAgent:"codex_cli_rs/0.166.0-alpha.5.1"};
+    if(method==="initialize")return {codexHome:root,platformFamily:"unix",platformOs:"macos",userAgent:"codex_cli_rs/0.166.0-alpha.6"};
     if(method==="thread/start"||method==="thread/resume")return {thread:thread(),model:"test-model",modelProvider:"openai",cwd:root,approvalPolicy:"on-request",approvalsReviewer:"user",sandbox,reasoningEffort:"high"};
     if(method==="thread/read")return {thread:thread(String(params.threadId))};
     if(method==="turn/start")return {turn:{id:"turn-1",items:[],status:"inProgress"}};
@@ -81,8 +81,8 @@ it.each(["start","history"] as const)("rejects a foreign root session identity d
  expect(rpc.calls.some(call=>["turn/start","thread/resume"].includes(call.method))).toBe(false);
  await backend.disconnectLocal();
 });
-it("refuses a thread created by the previous protocol without rewriting its binding",async()=>{
- const {rpc,backend}=setup();backend.registerBinding(binding);rpc.handlers.set("thread/read",()=>({thread:{...thread(),cliVersion:"0.162.0-alpha.17.2"}}));
+it.each(["0.162.0-alpha.17.2","0.166.0-alpha.5.1","0.166.0-alpha.7"])("refuses a thread created by unqualified protocol %s without rewriting its binding",async cliVersion=>{
+  const {rpc,backend}=setup();backend.registerBinding(binding);rpc.handlers.set("thread/read",()=>({thread:{...thread(),cliVersion}}));
  await expect(backend.inspect(binding)).rejects.toMatchObject({code:"CODEX_THREAD_IDENTITY_CHANGED"});expect(rpc.calls.some(call=>["thread/start","thread/resume","turn/start"].includes(call.method))).toBe(false);await backend.disconnectLocal();
 });
 const adapterInput=()=>({sessionId:"session",runId:"run",backendId:"codex-app-server",workspacePath:root,prompt:"first",executionRef:executionRef(),executionSelection:selection(),execution:{generation:1,attempt:1,leaseId:"lease"},beforeCreate:()=>undefined,beforeSend:()=>undefined});
